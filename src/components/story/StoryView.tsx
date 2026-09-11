@@ -83,6 +83,13 @@ export function StoryView() {
           )}
 
           {passages.map((passage, i) => {
+            // A completed Story-mode draft is hidden: its generated_story
+            // passage restates the same beat as prose, so rendering both would
+            // read it twice. Stranded drafts (a failed generation left them
+            // last) stay visible so they can still be edited or erased.
+            if (passage.input_mode === "story" && passages[i + 1]?.input_mode === "generated_story") {
+              return null;
+            }
             const isLastPassage = i === passages.length - 1;
             const pinHere = isStreamingReplace ? passage.id === streaming!.targetPassageId : isLastPassage && !isStreamingAppend;
             return (
