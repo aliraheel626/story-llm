@@ -1,0 +1,70 @@
+[package]
+name = "dungeon"
+version = "0.1.0"
+description = "A local-first AI roleplay desktop app"
+authors = ["you"]
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+# The `_lib` suffix may seem redundant but it is necessary
+# to make the lib name unique and wouldn't conflict with the bin name.
+# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
+name = "dungeon_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["protocol-asset"] }
+tauri-plugin-opener = "2"
+tauri-plugin-store = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rusqlite = { version = "0.32", features = ["bundled", "chrono"] }
+r2d2 = "0.8"
+r2d2_sqlite = "0.25"
+tokio = { version = "1", features = ["full"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+thiserror = "2"
+anyhow = "1"
+futures = "0.3"
+# Hand-rolled client for OpenRouter's dedicated Image API — Rig's OpenRouter
+# provider has no image_generation support yet (verified against its source;
+# see narrator module docs), so this one piece is built directly on reqwest
+# per the working agreement ("if Rig can't do it, wrap rather than replace").
+reqwest = { version = "0.13", features = ["json"] }
+base64 = "0.22"
+rand = "0.8"
+# Pinned to the same major as rig-core's own workspace dependency so
+# `#[derive(JsonSchema)]` on our classify/update structs satisfies the trait
+# bound `agent.prompt_typed::<T>()` expects — the derive macro and the trait
+# must come from the identical schemars crate instance.
+schemars = "1"
+
+# Pinned exactly: rig is pre-1.0 and both crates publish in lockstep at the
+# same workspace version. rig-core owns provider/message/tool contracts;
+# rig-agent owns the AgentBuilder/run-loop on top of it. Their default
+# features already include a bundled reqwest+rustls transport, so no separate
+# HTTP-transport crate is needed.
+rig-core = { version = "=0.42.0" }
+rig-agent = { version = "=0.42.0" }
+
+# tauri-pilot: lets an AI agent (or a human) drive the running dev build over
+# a local socket for interactive testing. Cargo has no debug/release-only
+# dependency selector, so this is compiled in for every profile; the actual
+# plugin registration is gated with #[cfg(debug_assertions)] in lib.rs so it
+# never initializes in a release build. Revisit before packaging (Phase 10) —
+# consider a Cargo feature instead if release binary size becomes a concern.
+tauri-plugin-pilot = { git = "https://github.com/mpiton/tauri-pilot" }
+
+# Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+panic = "abort"
+strip = true

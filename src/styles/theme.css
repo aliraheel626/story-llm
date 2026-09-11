@@ -1,0 +1,54 @@
+/* Bundled locally (not a Google Fonts @import) so the webview makes zero
+   network calls at runtime — files live in public/fonts. */
+@font-face {
+  font-family: "Lora";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("/fonts/lora-var.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Lora";
+  font-style: italic;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("/fonts/lora-italic-var.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("/fonts/inter-var.woff2") format("woff2");
+}
+
+/* Theme tokens. Dark (manuscript) is the default and only theme for now;
+   the light block exists so a future toggle needs no component rewrites. */
+:root {
+  --color-bg: #16151a;
+  --color-surface: #1c1b22;
+  --color-surface-hover: #24232c;
+  --color-border: #322f3a;
+  --color-text: #e9e4d8;
+  --color-muted: #8d8897;
+  --color-accent: #c9a570;
+  --color-accent-hover: #d9b880;
+  --color-danger: #d9695f;
+  --color-success: #6fae82;
+
+  --font-prose: "Lora", Georgia, "Iowan Old Style", "Source Serif Pro", serif;
+  --font-ui: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+[data-theme="light"] {
+  --color-bg: #f7f4ee;
+  --color-surface: #ffffff;
+  --color-surface-hover: #f0ece2;
+  --color-border: #ddd6c5;
+  --color-text: #241f18;
+  --color-muted: #7a7263;
+  --color-accent: #9c7a3e;
+  --color-accent-hover: #8a6a34;
+  --color-danger: #b8453c;
+  --color-success: #3f8a5b;
+}
