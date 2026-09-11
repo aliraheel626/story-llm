@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useAppStore } from "../../store/appStore";
-import { useMechanicsStore } from "../../store/mechanicsStore";
+import { DEFAULT_MECHANICS_SETTINGS, useMechanicsStore } from "../../store/mechanicsStore";
 import type { DiceMode } from "../../lib/types";
 
 const DICE_MODES: { id: DiceMode; label: string; hint: string }[] = [
@@ -12,24 +12,22 @@ const DICE_MODES: { id: DiceMode; label: string; hint: string }[] = [
 export function AttributesPanel() {
   const activeStoryId = useAppStore((s) => s.activeStoryId);
   const settingsByStory = useMechanicsStore((s) => s.settingsByStory);
+  const draftSettings = useMechanicsStore((s) => s.draftSettings);
   const loading = useMechanicsStore((s) => s.loading);
   const loadSettings = useMechanicsStore((s) => s.loadSettings);
   const saveSettings = useMechanicsStore((s) => s.saveSettings);
 
   const [saving, setSaving] = useState(false);
-  const settings = activeStoryId ? settingsByStory[activeStoryId] : undefined;
+  const loaded = activeStoryId ? settingsByStory[activeStoryId] : undefined;
+  const settings = loaded ?? draftSettings ?? DEFAULT_MECHANICS_SETTINGS;
 
   useEffect(() => {
     if (activeStoryId) loadSettings(activeStoryId);
   }, [activeStoryId, loadSettings]);
 
-  if (!activeStoryId) {
-    return <div className="text-xs text-muted py-1">Open a story first.</div>;
-  }
-  if (loading && !settings) {
+  if (activeStoryId && loading && !loaded) {
     return <div className="text-xs text-muted py-1">Loading...</div>;
   }
-  if (!settings) return null;
 
   const update = async (diceMode: DiceMode, attributesEnabled: boolean) => {
     setSaving(true);

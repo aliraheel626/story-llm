@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { commands } from "../lib/commands";
 import type { Story } from "../lib/types";
+import { useMechanicsStore } from "./mechanicsStore";
 
 export const SIDEBAR_PANELS = [
   "stories",
@@ -62,9 +63,12 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
   startDraft: () => {
     set({ activeStoryId: null, draft: true });
+    useMechanicsStore.getState().resetDraftSettings();
   },
   createStory: async () => {
-    const story = await commands.createStory();
+    const draft = useMechanicsStore.getState().draftSettings;
+    const story = await commands.createStory(undefined, draft);
+    useMechanicsStore.getState().promoteDraftSettings(story.id);
     set((s) => ({ stories: [story, ...s.stories], activeStoryId: story.id, draft: false }));
     return story;
   },
@@ -76,6 +80,9 @@ export const useAppStore = create<AppState>((set, get) => ({
     set((s) => ({ stories: s.stories.map((st) => (st.id === storyId ? { ...st, title } : st)) }));
   },
   setActiveStory: (id: string) => {
-    if (get().activeStoryId !== id || get().draft) set({ activeStoryId: id, draft: false });
+    if (get().activeStoryId !== id || get().draft) {
+      set({ activeStoryId: id, draft: false });
+      useMechanicsStore.getState().resetDraftSettings();
+    }
   },
 }));

@@ -17,7 +17,8 @@ import type {
 
 export const commands = {
   listStories: () => invoke<Story[]>("list_stories"),
-  createStory: (title?: string) => invoke<Story>("create_story", { title: title ?? null }),
+  createStory: (title?: string, settings?: MechanicsSettings | null) =>
+    invoke<Story>("create_story", { title: title ?? null, settings: settings ?? null }),
   renameStory: (storyId: string, title: string) => invoke<void>("rename_story", { storyId, title }),
 
   listPassages: (branchId: string) => invoke<Passage[]>("list_passages", { branchId }),

@@ -46,11 +46,19 @@ pub fn list_stories(pool: State<Pool>) -> AppResult<Vec<Story>> {
     Ok(out)
 }
 
+/// `settings` carries mechanics choices made while the story was still a
+/// frontend draft, so they are written in the same transaction as the story
+/// itself rather than a follow-up save that could fail on its own.
 #[tauri::command]
-pub fn create_story(pool: State<Pool>, title: Option<String>) -> AppResult<Story> {
+pub fn create_story(
+    pool: State<Pool>,
+    title: Option<String>,
+    settings: Option<serde_json::Value>,
+) -> AppResult<Story> {
     let title = title.unwrap_or_default();
     let title = title.trim();
     let title = if title.is_empty() { DEFAULT_STORY_TITLE } else { title };
+    let settings_json = settings.unwrap_or_else(|| json!({})).to_string();
     let mut conn = pool.get()?;
     let now = Utc::now().to_rfc3339();
     let story_id = Uuid::new_v4().to_string();
@@ -59,8 +67,8 @@ pub fn create_story(pool: State<Pool>, title: Option<String>) -> AppResult<Story
     let tx = conn.transaction()?;
     tx.execute(
         "INSERT INTO stories (id, title, created_at, updated_at, settings_json, default_branch_id)
-         VALUES (?1, ?2, ?3, ?3, '{}', NULL)",
-        rusqlite::params![story_id, title, now],
+         VALUES (?1, ?2, ?3, ?3, ?4, NULL)",
+        rusqlite::params![story_id, title, now, settings_json],
     )?;
     tx.execute(
         "INSERT INTO branches (id, story_id, parent_branch_id, forked_at_passage_id, name, created_at)
@@ -78,7 +86,7 @@ pub fn create_story(pool: State<Pool>, title: Option<String>) -> AppResult<Story
         title: title.to_string(),
         created_at: now.clone(),
         updated_at: now,
-        settings_json: "{}".to_string(),
+        settings_json,
         default_branch_id: Some(branch_id),
     })
 }
