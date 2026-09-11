@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useAppStore } from "../../store/appStore";
 import { useStoryStore } from "../../store/storyStore";
 import { useImageModelStore } from "../../store/imageModelStore";
 
@@ -12,20 +13,24 @@ const MODES: { id: Mode; label: string; placeholder: string }[] = [
   { id: "see", label: "See", placeholder: 'Optional: what to show — "the bucket", "the girl you are seeing"...' },
 ];
 
-export function Composer({ branchId }: { branchId: string }) {
+/** `branchId` is null while composing a not-yet-persisted draft story; the
+ *  first submit creates the story and branch (see `ensureBranch`), so an
+ *  abandoned draft never leaves an empty story behind. */
+export function Composer({ branchId }: { branchId: string | null }) {
   const [mode, setMode] = useState<Mode>("do");
   const [text, setText] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
+  const createStory = useAppStore((s) => s.createStory);
   const submitTurn = useStoryStore((s) => s.submitTurn);
   const submitStoryText = useStoryStore((s) => s.submitStoryText);
   const submitGuide = useStoryStore((s) => s.submitGuide);
   const continueScene = useStoryStore((s) => s.continueScene);
   const streaming = useStoryStore((s) => s.streaming);
   const turnError = useStoryStore((s) => s.turnError);
-  const passages = useStoryStore((s) => s.passagesByBranch[branchId]);
+  const passages = useStoryStore((s) => (branchId ? s.passagesByBranch[branchId] : undefined));
   const generateImageForPassage = useStoryStore((s) => s.generateImageForPassage);
   const generatingImageFor = useStoryStore((s) => s.generatingImageFor);
   const imageError = useStoryStore((s) => s.imageError);
@@ -49,6 +54,14 @@ export function Composer({ branchId }: { branchId: string }) {
     el.style.height = `${Math.min(el.scrollHeight, maxHeight)}px`;
   }, [text, mode]);
 
+  /** Lazily persists the story on first submit. No-op once it exists. */
+  const ensureBranch = async (): Promise<string> => {
+    if (branchId) return branchId;
+    const story = await createStory();
+    if (!story.default_branch_id) throw new Error("new story has no branch");
+    return story.default_branch_id;
+  };
+
   const onSubmit = async () => {
     if (busy) return;
     setError(null);
@@ -71,12 +84,13 @@ export function Composer({ branchId }: { branchId: string }) {
     if (!trimmed) return;
     setSubmitting(true);
     try {
+      const branch = await ensureBranch();
       if (mode === "story") {
-        await submitStoryText(branchId, trimmed);
+        await submitStoryText(branch, trimmed);
       } else if (mode === "guide") {
-        await submitGuide(branchId, trimmed);
+        await submitGuide(branch, trimmed);
       } else {
-        await submitTurn(branchId, mode, trimmed);
+        await submitTurn(branch, mode, trimmed);
       }
       setText("");
     } catch (e) {
@@ -87,7 +101,7 @@ export function Composer({ branchId }: { branchId: string }) {
   };
 
   const onContinue = async () => {
-    if (busy || !lastPassage) return;
+    if (busy || !branchId || !lastPassage) return;
     setSubmitting(true);
     setError(null);
     try {

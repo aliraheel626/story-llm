@@ -7,6 +7,15 @@ export interface Story {
   default_branch_id: string | null;
 }
 
+/** Placeholder until the model (or the user) supplies a real title —
+ *  mirrors `DEFAULT_STORY_TITLE` in `src-tauri/src/commands/stories.rs`. */
+export const DEFAULT_STORY_TITLE = "New story";
+
+export interface StoryTitleUpdatedPayload {
+  story_id: string;
+  title: string;
+}
+
 export type PassageRole = "player" | "narrator";
 export type InputMode = "do" | "say" | "story" | "generated" | "generated_guide" | "generated_continue";
 

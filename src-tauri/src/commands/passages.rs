@@ -4,7 +4,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, State};
 use uuid::Uuid;
 
-use crate::commands::{mechanics as mechanics_settings, settings};
+use crate::commands::{mechanics as mechanics_settings, settings, stories};
 use crate::db::{Pool, PooledConn};
 use crate::error::{AppError, AppResult};
 use crate::mechanics::pipeline::{self, DiceMode, PendingRoll};
@@ -127,13 +127,16 @@ pub fn list_passages(pool: State<Pool>, branch_id: String) -> AppResult<Vec<Pass
 /// "Story" input mode: narration typed directly by the player, inserted
 /// verbatim as the next narrator passage. No model call.
 #[tauri::command]
-pub fn submit_story(pool: State<Pool>, branch_id: String, content: String) -> AppResult<Passage> {
+pub fn submit_story(app: AppHandle, pool: State<Pool>, branch_id: String, content: String) -> AppResult<Passage> {
     let content = content.trim();
     if content.is_empty() {
         return Err(AppError::Invalid("content must not be empty".into()));
     }
     let conn = pool.get()?;
-    insert_passage(&conn, &branch_id, "narrator", "story", content, None)
+    let passage = insert_passage(&conn, &branch_id, "narrator", "story", content, None)?;
+    drop(conn);
+    kick_auto_title(&app, pool.inner(), &branch_id);
+    Ok(passage)
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -234,8 +237,8 @@ fn combine_preambles(parts: &[String]) -> String {
     parts.iter().filter(|p| !p.is_empty()).cloned().collect::<Vec<_>>().join("\n\n")
 }
 
-fn resolve_text_model(app: &AppHandle, pool: &tauri::State<Pool>) -> AppResult<TextModelConfig> {
-    let settings = settings::get_text_model_settings(app.clone(), pool.clone())?;
+pub(crate) fn resolve_text_model(app: &AppHandle, pool: &Pool) -> AppResult<TextModelConfig> {
+    let settings = settings::read_text_model_settings(app, pool)?;
     if settings.model.trim().is_empty() {
         return Err(AppError::Invalid("no text model configured yet — set one in the Text Model panel".into()));
     }
@@ -266,6 +269,21 @@ fn append_narrator_passage(
         pipeline::persist_roll(pool, &passage.id, roll)?;
     }
     Ok(passage)
+}
+
+/// Best-effort kick-off of the ChatGPT/Gemini-style auto-title: once a story
+/// has its first passage, ask the text model to name it. Never blocks or
+/// fails the passage write — generation is fire-and-forget and reports back
+/// via the `story-title-updated` event (see `stories::maybe_auto_title`).
+fn kick_auto_title(app: &AppHandle, pool: &Pool, branch_id: &str) {
+    let story_id = {
+        let Ok(conn) = pool.get() else { return };
+        match get_story_id_for_branch(&conn, branch_id) {
+            Ok(id) => id,
+            Err(_) => return,
+        }
+    };
+    stories::maybe_auto_title(app, pool, &story_id);
 }
 
 /// Spawns the background narration stream shared by every path that produces
@@ -348,6 +366,7 @@ async fn finish_append(
 ) -> AppResult<()> {
     let passage = append_narrator_passage(&pool, &branch_id, &input_mode, &visible, thoughts.as_deref(), None)?;
     let _ = app.emit("narration-done", NarrationDonePayload { stream_id, passage });
+    kick_auto_title(&app, &pool, &branch_id);
     Ok(())
 }
 
@@ -374,7 +393,7 @@ pub async fn submit_turn(
     }
 
     let history = load_history(&pool, &branch_id, None)?;
-    let config = resolve_text_model(&app, &pool)?;
+    let config = resolve_text_model(&app, pool.inner())?;
     let story_id = { let conn = pool.get()?; get_story_id_for_branch(&conn, &branch_id)? };
     let mechanics = mechanics_settings::get_story_mechanics_settings(pool.clone(), story_id.clone())?;
 
@@ -413,6 +432,7 @@ pub async fn submit_turn(
     spawn_narration(app, pool.inner().clone(), config, history, prompt, extra_preamble, stream_id.clone(), move |app, pool, sid, visible, thoughts| async move {
         let passage = append_narrator_passage(&pool, &branch_id_bg, "generated", &visible, thoughts.as_deref(), roll_to_persist)?;
         let _ = app.emit("narration-done", NarrationDonePayload { stream_id: sid, passage: passage.clone() });
+        kick_auto_title(&app, &pool, &branch_id_bg);
         if attributes_enabled {
             let _ = pipeline::run_update(&pool, &config_bg, &story_id_bg, &passage.id, &visible).await;
         }
@@ -434,7 +454,7 @@ pub async fn submit_guide(app: AppHandle, pool: State<'_, Pool>, branch_id: Stri
     }
 
     let history = load_history(&pool, &branch_id, None)?;
-    let config = resolve_text_model(&app, &pool)?;
+    let config = resolve_text_model(&app, pool.inner())?;
     let story_id = { let conn = pool.get()?; get_story_id_for_branch(&conn, &branch_id)? };
     let extra_preamble = author_note_preamble(pool.inner(), &story_id)?;
 
@@ -455,7 +475,7 @@ pub async fn submit_guide(app: AppHandle, pool: State<'_, Pool>, branch_id: Stri
 #[tauri::command]
 pub async fn continue_scene(app: AppHandle, pool: State<'_, Pool>, branch_id: String) -> AppResult<String> {
     let history = load_history(&pool, &branch_id, None)?;
-    let config = resolve_text_model(&app, &pool)?;
+    let config = resolve_text_model(&app, pool.inner())?;
     let story_id = { let conn = pool.get()?; get_story_id_for_branch(&conn, &branch_id)? };
     let extra_preamble = author_note_preamble(pool.inner(), &story_id)?;
 
@@ -487,7 +507,7 @@ pub async fn retry_passage(app: AppHandle, pool: State<'_, Pool>, branch_id: Str
     }
 
     let history = load_history(&pool, &branch_id, None)?;
-    let config = resolve_text_model(&app, &pool)?;
+    let config = resolve_text_model(&app, pool.inner())?;
 
     // Re-derive pairing from what's now the last passage: if a player action
     // led into this slot, the regenerated passage is paired with it the same
@@ -531,7 +551,7 @@ pub async fn swipe_passage(app: AppHandle, pool: State<'_, Pool>, branch_id: Str
     };
 
     let history = load_history(&pool, &branch_id, Some(target.seq))?;
-    let config = resolve_text_model(&app, &pool)?;
+    let config = resolve_text_model(&app, pool.inner())?;
     let story_id = { let conn = pool.get()?; get_story_id_for_branch(&conn, &branch_id)? };
     let extra_preamble = author_note_preamble(pool.inner(), &story_id)?;
 

@@ -1,80 +1,36 @@
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { useAppStore } from "../../store/appStore";
+import { DEFAULT_STORY_TITLE } from "../../lib/types";
 
 export function StoriesPanel() {
   const stories = useAppStore((s) => s.stories);
   const storiesLoading = useAppStore((s) => s.storiesLoading);
   const activeStoryId = useAppStore((s) => s.activeStoryId);
+  const draft = useAppStore((s) => s.draft);
   const loadStories = useAppStore((s) => s.loadStories);
-  const createStory = useAppStore((s) => s.createStory);
+  const startDraft = useAppStore((s) => s.startDraft);
   const setActiveStory = useAppStore((s) => s.setActiveStory);
-
-  const [creating, setCreating] = useState(false);
-  const [title, setTitle] = useState("");
-  const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
     loadStories();
   }, [loadStories]);
 
-  const submitNewStory = async () => {
-    const trimmed = title.trim();
-    if (!trimmed || submitting) return;
-    setSubmitting(true);
-    try {
-      await createStory(trimmed);
-      setTitle("");
-      setCreating(false);
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
   return (
     <div className="flex flex-col gap-2">
-      {creating ? (
-        <div className="flex flex-col gap-1.5">
-          <input
-            autoFocus
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") submitNewStory();
-              if (e.key === "Escape") setCreating(false);
-            }}
-            placeholder="Story title..."
-            className="w-full rounded bg-bg border border-border px-2 py-1.5 text-sm text-text placeholder:text-muted focus:outline-none focus:border-accent"
-          />
-          <div className="flex gap-1.5">
-            <button
-              onClick={submitNewStory}
-              disabled={submitting || !title.trim()}
-              className="flex-1 rounded bg-accent px-2 py-1 text-xs font-medium text-bg hover:bg-accent-hover disabled:opacity-40 transition-colors"
-            >
-              Create
-            </button>
-            <button
-              onClick={() => setCreating(false)}
-              className="rounded border border-border px-2 py-1 text-xs text-muted hover:text-text transition-colors"
-            >
-              Cancel
-            </button>
-          </div>
-        </div>
-      ) : (
-        <button
-          onClick={() => setCreating(true)}
-          className="w-full rounded border border-dashed border-border px-2 py-1.5 text-xs text-muted hover:text-text hover:border-accent transition-colors"
-        >
-          + New story
-        </button>
-      )}
+      <button
+        onClick={startDraft}
+        className={`w-full rounded border border-dashed px-2 py-1.5 text-xs transition-colors ${
+          draft
+            ? "border-accent text-text bg-surface-hover"
+            : "border-border text-muted hover:text-text hover:border-accent"
+        }`}
+      >
+        + New story
+      </button>
 
       <div className="flex flex-col gap-0.5 mt-1">
         {storiesLoading && <div className="text-xs text-muted px-1 py-1">Loading...</div>}
-        {!storiesLoading && stories.length === 0 && (
+        {!storiesLoading && stories.length === 0 && !draft && (
           <div className="text-xs text-muted px-1 py-1">No stories yet.</div>
         )}
         {stories.map((story) => (
@@ -85,7 +41,7 @@ export function StoriesPanel() {
               activeStoryId === story.id
                 ? "bg-surface-hover text-text"
                 : "text-muted hover:bg-surface-hover hover:text-text"
-            }`}
+            } ${story.title === DEFAULT_STORY_TITLE ? "italic" : ""}`}
             title={story.title}
           >
             {story.title}

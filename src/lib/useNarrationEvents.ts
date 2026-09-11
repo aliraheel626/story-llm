@@ -1,7 +1,14 @@
 import { useEffect } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { useStoryStore } from "../store/storyStore";
-import type { NarrationDonePayload, NarrationDeltaPayload, NarrationErrorPayload, SwipeDonePayload } from "./types";
+import { useAppStore } from "../store/appStore";
+import type {
+  NarrationDonePayload,
+  NarrationDeltaPayload,
+  NarrationErrorPayload,
+  StoryTitleUpdatedPayload,
+  SwipeDonePayload,
+} from "./types";
 
 /** Wires the Rust-side narration-* events into the story store. Mount once near the app root. */
 export function useNarrationEvents() {
@@ -21,6 +28,9 @@ export function useNarrationEvents() {
       }),
       listen<NarrationErrorPayload>("narration-error", (event) => {
         useStoryStore.getState()._fail(event.payload.stream_id, event.payload.message);
+      }),
+      listen<StoryTitleUpdatedPayload>("story-title-updated", (event) => {
+        useAppStore.getState().applyStoryTitle(event.payload.story_id, event.payload.title);
       }),
     ];
 

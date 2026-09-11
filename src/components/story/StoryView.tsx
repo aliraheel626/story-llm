@@ -3,6 +3,8 @@ import { useAppStore } from "../../store/appStore";
 import { useStoryStore } from "../../store/storyStore";
 import { PassageView } from "./PassageView";
 import { Composer } from "./Composer";
+import { EditableStoryTitle } from "./EditableStoryTitle";
+import { DEFAULT_STORY_TITLE } from "../../lib/types";
 
 function usePrefersReducedMotion() {
   return typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -11,6 +13,7 @@ function usePrefersReducedMotion() {
 export function StoryView() {
   const activeStoryId = useAppStore((s) => s.activeStoryId);
   const stories = useAppStore((s) => s.stories);
+  const draft = useAppStore((s) => s.draft);
   const activeStory = stories.find((s) => s.id === activeStoryId);
   const branchId = activeStory?.default_branch_id ?? null;
 
@@ -49,7 +52,10 @@ export function StoryView() {
     pinRef.current?.scrollIntoView({ block: "start", behavior: reducedMotion ? "auto" : "smooth" });
   }, [pinKey, reducedMotion]);
 
-  if (!activeStory || !branchId) {
+  // A draft is a story that doesn't exist yet: composed client-side, created
+  // on first submit (see Composer's ensureBranch).
+  const drafting = draft && !(activeStory && branchId);
+  if ((!activeStory || !branchId) && !drafting) {
     return (
       <div className="flex h-full flex-1 items-center justify-center">
         <div className="text-center">
@@ -64,7 +70,11 @@ export function StoryView() {
     <div className="flex h-full flex-1 flex-col overflow-hidden">
       <div ref={scrollRef} className="flex-1 overflow-y-auto">
         <div className="mx-auto flex w-full max-w-measure flex-col gap-5 px-6 py-10">
-          <h1 className="font-prose text-2xl text-text">{activeStory.title}</h1>
+          {drafting ? (
+            <h1 className="font-prose text-2xl italic text-muted">{DEFAULT_STORY_TITLE}</h1>
+          ) : (
+            <EditableStoryTitle storyId={activeStory!.id} />
+          )}
 
           {passages.length === 0 && !isStreamingAppend && (
             <p className="font-prose text-base italic leading-8 text-muted">
@@ -79,7 +89,7 @@ export function StoryView() {
               <div key={passage.id} ref={pinHere ? pinRef : undefined}>
                 <PassageView
                   passage={passage}
-                  branchId={branchId}
+                  branchId={branchId!}
                   isLast={isLastPassage}
                   images={imagesByPassage[passage.id]}
                   variants={variantsByPassage[passage.id]}

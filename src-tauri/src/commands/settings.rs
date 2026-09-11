@@ -23,6 +23,12 @@ fn api_key_store_key(provider: &str) -> String {
 
 #[tauri::command]
 pub fn get_text_model_settings(app: AppHandle, pool: State<Pool>) -> AppResult<TextModelSettings> {
+    read_text_model_settings(&app, pool.inner())
+}
+
+/// Plain-`&Pool` variant of `get_text_model_settings` for callers that aren't
+/// Tauri commands (e.g. the narrator's config resolution and the auto-titler).
+pub fn read_text_model_settings(app: &AppHandle, pool: &Pool) -> AppResult<TextModelSettings> {
     let conn = pool.get()?;
     let stored: Option<String> = conn
         .query_row(

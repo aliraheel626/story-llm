@@ -21,8 +21,15 @@ interface AppState {
   stories: Story[];
   activeStoryId: string | null;
   storiesLoading: boolean;
+  /** True while composing a brand-new story that isn't persisted yet — the
+   *  record and branch are only created on the first submit, ChatGPT-style.
+   *  This is why an accidental "+ New story" click leaves no empty entry. */
+  draft: boolean;
   loadStories: () => Promise<void>;
-  createStory: (title: string) => Promise<void>;
+  startDraft: () => void;
+  createStory: () => Promise<Story>;
+  renameStory: (storyId: string, title: string) => Promise<void>;
+  applyStoryTitle: (storyId: string, title: string) => void;
   setActiveStory: (id: string) => void;
 }
 
@@ -42,6 +49,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   stories: [],
   activeStoryId: null,
   storiesLoading: false,
+  draft: false,
   loadStories: async () => {
     set({ storiesLoading: true });
     try {
@@ -52,11 +60,22 @@ export const useAppStore = create<AppState>((set, get) => ({
       set({ storiesLoading: false });
     }
   },
-  createStory: async (title: string) => {
-    const story = await commands.createStory(title);
-    set((s) => ({ stories: [story, ...s.stories], activeStoryId: story.id }));
+  startDraft: () => {
+    set({ activeStoryId: null, draft: true });
+  },
+  createStory: async () => {
+    const story = await commands.createStory();
+    set((s) => ({ stories: [story, ...s.stories], activeStoryId: story.id, draft: false }));
+    return story;
+  },
+  renameStory: async (storyId: string, title: string) => {
+    const story = await commands.renameStory(storyId, title);
+    set((s) => ({ stories: s.stories.map((st) => (st.id === storyId ? story : st)) }));
+  },
+  applyStoryTitle: (storyId: string, title: string) => {
+    set((s) => ({ stories: s.stories.map((st) => (st.id === storyId ? { ...st, title } : st)) }));
   },
   setActiveStory: (id: string) => {
-    if (get().activeStoryId !== id) set({ activeStoryId: id });
+    if (get().activeStoryId !== id || get().draft) set({ activeStoryId: id, draft: false });
   },
 }));

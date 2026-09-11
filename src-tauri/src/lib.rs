@@ -29,6 +29,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::stories::list_stories,
             commands::stories::create_story,
+            commands::stories::rename_story,
             commands::stories::get_author_note,
             commands::stories::save_author_note,
             commands::passages::list_passages,
