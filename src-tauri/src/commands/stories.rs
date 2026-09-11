@@ -5,7 +5,7 @@ use serde_json::json;
 use tauri::{AppHandle, Emitter, State};
 use uuid::Uuid;
 
-use crate::db::{Pool, PooledConn};
+use crate::db::Pool;
 use crate::error::{AppError, AppResult};
 use crate::models::Story;
 use crate::narrator;
@@ -83,29 +83,11 @@ pub fn create_story(pool: State<Pool>, title: Option<String>) -> AppResult<Story
     })
 }
 
-fn get_story(conn: &PooledConn, story_id: &str) -> AppResult<Story> {
-    conn.query_row(
-        "SELECT id, title, created_at, updated_at, settings_json, default_branch_id
-         FROM stories WHERE id = ?1",
-        [story_id],
-        |row| {
-            Ok(Story {
-                id: row.get(0)?,
-                title: row.get(1)?,
-                created_at: row.get(2)?,
-                updated_at: row.get(3)?,
-                settings_json: row.get(4)?,
-                default_branch_id: row.get(5)?,
-            })
-        },
-    )
-    .map_err(|_| AppError::NotFound(format!("story {story_id} not found")))
-}
-
 /// Click-to-edit rename from the story header. Auto-titling never overwrites
 /// a title that isn't the placeholder, so any rename permanently ends it.
+/// Returns nothing — the caller already knows the new title.
 #[tauri::command]
-pub fn rename_story(pool: State<Pool>, story_id: String, title: String) -> AppResult<Story> {
+pub fn rename_story(pool: State<Pool>, story_id: String, title: String) -> AppResult<()> {
     let title = title.trim();
     if title.is_empty() {
         return Err(AppError::Invalid("title must not be empty".into()));
@@ -118,7 +100,7 @@ pub fn rename_story(pool: State<Pool>, story_id: String, title: String) -> AppRe
     if updated == 0 {
         return Err(AppError::NotFound(format!("story {story_id} not found")));
     }
-    get_story(&conn, &story_id)
+    Ok(())
 }
 
 #[derive(Debug, Clone, Serialize)]

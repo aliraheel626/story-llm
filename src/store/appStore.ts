@@ -69,8 +69,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     return story;
   },
   renameStory: async (storyId: string, title: string) => {
-    const story = await commands.renameStory(storyId, title);
-    set((s) => ({ stories: s.stories.map((st) => (st.id === storyId ? story : st)) }));
+    await commands.renameStory(storyId, title);
+    set((s) => ({ stories: s.stories.map((st) => (st.id === storyId ? { ...st, title } : st)) }));
   },
   applyStoryTitle: (storyId: string, title: string) => {
     set((s) => ({ stories: s.stories.map((st) => (st.id === storyId ? { ...st, title } : st)) }));
