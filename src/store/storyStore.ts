@@ -91,12 +91,14 @@ export const useStoryStore = create<StoryState>((set, get) => ({
   },
 
   submitStoryText: async (branchId: string, content: string) => {
-    const passage = await commands.submitStory(branchId, content);
+    set({ turnError: null });
+    const result = await commands.submitStory(branchId, content);
     set((s) => ({
       passagesByBranch: {
         ...s.passagesByBranch,
-        [branchId]: [...(s.passagesByBranch[branchId] ?? []), passage],
+        [branchId]: [...(s.passagesByBranch[branchId] ?? []), result.passage],
       },
+      streaming: { streamId: result.stream_id, branchId, text: "", thoughts: "", mode: "append" },
     }));
   },
 
@@ -106,7 +108,7 @@ export const useStoryStore = create<StoryState>((set, get) => ({
     set((s) => ({
       passagesByBranch: {
         ...s.passagesByBranch,
-        [branchId]: [...(s.passagesByBranch[branchId] ?? []), result.player_passage],
+        [branchId]: [...(s.passagesByBranch[branchId] ?? []), result.passage],
       },
       streaming: { streamId: result.stream_id, branchId, text: "", thoughts: "", mode: "append" },
     }));

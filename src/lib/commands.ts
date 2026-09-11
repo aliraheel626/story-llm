@@ -23,7 +23,7 @@ export const commands = {
 
   listPassages: (branchId: string) => invoke<Passage[]>("list_passages", { branchId }),
   submitStory: (branchId: string, content: string) =>
-    invoke<Passage>("submit_story", { branchId, content }),
+    invoke<SubmitTurnResult>("submit_story", { branchId, content }),
   submitTurn: (branchId: string, inputMode: "do" | "say", content: string) =>
     invoke<SubmitTurnResult>("submit_turn", { branchId, inputMode, content }),
   submitGuide: (branchId: string, note: string) =>

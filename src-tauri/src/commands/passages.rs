@@ -15,12 +15,19 @@ const HISTORY_LIMIT: i64 = 60;
 
 const NARRATOR_PREAMBLE: &str = "You are the narrator of an interactive story. Continue the scene \
 in vivid, literary prose that follows naturally from what has already happened and from the \
-player's latest action. Match the narrative voice already established (default to second person \
-if this is the opening). Never speak as the player, never break the fourth wall, and never add \
+player's latest action, matching the established tone, tense, and style. Always narrate the \
+player's actions and perceptions in the second person (\"you\"); other characters stay in the \
+third person. Never speak as the player, never break the fourth wall, and never add \
 meta-commentary, author's notes, or content outside the story itself.";
 
 const CONTINUE_PROMPT: &str =
     "Continue the scene naturally from where it left off, in the established voice and pacing.";
+
+const STORY_CONTINUE_PROMPT: &str =
+    "The latest turn is the player's draft of the next passage — it may read like a terse note or a \
+     directive. Complete it into the passage itself: open with the draft rendered as prose, then keep \
+     writing seamlessly to a natural ending. Do not reply to it as an instruction, and do not \
+     summarize it away.";
 
 fn row_to_passage(row: &rusqlite::Row) -> rusqlite::Result<Passage> {
     Ok(Passage {
@@ -124,24 +131,43 @@ pub fn list_passages(pool: State<Pool>, branch_id: String) -> AppResult<Vec<Pass
     Ok(out)
 }
 
-/// "Story" input mode: narration typed directly by the player, inserted
-/// verbatim as the next narrator passage. No model call.
+/// "Story" input mode: narration typed directly by the player. The authored
+/// text is inserted verbatim as a narrator passage, then the model continues
+/// from it in a streamed passage, same as any other generation path.
 #[tauri::command]
-pub fn submit_story(app: AppHandle, pool: State<Pool>, branch_id: String, content: String) -> AppResult<Passage> {
+pub fn submit_story(app: AppHandle, pool: State<Pool>, branch_id: String, content: String) -> AppResult<SubmitTurnResult> {
     let content = content.trim();
     if content.is_empty() {
         return Err(AppError::Invalid("content must not be empty".into()));
     }
-    let conn = pool.get()?;
-    let passage = insert_passage(&conn, &branch_id, "narrator", "story", content, None)?;
-    drop(conn);
+
+    // Resolve everything that can fail before inserting: with no model
+    // configured this must error without leaving a draft row the UI never saw.
+    let config = resolve_text_model(&app, pool.inner())?;
+    let story_id = { let conn = pool.get()?; get_story_id_for_branch(&conn, &branch_id)? };
+    let extra_preamble = author_note_preamble(pool.inner(), &story_id)?;
+
+    let authored = {
+        let conn = pool.get()?;
+        insert_passage(&conn, &branch_id, "narrator", "story", content, None)?
+    };
     kick_auto_title(&app, pool.inner(), &branch_id);
-    Ok(passage)
+
+    // After the insert, so the draft is the newest turn the model completes.
+    let history = load_history(pool.inner(), &branch_id, None)?;
+
+    let stream_id = Uuid::new_v4().to_string();
+    let branch_id_bg = branch_id.clone();
+    spawn_narration(app, pool.inner().clone(), config, history, STORY_CONTINUE_PROMPT.to_string(), extra_preamble, stream_id.clone(), move |app, pool, sid, visible, thoughts| {
+        finish_append(app, pool, sid, branch_id_bg, "generated_story".to_string(), visible, thoughts)
+    });
+
+    Ok(SubmitTurnResult { passage: authored, stream_id })
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct SubmitTurnResult {
-    pub player_passage: Passage,
+    pub passage: Passage,
     pub stream_id: String,
 }
 
@@ -187,40 +213,59 @@ fn format_prompt(input_mode: &str, content: &str) -> String {
 /// `before_seq` excludes the passage being regenerated (retry re-queries
 /// after deleting it, so it never needs this; swipe keeps the passage in
 /// place and needs the cutoff).
+///
+/// Story-mode drafts are filtered by `drop_stale_story_drafts` before the
+/// window is returned.
 fn load_history(pool: &Pool, branch_id: &str, before_seq: Option<i64>) -> AppResult<Vec<HistoryTurn>> {
     let conn = pool.get()?;
-    let mut out = Vec::new();
+    let mut rows_out: Vec<(String, HistoryTurn)> = Vec::new();
     // The most recent image generated for a passage (if any) is folded into
     // its history content, so the narrator stays consistent with what a
     // scene image already showed instead of contradicting it later.
-    const SELECT: &str = "SELECT passages.role, passages.content,
+    const SELECT: &str = "SELECT passages.role, passages.input_mode, passages.content,
         (SELECT images.prompt FROM images WHERE images.passage_id = passages.id ORDER BY images.created_at DESC LIMIT 1)
         FROM passages WHERE passages.branch_id = ?1";
-    let map_row = |row: &rusqlite::Row| -> rusqlite::Result<HistoryTurn> {
+    let map_row = |row: &rusqlite::Row| -> rusqlite::Result<(String, HistoryTurn)> {
         let role: String = row.get(0)?;
-        let content: String = row.get(1)?;
-        let image_prompt: Option<String> = row.get(2)?;
+        let input_mode: String = row.get(1)?;
+        let content: String = row.get(2)?;
+        let image_prompt: Option<String> = row.get(3)?;
         let content = match image_prompt {
             Some(prompt) => format!("{content}\n\n[A scene image was generated here, depicting: {prompt}]"),
             None => content,
         };
-        Ok(HistoryTurn { is_player: role == "player", content })
+        Ok((input_mode, HistoryTurn { is_player: role == "player", content }))
     };
     if let Some(seq) = before_seq {
         let mut stmt = conn.prepare(&format!("{SELECT} AND passages.seq < ?2 ORDER BY passages.seq DESC LIMIT ?3"))?;
         let rows = stmt.query_map(rusqlite::params![branch_id, seq, HISTORY_LIMIT], map_row)?;
         for r in rows {
-            out.push(r?);
+            rows_out.push(r?);
         }
     } else {
         let mut stmt = conn.prepare(&format!("{SELECT} ORDER BY passages.seq DESC LIMIT ?2"))?;
         let rows = stmt.query_map(rusqlite::params![branch_id, HISTORY_LIMIT], map_row)?;
         for r in rows {
-            out.push(r?);
+            rows_out.push(r?);
         }
     }
-    out.reverse();
-    Ok(out)
+    rows_out.reverse();
+    Ok(drop_stale_story_drafts(rows_out))
+}
+
+/// Drops Story-mode drafts from a history window (oldest first) — they are
+/// player input, not assistant prose, and their `generated_story` completion
+/// restates the same beat, so keeping both would double it in context. The
+/// newest entry is kept even when it's a draft, so a generation can complete
+/// the draft it was given; any older draft — completed or stranded — is
+/// excluded.
+fn drop_stale_story_drafts(rows: Vec<(String, HistoryTurn)>) -> Vec<HistoryTurn> {
+    let newest = rows.len().saturating_sub(1);
+    rows.into_iter()
+        .enumerate()
+        .filter(|(i, (input_mode, _))| input_mode != "story" || *i == newest)
+        .map(|(_, (_, turn))| turn)
+        .collect()
 }
 
 /// Author's Note (spec §6.6), formatted for the preamble, if the story has
@@ -439,7 +484,7 @@ pub async fn submit_turn(
         Ok(())
     });
 
-    Ok(SubmitTurnResult { player_passage, stream_id })
+    Ok(SubmitTurnResult { passage: player_passage, stream_id })
 }
 
 /// "Guide" mode: an ephemeral, out-of-character steering note. No player
@@ -479,10 +524,20 @@ pub async fn continue_scene(app: AppHandle, pool: State<'_, Pool>, branch_id: St
     let story_id = { let conn = pool.get()?; get_story_id_for_branch(&conn, &branch_id)? };
     let extra_preamble = author_note_preamble(pool.inner(), &story_id)?;
 
+    // A trailing story draft was never rendered (its generation failed), so
+    // Continue completes it into prose instead of writing past the note.
+    let (prompt, input_mode) = {
+        let conn = pool.get()?;
+        match get_last_passage(&conn, &branch_id)? {
+            Some(p) if p.input_mode == "story" => (STORY_CONTINUE_PROMPT, "generated_story".to_string()),
+            _ => (CONTINUE_PROMPT, "generated_continue".to_string()),
+        }
+    };
+
     let stream_id = Uuid::new_v4().to_string();
     let branch_id_bg = branch_id.clone();
-    spawn_narration(app, pool.inner().clone(), config, history, CONTINUE_PROMPT.to_string(), extra_preamble, stream_id.clone(), move |app, pool, sid, visible, thoughts| {
-        finish_append(app, pool, sid, branch_id_bg, "generated_continue".to_string(), visible, thoughts)
+    spawn_narration(app, pool.inner().clone(), config, history, prompt.to_string(), extra_preamble, stream_id.clone(), move |app, pool, sid, visible, thoughts| {
+        finish_append(app, pool, sid, branch_id_bg, input_mode, visible, thoughts)
     });
 
     Ok(stream_id)
@@ -510,13 +565,15 @@ pub async fn retry_passage(app: AppHandle, pool: State<'_, Pool>, branch_id: Str
     let config = resolve_text_model(&app, pool.inner())?;
 
     // Re-derive pairing from what's now the last passage: if a player action
-    // led into this slot, the regenerated passage is paired with it the same
-    // way the original was (so a later Erase still removes both correctly).
-    let input_mode = {
+    // (or story draft) led into this slot, the regenerated passage is paired
+    // with it the same way the original was (so a later Erase still removes
+    // both correctly).
+    let (input_mode, prompt) = {
         let conn = pool.get()?;
         match get_last_passage(&conn, &branch_id)? {
-            Some(p) if p.role == "player" => "generated".to_string(),
-            _ => "generated_continue".to_string(),
+            Some(p) if p.role == "player" => ("generated".to_string(), CONTINUE_PROMPT),
+            Some(p) if p.input_mode == "story" => ("generated_story".to_string(), STORY_CONTINUE_PROMPT),
+            _ => ("generated_continue".to_string(), CONTINUE_PROMPT),
         }
     };
 
@@ -525,7 +582,7 @@ pub async fn retry_passage(app: AppHandle, pool: State<'_, Pool>, branch_id: Str
 
     let stream_id = Uuid::new_v4().to_string();
     let branch_id_bg = branch_id.clone();
-    spawn_narration(app, pool.inner().clone(), config, history, CONTINUE_PROMPT.to_string(), extra_preamble, stream_id.clone(), move |app, pool, sid, visible, thoughts| {
+    spawn_narration(app, pool.inner().clone(), config, history, prompt.to_string(), extra_preamble, stream_id.clone(), move |app, pool, sid, visible, thoughts| {
         finish_append(app, pool, sid, branch_id_bg, input_mode, visible, thoughts)
     });
 
@@ -556,7 +613,8 @@ pub async fn swipe_passage(app: AppHandle, pool: State<'_, Pool>, branch_id: Str
     let extra_preamble = author_note_preamble(pool.inner(), &story_id)?;
 
     let stream_id = Uuid::new_v4().to_string();
-    spawn_narration(app, pool.inner().clone(), config, history, CONTINUE_PROMPT.to_string(), extra_preamble, stream_id.clone(), move |app, pool, sid, visible, thoughts| async move {
+    let prompt = if target.input_mode == "generated_story" { STORY_CONTINUE_PROMPT } else { CONTINUE_PROMPT };
+    spawn_narration(app, pool.inner().clone(), config, history, prompt.to_string(), extra_preamble, stream_id.clone(), move |app, pool, sid, visible, thoughts| async move {
         let mut conn = pool.get()?;
         let now = Utc::now().to_rfc3339();
         let tx = conn.transaction()?;
@@ -655,8 +713,8 @@ pub fn edit_passage(pool: State<Pool>, passage_id: String, content: String) -> A
 }
 
 /// "Erase": removes the most recent exchange — the latest passage, plus the
-/// player passage that triggered it if this was a paired do/say generation.
-/// Returns the ids removed so the frontend can splice locally.
+/// player passage (or story draft) that triggered it. Returns the ids removed
+/// so the frontend can splice locally.
 #[tauri::command]
 pub fn erase_last_exchange(pool: State<Pool>, branch_id: String) -> AppResult<Vec<String>> {
     let conn = pool.get()?;
@@ -666,9 +724,10 @@ pub fn erase_last_exchange(pool: State<Pool>, branch_id: String) -> AppResult<Ve
     let mut removed = vec![last.id.clone()];
     conn.execute("DELETE FROM passages WHERE id = ?1", [&last.id])?;
 
-    if last.role == "narrator" && last.input_mode == "generated" {
+    let paired = last.role == "narrator" && matches!(last.input_mode.as_str(), "generated" | "generated_story");
+    if paired {
         if let Some(prev) = get_last_passage(&conn, &branch_id)? {
-            if prev.role == "player" {
+            if prev.role == "player" || prev.input_mode == "story" {
                 removed.push(prev.id.clone());
                 conn.execute("DELETE FROM passages WHERE id = ?1", [&prev.id])?;
             }
@@ -676,4 +735,65 @@ pub fn erase_last_exchange(pool: State<Pool>, branch_id: String) -> AppResult<Ve
     }
 
     Ok(removed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::drop_stale_story_drafts;
+    use crate::narrator::HistoryTurn;
+
+    fn turn(content: &str) -> HistoryTurn {
+        HistoryTurn { is_player: false, content: content.to_string() }
+    }
+
+    #[test]
+    fn drops_draft_once_its_completion_is_newest() {
+        let rows = vec![
+            ("story".to_string(), turn("terse draft")),
+            ("generated_story".to_string(), turn("completed passage")),
+        ];
+        let out = drop_stale_story_drafts(rows);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].content, "completed passage");
+    }
+
+    #[test]
+    fn keeps_trailing_draft_for_completion() {
+        let rows = vec![("generated".to_string(), turn("scene")), ("story".to_string(), turn("draft"))];
+        let out = drop_stale_story_drafts(rows);
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[1].content, "draft");
+    }
+
+    #[test]
+    fn keeps_draft_when_window_excludes_completion() {
+        // Swipe passes before_seq, so the completion is cut off and the draft
+        // is the newest row again.
+        let rows = vec![("story".to_string(), turn("draft"))];
+        let out = drop_stale_story_drafts(rows);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].content, "draft");
+    }
+
+    #[test]
+    fn drops_stranded_older_draft() {
+        let rows = vec![
+            ("story".to_string(), turn("stranded draft")),
+            ("story".to_string(), turn("newer draft")),
+        ];
+        let out = drop_stale_story_drafts(rows);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].content, "newer draft");
+    }
+
+    #[test]
+    fn leaves_non_draft_history_untouched() {
+        let rows = vec![
+            ("do".to_string(), turn("player action")),
+            ("generated".to_string(), turn("narration")),
+            ("generated_continue".to_string(), turn("continued scene")),
+        ];
+        let out = drop_stale_story_drafts(rows);
+        assert_eq!(out.len(), 3);
+    }
 }

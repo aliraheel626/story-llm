@@ -126,6 +126,43 @@ export function PassageView({ passage, branchId, isLast, images, variants, rollS
     );
   }
 
+  // A Story-mode draft is player input, not story prose: the model turns it
+  // into the following passage, so it reads like a note rather than narration.
+  if (passage.input_mode === "story") {
+    return (
+      <div className="group relative">
+        {editing ? (
+          <EditBox
+            textareaRef={textareaRef}
+            draft={draft}
+            setDraft={setDraft}
+            onSave={saveEdit}
+            onCancel={cancelEdit}
+            busy={actionBusy}
+            className="border-l-2 border-dashed border-border pl-4 italic"
+          />
+        ) : (
+          <p className="border-l-2 border-dashed border-border pl-4 font-prose text-sm italic leading-7 text-muted">
+            <span className="select-none pr-2 text-[10px] uppercase tracking-wider">draft</span>
+            {passage.content}
+          </p>
+        )}
+        <div className="mt-1 flex justify-end gap-1.5">
+          {editControls}
+          {isLast && !anyStreamBusy && (
+            <button
+              onClick={() => runAction(() => eraseLastExchange(branchId))}
+              disabled={actionBusy}
+              className="rounded border border-border bg-bg px-2 py-0.5 text-[11px] text-danger hover:opacity-80 disabled:opacity-40"
+            >
+              Erase
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="group relative flex flex-col gap-3">
       {editing ? (

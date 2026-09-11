@@ -17,7 +17,7 @@ export interface StoryTitleUpdatedPayload {
 }
 
 export type PassageRole = "player" | "narrator";
-export type InputMode = "do" | "say" | "story" | "generated" | "generated_guide" | "generated_continue";
+export type InputMode = "do" | "say" | "story" | "generated" | "generated_guide" | "generated_continue" | "generated_story";
 
 export interface Passage {
   id: string;
@@ -40,7 +40,7 @@ export interface PassageVariant {
 }
 
 export interface SubmitTurnResult {
-  player_passage: Passage;
+  passage: Passage;
   stream_id: string;
 }
 
