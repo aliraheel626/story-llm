@@ -114,7 +114,7 @@ export function Composer({ branchId }: { branchId: string | null }) {
   };
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+    if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
       onSubmit();
     }
@@ -133,8 +133,8 @@ export function Composer({ branchId }: { branchId: string | null }) {
         ? "Image generation is disabled in the Image Model panel."
         : !lastPassage
           ? "Write a passage first, then generate an image."
-          : (displayedError ?? "⌘/Ctrl + Enter to generate")
-      : (displayedError ?? "⌘/Ctrl + Enter to send");
+          : (displayedError ?? "Enter to generate · Shift + Enter for a new line")
+      : (displayedError ?? "Enter to send · Shift + Enter for a new line");
 
   return (
     <div className="shrink-0 border-t border-border bg-surface px-6 py-3">
