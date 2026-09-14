@@ -9,12 +9,13 @@ const STYLE_PRESETS: { label: string; value: string }[] = [
   { label: "Comic", value: "Comic book art style, bold inked linework, dynamic shading." },
 ];
 
-const RESOLUTIONS: { label: string; value: string; hint: string }[] = [
-  { label: "Auto", value: "", hint: "Let the model choose." },
-  { label: "512", value: "512", hint: "Fastest; not all models support it." },
-  { label: "1K", value: "1K", hint: "Balanced." },
-  { label: "2K", value: "2K", hint: "Sharper, slower." },
-  { label: "4K", value: "4K", hint: "Highest detail, slowest." },
+/** Models we've measured against the images endpoint. No resolution tier is
+ *  ever requested — the model default is its lowest supported tier and the
+ *  fastest in every case we probed. */
+const IMAGE_MODELS: { slug: string; label: string }[] = [
+  { slug: "google/gemini-3.1-flash-lite-image", label: "Nano Banana 2 Lite (fastest)" },
+  { slug: "black-forest-labs/flux.2-pro", label: "FLUX.2 Pro (anime-friendly)" },
+  { slug: "x-ai/grok-imagine-image-2.0", label: "Grok Imagine 2.0" },
 ];
 
 export function ImageModelPanel() {
@@ -28,7 +29,7 @@ export function ImageModelPanel() {
   const [model, setModel] = useState("");
   const [enabled, setEnabled] = useState(true);
   const [style, setStyle] = useState("");
-  const [resolution, setResolution] = useState("");
+  const [customMode, setCustomMode] = useState(false);
   const [savedNotice, setSavedNotice] = useState(false);
 
   useEffect(() => {
@@ -40,13 +41,22 @@ export function ImageModelPanel() {
       setModel(settings.model);
       setEnabled(settings.enabled);
       setStyle(settings.style);
-      setResolution(settings.resolution);
+      setCustomMode(!IMAGE_MODELS.some((m) => m.slug === settings.model));
     }
   }, [settings]);
 
+  const onModelSelect = (value: string) => {
+    if (value === "__custom__") {
+      setCustomMode(true);
+      return;
+    }
+    setCustomMode(false);
+    setModel(value);
+  };
+
   const onSave = async () => {
     try {
-      await save(model.trim(), enabled, style.trim(), resolution);
+      await save(model.trim(), enabled, style.trim());
       setSavedNotice(true);
       setTimeout(() => setSavedNotice(false), 2000);
     } catch (e) {
@@ -69,33 +79,28 @@ export function ImageModelPanel() {
 
       <div>
         <label className="block text-xs text-muted mb-1">Model</label>
-        <input
-          value={model}
-          onChange={(e) => setModel(e.target.value)}
-          placeholder="google/gemini-3.1-flash-image-preview"
+        <select
+          value={customMode ? "__custom__" : model}
+          onChange={(e) => onModelSelect(e.target.value)}
           disabled={!enabled}
-          className="w-full rounded bg-bg border border-border px-2 py-1.5 text-sm text-text placeholder:text-muted focus:outline-none focus:border-accent disabled:opacity-50"
-        />
-      </div>
-
-      <div>
-        <label className="block text-xs text-muted mb-1">Resolution</label>
-        <div className="flex flex-wrap gap-1">
-          {RESOLUTIONS.map((r) => (
-            <button
-              key={r.label}
-              onClick={() => setResolution(r.value)}
-              disabled={!enabled}
-              title={r.hint}
-              className={`rounded px-2 py-0.5 text-[11px] transition-colors ${
-                resolution === r.value ? "bg-accent text-bg" : "border border-border bg-bg text-muted hover:text-text"
-              } disabled:opacity-50`}
-            >
-              {r.label}
-            </button>
+          className="w-full rounded bg-bg border border-border px-2 py-1.5 text-sm text-text focus:outline-none focus:border-accent disabled:opacity-50"
+        >
+          {IMAGE_MODELS.map((m) => (
+            <option key={m.slug} value={m.slug}>
+              {m.label}
+            </option>
           ))}
-        </div>
-        <p className="mt-1 text-[11px] text-muted">{RESOLUTIONS.find((r) => r.value === resolution)?.hint ?? ""}</p>
+          <option value="__custom__">Custom…</option>
+        </select>
+        {customMode && (
+          <input
+            value={model}
+            onChange={(e) => setModel(e.target.value)}
+            placeholder="provider/model"
+            disabled={!enabled}
+            className="mt-1.5 w-full rounded bg-bg border border-border px-2 py-1.5 text-sm text-text placeholder:text-muted focus:outline-none focus:border-accent disabled:opacity-50"
+          />
+        )}
       </div>
 
       <div>

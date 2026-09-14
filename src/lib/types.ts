@@ -80,7 +80,6 @@ export interface ImageModelSettings {
   model: string;
   enabled: boolean;
   style: string;
-  resolution: string;
   has_api_key: boolean;
 }
 
