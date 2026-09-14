@@ -20,6 +20,7 @@ export const commands = {
   createStory: (title?: string, settings?: MechanicsSettings | null) =>
     invoke<Story>("create_story", { title: title ?? null, settings: settings ?? null }),
   renameStory: (storyId: string, title: string) => invoke<void>("rename_story", { storyId, title }),
+  deleteStory: (storyId: string) => invoke<void>("delete_story", { storyId }),
 
   listPassages: (branchId: string) => invoke<Passage[]>("list_passages", { branchId }),
   submitStory: (branchId: string, content: string) =>

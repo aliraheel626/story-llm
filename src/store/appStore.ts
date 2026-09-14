@@ -30,6 +30,7 @@ interface AppState {
   startDraft: () => void;
   createStory: () => Promise<Story>;
   renameStory: (storyId: string, title: string) => Promise<void>;
+  deleteStory: (storyId: string) => Promise<void>;
   applyStoryTitle: (storyId: string, title: string) => void;
   setActiveStory: (id: string) => void;
 }
@@ -75,6 +76,13 @@ export const useAppStore = create<AppState>((set, get) => ({
   renameStory: async (storyId: string, title: string) => {
     await commands.renameStory(storyId, title);
     set((s) => ({ stories: s.stories.map((st) => (st.id === storyId ? { ...st, title } : st)) }));
+  },
+  deleteStory: async (storyId: string) => {
+    await commands.deleteStory(storyId);
+    set((s) => ({
+      stories: s.stories.filter((st) => st.id !== storyId),
+      activeStoryId: s.activeStoryId === storyId ? null : s.activeStoryId,
+    }));
   },
   applyStoryTitle: (storyId: string, title: string) => {
     set((s) => ({ stories: s.stories.map((st) => (st.id === storyId ? { ...st, title } : st)) }));

@@ -111,6 +111,36 @@ pub fn rename_story(pool: State<Pool>, story_id: String, title: String) -> AppRe
     Ok(())
 }
 
+/// Collects image file paths before the cascade delete removes their rows
+/// (SQLite FK cascade cleans up every table, but can't touch files on disk).
+#[tauri::command]
+pub fn delete_story(pool: State<Pool>, story_id: String) -> AppResult<()> {
+    let conn = pool.get()?;
+
+    let mut stmt = conn.prepare(
+        "SELECT images.path FROM images
+         JOIN passages ON passages.id = images.passage_id
+         JOIN branches ON branches.id = passages.branch_id
+         WHERE branches.story_id = ?1",
+    )?;
+    let paths: Vec<String> = stmt
+        .query_map([&story_id], |row| row.get(0))?
+        .filter_map(Result::ok)
+        .collect();
+    drop(stmt);
+
+    let deleted = conn.execute("DELETE FROM stories WHERE id = ?1", [&story_id])?;
+    if deleted == 0 {
+        return Err(AppError::NotFound(format!("story {story_id} not found")));
+    }
+
+    for path in paths {
+        let _ = std::fs::remove_file(path); // best-effort; a missing file shouldn't fail the delete
+    }
+
+    Ok(())
+}
+
 #[derive(Debug, Clone, Serialize)]
 struct StoryTitleUpdatedPayload {
     story_id: String,
