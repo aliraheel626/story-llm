@@ -21,6 +21,7 @@ export function PassageView({ passage, branchId, isLast, images, variants, rollS
   const editPassage = useStoryStore((s) => s.editPassage);
   const switchVariant = useStoryStore((s) => s.switchVariant);
   const loadVariantsForPassage = useStoryStore((s) => s.loadVariantsForPassage);
+  const imagePending = useStoryStore((s) => s.imagePendingFor.includes(passage.id));
 
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(passage.content);
@@ -184,6 +185,13 @@ export function PassageView({ passage, branchId, isLast, images, variants, rollS
           <ImageCaption prompt={image.prompt} />
         </div>
       ))}
+
+      {imagePending && (
+        <div className="relative h-56 w-full overflow-hidden rounded border border-border bg-surface" aria-label="Generating scene image">
+          <div className="absolute inset-0 animate-shimmer bg-gradient-to-r from-transparent via-surface-hover to-transparent motion-reduce:animate-none" />
+          <span className="absolute inset-x-0 bottom-2 text-center text-[11px] text-muted">Illustrating this scene...</span>
+        </div>
+      )}
 
       {!editing && (
         <div className="flex items-center justify-between">

@@ -28,9 +28,14 @@ export default {
           from: { opacity: "0" },
           to: { opacity: "1" },
         },
+        shimmer: {
+          from: { transform: "translateX(-100%)" },
+          to: { transform: "translateX(100%)" },
+        },
       },
       animation: {
         "fade-in": "fade-in 150ms ease-out",
+        shimmer: "shimmer 1.8s ease-in-out infinite",
       },
     },
   },

@@ -81,6 +81,7 @@ export interface ImageModelSettings {
   enabled: boolean;
   style: string;
   has_api_key: boolean;
+  narrator_images: boolean;
 }
 
 export interface StoryImage {

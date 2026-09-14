@@ -6,6 +6,7 @@ import type {
   NarrationDonePayload,
   NarrationDeltaPayload,
   NarrationErrorPayload,
+  StoryImage,
   StoryTitleUpdatedPayload,
   SwipeDonePayload,
 } from "./types";
@@ -31,6 +32,15 @@ export function useNarrationEvents() {
       }),
       listen<StoryTitleUpdatedPayload>("story-title-updated", (event) => {
         useAppStore.getState().applyStoryTitle(event.payload.story_id, event.payload.title);
+      }),
+      listen<string>("scene-image-pending", (event) => {
+        useStoryStore.getState()._imagePending(event.payload);
+      }),
+      listen<StoryImage>("scene-image-generated", (event) => {
+        useStoryStore.getState()._imageGenerated(event.payload);
+      }),
+      listen<string>("scene-image-failed", (event) => {
+        useStoryStore.getState()._imageFailed(event.payload);
       }),
     ];
 

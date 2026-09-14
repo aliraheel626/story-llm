@@ -28,6 +28,7 @@ export function ImageModelPanel() {
 
   const [model, setModel] = useState("");
   const [enabled, setEnabled] = useState(true);
+  const [narratorImages, setNarratorImages] = useState(true);
   const [style, setStyle] = useState("");
   const [customMode, setCustomMode] = useState(false);
   const [savedNotice, setSavedNotice] = useState(false);
@@ -40,6 +41,7 @@ export function ImageModelPanel() {
     if (settings) {
       setModel(settings.model);
       setEnabled(settings.enabled);
+      setNarratorImages(settings.narrator_images);
       setStyle(settings.style);
       setCustomMode(!IMAGE_MODELS.some((m) => m.slug === settings.model));
     }
@@ -56,7 +58,7 @@ export function ImageModelPanel() {
 
   const onSave = async () => {
     try {
-      await save(model.trim(), enabled, style.trim());
+      await save(model.trim(), enabled, style.trim(), narratorImages);
       setSavedNotice(true);
       setTimeout(() => setSavedNotice(false), 2000);
     } catch (e) {
@@ -75,6 +77,17 @@ export function ImageModelPanel() {
       <label className="flex items-center gap-2 text-xs text-muted">
         <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} className="accent-accent" />
         Enable image generation
+      </label>
+
+      <label className="flex items-center gap-2 text-xs text-muted">
+        <input
+          type="checkbox"
+          checked={narratorImages}
+          onChange={(e) => setNarratorImages(e.target.checked)}
+          disabled={!enabled}
+          className="accent-accent disabled:opacity-50"
+        />
+        Let the narrator illustrate scenes
       </label>
 
       <div>

@@ -7,7 +7,7 @@ interface ImageModelState {
   loading: boolean;
   saving: boolean;
   load: () => Promise<void>;
-  save: (model: string, enabled: boolean, style: string) => Promise<void>;
+  save: (model: string, enabled: boolean, style: string, narratorImages: boolean) => Promise<void>;
 }
 
 export const useImageModelStore = create<ImageModelState>((set) => ({
@@ -24,10 +24,10 @@ export const useImageModelStore = create<ImageModelState>((set) => ({
       set({ loading: false });
     }
   },
-  save: async (model, enabled, style) => {
+  save: async (model, enabled, style, narratorImages) => {
     set({ saving: true });
     try {
-      await commands.saveImageModelSettings(model, enabled, style);
+      await commands.saveImageModelSettings(model, enabled, style, narratorImages);
       const settings = await commands.getImageModelSettings();
       set({ settings, saving: false });
     } catch (e) {

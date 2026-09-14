@@ -32,14 +32,14 @@ export function Composer({ branchId }: { branchId: string | null }) {
   const turnError = useStoryStore((s) => s.turnError);
   const passages = useStoryStore((s) => (branchId ? s.passagesByBranch[branchId] : undefined));
   const generateImageForPassage = useStoryStore((s) => s.generateImageForPassage);
-  const generatingImageFor = useStoryStore((s) => s.generatingImageFor);
+  const imagePendingFor = useStoryStore((s) => s.imagePendingFor);
   const imageError = useStoryStore((s) => s.imageError);
   const imageSettings = useImageModelStore((s) => s.settings);
   const loadImageSettings = useImageModelStore((s) => s.load);
 
   const busy = submitting || (!!streaming && streaming.branchId === branchId);
   const lastPassage = passages && passages.length > 0 ? passages[passages.length - 1] : undefined;
-  const imageBusy = generatingImageFor === lastPassage?.id;
+  const imageBusy = !!lastPassage && imagePendingFor.includes(lastPassage.id);
   const imagesDisabled = imageSettings ? !imageSettings.enabled : false;
 
   useEffect(() => {

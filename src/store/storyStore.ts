@@ -23,7 +23,9 @@ interface StoryState {
   variantsByPassage: Record<string, PassageVariant[]>;
 
   imagesByPassage: Record<string, StoryImage[]>;
-  generatingImageFor: string | null;
+  /** Passages with an image in flight — the player's own "See" and the
+   *  narrator's own decision both land here, so both show a placeholder. */
+  imagePendingFor: string[];
   imageError: string | null;
 
   /** Cheap summary (names, no attribute snapshots) for every roll in the branch. */
@@ -54,6 +56,9 @@ interface StoryState {
   _finalize: (payload: NarrationDonePayload) => void;
   _swipeDone: (payload: SwipeDonePayload) => void;
   _fail: (streamId: string, message: string) => void;
+  _imagePending: (passageId: string) => void;
+  _imageGenerated: (image: StoryImage) => void;
+  _imageFailed: (passageId: string) => void;
 }
 
 function replacePassage(passages: Passage[], id: string, next: Passage): Passage[] {
@@ -73,7 +78,7 @@ export const useStoryStore = create<StoryState>((set, get) => ({
   variantsByPassage: {},
 
   imagesByPassage: {},
-  generatingImageFor: null,
+  imagePendingFor: [],
   imageError: null,
 
   rollByPassage: {},
@@ -203,15 +208,14 @@ export const useStoryStore = create<StoryState>((set, get) => ({
   },
 
   generateImageForPassage: async (passageId: string, promptHint?: string) => {
-    set({ imageError: null, generatingImageFor: passageId });
+    set({ imageError: null });
+    get()._imagePending(passageId);
     try {
       const image = await commands.generateSceneImage(passageId, promptHint);
-      set((s) => ({
-        imagesByPassage: { ...s.imagesByPassage, [passageId]: [...(s.imagesByPassage[passageId] ?? []), image] },
-        generatingImageFor: null,
-      }));
+      get()._imageGenerated(image);
     } catch (e) {
-      set({ generatingImageFor: null, imageError: String(e) });
+      get()._imageFailed(passageId);
+      set({ imageError: String(e) });
     }
   },
 
@@ -283,5 +287,25 @@ export const useStoryStore = create<StoryState>((set, get) => ({
     const current = get().streaming;
     if (!current || current.streamId !== streamId) return;
     set({ streaming: null, turnError: message });
+  },
+
+  _imagePending: (passageId) => {
+    set((s) => (s.imagePendingFor.includes(passageId) ? s : { imagePendingFor: [...s.imagePendingFor, passageId] }));
+  },
+
+  // Shared by the player's own "See" and the narrator's scene-image-generated
+  // event, so an image lands the same way whoever asked for it.
+  _imageGenerated: (image) => {
+    set((s) => ({
+      imagesByPassage: {
+        ...s.imagesByPassage,
+        [image.passage_id]: [...(s.imagesByPassage[image.passage_id] ?? []), image],
+      },
+      imagePendingFor: s.imagePendingFor.filter((id) => id !== image.passage_id),
+    }));
+  },
+
+  _imageFailed: (passageId) => {
+    set((s) => ({ imagePendingFor: s.imagePendingFor.filter((id) => id !== passageId) }));
   },
 }));

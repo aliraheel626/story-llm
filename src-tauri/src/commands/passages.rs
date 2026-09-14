@@ -410,8 +410,10 @@ async fn finish_append(
     thoughts: Option<String>,
 ) -> AppResult<()> {
     let passage = append_narrator_passage(&pool, &branch_id, &input_mode, &visible, thoughts.as_deref(), None)?;
+    let passage_id = passage.id.clone();
     let _ = app.emit("narration-done", NarrationDonePayload { stream_id, passage });
     kick_auto_title(&app, &pool, &branch_id);
+    crate::commands::images::maybe_auto_image(&app, &pool, &passage_id, &visible);
     Ok(())
 }
 
@@ -478,6 +480,7 @@ pub async fn submit_turn(
         let passage = append_narrator_passage(&pool, &branch_id_bg, "generated", &visible, thoughts.as_deref(), roll_to_persist)?;
         let _ = app.emit("narration-done", NarrationDonePayload { stream_id: sid, passage: passage.clone() });
         kick_auto_title(&app, &pool, &branch_id_bg);
+        crate::commands::images::maybe_auto_image(&app, &pool, &passage.id, &visible);
         if attributes_enabled {
             let _ = pipeline::run_update(&pool, &config_bg, &story_id_bg, &passage.id, &visible).await;
         }

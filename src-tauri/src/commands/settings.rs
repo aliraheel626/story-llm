@@ -96,22 +96,31 @@ pub struct ImageModelSettings {
     pub model: String,
     pub enabled: bool,
     /// A style prefix folded into every generated prompt (e.g. "anime",
-    /// "photorealistic") — see `crate::images::DEFAULT_IMAGE_MODEL`'s prompt
-    /// composition in `commands::images::build_image_prompt`.
+    /// "photorealistic") — see `commands::images::compose_image_prompt`.
     pub style: String,
     /// Images reuse the OpenRouter key set in the Text Model panel — there is
     /// only one provider (OpenRouter) for both text and images.
     pub has_api_key: bool,
+    /// Whether the narrator decides on its own that a passage is worth
+    /// illustrating (see `commands::images::maybe_auto_image`), rather than
+    /// images only ever coming from the player's "See" composer mode.
+    pub narrator_images: bool,
 }
 
 #[tauri::command]
 pub fn get_image_model_settings(app: AppHandle, pool: State<Pool>) -> AppResult<ImageModelSettings> {
+    read_image_model_settings(&app, pool.inner())
+}
+
+/// Plain-`&Pool` variant of `get_image_model_settings` for callers that aren't
+/// Tauri commands (the narrator-driven image path runs in a spawned task).
+pub fn read_image_model_settings(app: &AppHandle, pool: &Pool) -> AppResult<ImageModelSettings> {
     let conn = pool.get()?;
     let stored: Option<String> = conn
         .query_row("SELECT value FROM settings WHERE key = ?1", [SETTINGS_KEY_IMAGE_MODEL], |row| row.get(0))
         .ok();
 
-    let (model, enabled, style) = stored
+    let (model, enabled, style, narrator_images) = stored
         .and_then(|v| serde_json::from_str::<serde_json::Value>(&v).ok())
         .map(|v| {
             let model = v
@@ -121,23 +130,30 @@ pub fn get_image_model_settings(app: AppHandle, pool: State<Pool>) -> AppResult<
                 .to_string();
             let enabled = v.get("enabled").and_then(|e| e.as_bool()).unwrap_or(true);
             let style = v.get("style").and_then(|s| s.as_str()).unwrap_or(DEFAULT_IMAGE_STYLE).to_string();
-            (model, enabled, style)
+            let narrator_images = v.get("narrator_images").and_then(|n| n.as_bool()).unwrap_or(true);
+            (model, enabled, style, narrator_images)
         })
-        .unwrap_or_else(|| (crate::images::DEFAULT_IMAGE_MODEL.to_string(), true, DEFAULT_IMAGE_STYLE.to_string()));
+        .unwrap_or_else(|| (crate::images::DEFAULT_IMAGE_MODEL.to_string(), true, DEFAULT_IMAGE_STYLE.to_string(), true));
 
     let store = app
         .store(SECRETS_STORE)
         .map_err(|e| AppError::Other(format!("failed to open secrets store: {e}")))?;
     let has_api_key = store.get(api_key_store_key("openrouter")).is_some();
 
-    Ok(ImageModelSettings { model, enabled, style, has_api_key })
+    Ok(ImageModelSettings { model, enabled, style, has_api_key, narrator_images })
 }
 
 #[tauri::command]
-pub fn save_image_model_settings(pool: State<Pool>, model: String, enabled: bool, style: String) -> AppResult<()> {
+pub fn save_image_model_settings(
+    pool: State<Pool>,
+    model: String,
+    enabled: bool,
+    style: String,
+    narrator_images: bool,
+) -> AppResult<()> {
     let conn = pool.get()?;
     let style = if style.trim().is_empty() { DEFAULT_IMAGE_STYLE.to_string() } else { style.trim().to_string() };
-    let value = json!({ "model": model, "enabled": enabled, "style": style }).to_string();
+    let value = json!({ "model": model, "enabled": enabled, "style": style, "narrator_images": narrator_images }).to_string();
     conn.execute(
         "INSERT INTO settings (key, value) VALUES (?1, ?2)
          ON CONFLICT(key) DO UPDATE SET value = excluded.value",
