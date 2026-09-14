@@ -9,6 +9,14 @@ const STYLE_PRESETS: { label: string; value: string }[] = [
   { label: "Comic", value: "Comic book art style, bold inked linework, dynamic shading." },
 ];
 
+const RESOLUTIONS: { label: string; value: string; hint: string }[] = [
+  { label: "Auto", value: "", hint: "Let the model choose." },
+  { label: "512", value: "512", hint: "Fastest; not all models support it." },
+  { label: "1K", value: "1K", hint: "Balanced." },
+  { label: "2K", value: "2K", hint: "Sharper, slower." },
+  { label: "4K", value: "4K", hint: "Highest detail, slowest." },
+];
+
 export function ImageModelPanel() {
   const settings = useImageModelStore((s) => s.settings);
   const loading = useImageModelStore((s) => s.loading);
@@ -20,6 +28,7 @@ export function ImageModelPanel() {
   const [model, setModel] = useState("");
   const [enabled, setEnabled] = useState(true);
   const [style, setStyle] = useState("");
+  const [resolution, setResolution] = useState("");
   const [savedNotice, setSavedNotice] = useState(false);
 
   useEffect(() => {
@@ -31,12 +40,13 @@ export function ImageModelPanel() {
       setModel(settings.model);
       setEnabled(settings.enabled);
       setStyle(settings.style);
+      setResolution(settings.resolution);
     }
   }, [settings]);
 
   const onSave = async () => {
     try {
-      await save(model.trim(), enabled, style.trim());
+      await save(model.trim(), enabled, style.trim(), resolution);
       setSavedNotice(true);
       setTimeout(() => setSavedNotice(false), 2000);
     } catch (e) {
@@ -66,6 +76,26 @@ export function ImageModelPanel() {
           disabled={!enabled}
           className="w-full rounded bg-bg border border-border px-2 py-1.5 text-sm text-text placeholder:text-muted focus:outline-none focus:border-accent disabled:opacity-50"
         />
+      </div>
+
+      <div>
+        <label className="block text-xs text-muted mb-1">Resolution</label>
+        <div className="flex flex-wrap gap-1">
+          {RESOLUTIONS.map((r) => (
+            <button
+              key={r.label}
+              onClick={() => setResolution(r.value)}
+              disabled={!enabled}
+              title={r.hint}
+              className={`rounded px-2 py-0.5 text-[11px] transition-colors ${
+                resolution === r.value ? "bg-accent text-bg" : "border border-border bg-bg text-muted hover:text-text"
+              } disabled:opacity-50`}
+            >
+              {r.label}
+            </button>
+          ))}
+        </div>
+        <p className="mt-1 text-[11px] text-muted">{RESOLUTIONS.find((r) => r.value === resolution)?.hint ?? ""}</p>
       </div>
 
       <div>

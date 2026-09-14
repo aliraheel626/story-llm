@@ -79,7 +79,9 @@ pub async fn generate_scene_image(
         build_image_prompt(&conn, &passage_id, &passage_content, prompt_hint.as_deref(), &settings.style)?
     };
 
-    let generated = images::generate_image(&api_key, &settings.model, &prompt).await?;
+    let resolution = settings.resolution.trim();
+    let resolution = if resolution.is_empty() { None } else { Some(resolution) };
+    let generated = images::generate_image(&api_key, &settings.model, &prompt, resolution).await?;
 
     let app_data_dir = app.path().app_data_dir().map_err(|e| AppError::Other(e.to_string()))?;
     let images_dir = app_data_dir.join("images");

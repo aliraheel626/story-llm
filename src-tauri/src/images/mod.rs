@@ -10,6 +10,12 @@ use crate::error::{AppError, AppResult};
 
 const IMAGES_ENDPOINT: &str = "https://openrouter.ai/api/v1/images";
 pub const DEFAULT_IMAGE_MODEL: &str = "google/gemini-3.1-flash-image-preview";
+/// Render tier for scene images (`resolution` in the API). The default is
+/// empty — "Auto": no tier is sent, matching the request body from before
+/// tiers existed, since support varies (some providers reject 512, some
+/// models reject the parameter entirely). The Image Model panel opts into a
+/// specific tier.
+pub const DEFAULT_IMAGE_RESOLUTION: &str = "";
 
 pub struct GeneratedImage {
     pub bytes: Vec<u8>,
@@ -20,6 +26,8 @@ pub struct GeneratedImage {
 struct ImageRequestBody<'a> {
     model: &'a str,
     prompt: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    resolution: Option<&'a str>,
 }
 
 #[derive(Deserialize)]
@@ -40,12 +48,12 @@ struct ImageDataEntry {
     media_type: Option<String>,
 }
 
-pub async fn generate_image(api_key: &str, model: &str, prompt: &str) -> AppResult<GeneratedImage> {
+pub async fn generate_image(api_key: &str, model: &str, prompt: &str, resolution: Option<&str>) -> AppResult<GeneratedImage> {
     let client = reqwest::Client::new();
     let res = client
         .post(IMAGES_ENDPOINT)
         .bearer_auth(api_key)
-        .json(&ImageRequestBody { model, prompt })
+        .json(&ImageRequestBody { model, prompt, resolution })
         .send()
         .await
         .map_err(|e| AppError::Other(format!("image request failed: {e}")))?;
@@ -84,5 +92,24 @@ pub fn extension_for(media_type: &str) -> &'static str {
         "image/gif" => "gif",
         "image/svg+xml" => "svg",
         _ => "png",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ImageRequestBody;
+
+    #[test]
+    fn omits_resolution_when_unset() {
+        let body = ImageRequestBody { model: "m", prompt: "p", resolution: None };
+        let value = serde_json::to_value(&body).unwrap();
+        assert_eq!(value, serde_json::json!({ "model": "m", "prompt": "p" }));
+    }
+
+    #[test]
+    fn sends_resolution_when_set() {
+        let body = ImageRequestBody { model: "m", prompt: "p", resolution: Some("1K") };
+        let value = serde_json::to_value(&body).unwrap();
+        assert_eq!(value, serde_json::json!({ "model": "m", "prompt": "p", "resolution": "1K" }));
     }
 }

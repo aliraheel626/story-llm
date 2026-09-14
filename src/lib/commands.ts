@@ -45,8 +45,8 @@ export const commands = {
     invoke<void>("save_text_model_settings", { provider, model, apiKey: apiKey ?? null }),
 
   getImageModelSettings: () => invoke<ImageModelSettings>("get_image_model_settings"),
-  saveImageModelSettings: (model: string, enabled: boolean, style: string) =>
-    invoke<void>("save_image_model_settings", { model, enabled, style }),
+  saveImageModelSettings: (model: string, enabled: boolean, style: string, resolution: string) =>
+    invoke<void>("save_image_model_settings", { model, enabled, style, resolution }),
   generateSceneImage: (passageId: string, promptHint?: string) =>
     invoke<StoryImage>("generate_scene_image", { passageId, promptHint: promptHint ?? null }),
   listImagesForPassage: (passageId: string) =>
