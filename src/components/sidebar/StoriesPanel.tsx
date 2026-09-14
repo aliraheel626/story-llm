@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useAppStore } from "../../store/appStore";
 import { DEFAULT_STORY_TITLE } from "../../lib/types";
 
@@ -12,9 +12,24 @@ export function StoriesPanel() {
   const setActiveStory = useAppStore((s) => s.setActiveStory);
   const deleteStory = useAppStore((s) => s.deleteStory);
 
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
   useEffect(() => {
     loadStories();
   }, [loadStories]);
+
+  const onDelete = async (e: React.MouseEvent, storyId: string) => {
+    e.stopPropagation();
+    if (deletingId) return;
+    setDeletingId(storyId);
+    try {
+      await deleteStory(storyId);
+    } catch (err) {
+      console.error("failed to delete story", err);
+    } finally {
+      setDeletingId(null);
+    }
+  };
 
   return (
     <div className="flex flex-col gap-2">
@@ -48,12 +63,10 @@ export function StoriesPanel() {
               {story.title}
             </button>
             <button
-              onClick={(e) => {
-                e.stopPropagation();
-                deleteStory(story.id);
-              }}
+              onClick={(e) => onDelete(e, story.id)}
+              disabled={deletingId === story.id}
               title="Delete story"
-              className="absolute right-1 top-1/2 -translate-y-1/2 rounded px-1.5 py-0.5 text-[11px] text-danger opacity-0 transition-opacity hover:opacity-100 group-hover:opacity-100"
+              className="absolute right-1 top-1/2 -translate-y-1/2 rounded px-1.5 py-0.5 text-[11px] text-danger opacity-0 transition-opacity hover:opacity-100 group-hover:opacity-100 disabled:opacity-40"
             >
               ✕
             </button>

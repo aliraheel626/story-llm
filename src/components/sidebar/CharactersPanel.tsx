@@ -67,6 +67,21 @@ export function CharactersPanel() {
     }
   };
 
+  // Only closes the edit card on success, so a failed delete leaves the row
+  // open to retry.
+  const onDelete = async () => {
+    if (busy || !editingId) return;
+    setBusy(true);
+    try {
+      await deleteCharacter(activeStoryId, editingId);
+      setEditingId(null);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <div className="flex flex-col gap-2">
       {creating ? (
@@ -137,8 +152,9 @@ export function CharactersPanel() {
                   Cancel
                 </button>
                 <button
-                  onClick={() => deleteCharacter(activeStoryId, entity.id)}
-                  className="rounded border border-border px-2 py-1 text-xs text-danger hover:opacity-80"
+                  onClick={onDelete}
+                  disabled={busy}
+                  className="rounded border border-border px-2 py-1 text-xs text-danger hover:opacity-80 disabled:opacity-40"
                 >
                   Delete
                 </button>
