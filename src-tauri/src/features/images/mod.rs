@@ -9,6 +9,7 @@ use uuid::Uuid;
 
 use crate::ai;
 use crate::features::settings;
+use crate::features::timeline::{model::kind as timeline_kind, repository as timeline_repository};
 use crate::shared::db::Pool;
 use crate::shared::error::{AppError, AppResult};
 use model::StoryImage;
@@ -102,10 +103,10 @@ fn compose_image_prompt(style: &str, description: &str, matched: &[&(String, Str
 /// player's manual trigger and the narrator's own decision to illustrate
 /// (`maybe_auto_image`) come through here, so an auto-drawn image is composed
 /// exactly like a player-drawn one.
-pub(crate) async fn generate_for_passage(
+pub(crate) async fn generate_for_entry(
     app: &AppHandle,
     pool: &Pool,
-    passage_id: &str,
+    entry_id: &str,
     hint: Option<&str>,
 ) -> AppResult<StoryImage> {
     let settings = settings::read_image_model_settings(app, pool)?;
@@ -118,26 +119,23 @@ pub(crate) async fn generate_for_passage(
 
     let (passage_content, characters) = {
         let conn = pool.get()?;
-        let passage_content: String = conn
-            .query_row(
-                "SELECT content FROM passages WHERE id = ?1",
-                [passage_id],
-                |row| row.get(0),
-            )
-            .map_err(|_| AppError::NotFound(format!("passage {passage_id} not found")))?;
+        let active = timeline_repository::active_entry(&conn, entry_id)?;
+        let passage_content = active.content.unwrap_or_default();
         let story_id: String = conn
             .query_row(
-                "SELECT branches.story_id FROM passages JOIN branches ON branches.id = passages.branch_id WHERE passages.id = ?1",
-                [passage_id],
+                "SELECT branches.story_id FROM timeline_entries JOIN branches ON branches.id = timeline_entries.branch_id WHERE timeline_entries.id = ?1",
+                [entry_id],
                 |row| row.get(0),
             )
-            .map_err(|_| AppError::NotFound(format!("passage {passage_id} not found")))?;
+            .map_err(|_| AppError::NotFound(format!("timeline entry {entry_id} not found")))?;
         let mut stmt = conn.prepare(
-            "SELECT name, appearance_anchor FROM entities
-             WHERE story_id = ?1 AND kind = 'character' AND appearance_anchor IS NOT NULL",
+            "SELECT branch_entity_state.name, branch_entity_state.appearance_anchor
+             FROM entities JOIN branch_entity_state ON branch_entity_state.entity_id = entities.id
+             WHERE entities.story_id = ?1 AND branch_entity_state.branch_id = ?2 AND entities.kind = 'character'
+               AND branch_entity_state.is_present = 1 AND branch_entity_state.appearance_anchor IS NOT NULL",
         )?;
         let characters: Vec<(String, String)> = stmt
-            .query_map([&story_id], |row| {
+            .query_map(rusqlite::params![&story_id, &active.branch_id], |row| {
                 Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
             })?
             .collect::<Result<_, _>>()?;
@@ -175,22 +173,30 @@ pub(crate) async fn generate_for_passage(
     let persist_result = (|| -> AppResult<()> {
         let mut conn = pool.get()?;
         let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-        let current_content: String = tx
-            .query_row(
-                "SELECT content FROM passages WHERE id = ?1",
-                [passage_id],
-                |row| row.get(0),
-            )
-            .map_err(|_| AppError::NotFound(format!("passage {passage_id} not found")))?;
+        let current_content = timeline_repository::active_entry(&tx, entry_id)?
+            .content
+            .unwrap_or_default();
         if current_content != passage_content {
             return Err(AppError::Other(
                 "the passage changed while its image was being generated".into(),
             ));
         }
         tx.execute(
-            "INSERT INTO images (id, passage_id, path, prompt, seed, provider, created_at)
+            "INSERT INTO image_assets (id, entry_id, path, prompt, seed, provider, created_at)
              VALUES (?1, ?2, ?3, ?4, NULL, ?5, ?6)",
-            rusqlite::params![id, passage_id, path_str, prompt, "openrouter", now],
+            rusqlite::params![id, entry_id, path_str, prompt, "openrouter", now],
+        )?;
+        let base = timeline_repository::get_entry(&tx, entry_id)?;
+        timeline_repository::append_entry(
+            &tx,
+            &base.branch_id,
+            timeline_kind::IMAGE_GENERATED,
+            "hidden",
+            Some(&format!(
+                "A scene image was generated depicting: {description}"
+            )),
+            &serde_json::json!({"asset_id": id, "prompt": prompt, "provider": "openrouter"}),
+            Some(entry_id),
         )?;
         tx.commit()?;
         Ok(())
@@ -202,7 +208,7 @@ pub(crate) async fn generate_for_passage(
 
     Ok(StoryImage {
         id,
-        passage_id: passage_id.to_string(),
+        entry_id: entry_id.to_string(),
         path: path_str,
         prompt,
         seed: None,
@@ -220,10 +226,10 @@ pub(crate) async fn generate_for_passage(
 pub async fn generate_scene_image(
     app: AppHandle,
     pool: State<'_, Pool>,
-    passage_id: String,
+    entry_id: String,
     prompt_hint: Option<String>,
 ) -> AppResult<StoryImage> {
-    generate_for_passage(&app, pool.inner(), &passage_id, prompt_hint.as_deref()).await
+    generate_for_entry(&app, pool.inner(), &entry_id, prompt_hint.as_deref()).await
 }
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
@@ -247,14 +253,9 @@ only.";
 /// Fire-and-forget and best-effort throughout (mirroring
 /// `stories::maybe_auto_title`): it never blocks or fails the passage write,
 /// and reports back via the `scene-image-generated` event. The focus phrase
-/// it produces is handed to `generate_for_passage` as the guiding hint, so
+/// it produces is handed to `generate_for_entry` as the guiding hint, so
 /// the prompt is written the same way a player-triggered image's is.
-pub(crate) fn maybe_auto_image(
-    app: &AppHandle,
-    pool: &Pool,
-    passage_id: &str,
-    narrated_text: &str,
-) {
+pub(crate) fn maybe_auto_image(app: &AppHandle, pool: &Pool, entry_id: &str, narrated_text: &str) {
     let Ok(settings) = settings::read_image_model_settings(app, pool) else {
         return;
     };
@@ -268,7 +269,7 @@ pub(crate) fn maybe_auto_image(
 
     let app = app.clone();
     let pool = pool.clone();
-    let passage_id = passage_id.to_string();
+    let entry_id = entry_id.to_string();
     let narrated_text = narrated_text.to_string();
     tauri::async_runtime::spawn(async move {
         let prompt =
@@ -285,14 +286,14 @@ pub(crate) fn maybe_auto_image(
         let focus = if focus.is_empty() { None } else { Some(focus) };
         // Announce the decision before the slow part, so the passage can show a
         // placeholder for the minute-plus the image model takes.
-        let _ = app.emit("scene-image-pending", &passage_id);
-        match generate_for_passage(&app, &pool, &passage_id, focus).await {
+        let _ = app.emit("scene-image-pending", &entry_id);
+        match generate_for_entry(&app, &pool, &entry_id, focus).await {
             Ok(image) => {
                 let _ = app.emit("scene-image-generated", image);
             }
             // Still best-effort — but the placeholder has to be cleared.
             Err(_) => {
-                let _ = app.emit("scene-image-failed", &passage_id);
+                let _ = app.emit("scene-image-failed", &entry_id);
             }
         }
     });
@@ -301,7 +302,7 @@ pub(crate) fn maybe_auto_image(
 fn row_to_image(row: &rusqlite::Row) -> rusqlite::Result<StoryImage> {
     Ok(StoryImage {
         id: row.get(0)?,
-        passage_id: row.get(1)?,
+        entry_id: row.get(1)?,
         path: row.get(2)?,
         prompt: row.get(3)?,
         seed: row.get(4)?,
@@ -311,16 +312,13 @@ fn row_to_image(row: &rusqlite::Row) -> rusqlite::Result<StoryImage> {
 }
 
 #[tauri::command]
-pub fn list_images_for_passage(
-    pool: State<Pool>,
-    passage_id: String,
-) -> AppResult<Vec<StoryImage>> {
+pub fn list_images_for_entry(pool: State<Pool>, entry_id: String) -> AppResult<Vec<StoryImage>> {
     let conn = pool.get()?;
     let mut stmt = conn.prepare(
-        "SELECT id, passage_id, path, prompt, seed, provider, created_at
-         FROM images WHERE passage_id = ?1 ORDER BY created_at ASC",
+        "SELECT id, entry_id, path, prompt, seed, provider, created_at
+         FROM image_assets WHERE entry_id = ?1 ORDER BY created_at ASC",
     )?;
-    let rows = stmt.query_map([passage_id], row_to_image)?;
+    let rows = stmt.query_map([entry_id], row_to_image)?;
     let mut out = Vec::new();
     for r in rows {
         out.push(r?);
@@ -329,15 +327,14 @@ pub fn list_images_for_passage(
 }
 
 /// All images for every passage in a branch, in one call — the frontend
-/// groups them by `passage_id` itself rather than issuing one query per
-/// passage.
+/// groups them by `entry_id` itself rather than issuing one query per entry.
 #[tauri::command]
 pub fn list_images_for_branch(pool: State<Pool>, branch_id: String) -> AppResult<Vec<StoryImage>> {
     let conn = pool.get()?;
     let mut stmt = conn.prepare(
-        "SELECT images.id, images.passage_id, images.path, images.prompt, images.seed, images.provider, images.created_at
-         FROM images JOIN passages ON passages.id = images.passage_id
-         WHERE passages.branch_id = ?1 ORDER BY images.created_at ASC",
+        "SELECT image_assets.id, image_assets.entry_id, image_assets.path, image_assets.prompt, image_assets.seed, image_assets.provider, image_assets.created_at
+         FROM image_assets JOIN timeline_entries ON timeline_entries.id = image_assets.entry_id
+         WHERE timeline_entries.branch_id = ?1 ORDER BY image_assets.created_at ASC",
     )?;
     let rows = stmt.query_map([branch_id], row_to_image)?;
     let mut out = Vec::new();

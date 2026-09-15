@@ -16,6 +16,7 @@ pub struct AttributeRegistryEntry {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EntityAttributeValue {
+    pub branch_id: String,
     pub entity_id: String,
     pub attribute_id: String,
     pub canonical_name: String,
@@ -23,12 +24,13 @@ pub struct EntityAttributeValue {
     pub min: f64,
     pub max: f64,
     pub updated_at: String,
+    pub source: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Roll {
     pub id: String,
-    pub passage_id: String,
+    pub entry_id: String,
     pub actor_entity_id: String,
     pub target_entity_id: Option<String>,
     pub actor_attribute_id: Option<String>,

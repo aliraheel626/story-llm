@@ -16,6 +16,7 @@ pub struct TextModelSettings {
     pub provider: String,
     pub model: String,
     pub has_api_key: bool,
+    pub context_window: usize,
 }
 
 fn api_key_store_key(provider: &str) -> String {
@@ -39,7 +40,7 @@ pub fn read_text_model_settings(app: &AppHandle, pool: &Pool) -> AppResult<TextM
         )
         .ok();
 
-    let (provider, model) = stored
+    let (provider, model, context_window) = stored
         .and_then(|v| serde_json::from_str::<serde_json::Value>(&v).ok())
         .map(|v| {
             let provider = v
@@ -52,9 +53,13 @@ pub fn read_text_model_settings(app: &AppHandle, pool: &Pool) -> AppResult<TextM
                 .and_then(|m| m.as_str())
                 .unwrap_or("")
                 .to_string();
-            (provider, model)
+            let context_window = v
+                .get("context_window")
+                .and_then(|n| n.as_u64())
+                .unwrap_or(32_768) as usize;
+            (provider, model, context_window)
         })
-        .unwrap_or_else(|| ("openrouter".to_string(), String::new()));
+        .unwrap_or_else(|| ("openrouter".to_string(), String::new(), 32_768));
 
     let store = app
         .store(SECRETS_STORE)
@@ -65,19 +70,24 @@ pub fn read_text_model_settings(app: &AppHandle, pool: &Pool) -> AppResult<TextM
         provider,
         model,
         has_api_key,
+        context_window,
     })
 }
 
 #[tauri::command]
-pub fn save_text_model_settings(
+pub async fn save_text_model_settings(
     app: AppHandle,
-    pool: State<Pool>,
+    pool: State<'_, Pool>,
     provider: String,
     model: String,
     api_key: Option<String>,
 ) -> AppResult<()> {
+    let context_window = fetch_openrouter_context_window(&model)
+        .await
+        .unwrap_or(32_768);
     let conn = pool.get()?;
-    let value = json!({ "provider": provider, "model": model }).to_string();
+    let value = json!({ "provider": provider, "model": model, "context_window": context_window })
+        .to_string();
     conn.execute(
         "INSERT INTO settings (key, value) VALUES (?1, ?2)
          ON CONFLICT(key) DO UPDATE SET value = excluded.value",
@@ -100,6 +110,31 @@ pub fn save_text_model_settings(
     }
 
     Ok(())
+}
+
+async fn fetch_openrouter_context_window(model: &str) -> AppResult<usize> {
+    let response: serde_json::Value = reqwest::Client::new()
+        .get("https://openrouter.ai/api/v1/models")
+        .send()
+        .await
+        .map_err(|e| AppError::Other(format!("model metadata request failed: {e}")))?
+        .error_for_status()
+        .map_err(|e| AppError::Other(format!("model metadata request failed: {e}")))?
+        .json()
+        .await
+        .map_err(|e| AppError::Other(format!("invalid model metadata: {e}")))?;
+    response
+        .get("data")
+        .and_then(|v| v.as_array())
+        .and_then(|models| {
+            models
+                .iter()
+                .find(|item| item.get("id").and_then(|v| v.as_str()) == Some(model))
+        })
+        .and_then(|item| item.get("context_length"))
+        .and_then(|v| v.as_u64())
+        .map(|n| n as usize)
+        .ok_or_else(|| AppError::NotFound(format!("context metadata for model {model} not found")))
 }
 
 pub const DEFAULT_IMAGE_STYLE: &str = "Digital painting, atmospheric scene illustration.";
@@ -234,5 +269,6 @@ pub fn resolve_text_model(app: &AppHandle, pool: &Pool) -> AppResult<TextModelCo
         provider,
         model: settings.model,
         api_key,
+        context_window: settings.context_window,
     })
 }

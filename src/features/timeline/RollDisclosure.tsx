@@ -21,13 +21,13 @@ function matchupLabel(summary: RollDetail): string {
 /** `summary` is the cheap, always-available version (names, no attribute
  * snapshots) from the branch-wide bulk load; `detail` (with snapshots) is
  * fetched lazily only once the user expands. */
-export function RollDisclosure({ passageId, summary }: { passageId: string; summary: RollDetail }) {
+export function RollDisclosure({ entryId, summary }: { entryId: string; summary: RollDetail }) {
   const [open, setOpen] = useState(false);
-  const detail = useStoryStore((s) => s.rollDetailByPassage[passageId]);
+  const detail = useStoryStore((s) => s.rollDetailByEntry[entryId]);
   const loadRollDetail = useStoryStore((s) => s.loadRollDetail);
 
   const toggle = () => {
-    if (!open && !detail) loadRollDetail(passageId);
+    if (!open && !detail) loadRollDetail(entryId);
     setOpen((v) => !v);
   };
 

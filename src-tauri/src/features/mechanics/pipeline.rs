@@ -8,11 +8,9 @@
 //! is always the player, via a synthetic per-story "You" entity, since there
 //! is no character-to-player binding yet.
 
-use chrono::Utc;
 use rusqlite::OptionalExtension;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
 use super::attributes::{
     apply_attribute_delta, get_or_init_entity_attribute, resolve_or_create_attribute,
@@ -20,6 +18,10 @@ use super::attributes::{
 use super::resolve::{resolve, ResolveInput, ResolveOutput};
 use crate::ai::{self, TextModelConfig};
 use crate::features::entities::model::Entity;
+use crate::features::{
+    entities,
+    timeline::{model::kind as timeline_kind, repository as timeline_repository},
+};
 use crate::shared::db::Pool;
 use crate::shared::error::AppResult;
 
@@ -128,9 +130,9 @@ fn row_to_entity(row: &rusqlite::Row) -> rusqlite::Result<Entity> {
     Ok(Entity {
         id: row.get(0)?,
         story_id: row.get(1)?,
-        kind: row.get(2)?,
-        name: row.get(3)?,
-        card_json: row.get(4)?,
+        branch_id: row.get(2)?,
+        kind: row.get(3)?,
+        name: row.get(4)?,
         appearance_anchor: row.get(5)?,
         created_at: row.get(6)?,
     })
@@ -142,53 +144,55 @@ fn row_to_entity(row: &rusqlite::Row) -> rusqlite::Result<Entity> {
 /// or target the classifier names that doesn't exist yet becomes one too,
 /// rather than requiring it be added by hand first. Appearance/card details
 /// can still be filled in later from the Characters panel.
-fn get_or_create_character(pool: &Pool, story_id: &str, name: &str) -> AppResult<Entity> {
-    let conn = pool.get()?;
+fn get_or_create_character(
+    pool: &Pool,
+    story_id: &str,
+    branch_id: &str,
+    name: &str,
+    source_entry_id: &str,
+) -> AppResult<Entity> {
+    let mut conn = pool.get()?;
     let existing: Option<Entity> = conn
         .query_row(
-            "SELECT id, story_id, kind, name, card_json, appearance_anchor, created_at
-             FROM entities WHERE story_id = ?1 AND kind = 'character' AND name = ?2 COLLATE NOCASE",
-            rusqlite::params![story_id, name],
+            "SELECT entities.id, entities.story_id, branch_entity_state.branch_id, entities.kind,
+                    branch_entity_state.name, branch_entity_state.appearance_anchor, entities.created_at
+             FROM entities JOIN branch_entity_state ON branch_entity_state.entity_id = entities.id
+             WHERE entities.story_id = ?1 AND branch_entity_state.branch_id = ?2 AND entities.kind = 'character'
+               AND branch_entity_state.is_present = 1 AND branch_entity_state.name = ?3 COLLATE NOCASE",
+            rusqlite::params![story_id, branch_id, name],
             row_to_entity,
         )
         .optional()?;
     if let Some(e) = existing {
         return Ok(e);
     }
-    let id = Uuid::new_v4().to_string();
-    let now = Utc::now().to_rfc3339();
-    conn.execute(
-        "INSERT INTO entities (id, story_id, kind, name, card_json, appearance_anchor, created_at)
-         VALUES (?1, ?2, 'character', ?3, '{}', NULL, ?4)",
-        rusqlite::params![id, story_id, name, now],
+    let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+    let entity = entities::create_entity_sync(
+        &tx,
+        story_id,
+        branch_id,
+        "character",
+        name,
+        None,
+        "mechanics",
+        Some(source_entry_id),
     )?;
-    Ok(Entity {
-        id,
-        story_id: story_id.to_string(),
-        kind: "character".to_string(),
-        name: name.to_string(),
-        card_json: "{}".to_string(),
-        appearance_anchor: None,
-        created_at: now,
-    })
+    tx.commit()?;
+    Ok(entity)
 }
 
-fn get_or_create_player_entity(pool: &Pool, story_id: &str) -> AppResult<Entity> {
-    get_or_create_character(pool, story_id, "You")
+fn get_or_create_player_entity(
+    pool: &Pool,
+    story_id: &str,
+    branch_id: &str,
+    source_entry_id: &str,
+) -> AppResult<Entity> {
+    get_or_create_character(pool, story_id, branch_id, "You", source_entry_id)
 }
 
-fn list_characters(pool: &Pool, story_id: &str) -> AppResult<Vec<Entity>> {
+fn list_characters(pool: &Pool, story_id: &str, branch_id: &str) -> AppResult<Vec<Entity>> {
     let conn = pool.get()?;
-    let mut stmt = conn.prepare(
-        "SELECT id, story_id, kind, name, card_json, appearance_anchor, created_at
-         FROM entities WHERE story_id = ?1 AND kind = 'character' ORDER BY created_at ASC",
-    )?;
-    let rows = stmt.query_map([story_id], row_to_entity)?;
-    let mut out = Vec::new();
-    for r in rows {
-        out.push(r?);
-    }
-    Ok(out)
+    entities::list_entities_sync(&conn, story_id, branch_id, Some("character"))
 }
 
 fn format_attribute_line(name: &str, value: f64, min: f64, max: f64) -> String {
@@ -202,16 +206,19 @@ fn format_attribute_line(name: &str, value: f64, min: f64, max: f64) -> String {
 /// Stage 1 (classify, cheap) + Stage 2 (resolve, deterministic — no model
 /// call). Returns extra preamble text for Stage 3 and a roll to persist
 /// alongside the narrated passage, if one happened.
+#[allow(clippy::too_many_arguments)]
 pub async fn run_classify_and_resolve(
     pool: &Pool,
     config: &TextModelConfig,
     story_id: &str,
+    branch_id: &str,
+    source_entry_id: &str,
     dice_mode: DiceMode,
     recent_context: &str,
     player_action: &str,
 ) -> AppResult<StageOneResult> {
-    let characters = list_characters(pool, story_id)?;
-    let player = get_or_create_player_entity(pool, story_id)?;
+    let characters = list_characters(pool, story_id, branch_id)?;
+    let player = get_or_create_player_entity(pool, story_id, branch_id, source_entry_id)?;
 
     let character_names: Vec<&str> = characters
         .iter()
@@ -266,7 +273,13 @@ pub async fn run_classify_and_resolve(
     .await?;
     let actor_value = {
         let conn = pool.get()?;
-        get_or_init_entity_attribute(&conn, &player.id, &actor_attribute)?
+        get_or_init_entity_attribute(
+            &conn,
+            branch_id,
+            &player.id,
+            &actor_attribute,
+            source_entry_id,
+        )?
     };
 
     // Auto-create the target if the classifier named someone not yet in the
@@ -278,7 +291,13 @@ pub async fn run_classify_and_resolve(
         .map(str::trim)
         .filter(|s| !s.is_empty())
     {
-        Some(name) => Some(get_or_create_character(pool, story_id, name)?),
+        Some(name) => Some(get_or_create_character(
+            pool,
+            story_id,
+            branch_id,
+            name,
+            source_entry_id,
+        )?),
         None => None,
     };
 
@@ -296,7 +315,13 @@ pub async fn run_classify_and_resolve(
             .await?;
             let value = {
                 let conn = pool.get()?;
-                get_or_init_entity_attribute(&conn, &target.id, &target_attribute)?
+                get_or_init_entity_attribute(
+                    &conn,
+                    branch_id,
+                    &target.id,
+                    &target_attribute,
+                    source_entry_id,
+                )?
             };
             (value, Some(target_attribute), Some(target.id.clone()))
         } else {
@@ -367,30 +392,27 @@ pub async fn run_classify_and_resolve(
 
 pub fn persist_roll(
     conn: &rusqlite::Connection,
-    passage_id: &str,
+    entry_id: &str,
     pending: PendingRoll,
 ) -> AppResult<()> {
-    let now = Utc::now().to_rfc3339();
-    conn.execute(
-        "INSERT INTO rolls (id, passage_id, actor_entity_id, target_entity_id, actor_attribute_id, target_attribute_id,
-                             actor_value, target_value, p_success, seed, roll, outcome, degree, modifiers_json, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, '{}', ?14)",
-        rusqlite::params![
-            Uuid::new_v4().to_string(),
-            passage_id,
-            pending.actor_entity_id,
-            pending.target_entity_id,
-            pending.actor_attribute_id,
-            pending.target_attribute_id,
-            pending.actor_value,
-            pending.target_value,
-            pending.output.p_success,
-            pending.output.seed,
-            pending.output.roll,
-            pending.output.outcome,
-            pending.output.degree,
-            now,
-        ],
+    let base = timeline_repository::get_entry(conn, entry_id)?;
+    timeline_repository::append_entry(
+        conn,
+        &base.branch_id,
+        timeline_kind::MECHANICAL_RESULT,
+        "hidden",
+        Some(&format!(
+            "Mechanical outcome: rolled {} and got {} ({}).",
+            pending.output.roll, pending.output.outcome, pending.output.degree
+        )),
+        &serde_json::json!({
+            "actor_entity_id": pending.actor_entity_id, "target_entity_id": pending.target_entity_id,
+            "actor_attribute_id": pending.actor_attribute_id, "target_attribute_id": pending.target_attribute_id,
+            "actor_value": pending.actor_value, "target_value": pending.target_value,
+            "p_success": pending.output.p_success, "seed": pending.output.seed, "roll": pending.output.roll,
+            "outcome": pending.output.outcome, "degree": pending.output.degree, "modifiers": {}
+        }),
+        Some(entry_id),
     )?;
     Ok(())
 }
@@ -404,10 +426,11 @@ pub async fn run_update(
     pool: &Pool,
     config: &TextModelConfig,
     story_id: &str,
-    passage_id: &str,
+    branch_id: &str,
+    entry_id: &str,
     narrated_text: &str,
 ) -> AppResult<()> {
-    let player = get_or_create_player_entity(pool, story_id)?;
+    let player = get_or_create_player_entity(pool, story_id, branch_id, entry_id)?;
 
     let prompt = format!("Passage:\n{narrated_text}");
     let update: UpdateOutput = match ai::prompt_typed(config, UPDATE_PREAMBLE, prompt).await {
@@ -423,7 +446,7 @@ pub async fn run_update(
         let entity = if name.eq_ignore_ascii_case("you") || name.eq_ignore_ascii_case("player") {
             player.clone()
         } else {
-            match get_or_create_character(pool, story_id, name) {
+            match get_or_create_character(pool, story_id, branch_id, name, entry_id) {
                 Ok(e) => e,
                 Err(_) => continue,
             }
@@ -450,11 +473,12 @@ pub async fn run_update(
         };
         let _ = apply_attribute_delta(
             &conn,
+            branch_id,
             &entity.id,
             &attribute,
             proposal.delta,
             &cause,
-            passage_id,
+            entry_id,
             proposal.dramatic,
         );
     }

@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StoryImage {
     pub id: String,
-    pub passage_id: String,
+    pub entry_id: String,
     pub path: String,
     pub prompt: String,
     pub seed: Option<i64>,

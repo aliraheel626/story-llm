@@ -1024,6 +1024,7 @@ dependencies = [
  "reqwest",
  "rig-agent",
  "rig-core",
+ "rig-memory",
  "rusqlite",
  "schemars 1.2.2",
  "serde",
@@ -3628,6 +3629,16 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "rig-memory"
+version = "0.42.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ed56015accac541e4a28eccc4fa63f878d5ce0d235b47aff3971d5dd1072e539"
+dependencies = [
+ "rig-core",
+ "tracing",
 ]
 
 [[package]]

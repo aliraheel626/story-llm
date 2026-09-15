@@ -1,10 +1,12 @@
 import { useEffect, useState } from "react";
 import { useAppStore } from "../../app/store";
-import type { Entity } from "../../shared/types";
+import type { AttributeRegistryEntry, Entity, EntityAttributeValue } from "../../shared/types";
+import { charactersApi } from "./api";
 import { useCharacterStore } from "./store";
 
 export function CharactersPanel() {
   const activeStoryId = useAppStore((s) => s.activeStoryId);
+  const activeBranchId = useAppStore((s) => s.stories.find((story) => story.id === s.activeStoryId)?.default_branch_id ?? null);
   const entitiesByStory = useCharacterStore((s) => s.entitiesByStory);
   const loading = useCharacterStore((s) => s.loading);
   const loadCharacters = useCharacterStore((s) => s.loadCharacters);
@@ -19,14 +21,20 @@ export function CharactersPanel() {
   const [editName, setEditName] = useState("");
   const [editAnchor, setEditAnchor] = useState("");
   const [busy, setBusy] = useState(false);
+  const [attributes, setAttributes] = useState<EntityAttributeValue[]>([]);
+  const [registry, setRegistry] = useState<AttributeRegistryEntry[]>([]);
+  const [attributeDrafts, setAttributeDrafts] = useState<Record<string, string>>({});
+  const [attributeToAdd, setAttributeToAdd] = useState("");
 
   const characters = activeStoryId ? (entitiesByStory[activeStoryId] ?? []) : [];
 
   useEffect(() => {
-    if (activeStoryId) loadCharacters(activeStoryId);
-  }, [activeStoryId, loadCharacters]);
+    if (activeStoryId && activeBranchId) loadCharacters(activeStoryId, activeBranchId);
+  }, [activeStoryId, activeBranchId, loadCharacters]);
 
-  if (!activeStoryId) {
+  useEffect(() => { charactersApi.listRegistry().then(setRegistry).catch(console.error); }, []);
+
+  if (!activeStoryId || !activeBranchId) {
     return <div className="text-xs text-muted py-1">Open a story first.</div>;
   }
 
@@ -35,7 +43,7 @@ export function CharactersPanel() {
     if (!trimmed || busy) return;
     setBusy(true);
     try {
-      await createCharacter(activeStoryId, trimmed, anchor.trim() || undefined);
+      await createCharacter(activeStoryId, activeBranchId, trimmed, anchor.trim() || undefined);
       setName("");
       setAnchor("");
       setCreating(false);
@@ -46,10 +54,16 @@ export function CharactersPanel() {
     }
   };
 
-  const startEdit = (entity: Entity) => {
+  const startEdit = async (entity: Entity) => {
     setEditingId(entity.id);
     setEditName(entity.name);
     setEditAnchor(entity.appearance_anchor ?? "");
+    try {
+      const values = await charactersApi.listAttributes(activeBranchId, entity.id);
+      setAttributes(values);
+      setAttributeDrafts(Object.fromEntries(values.map((value) => [value.attribute_id, String(value.value)])));
+      setAttributeToAdd("");
+    } catch (error) { console.error(error); }
   };
 
   const submitEdit = async () => {
@@ -58,7 +72,13 @@ export function CharactersPanel() {
     if (!trimmed) return;
     setBusy(true);
     try {
-      await updateCharacter(activeStoryId, editingId, trimmed, editAnchor.trim() || undefined);
+      for (const attribute of attributes) {
+        const value = Number(attributeDrafts[attribute.attribute_id] ?? attribute.value);
+        if (Number.isFinite(value) && value !== attribute.value) {
+          await charactersApi.setAttribute(activeBranchId, editingId, attribute.attribute_id, value);
+        }
+      }
+      await updateCharacter(activeStoryId, activeBranchId, editingId, trimmed, editAnchor.trim() || undefined);
       setEditingId(null);
     } catch (e) {
       console.error(e);
@@ -73,13 +93,40 @@ export function CharactersPanel() {
     if (busy || !editingId) return;
     setBusy(true);
     try {
-      await deleteCharacter(activeStoryId, editingId);
+      await deleteCharacter(activeStoryId, activeBranchId, editingId);
       setEditingId(null);
     } catch (e) {
       console.error(e);
     } finally {
       setBusy(false);
     }
+  };
+
+  const saveAttribute = async (attributeId: string) => {
+    if (!editingId) return;
+    const value = Number(attributeDrafts[attributeId]);
+    if (!Number.isFinite(value)) return;
+    const saved = await charactersApi.setAttribute(activeBranchId, editingId, attributeId, value);
+    setAttributes((current) => current.some((item) => item.attribute_id === attributeId)
+      ? current.map((item) => item.attribute_id === attributeId ? saved : item)
+      : [...current, saved].sort((a, b) => a.canonical_name.localeCompare(b.canonical_name)));
+  };
+
+  const removeAttribute = async (attributeId: string) => {
+    if (!editingId) return;
+    await charactersApi.removeAttribute(activeBranchId, editingId, attributeId);
+    setAttributes((current) => current.filter((item) => item.attribute_id !== attributeId));
+  };
+
+  const addAttribute = async () => {
+    const definition = registry.find((item) => item.id === attributeToAdd);
+    if (!definition) return;
+    const midpoint = (definition.min + definition.max) / 2;
+    setAttributeDrafts((current) => ({ ...current, [definition.id]: String(midpoint) }));
+    if (!editingId) return;
+    const saved = await charactersApi.setAttribute(activeBranchId, editingId, definition.id, midpoint);
+    setAttributes((current) => [...current, saved].sort((a, b) => a.canonical_name.localeCompare(b.canonical_name)));
+    setAttributeToAdd("");
   };
 
   return (
@@ -140,6 +187,28 @@ export function CharactersPanel() {
                 rows={3}
                 className="w-full resize-none rounded bg-surface border border-border px-2 py-1 text-xs text-text focus:outline-none focus:border-accent"
               />
+              <div className="flex flex-col gap-1.5 rounded border border-border bg-surface p-2">
+                <div className="text-[11px] uppercase tracking-wide text-muted">Authoritative attributes</div>
+                {attributes.map((attribute) => (
+                  <div key={attribute.attribute_id} className="grid grid-cols-[1fr_5rem_auto] items-center gap-1.5 text-xs">
+                    <label className="text-text">{attribute.canonical_name}</label>
+                    <input type="number" min={attribute.min} max={attribute.max} step="0.5"
+                      value={attributeDrafts[attribute.attribute_id] ?? String(attribute.value)}
+                      onChange={(event) => setAttributeDrafts((current) => ({ ...current, [attribute.attribute_id]: event.target.value }))}
+                      onBlur={() => saveAttribute(attribute.attribute_id).catch(console.error)}
+                      className="w-full rounded border border-border bg-bg px-1.5 py-1 text-right text-text" />
+                    <button onClick={() => removeAttribute(attribute.attribute_id).catch(console.error)} className="text-danger" title="Remove attribute">×</button>
+                  </div>
+                ))}
+                <div className="flex gap-1.5">
+                  <select value={attributeToAdd} onChange={(event) => setAttributeToAdd(event.target.value)} className="min-w-0 flex-1 rounded border border-border bg-bg px-1.5 py-1 text-xs text-text">
+                    <option value="">Add attribute…</option>
+                    {registry.filter((definition) => !attributes.some((item) => item.attribute_id === definition.id) && JSON.parse(definition.entity_kinds_json).includes("character"))
+                      .map((definition) => <option key={definition.id} value={definition.id}>{definition.canonical_name}</option>)}
+                  </select>
+                  <button onClick={() => addAttribute().catch(console.error)} disabled={!attributeToAdd} className="rounded border border-border px-2 py-1 text-xs text-muted disabled:opacity-40">Add</button>
+                </div>
+              </div>
               <div className="flex gap-1.5">
                 <button
                   onClick={submitEdit}

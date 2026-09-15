@@ -11,6 +11,7 @@ const DICE_MODES: { id: DiceMode; label: string; hint: string }[] = [
 
 export function AttributesPanel() {
   const activeStoryId = useAppStore((s) => s.activeStoryId);
+  const activeBranchId = useAppStore((s) => s.stories.find((story) => story.id === s.activeStoryId)?.default_branch_id ?? null);
   const settingsByStory = useMechanicsStore((s) => s.settingsByStory);
   const draftSettings = useMechanicsStore((s) => s.draftSettings);
   const loading = useMechanicsStore((s) => s.loading);
@@ -32,7 +33,7 @@ export function AttributesPanel() {
   const update = async (diceMode: DiceMode, attributesEnabled: boolean) => {
     setSaving(true);
     try {
-      await saveSettings(activeStoryId, diceMode, attributesEnabled);
+      await saveSettings(activeStoryId, activeBranchId, diceMode, attributesEnabled);
     } catch (e) {
       console.error(e);
     } finally {

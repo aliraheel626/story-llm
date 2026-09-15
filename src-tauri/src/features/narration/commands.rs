@@ -11,15 +11,19 @@ use crate::features::{
         pipeline::{self, DiceMode, PendingRoll},
     },
     settings, stories,
+    timeline::{
+        model::{kind as timeline_kind, NarrationVariant, TimelineEntry},
+        repository as timeline_repository,
+    },
 };
 use crate::shared::db::Pool;
 use crate::shared::error::{AppError, AppResult};
 
 use super::history::load_history;
-use super::model::{Passage, PassageVariant};
+use super::model::ActiveStoryEntry;
 use super::repository::{
-    get_last_passage, get_passage, get_story_id_for_branch, image_paths_for_passage,
-    insert_passage, row_to_variant,
+    get_active_story_entry, get_last_story_entry, get_story_id_for_branch, image_paths_for_entry,
+    insert_story_entry,
 };
 
 const NARRATOR_PREAMBLE: &str = "You are the narrator of an interactive story. Continue the scene \
@@ -37,12 +41,6 @@ const STORY_CONTINUE_PROMPT: &str =
      directive. Complete it into the passage itself: open with the draft rendered as prose, then keep \
      writing seamlessly to a natural ending. Do not reply to it as an instruction, and do not \
      summarize it away.";
-
-#[tauri::command]
-pub fn list_passages(pool: State<Pool>, branch_id: String) -> AppResult<Vec<Passage>> {
-    let conn = pool.get()?;
-    super::repository::list_passages(&conn, &branch_id)
-}
 
 /// "Story" input mode: narration typed directly by the player. The authored
 /// text is inserted verbatim as a narrator passage, then the model continues
@@ -66,11 +64,11 @@ pub fn submit_story(
         let conn = pool.get()?;
         get_story_id_for_branch(&conn, &branch_id)?
     };
-    let extra_preamble = author_note_preamble(pool.inner(), &story_id)?;
+    let extra_preamble = story_context_preamble(pool.inner(), &story_id, &branch_id)?;
 
     let authored = {
         let conn = pool.get()?;
-        insert_passage(&conn, &branch_id, "narrator", "story", content, None)?
+        insert_story_entry(&conn, &branch_id, "narrator", "story", content, None)?
     };
     kick_auto_title(&app, pool.inner(), &branch_id);
 
@@ -83,6 +81,7 @@ pub fn submit_story(
         NarrationJob {
             app,
             pool: pool.inner().clone(),
+            branch_id: branch_id.clone(),
             config,
             history,
             prompt: STORY_CONTINUE_PROMPT.to_string(),
@@ -102,21 +101,22 @@ pub fn submit_story(
         },
     );
 
-    Ok(SubmitTurnResult {
-        passage: authored,
-        stream_id,
-    })
+    let entry = {
+        let conn = pool.get()?;
+        timeline_repository::active_entry(&conn, &authored.id)?
+    };
+    Ok(SubmitTurnResult { entry, stream_id })
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct SubmitTurnResult {
-    pub passage: Passage,
+    pub entry: TimelineEntry,
     pub stream_id: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct RetryResult {
-    pub removed_passage_id: String,
+    pub entry_id: String,
     pub stream_id: String,
 }
 
@@ -129,14 +129,14 @@ struct NarrationDeltaPayload<'a> {
 #[derive(Debug, Clone, Serialize)]
 struct NarrationDonePayload {
     stream_id: String,
-    passage: Passage,
+    entry: TimelineEntry,
 }
 
 #[derive(Debug, Clone, Serialize)]
 struct SwipeDonePayload {
     stream_id: String,
-    passage: Passage,
-    variants: Vec<PassageVariant>,
+    entry: TimelineEntry,
+    variants: Vec<NarrationVariant>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -164,6 +164,43 @@ fn author_note_preamble(pool: &Pool, story_id: &str) -> AppResult<String> {
     }
 }
 
+fn story_context_preamble(pool: &Pool, story_id: &str, branch_id: &str) -> AppResult<String> {
+    let author_note = author_note_preamble(pool, story_id)?;
+    let conn = pool.get()?;
+    let entities = crate::features::entities::list_entities_sync(&conn, story_id, branch_id, None)?;
+    let mut lines = vec!["Current entity state is authoritative. User overrides take precedence over inferred updates. Mechanical outcomes must not be contradicted.".to_string()];
+    for entity in entities {
+        let mut stmt = conn.prepare(
+            "SELECT attribute_registry.canonical_name, entity_attributes.value
+             FROM entity_attributes JOIN attribute_registry ON attribute_registry.id = entity_attributes.attribute_id
+             WHERE entity_attributes.branch_id = ?1 AND entity_attributes.entity_id = ?2 ORDER BY attribute_registry.canonical_name")?;
+        let attrs = stmt
+            .query_map(rusqlite::params![branch_id, entity.id], |row| {
+                Ok(format!(
+                    "{}={}",
+                    row.get::<_, String>(0)?,
+                    row.get::<_, f64>(1)?
+                ))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        let appearance = entity
+            .appearance_anchor
+            .as_deref()
+            .map(|a| format!("; appearance: {a}"))
+            .unwrap_or_default();
+        let attributes = if attrs.is_empty() {
+            String::new()
+        } else {
+            format!("; attributes: {}", attrs.join(", "))
+        };
+        lines.push(format!(
+            "- {} ({}){appearance}{attributes}",
+            entity.name, entity.kind
+        ));
+    }
+    Ok(combine_preambles(&[author_note, lines.join("\n")]))
+}
+
 fn combine_preambles(parts: &[String]) -> String {
     parts
         .iter()
@@ -173,22 +210,19 @@ fn combine_preambles(parts: &[String]) -> String {
         .join("\n\n")
 }
 
-/// Inserts a fresh narrator passage and emits `narration-done` — the shared
-/// terminal step for every flow that appends a new passage (turn, guide, and
-/// continue). Retry and Swipe update an existing passage in place.
-/// If a Stage 1/2 roll produced this passage, it's persisted here too, now
-/// that the passage it belongs to actually exists.
-fn append_narrator_passage(
+/// Inserts a fresh narration entry. If mechanics produced a roll, its hidden
+/// result event is persisted in the same transaction.
+fn append_narration_entry(
     pool: &Pool,
     branch_id: &str,
     input_mode: &str,
     visible: &str,
     thoughts: Option<&str>,
     roll: Option<PendingRoll>,
-) -> AppResult<Passage> {
+) -> AppResult<ActiveStoryEntry> {
     let mut conn = pool.get()?;
     let tx = conn.transaction()?;
-    let passage = insert_passage(&tx, branch_id, "narrator", input_mode, visible, thoughts)?;
+    let passage = insert_story_entry(&tx, branch_id, "narrator", input_mode, visible, thoughts)?;
     if let Some(roll) = roll {
         pipeline::persist_roll(&tx, &passage.id, roll)?;
     }
@@ -196,34 +230,39 @@ fn append_narrator_passage(
     Ok(passage)
 }
 
-/// Replaces a completed narrator passage in place after Retry has generated a
-/// valid successor. Keeping the same passage id preserves its position and
-/// any mechanical roll tied to the action, while variants and scene images
-/// derived from the old prose are discarded.
-fn replace_narrator_passage(
+/// Appends and selects a retry variant only after generation has succeeded.
+/// The base narration remains immutable and keeps its chronological position.
+fn append_retry_variant(
     pool: &Pool,
-    target: &Passage,
+    target: &ActiveStoryEntry,
     visible: &str,
-    thoughts: Option<&str>,
-) -> AppResult<Passage> {
+    _thoughts: Option<&str>,
+) -> AppResult<ActiveStoryEntry> {
     let mut conn = pool.get()?;
-    let now = Utc::now().to_rfc3339();
     let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-    let image_paths = image_paths_for_passage(&tx, &target.id)?;
+    let image_paths = image_paths_for_entry(&tx, &target.id)?;
+    tx.execute("DELETE FROM image_assets WHERE entry_id = ?1", [&target.id])?;
     tx.execute(
-        "UPDATE passages SET content = ?1, thoughts = ?2, edited_at = ?3 WHERE id = ?4",
-        rusqlite::params![visible, thoughts, now, target.id],
+        "DELETE FROM timeline_entries WHERE kind = ?1 AND target_entry_id = ?2",
+        rusqlite::params![timeline_kind::IMAGE_GENERATED, target.id],
     )?;
-    tx.execute(
-        "DELETE FROM passage_variants WHERE passage_id = ?1",
-        [&target.id],
+    let variant = timeline_repository::append_entry(
+        &tx,
+        &target.branch_id,
+        timeline_kind::NARRATION_VARIANT,
+        "hidden",
+        Some(visible),
+        &serde_json::json!({"reason":"retry", "input_mode": target.input_mode}),
+        Some(&target.id),
     )?;
-    tx.execute("DELETE FROM images WHERE passage_id = ?1", [&target.id])?;
-    tx.execute(
-        "UPDATE stories SET updated_at = ?1 WHERE id = (
-             SELECT story_id FROM branches WHERE id = ?2
-         )",
-        rusqlite::params![now, target.branch_id],
+    timeline_repository::append_entry(
+        &tx,
+        &target.branch_id,
+        timeline_kind::NARRATION_SELECTED,
+        "hidden",
+        None,
+        &serde_json::json!({"selected_entry_id": variant.id, "reason":"retry"}),
+        Some(&target.id),
     )?;
     tx.commit()?;
 
@@ -231,7 +270,7 @@ fn replace_narrator_passage(
         let _ = std::fs::remove_file(path);
     }
 
-    get_passage(&conn, &target.id)
+    get_active_story_entry(&conn, &target.id)
 }
 
 /// Best-effort kick-off of the ChatGPT/Gemini-style auto-title: once a story
@@ -259,6 +298,7 @@ fn kick_auto_title(app: &AppHandle, pool: &Pool, branch_id: &str) {
 struct NarrationJob {
     app: AppHandle,
     pool: Pool,
+    branch_id: String,
     config: TextModelConfig,
     history: Vec<HistoryTurn>,
     prompt: String,
@@ -274,6 +314,7 @@ where
     let NarrationJob {
         app,
         pool,
+        branch_id,
         config,
         history,
         prompt,
@@ -286,6 +327,10 @@ where
         } else {
             format!("{NARRATOR_PREAMBLE}\n\n{extra_preamble}")
         };
+        let history = crate::features::timeline::compaction::prepare_history(
+            &pool, &branch_id, &config, &preamble, &prompt, history,
+        )
+        .await;
         let req = NarrateRequest {
             config,
             preamble,
@@ -373,7 +418,7 @@ async fn finish_append(
     visible: String,
     thoughts: Option<String>,
 ) -> AppResult<()> {
-    let passage = append_narrator_passage(
+    let passage = append_narration_entry(
         &pool,
         &branch_id,
         &input_mode,
@@ -381,13 +426,14 @@ async fn finish_append(
         thoughts.as_deref(),
         None,
     )?;
-    let passage_id = passage.id.clone();
-    let _ = app.emit(
-        "narration-done",
-        NarrationDonePayload { stream_id, passage },
-    );
+    let entry_id = passage.id.clone();
+    let entry = {
+        let conn = pool.get()?;
+        timeline_repository::active_entry(&conn, &entry_id)?
+    };
+    let _ = app.emit("narration-done", NarrationDonePayload { stream_id, entry });
     kick_auto_title(&app, &pool, &branch_id);
-    images::maybe_auto_image(&app, &pool, &passage_id, &visible);
+    images::maybe_auto_image(&app, &pool, &entry_id, &visible);
     Ok(())
 }
 
@@ -426,7 +472,7 @@ pub async fn submit_turn(
 
     let player_passage = {
         let conn = pool.get()?;
-        insert_passage(&conn, &branch_id, "player", &input_mode, content, None)?
+        insert_story_entry(&conn, &branch_id, "player", &input_mode, content, None)?
     };
 
     let prompt = format_prompt(&input_mode, content);
@@ -451,6 +497,8 @@ pub async fn submit_turn(
             pool.inner(),
             &config,
             &story_id,
+            &branch_id,
+            &player_passage.id,
             dice_mode,
             &recent_context,
             &prompt,
@@ -464,7 +512,7 @@ pub async fn submit_turn(
         (String::new(), None)
     };
     let extra_preamble = combine_preambles(&[
-        author_note_preamble(pool.inner(), &story_id)?,
+        story_context_preamble(pool.inner(), &story_id, &branch_id)?,
         extra_preamble,
     ]);
 
@@ -478,6 +526,7 @@ pub async fn submit_turn(
         NarrationJob {
             app,
             pool: pool.inner().clone(),
+            branch_id: branch_id.clone(),
             config,
             history,
             prompt,
@@ -485,7 +534,7 @@ pub async fn submit_turn(
             stream_id: stream_id.clone(),
         },
         move |app, pool, sid, visible, thoughts| async move {
-            let passage = append_narrator_passage(
+            let passage = append_narration_entry(
                 &pool,
                 &branch_id_bg,
                 "generated",
@@ -493,28 +542,39 @@ pub async fn submit_turn(
                 thoughts.as_deref(),
                 roll_to_persist,
             )?;
+            let entry = {
+                let conn = pool.get()?;
+                timeline_repository::active_entry(&conn, &passage.id)?
+            };
             let _ = app.emit(
                 "narration-done",
                 NarrationDonePayload {
                     stream_id: sid,
-                    passage: passage.clone(),
+                    entry,
                 },
             );
             kick_auto_title(&app, &pool, &branch_id_bg);
             images::maybe_auto_image(&app, &pool, &passage.id, &visible);
             if attributes_enabled {
-                let _ =
-                    pipeline::run_update(&pool, &config_bg, &story_id_bg, &passage.id, &visible)
-                        .await;
+                let _ = pipeline::run_update(
+                    &pool,
+                    &config_bg,
+                    &story_id_bg,
+                    &branch_id_bg,
+                    &passage.id,
+                    &visible,
+                )
+                .await;
             }
             Ok(())
         },
     );
 
-    Ok(SubmitTurnResult {
-        passage: player_passage,
-        stream_id,
-    })
+    let entry = {
+        let conn = pool.get()?;
+        timeline_repository::active_entry(&conn, &player_passage.id)?
+    };
+    Ok(SubmitTurnResult { entry, stream_id })
 }
 
 /// "Guide" mode: an ephemeral, out-of-character steering note. No player
@@ -539,7 +599,7 @@ pub async fn submit_guide(
         let conn = pool.get()?;
         get_story_id_for_branch(&conn, &branch_id)?
     };
-    let extra_preamble = author_note_preamble(pool.inner(), &story_id)?;
+    let extra_preamble = story_context_preamble(pool.inner(), &story_id, &branch_id)?;
 
     let stream_id = Uuid::new_v4().to_string();
     let prompt = format!(
@@ -551,6 +611,7 @@ pub async fn submit_guide(
         NarrationJob {
             app,
             pool: pool.inner().clone(),
+            branch_id: branch_id.clone(),
             config,
             history,
             prompt,
@@ -586,13 +647,13 @@ pub async fn continue_scene(
         let conn = pool.get()?;
         get_story_id_for_branch(&conn, &branch_id)?
     };
-    let extra_preamble = author_note_preamble(pool.inner(), &story_id)?;
+    let extra_preamble = story_context_preamble(pool.inner(), &story_id, &branch_id)?;
 
     // A trailing story draft was never rendered (its generation failed), so
     // Continue completes it into prose instead of writing past the note.
     let (prompt, input_mode) = {
         let conn = pool.get()?;
-        match get_last_passage(&conn, &branch_id)? {
+        match get_last_story_entry(&conn, &branch_id)? {
             Some(p) if p.input_mode == "story" => {
                 (STORY_CONTINUE_PROMPT, "generated_story".to_string())
             }
@@ -606,6 +667,7 @@ pub async fn continue_scene(
         NarrationJob {
             app,
             pool: pool.inner().clone(),
+            branch_id: branch_id.clone(),
             config,
             history,
             prompt: prompt.to_string(),
@@ -625,24 +687,24 @@ pub async fn continue_scene(
 /// after a successful generation, so configuration or stream failures cannot
 /// destroy the version the user was trying to retry.
 #[tauri::command]
-pub async fn retry_passage(
+pub async fn retry_narration(
     app: AppHandle,
     pool: State<'_, Pool>,
     branch_id: String,
-    passage_id: String,
+    entry_id: String,
 ) -> AppResult<RetryResult> {
     let target = {
         let conn = pool.get()?;
-        let last = get_last_passage(&conn, &branch_id)?
-            .ok_or_else(|| AppError::Invalid("no passages to retry".into()))?;
-        if last.id != passage_id {
+        let last = get_last_story_entry(&conn, &branch_id)?
+            .ok_or_else(|| AppError::Invalid("no narration to retry".into()))?;
+        if last.id != entry_id {
             return Err(AppError::Invalid(
-                "only the latest passage can be retried".into(),
+                "only the latest narration can be retried".into(),
             ));
         }
         if last.role != "narrator" {
             return Err(AppError::Invalid(
-                "only a narrator passage can be retried".into(),
+                "only a narration entry can be retried".into(),
             ));
         }
         last
@@ -661,13 +723,14 @@ pub async fn retry_passage(
         let conn = pool.get()?;
         get_story_id_for_branch(&conn, &branch_id)?
     };
-    let extra_preamble = author_note_preamble(pool.inner(), &story_id)?;
+    let extra_preamble = story_context_preamble(pool.inner(), &story_id, &branch_id)?;
 
     let stream_id = Uuid::new_v4().to_string();
     spawn_narration(
         NarrationJob {
             app,
             pool: pool.inner().clone(),
+            branch_id: branch_id.clone(),
             config,
             history,
             prompt: prompt.to_string(),
@@ -675,12 +738,16 @@ pub async fn retry_passage(
             stream_id: stream_id.clone(),
         },
         move |app, pool, sid, visible, thoughts| async move {
-            let passage = replace_narrator_passage(&pool, &target, &visible, thoughts.as_deref())?;
+            let passage = append_retry_variant(&pool, &target, &visible, thoughts.as_deref())?;
+            let entry = {
+                let conn = pool.get()?;
+                timeline_repository::active_entry(&conn, &passage.id)?
+            };
             let _ = app.emit(
                 "narration-done",
                 NarrationDonePayload {
                     stream_id: sid,
-                    passage: passage.clone(),
+                    entry,
                 },
             );
             images::maybe_auto_image(&app, &pool, &target.id, &visible);
@@ -689,7 +756,7 @@ pub async fn retry_passage(
     );
 
     Ok(RetryResult {
-        removed_passage_id: passage_id,
+        entry_id,
         stream_id,
     })
 }
@@ -699,24 +766,24 @@ pub async fn retry_passage(
 /// which replaces. Updates the passage in place and emits `swipe-done` with
 /// the full variant list.
 #[tauri::command]
-pub async fn swipe_passage(
+pub async fn generate_narration_variant(
     app: AppHandle,
     pool: State<'_, Pool>,
     branch_id: String,
-    passage_id: String,
+    entry_id: String,
 ) -> AppResult<String> {
     let target = {
         let conn = pool.get()?;
-        let last = get_last_passage(&conn, &branch_id)?
-            .ok_or_else(|| AppError::Invalid("no passages to swipe".into()))?;
-        if last.id != passage_id {
+        let last = get_last_story_entry(&conn, &branch_id)?
+            .ok_or_else(|| AppError::Invalid("no narration to swipe".into()))?;
+        if last.id != entry_id {
             return Err(AppError::Invalid(
-                "only the latest passage can be swiped".into(),
+                "only the latest narration can be swiped".into(),
             ));
         }
         if last.role != "narrator" {
             return Err(AppError::Invalid(
-                "only a narrator passage can be swiped".into(),
+                "only a narration entry can be swiped".into(),
             ));
         }
         last
@@ -728,7 +795,7 @@ pub async fn swipe_passage(
         let conn = pool.get()?;
         get_story_id_for_branch(&conn, &branch_id)?
     };
-    let extra_preamble = author_note_preamble(pool.inner(), &story_id)?;
+    let extra_preamble = story_context_preamble(pool.inner(), &story_id, &branch_id)?;
 
     let stream_id = Uuid::new_v4().to_string();
     let prompt = if target.input_mode == "generated_story" {
@@ -740,50 +807,39 @@ pub async fn swipe_passage(
         NarrationJob {
             app,
             pool: pool.inner().clone(),
+            branch_id: branch_id.clone(),
             config,
             history,
             prompt: prompt.to_string(),
             extra_preamble,
             stream_id: stream_id.clone(),
         },
-        move |app, pool, sid, visible, thoughts| async move {
+        move |app, pool, sid, visible, _thoughts| async move {
             let mut conn = pool.get()?;
-            let now = Utc::now().to_rfc3339();
             let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-            let image_paths = image_paths_for_passage(&tx, &target.id)?;
-
-            let existing_count: i64 = tx.query_row(
-                "SELECT COUNT(*) FROM passage_variants WHERE passage_id = ?1",
-                [&target.id],
-                |r| r.get(0),
-            )?;
-            if existing_count == 0 {
-                let orig_id = Uuid::new_v4().to_string();
-                tx.execute(
-                "INSERT INTO passage_variants (id, passage_id, content, is_selected, created_at) VALUES (?1, ?2, ?3, 0, ?4)",
-                rusqlite::params![orig_id, target.id, target.content, target.created_at],
-            )?;
-            }
-
+            let image_paths = image_paths_for_entry(&tx, &target.id)?;
+            tx.execute("DELETE FROM image_assets WHERE entry_id = ?1", [&target.id])?;
             tx.execute(
-                "UPDATE passage_variants SET is_selected = 0 WHERE passage_id = ?1",
-                [&target.id],
+                "DELETE FROM timeline_entries WHERE kind = ?1 AND target_entry_id = ?2",
+                rusqlite::params![timeline_kind::IMAGE_GENERATED, target.id],
             )?;
-            let new_variant_id = Uuid::new_v4().to_string();
-            tx.execute(
-            "INSERT INTO passage_variants (id, passage_id, content, is_selected, created_at) VALUES (?1, ?2, ?3, 1, ?4)",
-            rusqlite::params![new_variant_id, target.id, visible, now],
-        )?;
-            tx.execute(
-                "UPDATE passages SET content = ?1, thoughts = ?2, edited_at = ?3 WHERE id = ?4",
-                rusqlite::params![visible, thoughts, now, target.id],
+            let variant = timeline_repository::append_entry(
+                &tx,
+                &target.branch_id,
+                timeline_kind::NARRATION_VARIANT,
+                "hidden",
+                Some(&visible),
+                &serde_json::json!({"reason":"swipe", "input_mode": target.input_mode}),
+                Some(&target.id),
             )?;
-            tx.execute("DELETE FROM images WHERE passage_id = ?1", [&target.id])?;
-            tx.execute(
-                "UPDATE stories SET updated_at = ?1 WHERE id = (
-                     SELECT story_id FROM branches WHERE id = ?2
-                 )",
-                rusqlite::params![now, target.branch_id],
+            timeline_repository::append_entry(
+                &tx,
+                &target.branch_id,
+                timeline_kind::NARRATION_SELECTED,
+                "hidden",
+                None,
+                &serde_json::json!({"selected_entry_id": variant.id, "reason":"swipe"}),
+                Some(&target.id),
             )?;
             tx.commit()?;
 
@@ -791,20 +847,14 @@ pub async fn swipe_passage(
                 let _ = std::fs::remove_file(path);
             }
 
-            let passage = get_passage(&conn, &target.id)?;
-            let mut stmt = conn.prepare(
-            "SELECT id, passage_id, content, is_selected, created_at FROM passage_variants WHERE passage_id = ?1 ORDER BY created_at ASC",
-        )?;
-            let mut variants = Vec::new();
-            for r in stmt.query_map([&target.id], row_to_variant)? {
-                variants.push(r?);
-            }
+            let entry = timeline_repository::active_entry(&conn, &target.id)?;
+            let variants = super::repository::list_variants(&conn, &target.id)?;
 
             let _ = app.emit(
                 "swipe-done",
                 SwipeDonePayload {
                     stream_id: sid,
-                    passage,
+                    entry,
                     variants,
                 },
             );
@@ -817,56 +867,47 @@ pub async fn swipe_passage(
 }
 
 #[tauri::command]
-pub fn list_variants(pool: State<Pool>, passage_id: String) -> AppResult<Vec<PassageVariant>> {
+pub fn list_narration_variants(
+    pool: State<Pool>,
+    entry_id: String,
+) -> AppResult<Vec<NarrationVariant>> {
     let conn = pool.get()?;
-    let mut stmt = conn.prepare(
-        "SELECT id, passage_id, content, is_selected, created_at FROM passage_variants WHERE passage_id = ?1 ORDER BY created_at ASC",
-    )?;
-    let rows = stmt.query_map([passage_id], row_to_variant)?;
-    let mut out = Vec::new();
-    for r in rows {
-        out.push(r?);
-    }
-    Ok(out)
+    super::repository::list_variants(&conn, &entry_id)
 }
 
 #[tauri::command]
-pub fn switch_variant(
+pub fn select_narration_variant(
     pool: State<Pool>,
-    passage_id: String,
-    variant_id: String,
-) -> AppResult<Passage> {
+    entry_id: String,
+    variant_entry_id: String,
+) -> AppResult<TimelineEntry> {
     let mut conn = pool.get()?;
     let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-    let image_paths = image_paths_for_passage(&tx, &passage_id)?;
-    let content: String = tx
-        .query_row(
-            "SELECT content FROM passage_variants WHERE id = ?1 AND passage_id = ?2",
-            rusqlite::params![variant_id, passage_id],
-            |r| r.get(0),
-        )
-        .map_err(|_| AppError::NotFound(format!("variant {variant_id} not found")))?;
-    tx.execute(
-        "UPDATE passage_variants SET is_selected = 0 WHERE passage_id = ?1",
-        [&passage_id],
+    let image_paths = image_paths_for_entry(&tx, &entry_id)?;
+    let target = timeline_repository::get_entry(&tx, &entry_id)?;
+    if variant_entry_id != entry_id {
+        let variant = timeline_repository::get_entry(&tx, &variant_entry_id)?;
+        if variant.kind != timeline_kind::NARRATION_VARIANT
+            || variant.target_entry_id.as_deref() != Some(&entry_id)
+        {
+            return Err(AppError::NotFound(format!(
+                "variant {variant_entry_id} not found"
+            )));
+        }
+    }
+    timeline_repository::append_entry(
+        &tx,
+        &target.branch_id,
+        timeline_kind::NARRATION_SELECTED,
+        "hidden",
+        None,
+        &serde_json::json!({"selected_entry_id": variant_entry_id, "reason":"user_selection"}),
+        Some(&entry_id),
     )?;
+    tx.execute("DELETE FROM image_assets WHERE entry_id = ?1", [&entry_id])?;
     tx.execute(
-        "UPDATE passage_variants SET is_selected = 1 WHERE id = ?1",
-        [&variant_id],
-    )?;
-    let now = Utc::now().to_rfc3339();
-    tx.execute(
-        "UPDATE passages SET content = ?1, edited_at = ?2 WHERE id = ?3",
-        rusqlite::params![content, now, passage_id],
-    )?;
-    tx.execute("DELETE FROM images WHERE passage_id = ?1", [&passage_id])?;
-    tx.execute(
-        "UPDATE stories SET updated_at = ?1 WHERE id = (
-             SELECT branches.story_id FROM branches
-             JOIN passages ON passages.branch_id = branches.id
-             WHERE passages.id = ?2
-         )",
-        rusqlite::params![now, passage_id],
+        "DELETE FROM timeline_entries WHERE kind = ?1 AND target_entry_id = ?2",
+        rusqlite::params![timeline_kind::IMAGE_GENERATED, entry_id],
     )?;
     tx.commit()?;
 
@@ -874,73 +915,77 @@ pub fn switch_variant(
         let _ = std::fs::remove_file(path);
     }
 
-    get_passage(&conn, &passage_id)
+    timeline_repository::active_entry(&conn, &entry_id)
 }
 
-/// "Edit": rewrite any passage in place. If it currently has a selected
+/// "Edit": append a content override for any visible timeline entry. If it currently has a selected
 /// variant, that variant's stored text is kept in sync too.
 #[tauri::command]
-pub fn edit_passage(pool: State<Pool>, passage_id: String, content: String) -> AppResult<Passage> {
+pub fn edit_timeline_entry(
+    pool: State<Pool>,
+    entry_id: String,
+    content: String,
+) -> AppResult<TimelineEntry> {
     let content = content.trim();
     if content.is_empty() {
         return Err(AppError::Invalid("content must not be empty".into()));
     }
     let mut conn = pool.get()?;
-    let now = Utc::now().to_rfc3339();
     let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-    let image_paths = image_paths_for_passage(&tx, &passage_id)?;
-    tx.execute(
-        "UPDATE passages SET content = ?1, edited_at = ?2 WHERE id = ?3",
-        rusqlite::params![content, now, passage_id],
+    let image_paths = image_paths_for_entry(&tx, &entry_id)?;
+    let target = timeline_repository::get_entry(&tx, &entry_id)?;
+    timeline_repository::append_entry(
+        &tx,
+        &target.branch_id,
+        timeline_kind::CONTENT_EDITED,
+        "hidden",
+        Some(content),
+        &serde_json::json!({"reason":"user_edit"}),
+        Some(&entry_id),
     )?;
+    tx.execute("DELETE FROM image_assets WHERE entry_id = ?1", [&entry_id])?;
     tx.execute(
-        "UPDATE passage_variants SET content = ?1 WHERE passage_id = ?2 AND is_selected = 1",
-        rusqlite::params![content, passage_id],
-    )?;
-    tx.execute("DELETE FROM images WHERE passage_id = ?1", [&passage_id])?;
-    tx.execute(
-        "UPDATE stories SET updated_at = ?1 WHERE id = (
-             SELECT branches.story_id FROM branches
-             JOIN passages ON passages.branch_id = branches.id
-             WHERE passages.id = ?2
-         )",
-        rusqlite::params![now, passage_id],
+        "DELETE FROM timeline_entries WHERE kind = ?1 AND target_entry_id = ?2",
+        rusqlite::params![timeline_kind::IMAGE_GENERATED, entry_id],
     )?;
     tx.commit()?;
 
     for path in image_paths {
         let _ = std::fs::remove_file(path);
     }
-    get_passage(&conn, &passage_id)
+    timeline_repository::active_entry(&conn, &entry_id)
 }
 
-/// "Erase": removes the most recent exchange — the latest passage, plus the
-/// player passage (or story draft) that triggered it. Returns the ids removed
-/// so the frontend can splice locally.
-#[tauri::command]
-pub fn erase_last_exchange(pool: State<Pool>, branch_id: String) -> AppResult<Vec<String>> {
-    let mut conn = pool.get()?;
+fn erase_last_exchange_in_conn(
+    conn: &mut rusqlite::Connection,
+    branch_id: &str,
+) -> AppResult<(Vec<String>, Vec<String>)> {
     let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-    let Some(last) = get_last_passage(&tx, &branch_id)? else {
-        return Ok(vec![]);
+    let Some(last) = get_last_story_entry(&tx, branch_id)? else {
+        return Ok((vec![], vec![]));
     };
     let mut removed = vec![last.id.clone()];
-    let mut image_paths = image_paths_for_passage(&tx, &last.id)?;
-    tx.execute("DELETE FROM passages WHERE id = ?1", [&last.id])?;
+    let mut image_paths = image_paths_for_entry(&tx, &last.id)?;
+    tx.execute("DELETE FROM timeline_entries WHERE id = ?1", [&last.id])?;
 
     let paired = last.role == "narrator"
         && matches!(last.input_mode.as_str(), "generated" | "generated_story");
     if paired {
-        if let Some(prev) = get_last_passage(&tx, &branch_id)? {
+        if let Some(prev) = get_last_story_entry(&tx, branch_id)? {
             if prev.role == "player" || prev.input_mode == "story" {
-                image_paths.extend(image_paths_for_passage(&tx, &prev.id)?);
+                image_paths.extend(image_paths_for_entry(&tx, &prev.id)?);
                 removed.push(prev.id.clone());
-                tx.execute("DELETE FROM passages WHERE id = ?1", [&prev.id])?;
+                tx.execute("DELETE FROM timeline_entries WHERE id = ?1", [&prev.id])?;
             }
         }
     }
 
     let now = Utc::now().to_rfc3339();
+    tx.execute(
+        "DELETE FROM timeline_entries WHERE branch_id = ?1 AND kind = ?2",
+        rusqlite::params![branch_id, timeline_kind::CONTEXT_SUMMARY],
+    )?;
+    crate::features::timeline::projections::rebuild_branch(&tx, branch_id)?;
     tx.execute(
         "UPDATE stories SET updated_at = ?1 WHERE id = (
              SELECT story_id FROM branches WHERE id = ?2
@@ -949,9 +994,110 @@ pub fn erase_last_exchange(pool: State<Pool>, branch_id: String) -> AppResult<Ve
     )?;
     tx.commit()?;
 
+    Ok((removed, image_paths))
+}
+
+/// "Erase": removes the most recent exchange — the latest narration plus the
+/// player message (or story draft) that triggered it. Returns the IDs removed
+/// so the frontend can splice locally.
+#[tauri::command]
+pub fn erase_last_exchange(pool: State<Pool>, branch_id: String) -> AppResult<Vec<String>> {
+    let mut conn = pool.get()?;
+    let (removed, image_paths) = erase_last_exchange_in_conn(&mut conn, &branch_id)?;
+
     for path in image_paths {
         let _ = std::fs::remove_file(path);
     }
 
     Ok(removed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::features::timeline::repository::append_entry;
+    use serde_json::json;
+
+    #[test]
+    fn hard_erase_removes_exchange_derivatives_summaries_and_projections() {
+        let mut conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys=ON;
+            CREATE TABLE stories(id TEXT PRIMARY KEY, updated_at TEXT NOT NULL);
+            CREATE TABLE branches(id TEXT PRIMARY KEY, story_id TEXT NOT NULL, parent_branch_id TEXT, forked_at_entry_id TEXT);
+            CREATE TABLE timeline_entries(id TEXT PRIMARY KEY, branch_id TEXT NOT NULL, seq INTEGER NOT NULL, kind TEXT NOT NULL, visibility TEXT NOT NULL, content TEXT, payload_json TEXT NOT NULL, target_entry_id TEXT REFERENCES timeline_entries(id) ON DELETE CASCADE, created_at TEXT NOT NULL, UNIQUE(branch_id,seq));
+            CREATE TABLE image_assets(id TEXT PRIMARY KEY, entry_id TEXT NOT NULL REFERENCES timeline_entries(id) ON DELETE CASCADE, path TEXT NOT NULL, prompt TEXT NOT NULL, seed INTEGER, provider TEXT NOT NULL, created_at TEXT NOT NULL);
+            CREATE TABLE branch_entity_state(branch_id TEXT NOT NULL, entity_id TEXT NOT NULL, name TEXT NOT NULL, appearance_anchor TEXT, is_present INTEGER NOT NULL, updated_at TEXT NOT NULL, last_event_id TEXT, PRIMARY KEY(branch_id,entity_id));
+            CREATE TABLE entity_attributes(branch_id TEXT NOT NULL, entity_id TEXT NOT NULL, attribute_id TEXT NOT NULL, value REAL NOT NULL, source TEXT NOT NULL, updated_at TEXT NOT NULL, last_event_id TEXT, PRIMARY KEY(branch_id,entity_id,attribute_id));
+            INSERT INTO stories VALUES ('s','now');
+            INSERT INTO branches VALUES ('b','s',NULL,NULL);").unwrap();
+
+        let player = append_entry(
+            &conn,
+            "b",
+            timeline_kind::PLAYER_MESSAGE,
+            "visible",
+            Some("act"),
+            &json!({"input_mode":"do"}),
+            None,
+        )
+        .unwrap();
+        append_entry(
+            &conn,
+            "b",
+            timeline_kind::ENTITY_CREATED,
+            "hidden",
+            Some("Actor created"),
+            &json!({"entity_id":"actor","name":"Actor"}),
+            Some(&player.id),
+        )
+        .unwrap();
+        let narration = append_entry(
+            &conn,
+            "b",
+            timeline_kind::NARRATION,
+            "visible",
+            Some("result"),
+            &json!({"input_mode":"generated"}),
+            None,
+        )
+        .unwrap();
+        append_entry(
+            &conn,
+            "b",
+            timeline_kind::CONTEXT_SUMMARY,
+            "hidden",
+            Some("summary"),
+            &json!({"through_entry_id":narration.id.clone()}),
+            None,
+        )
+        .unwrap();
+        conn.execute("INSERT INTO image_assets VALUES ('image',?1,'C:/tmp/image.png','prompt',NULL,'test','now')", [&narration.id]).unwrap();
+        conn.execute(
+            "INSERT INTO branch_entity_state VALUES ('b','stale','Stale',NULL,1,'now',NULL)",
+            [],
+        )
+        .unwrap();
+
+        let (removed, paths) = erase_last_exchange_in_conn(&mut conn, "b").unwrap();
+        assert_eq!(removed, vec![narration.id, player.id]);
+        assert_eq!(paths, vec!["C:/tmp/image.png"]);
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM timeline_entries", [], |row| row
+                .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM image_assets", [], |row| row
+                .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM branch_entity_state", [], |row| row
+                .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+    }
 }

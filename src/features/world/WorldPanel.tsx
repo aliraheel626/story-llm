@@ -4,6 +4,7 @@ import { useAuthorNoteStore } from "./store";
 
 export function WorldPanel() {
   const activeStoryId = useAppStore((s) => s.activeStoryId);
+  const activeBranchId = useAppStore((s) => s.stories.find((story) => story.id === s.activeStoryId)?.default_branch_id ?? null);
   const noteByStory = useAuthorNoteStore((s) => s.noteByStory);
   const loading = useAuthorNoteStore((s) => s.loading);
   const saving = useAuthorNoteStore((s) => s.saving);
@@ -21,7 +22,7 @@ export function WorldPanel() {
     if (activeStoryId) setDraft(noteByStory[activeStoryId] ?? "");
   }, [activeStoryId, noteByStory]);
 
-  if (!activeStoryId) {
+  if (!activeStoryId || !activeBranchId) {
     return <div className="text-xs text-muted py-1">Open a story first.</div>;
   }
   if (loading && noteByStory[activeStoryId] === undefined) {
@@ -30,7 +31,7 @@ export function WorldPanel() {
 
   const onSave = async () => {
     try {
-      await save(activeStoryId, draft);
+      await save(activeStoryId, activeBranchId, draft);
       setSavedNotice(true);
       setTimeout(() => setSavedNotice(false), 2000);
     } catch (e) {

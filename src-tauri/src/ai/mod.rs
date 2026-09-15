@@ -23,11 +23,13 @@ pub struct TextModelConfig {
     pub provider: TextProviderKind,
     pub model: String,
     pub api_key: String,
+    pub context_window: usize,
 }
 
-/// One turn of prior conversation, already resolved from persisted passages.
+/// One turn of prior conversation, already resolved from the persisted timeline.
 #[derive(Debug, Clone)]
 pub struct HistoryTurn {
+    pub entry_id: Option<String>,
     pub is_player: bool,
     pub content: String,
 }

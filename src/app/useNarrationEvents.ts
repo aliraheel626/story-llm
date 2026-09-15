@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { useStoryStore } from "../features/passages/store";
+import { useStoryStore } from "../features/timeline/store";
 import { useAppStore } from "./store";
 import type {
   NarrationDonePayload,

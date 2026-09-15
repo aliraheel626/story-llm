@@ -52,6 +52,7 @@ schemars = "1"
 # HTTP-transport crate is needed.
 rig-core = { version = "=0.42.0" }
 rig-agent = { version = "=0.42.0" }
+rig-memory = { version = "=0.42.0" }
 
 # tauri-pilot: lets an AI agent (or a human) drive the running dev build over
 # a local socket for interactive testing. Cargo has no debug/release-only

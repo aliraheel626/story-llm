@@ -1,8 +1,8 @@
 import { useEffect, useRef } from "react";
 import { useAppStore } from "../../app/store";
-import { DEFAULT_STORY_TITLE } from "../../shared/types";
+import { DEFAULT_STORY_TITLE, timelineInputMode } from "../../shared/types";
 import { EditableStoryTitle } from "../stories/EditableStoryTitle";
-import { PassageView } from "./PassageView";
+import { TimelineEntryView } from "./TimelineEntryView";
 import { Composer } from "./Composer";
 import { useStoryStore } from "./store";
 
@@ -17,27 +17,27 @@ export function StoryView() {
   const activeStory = stories.find((s) => s.id === activeStoryId);
   const branchId = activeStory?.default_branch_id ?? null;
 
-  const passagesByBranch = useStoryStore((s) => s.passagesByBranch);
-  const loadPassages = useStoryStore((s) => s.loadPassages);
+  const entriesByBranch = useStoryStore((s) => s.entriesByBranch);
+  const loadTimeline = useStoryStore((s) => s.loadTimeline);
   const loadImagesForBranch = useStoryStore((s) => s.loadImagesForBranch);
   const loadRollsForBranch = useStoryStore((s) => s.loadRollsForBranch);
-  const imagesByPassage = useStoryStore((s) => s.imagesByPassage);
-  const variantsByPassage = useStoryStore((s) => s.variantsByPassage);
-  const rollByPassage = useStoryStore((s) => s.rollByPassage);
+  const imagesByEntry = useStoryStore((s) => s.imagesByEntry);
+  const variantsByEntry = useStoryStore((s) => s.variantsByEntry);
+  const rollByEntry = useStoryStore((s) => s.rollByEntry);
   const streaming = useStoryStore((s) => (branchId ? s.streamingByBranch[branchId] : undefined));
 
-  const passages = branchId ? passagesByBranch[branchId] ?? [] : [];
+  const entries = branchId ? entriesByBranch[branchId] ?? [] : [];
   const scrollRef = useRef<HTMLDivElement>(null);
   const pinRef = useRef<HTMLDivElement>(null);
   const reducedMotion = usePrefersReducedMotion();
 
   useEffect(() => {
     if (branchId) {
-      loadPassages(branchId);
+      loadTimeline(branchId);
       loadImagesForBranch(branchId);
       loadRollsForBranch(branchId);
     }
-  }, [branchId, loadPassages, loadImagesForBranch, loadRollsForBranch]);
+  }, [branchId, loadTimeline, loadImagesForBranch, loadRollsForBranch]);
 
   const isStreamingAppend = streaming?.mode === "append";
   const isStreamingReplace = streaming?.mode === "replace";
@@ -45,8 +45,8 @@ export function StoryView() {
   const pinKey = isStreamingAppend
     ? `streaming:${streaming!.streamId}`
     : isStreamingReplace
-      ? `replace:${streaming!.targetPassageId}`
-      : (passages[passages.length - 1]?.id ?? null);
+      ? `replace:${streaming!.targetEntryId}`
+      : (entries[entries.length - 1]?.id ?? null);
 
   useEffect(() => {
     pinRef.current?.scrollIntoView({ block: "start", behavior: reducedMotion ? "auto" : "smooth" });
@@ -76,31 +76,31 @@ export function StoryView() {
             <EditableStoryTitle storyId={activeStory!.id} />
           )}
 
-          {passages.length === 0 && !isStreamingAppend && (
+          {entries.length === 0 && !isStreamingAppend && (
             <p className="font-prose text-base italic leading-8 text-muted">
               The page is blank. Use Do, Say, or Story below to begin.
             </p>
           )}
 
-          {passages.map((passage, i) => {
+          {entries.map((entry, i) => {
             // A completed Story-mode draft is hidden: its generated_story
-            // passage restates the same beat as prose, so rendering both would
+            // narration restates the same beat as prose, so rendering both would
             // read it twice. Stranded drafts (a failed generation left them
             // last) stay visible so they can still be edited or erased.
-            if (passage.input_mode === "story" && passages[i + 1]?.input_mode === "generated_story") {
+            if (timelineInputMode(entry) === "story" && entries[i + 1] && timelineInputMode(entries[i + 1]) === "generated_story") {
               return null;
             }
-            const isLastPassage = i === passages.length - 1;
-            const pinHere = isStreamingReplace ? passage.id === streaming!.targetPassageId : isLastPassage && !isStreamingAppend;
+            const isLastEntry = i === entries.length - 1;
+            const pinHere = isStreamingReplace ? entry.id === streaming!.targetEntryId : isLastEntry && !isStreamingAppend;
             return (
-              <div key={passage.id} ref={pinHere ? pinRef : undefined}>
-                <PassageView
-                  passage={passage}
+              <div key={entry.id} ref={pinHere ? pinRef : undefined}>
+                <TimelineEntryView
+                  entry={entry}
                   branchId={branchId!}
-                  isLast={isLastPassage}
-                  images={imagesByPassage[passage.id]}
-                  variants={variantsByPassage[passage.id]}
-                  rollSummary={rollByPassage[passage.id]}
+                  isLast={isLastEntry}
+                  images={imagesByEntry[entry.id]}
+                  variants={variantsByEntry[entry.id]}
+                  rollSummary={rollByEntry[entry.id]}
                 />
               </div>
             );

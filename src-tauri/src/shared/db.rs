@@ -7,6 +7,8 @@ use crate::shared::error::{AppError, AppResult};
 pub type Pool = r2d2::Pool<SqliteConnectionManager>;
 pub type PooledConn = r2d2::PooledConnection<SqliteConnectionManager>;
 
+const SCHEMA_VERSION: i64 = 2;
+
 pub fn init_pool(app_data_dir: &Path) -> AppResult<Pool> {
     std::fs::create_dir_all(app_data_dir)?;
     let db_path = app_data_dir.join("dungeon.sqlite3");
@@ -16,22 +18,50 @@ pub fn init_pool(app_data_dir: &Path) -> AppResult<Pool> {
     });
     let pool = r2d2::Pool::new(manager).map_err(AppError::Pool)?;
     let conn = pool.get().map_err(AppError::Pool)?;
-    run_migrations(&conn)?;
+    run_migrations(&conn, app_data_dir)?;
     seed_attribute_registry(&conn)?;
     Ok(pool)
 }
 
-fn run_migrations(conn: &PooledConn) -> AppResult<()> {
-    // One-time cleanup: these were briefly named "meter_*" before the app's
-    // terminology settled on "attribute", and were never populated. Safe
-    // no-ops on every run after the first (DROP TABLE IF EXISTS).
-    conn.execute_batch(
-        r#"
-        DROP TABLE IF EXISTS meter_events;
-        DROP TABLE IF EXISTS entity_meters;
-        DROP TABLE IF EXISTS meter_registry;
-        "#,
+fn run_migrations(conn: &PooledConn, app_data_dir: &Path) -> AppResult<()> {
+    let version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+    let has_legacy: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'passages')",
+        [],
+        |row| row.get(0),
     )?;
+
+    if version < SCHEMA_VERSION && has_legacy {
+        // Timeline v2 intentionally resets story data. Global model settings
+        // and Tauri's secure store (API keys) are kept.
+        conn.execute_batch(
+            r#"
+            PRAGMA foreign_keys = OFF;
+            BEGIN IMMEDIATE;
+            DROP TABLE IF EXISTS card_activations;
+            DROP TABLE IF EXISTS story_cards;
+            DROP TABLE IF EXISTS rolls;
+            DROP TABLE IF EXISTS attribute_events;
+            DROP TABLE IF EXISTS entity_attributes;
+            DROP TABLE IF EXISTS attribute_registry;
+            DROP TABLE IF EXISTS images;
+            DROP TABLE IF EXISTS passage_variants;
+            DROP TABLE IF EXISTS passages;
+            DROP TABLE IF EXISTS entities;
+            DROP TABLE IF EXISTS branches;
+            DROP TABLE IF EXISTS stories;
+            DROP TABLE IF EXISTS meter_events;
+            DROP TABLE IF EXISTS entity_meters;
+            DROP TABLE IF EXISTS meter_registry;
+            COMMIT;
+            PRAGMA foreign_keys = ON;
+            "#,
+        )?;
+        let images_dir = app_data_dir.join("images");
+        if images_dir.is_dir() {
+            std::fs::remove_dir_all(images_dir)?;
+        }
+    }
 
     conn.execute_batch(
         r#"
@@ -48,51 +78,45 @@ fn run_migrations(conn: &PooledConn) -> AppResult<()> {
             id TEXT PRIMARY KEY,
             story_id TEXT NOT NULL REFERENCES stories(id) ON DELETE CASCADE,
             parent_branch_id TEXT REFERENCES branches(id) ON DELETE SET NULL,
-            forked_at_passage_id TEXT,
+            forked_at_entry_id TEXT,
             name TEXT NOT NULL,
             created_at TEXT NOT NULL
         );
 
-        CREATE TABLE IF NOT EXISTS passages (
+        CREATE TABLE IF NOT EXISTS timeline_entries (
             id TEXT PRIMARY KEY,
             branch_id TEXT NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
             seq INTEGER NOT NULL,
-            role TEXT NOT NULL,
-            input_mode TEXT NOT NULL,
-            content TEXT NOT NULL,
-            thoughts TEXT,
+            kind TEXT NOT NULL,
+            visibility TEXT NOT NULL CHECK (visibility IN ('visible', 'hidden')),
+            content TEXT,
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            target_entry_id TEXT REFERENCES timeline_entries(id) ON DELETE CASCADE,
             created_at TEXT NOT NULL,
-            edited_at TEXT
+            UNIQUE(branch_id, seq)
         );
-        CREATE INDEX IF NOT EXISTS idx_passages_branch_seq ON passages(branch_id, seq);
-
-        CREATE TABLE IF NOT EXISTS passage_variants (
-            id TEXT PRIMARY KEY,
-            passage_id TEXT NOT NULL REFERENCES passages(id) ON DELETE CASCADE,
-            content TEXT NOT NULL,
-            is_selected INTEGER NOT NULL DEFAULT 0,
-            created_at TEXT NOT NULL
-        );
-
-        CREATE TABLE IF NOT EXISTS images (
-            id TEXT PRIMARY KEY,
-            passage_id TEXT NOT NULL REFERENCES passages(id) ON DELETE CASCADE,
-            path TEXT NOT NULL,
-            prompt TEXT NOT NULL,
-            seed INTEGER,
-            provider TEXT NOT NULL,
-            created_at TEXT NOT NULL
-        );
+        CREATE INDEX IF NOT EXISTS idx_timeline_branch_seq ON timeline_entries(branch_id, seq);
+        CREATE INDEX IF NOT EXISTS idx_timeline_target ON timeline_entries(target_entry_id);
+        CREATE INDEX IF NOT EXISTS idx_timeline_kind ON timeline_entries(branch_id, kind, seq);
 
         CREATE TABLE IF NOT EXISTS entities (
             id TEXT PRIMARY KEY,
             story_id TEXT NOT NULL REFERENCES stories(id) ON DELETE CASCADE,
             kind TEXT NOT NULL,
-            name TEXT NOT NULL,
-            card_json TEXT NOT NULL DEFAULT '{}',
-            appearance_anchor TEXT,
             created_at TEXT NOT NULL
         );
+
+        CREATE TABLE IF NOT EXISTS branch_entity_state (
+            branch_id TEXT NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
+            entity_id TEXT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+            name TEXT NOT NULL,
+            appearance_anchor TEXT,
+            is_present INTEGER NOT NULL DEFAULT 1,
+            updated_at TEXT NOT NULL,
+            last_event_id TEXT REFERENCES timeline_entries(id) ON DELETE SET NULL,
+            PRIMARY KEY (branch_id, entity_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_branch_entities_name ON branch_entity_state(branch_id, name);
 
         CREATE TABLE IF NOT EXISTS attribute_registry (
             id TEXT PRIMARY KEY,
@@ -108,102 +132,38 @@ fn run_migrations(conn: &PooledConn) -> AppResult<()> {
         );
 
         CREATE TABLE IF NOT EXISTS entity_attributes (
+            branch_id TEXT NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
             entity_id TEXT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
             attribute_id TEXT NOT NULL REFERENCES attribute_registry(id) ON DELETE CASCADE,
             value REAL NOT NULL,
+            source TEXT NOT NULL,
             updated_at TEXT NOT NULL,
-            PRIMARY KEY (entity_id, attribute_id)
+            last_event_id TEXT REFERENCES timeline_entries(id) ON DELETE SET NULL,
+            PRIMARY KEY (branch_id, entity_id, attribute_id)
         );
 
-        CREATE TABLE IF NOT EXISTS attribute_events (
+        CREATE TABLE IF NOT EXISTS image_assets (
             id TEXT PRIMARY KEY,
-            entity_id TEXT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
-            attribute_id TEXT NOT NULL REFERENCES attribute_registry(id) ON DELETE CASCADE,
-            before REAL NOT NULL,
-            after REAL NOT NULL,
-            delta REAL NOT NULL,
-            cause TEXT NOT NULL,
-            passage_id TEXT REFERENCES passages(id) ON DELETE SET NULL,
+            entry_id TEXT NOT NULL REFERENCES timeline_entries(id) ON DELETE CASCADE,
+            path TEXT NOT NULL,
+            prompt TEXT NOT NULL,
+            seed INTEGER,
+            provider TEXT NOT NULL,
             created_at TEXT NOT NULL
         );
-        CREATE INDEX IF NOT EXISTS idx_attribute_events_entity ON attribute_events(entity_id, attribute_id);
-
-        CREATE TABLE IF NOT EXISTS rolls (
-            id TEXT PRIMARY KEY,
-            passage_id TEXT NOT NULL REFERENCES passages(id) ON DELETE CASCADE,
-            actor_entity_id TEXT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
-            target_entity_id TEXT REFERENCES entities(id) ON DELETE SET NULL,
-            actor_attribute_id TEXT REFERENCES attribute_registry(id) ON DELETE SET NULL,
-            target_attribute_id TEXT REFERENCES attribute_registry(id) ON DELETE SET NULL,
-            actor_value REAL,
-            target_value REAL,
-            p_success REAL NOT NULL,
-            seed INTEGER NOT NULL,
-            roll INTEGER NOT NULL,
-            outcome TEXT NOT NULL,
-            degree TEXT NOT NULL,
-            modifiers_json TEXT NOT NULL DEFAULT '{}',
-            created_at TEXT NOT NULL
-        );
-
-        CREATE TABLE IF NOT EXISTS story_cards (
-            id TEXT PRIMARY KEY,
-            story_id TEXT NOT NULL REFERENCES stories(id) ON DELETE CASCADE,
-            title TEXT NOT NULL,
-            keys_json TEXT NOT NULL DEFAULT '[]',
-            content TEXT NOT NULL,
-            priority INTEGER NOT NULL DEFAULT 0,
-            enabled INTEGER NOT NULL DEFAULT 1,
-            created_at TEXT NOT NULL
-        );
-
-        CREATE TABLE IF NOT EXISTS card_activations (
-            id TEXT PRIMARY KEY,
-            passage_id TEXT NOT NULL REFERENCES passages(id) ON DELETE CASCADE,
-            card_id TEXT NOT NULL REFERENCES story_cards(id) ON DELETE CASCADE,
-            trigger_key TEXT NOT NULL
-        );
+        CREATE INDEX IF NOT EXISTS idx_image_assets_entry ON image_assets(entry_id);
 
         CREATE TABLE IF NOT EXISTS settings (
             key TEXT PRIMARY KEY,
             value TEXT NOT NULL
         );
+
+        PRAGMA user_version = 2;
         "#,
     )?;
-
-    // Added after `rolls` already shipped: `CREATE TABLE IF NOT EXISTS` above
-    // won't retrofit an existing table, so an existing database needs an
-    // explicit ALTER TABLE. A brand-new database already gets these columns
-    // from the CREATE TABLE statement, so this is a no-op there.
-    add_column_if_missing(conn, "rolls", "actor_value", "REAL")?;
-    add_column_if_missing(conn, "rolls", "target_value", "REAL")?;
-
     Ok(())
 }
 
-fn add_column_if_missing(
-    conn: &PooledConn,
-    table: &str,
-    column: &str,
-    decl_type: &str,
-) -> AppResult<()> {
-    let mut stmt = conn.prepare(&format!("PRAGMA table_info({table})"))?;
-    let existing: Vec<String> = stmt
-        .query_map([], |row| row.get::<_, String>(1))?
-        .collect::<Result<Vec<_>, _>>()?;
-    if !existing.iter().any(|c| c == column) {
-        conn.execute(
-            &format!("ALTER TABLE {table} ADD COLUMN {column} {decl_type}"),
-            [],
-        )?;
-    }
-    Ok(())
-}
-
-/// Starter attribute vocabulary (spec §5.2: "~10 per entity kind"), seeded
-/// once so the classifier has a registry to match against from the first
-/// turn instead of minting everything as user-created. `INSERT OR IGNORE`
-/// against the `canonical_name` UNIQUE constraint makes this idempotent.
 fn seed_attribute_registry(conn: &PooledConn) -> AppResult<()> {
     let now = chrono::Utc::now().to_rfc3339();
     let starters: &[(&str, &[&str], f64, f64, &str)] = &[
@@ -235,14 +195,41 @@ fn seed_attribute_registry(conn: &PooledConn) -> AppResult<()> {
     ];
 
     for (name, kinds, min, max, category) in starters {
-        let id = Uuid::new_v4().to_string();
         let kinds_json = serde_json::to_string(kinds).unwrap_or_else(|_| "[]".to_string());
         conn.execute(
             "INSERT OR IGNORE INTO attribute_registry
              (id, canonical_name, aliases_json, entity_kinds_json, min, max, category, is_user_created, created_in_story_id, created_at)
              VALUES (?1, ?2, '[]', ?3, ?4, ?5, ?6, 0, NULL, ?7)",
-            rusqlite::params![id, name, kinds_json, min, max, category, now],
+            rusqlite::params![Uuid::new_v4().to_string(), name, kinds_json, min, max, category, now],
         )?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fresh_schema_contains_timeline_and_no_story_cards() {
+        let dir = std::env::temp_dir().join(format!("dungeon-schema-{}", Uuid::new_v4()));
+        let pool = init_pool(&dir).expect("initialize schema");
+        let conn = pool.get().unwrap();
+        let exists = |name: &str| -> bool {
+            conn.query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1)",
+                [name],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+        assert!(exists("timeline_entries"));
+        assert!(exists("branch_entity_state"));
+        assert!(exists("image_assets"));
+        assert!(!exists("story_cards"));
+        assert!(!exists("passages"));
+        drop(conn);
+        drop(pool);
+        let _ = std::fs::remove_dir_all(dir);
+    }
 }

@@ -30,16 +30,16 @@ export function Composer({ branchId }: { branchId: string | null }) {
   const continueScene = useStoryStore((s) => s.continueScene);
   const streaming = useStoryStore((s) => (branchId ? s.streamingByBranch[branchId] : undefined));
   const turnError = useStoryStore((s) => s.turnError);
-  const passages = useStoryStore((s) => (branchId ? s.passagesByBranch[branchId] : undefined));
-  const generateImageForPassage = useStoryStore((s) => s.generateImageForPassage);
+  const entries = useStoryStore((s) => (branchId ? s.entriesByBranch[branchId] : undefined));
+  const generateImageForEntry = useStoryStore((s) => s.generateImageForEntry);
   const imagePendingFor = useStoryStore((s) => s.imagePendingFor);
   const imageError = useStoryStore((s) => s.imageError);
   const imageSettings = useImageModelStore((s) => s.settings);
   const loadImageSettings = useImageModelStore((s) => s.load);
 
   const busy = submitting || !!streaming;
-  const lastPassage = passages && passages.length > 0 ? passages[passages.length - 1] : undefined;
-  const imageBusy = !!lastPassage && imagePendingFor.includes(lastPassage.id);
+  const lastEntry = entries && entries.length > 0 ? entries[entries.length - 1] : undefined;
+  const imageBusy = !!lastEntry && imagePendingFor.includes(lastEntry.id);
   const imagesDisabled = imageSettings ? !imageSettings.enabled : false;
 
   useEffect(() => {
@@ -67,10 +67,10 @@ export function Composer({ branchId }: { branchId: string | null }) {
     setError(null);
 
     if (mode === "see") {
-      if (!lastPassage || imageBusy || imagesDisabled) return;
+      if (!lastEntry || imageBusy || imagesDisabled) return;
       setSubmitting(true);
       try {
-        await generateImageForPassage(lastPassage.id, text.trim() || undefined);
+        await generateImageForEntry(lastEntry.id, text.trim() || undefined);
         setText("");
       } catch (e) {
         setError(String(e));
@@ -101,7 +101,7 @@ export function Composer({ branchId }: { branchId: string | null }) {
   };
 
   const onContinue = async () => {
-    if (busy || !branchId || !lastPassage) return;
+    if (busy || !branchId || !lastEntry) return;
     setSubmitting(true);
     setError(null);
     try {
@@ -123,7 +123,7 @@ export function Composer({ branchId }: { branchId: string | null }) {
   const activeMode = MODES.find((m) => m.id === mode)!;
   const displayedError = mode === "see" ? (error ?? imageError) : (error ?? turnError);
 
-  const submitDisabled = mode === "see" ? busy || !lastPassage || imageBusy || imagesDisabled : busy || !text.trim();
+  const submitDisabled = mode === "see" ? busy || !lastEntry || imageBusy || imagesDisabled : busy || !text.trim();
 
   const submitLabel = mode === "see" ? (imageBusy ? "Generating..." : "Generate") : busy ? "Writing..." : "Send";
 
@@ -131,7 +131,7 @@ export function Composer({ branchId }: { branchId: string | null }) {
     mode === "see"
       ? imagesDisabled
         ? "Image generation is disabled in the Image Model panel."
-        : !lastPassage
+        : !lastEntry
           ? "Write a passage first, then generate an image."
           : (displayedError ?? "Enter to generate · Shift + Enter for a new line")
       : (displayedError ?? "Enter to send · Shift + Enter for a new line");
@@ -155,7 +155,7 @@ export function Composer({ branchId }: { branchId: string | null }) {
           </div>
           <button
             onClick={onContinue}
-            disabled={busy || !lastPassage}
+            disabled={busy || !lastEntry}
             title="Advance the scene with no player input"
             className="rounded border border-border bg-bg px-3 py-1 text-xs font-medium text-muted transition-colors hover:text-text disabled:opacity-40"
           >

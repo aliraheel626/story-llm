@@ -8,7 +8,10 @@ use tauri::{AppHandle, Emitter, State};
 use uuid::Uuid;
 
 use crate::ai;
-use crate::features::settings;
+use crate::features::{
+    settings,
+    timeline::{model::kind as timeline_kind, repository as timeline_repository},
+};
 use crate::shared::db::Pool;
 use crate::shared::error::{AppError, AppResult};
 use model::Story;
@@ -82,7 +85,7 @@ pub fn create_story(
         rusqlite::params![story_id, title, now, settings_json],
     )?;
     tx.execute(
-        "INSERT INTO branches (id, story_id, parent_branch_id, forked_at_passage_id, name, created_at)
+        "INSERT INTO branches (id, story_id, parent_branch_id, forked_at_entry_id, name, created_at)
          VALUES (?1, ?2, NULL, NULL, 'main', ?3)",
         rusqlite::params![branch_id, story_id, now],
     )?;
@@ -131,9 +134,9 @@ pub fn delete_story(pool: State<Pool>, story_id: String) -> AppResult<()> {
     let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
     let paths: Vec<String> = {
         let mut stmt = tx.prepare(
-            "SELECT images.path FROM images
-             JOIN passages ON passages.id = images.passage_id
-             JOIN branches ON branches.id = passages.branch_id
+            "SELECT image_assets.path FROM image_assets
+             JOIN timeline_entries ON timeline_entries.id = image_assets.entry_id
+             JOIN branches ON branches.id = timeline_entries.branch_id
              WHERE branches.story_id = ?1",
         )?;
         let paths = stmt
@@ -173,7 +176,7 @@ a short, evocative title of 2 to 5 words that fits its tone and language. Respon
 structured output only.";
 
 /// Characters of opening text folded into the title prompt — enough for the
-/// model to name the story, capped so a long first passage doesn't balloon
+/// model to name the story, capped so a long opening entry doesn't balloon
 /// the request.
 const TITLE_INPUT_LIMIT: usize = 2_000;
 /// Hard cap on the persisted title, so a runaway model can't produce an
@@ -181,10 +184,10 @@ const TITLE_INPUT_LIMIT: usize = 2_000;
 const TITLE_MAX_CHARS: usize = 60;
 
 /// Auto-title (the ChatGPT/Gemini pattern): once a story has its first
-/// passage, name it with the text model and emit `story-title-updated`. Only
+/// exchange, name it with the text model and emit `story-title-updated`. Only
 /// runs while the story still carries the placeholder title, so a user rename
 /// before or during generation always wins. Best-effort throughout — a
-/// failure leaves the placeholder in place and the next passage retries.
+/// failure leaves the placeholder in place and the next exchange retries.
 pub fn maybe_auto_title(app: &AppHandle, pool: &Pool, story_id: &str) {
     let Ok(conn) = pool.get() else { return };
     let Ok((title, branch_id)) = conn.query_row(
@@ -199,11 +202,11 @@ pub fn maybe_auto_title(app: &AppHandle, pool: &Pool, story_id: &str) {
     }
     let Some(branch_id) = branch_id else { return };
 
-    // The opening exchange: whatever the earliest one or two passages are
-    // (player turn + narration, a Story-mode passage, or a continued scene).
+    // The opening exchange: the earliest one or two visible timeline entries.
     let opening = {
         let Ok(mut stmt) = conn.prepare(
-            "SELECT role, content FROM passages WHERE branch_id = ?1 ORDER BY seq ASC LIMIT 2",
+            "SELECT kind, content FROM timeline_entries
+             WHERE branch_id = ?1 AND kind IN ('player_message', 'narration') ORDER BY seq ASC LIMIT 2",
         ) else {
             return;
         };
@@ -224,7 +227,7 @@ pub fn maybe_auto_title(app: &AppHandle, pool: &Pool, story_id: &str) {
 
     let Ok(config) = settings::resolve_text_model(app, pool) else {
         // No text model configured yet (or no API key): keep the placeholder;
-        // a later passage retries once the model is set up.
+        // a later exchange retries once the model is set up.
         return;
     };
 
@@ -233,7 +236,7 @@ pub fn maybe_auto_title(app: &AppHandle, pool: &Pool, story_id: &str) {
         .map(|(role, content)| {
             format!(
                 "{}: {}",
-                if role == "player" {
+                if role == timeline_kind::PLAYER_MESSAGE {
                     "Player"
                 } else {
                     "Narrator"
@@ -303,15 +306,31 @@ pub fn get_author_note(pool: State<Pool>, story_id: String) -> AppResult<String>
 }
 
 #[tauri::command]
-pub fn save_author_note(pool: State<Pool>, story_id: String, note: String) -> AppResult<()> {
+pub fn save_author_note(
+    pool: State<Pool>,
+    story_id: String,
+    branch_id: String,
+    note: String,
+) -> AppResult<()> {
     let mut settings = read_settings_json(&pool, &story_id)?;
     settings["author_note"] = json!(note.trim());
-    let conn = pool.get()?;
+    let mut conn = pool.get()?;
     let now = Utc::now().to_rfc3339();
-    conn.execute(
+    let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+    tx.execute(
         "UPDATE stories SET settings_json = ?1, updated_at = ?2 WHERE id = ?3",
         rusqlite::params![settings.to_string(), now, story_id],
     )?;
+    timeline_repository::append_entry(
+        &tx,
+        &branch_id,
+        timeline_kind::CONTEXT_NOTE_UPDATED,
+        "hidden",
+        Some(&format!("Author's note was updated: {}", note.trim())),
+        &json!({"author_note": note.trim()}),
+        None,
+    )?;
+    tx.commit()?;
     Ok(())
 }
 

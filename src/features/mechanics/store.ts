@@ -14,7 +14,7 @@ interface MechanicsState {
   loading: boolean;
 
   loadSettings: (storyId: string) => Promise<void>;
-  saveSettings: (storyId: string | null, diceMode: DiceMode, attributesEnabled: boolean) => Promise<void>;
+  saveSettings: (storyId: string | null, branchId: string | null, diceMode: DiceMode, attributesEnabled: boolean) => Promise<void>;
   resetDraftSettings: () => void;
   promoteDraftSettings: (storyId: string) => void;
 }
@@ -35,12 +35,12 @@ export const useMechanicsStore = create<MechanicsState>((set, get) => ({
     }
   },
 
-  saveSettings: async (storyId: string | null, diceMode: DiceMode, attributesEnabled: boolean) => {
-    if (!storyId) {
+  saveSettings: async (storyId: string | null, branchId: string | null, diceMode: DiceMode, attributesEnabled: boolean) => {
+    if (!storyId || !branchId) {
       set({ draftSettings: { dice_mode: diceMode, attributes_enabled: attributesEnabled } });
       return;
     }
-    await mechanicsApi.saveSettings(storyId, diceMode, attributesEnabled);
+    await mechanicsApi.saveSettings(storyId, branchId, diceMode, attributesEnabled);
     set((s) => ({ settingsByStory: { ...s.settingsByStory, [storyId]: { dice_mode: diceMode, attributes_enabled: attributesEnabled } } }));
   },
 

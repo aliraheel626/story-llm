@@ -9,6 +9,7 @@ use rig_core::providers::openrouter;
 use rusqlite::OptionalExtension;
 use uuid::Uuid;
 
+use crate::features::timeline::{model::kind as timeline_kind, repository::append_entry};
 use crate::shared::db::{Pool, PooledConn};
 use crate::shared::error::{AppError, AppResult};
 
@@ -194,13 +195,15 @@ pub async fn resolve_or_create_attribute(
 /// shouldn't start maxed or bottomed on a stat nobody's set).
 pub fn get_or_init_entity_attribute(
     conn: &PooledConn,
+    branch_id: &str,
     entity_id: &str,
     attribute: &AttributeRegistryEntry,
+    source_entry_id: &str,
 ) -> AppResult<f64> {
     let existing: Option<f64> = conn
         .query_row(
-            "SELECT value FROM entity_attributes WHERE entity_id = ?1 AND attribute_id = ?2",
-            rusqlite::params![entity_id, attribute.id],
+            "SELECT value FROM entity_attributes WHERE branch_id = ?1 AND entity_id = ?2 AND attribute_id = ?3",
+            rusqlite::params![branch_id, entity_id, attribute.id],
             |r| r.get(0),
         )
         .optional()?;
@@ -209,9 +212,23 @@ pub fn get_or_init_entity_attribute(
     }
     let midpoint = (attribute.min + attribute.max) / 2.0;
     let now = Utc::now().to_rfc3339();
+    let event = append_entry(
+        conn,
+        branch_id,
+        timeline_kind::ENTITY_ATTRIBUTE_CHANGED,
+        "hidden",
+        Some(&format!(
+            "{} was initialized to {}.",
+            attribute.canonical_name, midpoint
+        )),
+        &serde_json::json!({"entity_id": entity_id, "attribute_id": attribute.id, "attribute_name": attribute.canonical_name,
+            "before": null, "after": midpoint, "source": "default"}),
+        Some(source_entry_id),
+    )?;
     conn.execute(
-        "INSERT INTO entity_attributes (entity_id, attribute_id, value, updated_at) VALUES (?1, ?2, ?3, ?4)",
-        rusqlite::params![entity_id, attribute.id, midpoint, now],
+        "INSERT INTO entity_attributes (branch_id, entity_id, attribute_id, value, source, updated_at, last_event_id)
+         VALUES (?1, ?2, ?3, ?4, 'default', ?5, ?6)",
+        rusqlite::params![branch_id, entity_id, attribute.id, midpoint, now, event.id],
     )?;
     Ok(midpoint)
 }
@@ -222,17 +239,19 @@ pub fn get_or_init_entity_attribute(
 const NON_DRAMATIC_MAX_FRACTION: f64 = 0.3;
 
 /// Applies a proposed delta with clamping and rate-limiting, and logs an
-/// append-only `attribute_events` row. Returns `(before, after)`.
+/// append-only timeline event. Returns `(before, after)`.
+#[allow(clippy::too_many_arguments)]
 pub fn apply_attribute_delta(
     conn: &PooledConn,
+    branch_id: &str,
     entity_id: &str,
     attribute: &AttributeRegistryEntry,
     delta: f64,
     cause: &str,
-    passage_id: &str,
+    entry_id: &str,
     dramatic: bool,
 ) -> AppResult<(f64, f64)> {
-    let before = get_or_init_entity_attribute(conn, entity_id, attribute)?;
+    let before = get_or_init_entity_attribute(conn, branch_id, entity_id, attribute, entry_id)?;
     let range = attribute.max - attribute.min;
     let max_step = if dramatic {
         range
@@ -243,14 +262,23 @@ pub fn apply_attribute_delta(
     let after = (before + clamped_delta).clamp(attribute.min, attribute.max);
 
     let now = Utc::now().to_rfc3339();
-    conn.execute(
-        "UPDATE entity_attributes SET value = ?1, updated_at = ?2 WHERE entity_id = ?3 AND attribute_id = ?4",
-        rusqlite::params![after, now, entity_id, attribute.id],
+    let event = append_entry(
+        conn,
+        branch_id,
+        timeline_kind::ENTITY_ATTRIBUTE_CHANGED,
+        "hidden",
+        Some(&format!(
+            "{} changed from {} to {}: {cause}",
+            attribute.canonical_name, before, after
+        )),
+        &serde_json::json!({"entity_id": entity_id, "attribute_id": attribute.id, "attribute_name": attribute.canonical_name,
+            "before": before, "after": after, "delta": after - before, "cause": cause, "source": "inferred"}),
+        Some(entry_id),
     )?;
     conn.execute(
-        "INSERT INTO attribute_events (id, entity_id, attribute_id, before, after, delta, cause, passage_id, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-        rusqlite::params![Uuid::new_v4().to_string(), entity_id, attribute.id, before, after, after - before, cause, passage_id, now],
+        "UPDATE entity_attributes SET value = ?1, source = 'inferred', updated_at = ?2, last_event_id = ?3
+         WHERE branch_id = ?4 AND entity_id = ?5 AND attribute_id = ?6",
+        rusqlite::params![after, now, event.id, branch_id, entity_id, attribute.id],
     )?;
     Ok((before, after))
 }

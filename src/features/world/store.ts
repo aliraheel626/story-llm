@@ -6,7 +6,7 @@ interface AuthorNoteState {
   loading: boolean;
   saving: boolean;
   load: (storyId: string) => Promise<void>;
-  save: (storyId: string, note: string) => Promise<void>;
+  save: (storyId: string, branchId: string, note: string) => Promise<void>;
 }
 
 export const useAuthorNoteStore = create<AuthorNoteState>((set) => ({
@@ -23,10 +23,10 @@ export const useAuthorNoteStore = create<AuthorNoteState>((set) => ({
       set({ loading: false });
     }
   },
-  save: async (storyId: string, note: string) => {
+  save: async (storyId: string, branchId: string, note: string) => {
     set({ saving: true });
     try {
-      await worldApi.saveAuthorNote(storyId, note);
+      await worldApi.saveAuthorNote(storyId, branchId, note);
       set((s) => ({ noteByStory: { ...s.noteByStory, [storyId]: note.trim() }, saving: false }));
     } catch (e) {
       set({ saving: false });

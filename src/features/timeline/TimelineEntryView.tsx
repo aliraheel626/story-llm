@@ -1,43 +1,44 @@
 import { useEffect, useRef, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import type { Passage, PassageVariant, RollDetail, StoryImage } from "../../shared/types";
+import { isPlayerEntry, timelineInputMode, type NarrationVariant, type RollDetail, type StoryImage, type TimelineEntry } from "../../shared/types";
 import { useStoryStore } from "./store";
 import { RollDisclosure } from "./RollDisclosure";
 
-interface PassageViewProps {
-  passage: Passage;
+interface TimelineEntryViewProps {
+  entry: TimelineEntry;
   branchId: string;
   isLast: boolean;
   images?: StoryImage[];
-  variants?: PassageVariant[];
+  variants?: NarrationVariant[];
   rollSummary?: RollDetail;
 }
 
-export function PassageView({ passage, branchId, isLast, images, variants, rollSummary }: PassageViewProps) {
+export function TimelineEntryView({ entry, branchId, isLast, images, variants, rollSummary }: TimelineEntryViewProps) {
   const streaming = useStoryStore((s) => s.streamingByBranch[branchId]);
-  const retryPassage = useStoryStore((s) => s.retryPassage);
+  const retryNarration = useStoryStore((s) => s.retryNarration);
   const eraseLastExchange = useStoryStore((s) => s.eraseLastExchange);
-  const swipePassage = useStoryStore((s) => s.swipePassage);
-  const editPassage = useStoryStore((s) => s.editPassage);
-  const switchVariant = useStoryStore((s) => s.switchVariant);
-  const loadVariantsForPassage = useStoryStore((s) => s.loadVariantsForPassage);
-  const imagePending = useStoryStore((s) => s.imagePendingFor.includes(passage.id));
+  const generateVariant = useStoryStore((s) => s.generateVariant);
+  const editEntry = useStoryStore((s) => s.editEntry);
+  const selectVariant = useStoryStore((s) => s.selectVariant);
+  const loadVariantsForEntry = useStoryStore((s) => s.loadVariantsForEntry);
+  const imagePending = useStoryStore((s) => s.imagePendingFor.includes(entry.id));
 
   const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(passage.content);
+  const [draft, setDraft] = useState(entry.content ?? "");
   const [actionBusy, setActionBusy] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  const isNarrator = passage.role === "narrator";
-  const isBeingReplaced = streaming?.mode === "replace" && streaming.targetPassageId === passage.id;
+  const isNarrator = entry.kind === "narration";
+  const inputMode = timelineInputMode(entry);
+  const isBeingReplaced = streaming?.mode === "replace" && streaming.targetEntryId === entry.id;
   const anyStreamBusy = !!streaming;
 
   useEffect(() => {
     if (isLast && isNarrator && !variants) {
-      loadVariantsForPassage(passage.id);
+      loadVariantsForEntry(entry.id);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isLast, isNarrator, passage.id]);
+  }, [isLast, isNarrator, entry.id]);
 
   useEffect(() => {
     if (editing) {
@@ -48,7 +49,7 @@ export function PassageView({ passage, branchId, isLast, images, variants, rollS
   }, [editing]);
 
   const startEdit = () => {
-    setDraft(passage.content);
+    setDraft(entry.content ?? "");
     setEditing(true);
   };
 
@@ -57,7 +58,7 @@ export function PassageView({ passage, branchId, isLast, images, variants, rollS
     if (!trimmed) return;
     setActionBusy(true);
     try {
-      await editPassage(branchId, passage.id, trimmed);
+      await editEntry(branchId, entry.id, trimmed);
       setEditing(false);
     } catch (e) {
       console.error("failed to save edit", e);
@@ -85,14 +86,14 @@ export function PassageView({ passage, branchId, isLast, images, variants, rollS
 
   const onPrevVariant = () => {
     if (!variants || selectedIndex <= 0) return;
-    runAction(() => switchVariant(branchId, passage.id, variants[selectedIndex - 1].id));
+    runAction(() => selectVariant(branchId, entry.id, variants[selectedIndex - 1].id));
   };
   const onNextVariant = () => {
     if (!variants || selectedIndex === -1 || selectedIndex >= variants.length - 1) return;
-    runAction(() => switchVariant(branchId, passage.id, variants[selectedIndex + 1].id));
+    runAction(() => selectVariant(branchId, entry.id, variants[selectedIndex + 1].id));
   };
 
-  const displayContent = isBeingReplaced ? streaming!.text : passage.content;
+  const displayContent = isBeingReplaced ? streaming!.text : (entry.content ?? "");
 
   const editControls = !editing && !anyStreamBusy && (
     <button
@@ -103,8 +104,8 @@ export function PassageView({ passage, branchId, isLast, images, variants, rollS
     </button>
   );
 
-  if (passage.role === "player") {
-    const isSay = passage.input_mode === "say";
+  if (isPlayerEntry(entry)) {
+    const isSay = inputMode === "say";
     return (
       <div className="group relative">
         {editing ? (
@@ -119,7 +120,7 @@ export function PassageView({ passage, branchId, isLast, images, variants, rollS
           />
         ) : (
           <p className="border-l-2 border-accent pl-4 font-prose text-base italic leading-8 text-muted">
-            {isSay ? `"${passage.content}"` : passage.content}
+            {isSay ? `"${entry.content ?? ""}"` : entry.content}
           </p>
         )}
         <div className="mt-1 flex justify-end">{editControls}</div>
@@ -129,7 +130,7 @@ export function PassageView({ passage, branchId, isLast, images, variants, rollS
 
   // A Story-mode draft is player input, not story prose: the model turns it
   // into the following passage, so it reads like a note rather than narration.
-  if (passage.input_mode === "story") {
+  if (inputMode === "story") {
     return (
       <div className="group relative">
         {editing ? (
@@ -145,7 +146,7 @@ export function PassageView({ passage, branchId, isLast, images, variants, rollS
         ) : (
           <p className="border-l-2 border-dashed border-border pl-4 font-prose text-sm italic leading-7 text-muted">
             <span className="select-none pr-2 text-[10px] uppercase tracking-wider">draft</span>
-            {passage.content}
+            {entry.content}
           </p>
         )}
         <div className="mt-1 flex justify-end gap-1.5">
@@ -177,7 +178,7 @@ export function PassageView({ passage, branchId, isLast, images, variants, rollS
         </p>
       )}
 
-      {rollSummary && <RollDisclosure passageId={passage.id} summary={rollSummary} />}
+      {rollSummary && <RollDisclosure entryId={entry.id} summary={rollSummary} />}
 
       {images?.map((image) => (
         <div key={image.id} className="flex flex-col gap-1">
@@ -220,14 +221,14 @@ export function PassageView({ passage, branchId, isLast, images, variants, rollS
             {isLast && !anyStreamBusy && (
               <>
                 <button
-                  onClick={() => runAction(() => swipePassage(branchId, passage.id))}
+                  onClick={() => runAction(() => generateVariant(branchId, entry.id))}
                   disabled={actionBusy}
                   className="rounded border border-border bg-bg px-2 py-0.5 text-[11px] text-muted hover:text-text disabled:opacity-40"
                 >
                   Swipe
                 </button>
                 <button
-                  onClick={() => runAction(() => retryPassage(branchId, passage.id))}
+                  onClick={() => runAction(() => retryNarration(branchId, entry.id))}
                   disabled={actionBusy}
                   className="rounded border border-border bg-bg px-2 py-0.5 text-[11px] text-muted hover:text-text disabled:opacity-40"
                 >
