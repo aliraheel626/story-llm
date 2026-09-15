@@ -263,28 +263,9 @@ pub async fn run_classify_and_resolve(
         });
     };
 
-    let actor_attribute = resolve_or_create_attribute(
-        pool,
-        &config.api_key,
-        &actor_attribute_name,
-        "character",
-        story_id,
-    )
-    .await?;
-    let actor_value = {
-        let conn = pool.get()?;
-        get_or_init_entity_attribute(
-            &conn,
-            branch_id,
-            &player.id,
-            &actor_attribute,
-            source_entry_id,
-        )?
-    };
-
-    // Auto-create the target if the classifier named someone not yet in the
-    // registry — the world builds itself from what the story actually
-    // mentions rather than requiring every character be added by hand first.
+    // Auto-create the target first (sync, cheap) so its attribute lookup —
+    // an independent OpenRouter embedding call — can be resolved concurrently
+    // with the actor's below instead of paying both round trips in sequence.
     let target_entity = match classify
         .target_name
         .as_deref()
@@ -300,39 +281,77 @@ pub async fn run_classify_and_resolve(
         )?),
         None => None,
     };
+    let target_attr_name = target_entity
+        .as_ref()
+        .and(classify.target_attribute.as_ref());
 
-    let (target_value, target_attribute, target_entity_id) =
-        if let (Some(target), Some(target_attr_name)) =
-            (target_entity.as_ref(), classify.target_attribute.as_ref())
-        {
-            let target_attribute = resolve_or_create_attribute(
+    let (actor_attribute, target_attribute) = if let Some(target_attr_name) = target_attr_name {
+        let (actor, target) = tokio::try_join!(
+            resolve_or_create_attribute(
+                pool,
+                &config.api_key,
+                &actor_attribute_name,
+                "character",
+                story_id
+            ),
+            resolve_or_create_attribute(
                 pool,
                 &config.api_key,
                 target_attr_name,
                 "character",
-                story_id,
-            )
-            .await?;
-            let value = {
-                let conn = pool.get()?;
-                get_or_init_entity_attribute(
-                    &conn,
-                    branch_id,
-                    &target.id,
-                    &target_attribute,
-                    source_entry_id,
-                )?
-            };
-            (value, Some(target_attribute), Some(target.id.clone()))
-        } else {
-            // No identifiable opposing entity/attribute — resolve against a
-            // neutral midpoint so a roll can still happen (e.g. picking a lock).
-            (
-                actor_attribute.min.midpoint(actor_attribute.max),
-                None,
-                None,
-            )
+                story_id
+            ),
+        )?;
+        (actor, Some(target))
+    } else {
+        let actor = resolve_or_create_attribute(
+            pool,
+            &config.api_key,
+            &actor_attribute_name,
+            "character",
+            story_id,
+        )
+        .await?;
+        (actor, None)
+    };
+
+    let actor_value = {
+        let conn = pool.get()?;
+        get_or_init_entity_attribute(
+            &conn,
+            branch_id,
+            &player.id,
+            &actor_attribute,
+            source_entry_id,
+        )?
+    };
+
+    let (target_value, target_attribute, target_entity_id) = if let (
+        Some(target),
+        Some(target_attribute),
+    ) =
+        (target_entity.as_ref(), target_attribute)
+    {
+        let value = {
+            let conn = pool.get()?;
+            get_or_init_entity_attribute(
+                &conn,
+                branch_id,
+                &target.id,
+                &target_attribute,
+                source_entry_id,
+            )?
         };
+        (value, Some(target_attribute), Some(target.id.clone()))
+    } else {
+        // No identifiable opposing entity/attribute — resolve against a
+        // neutral midpoint so a roll can still happen (e.g. picking a lock).
+        (
+            actor_attribute.min.midpoint(actor_attribute.max),
+            None,
+            None,
+        )
+    };
 
     let output = resolve(ResolveInput {
         actor_value,

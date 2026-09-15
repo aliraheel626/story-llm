@@ -86,8 +86,12 @@ export function StoryView() {
             // A completed Story-mode draft is hidden: its generated_story
             // narration restates the same beat as prose, so rendering both would
             // read it twice. Stranded drafts (a failed generation left them
-            // last) stay visible so they can still be edited or erased.
-            if (timelineInputMode(entry) === "story" && entries[i + 1] && timelineInputMode(entries[i + 1]) === "generated_story") {
+            // last) stay visible so they can still be edited or erased. Checked
+            // against any later entry, not just the next one, to match the
+            // backend's own history-folding rule (narration/history.rs) — an
+            // intervening hidden event must not make a completed draft look
+            // stranded here while the model already treats it as superseded.
+            if (timelineInputMode(entry) === "story" && entries.slice(i + 1).some((e) => timelineInputMode(e) === "generated_story")) {
               return null;
             }
             const isLastEntry = i === entries.length - 1;

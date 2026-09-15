@@ -112,6 +112,10 @@ pub async fn save_text_model_settings(
     Ok(())
 }
 
+/// Best-effort, fetched once at save time and persisted — not a live cache.
+/// A failed fetch (or a model id that doesn't exactly match OpenRouter's
+/// listing) is stored as the same 32,768 fallback as a real value, so
+/// re-saving the model is the only way to pick up a corrected number.
 async fn fetch_openrouter_context_window(model: &str) -> AppResult<usize> {
     let response: serde_json::Value = reqwest::Client::new()
         .get("https://openrouter.ai/api/v1/models")

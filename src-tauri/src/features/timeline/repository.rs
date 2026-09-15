@@ -107,6 +107,7 @@ fn local_entries(
     conn: &rusqlite::Connection,
     branch_id: &str,
     through_entry_id: Option<&str>,
+    since_seq: Option<i64>,
 ) -> AppResult<Vec<TimelineEntry>> {
     let through_seq = through_entry_id
         .map(|id| {
@@ -120,9 +121,12 @@ fn local_entries(
         .unwrap_or(i64::MAX);
     let mut stmt = conn.prepare(
         "SELECT id, branch_id, seq, kind, visibility, content, payload_json, target_entry_id, created_at
-         FROM timeline_entries WHERE branch_id = ?1 AND seq <= ?2 ORDER BY seq ASC",
+         FROM timeline_entries WHERE branch_id = ?1 AND seq <= ?2 AND seq >= ?3 ORDER BY seq ASC",
     )?;
-    let rows = stmt.query_map(rusqlite::params![branch_id, through_seq], row_to_entry)?;
+    let rows = stmt.query_map(
+        rusqlite::params![branch_id, through_seq, since_seq.unwrap_or(i64::MIN)],
+        row_to_entry,
+    )?;
     Ok(rows.collect::<Result<Vec<_>, _>>()?)
 }
 
@@ -130,6 +134,7 @@ fn logical_entries_inner(
     conn: &rusqlite::Connection,
     branch_id: &str,
     through_entry_id: Option<&str>,
+    since_seq: Option<i64>,
     visited: &mut HashSet<String>,
 ) -> AppResult<Vec<TimelineEntry>> {
     if !visited.insert(branch_id.to_string()) {
@@ -142,12 +147,16 @@ fn logical_entries_inner(
             |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .optional()?;
+    // `since_seq` only ever bounds the branch this call started on — an
+    // ancestor branch's own sequence numbering is independent, and its
+    // entries all precede the fork point anyway, so they're always walked
+    // in full.
     let mut out = if let Some((parent_id, fork_id)) = parent {
-        logical_entries_inner(conn, &parent_id, fork_id.as_deref(), visited)?
+        logical_entries_inner(conn, &parent_id, fork_id.as_deref(), None, visited)?
     } else {
         Vec::new()
     };
-    out.extend(local_entries(conn, branch_id, through_entry_id)?);
+    out.extend(local_entries(conn, branch_id, through_entry_id, since_seq)?);
     visited.remove(branch_id);
     Ok(out)
 }
@@ -156,7 +165,19 @@ pub fn list_logical_entries(
     conn: &rusqlite::Connection,
     branch_id: &str,
 ) -> AppResult<Vec<TimelineEntry>> {
-    logical_entries_inner(conn, branch_id, None, &mut HashSet::new())
+    logical_entries_inner(conn, branch_id, None, None, &mut HashSet::new())
+}
+
+/// Like `list_logical_entries`, but skips entries on `branch_id` itself with
+/// `seq < since_seq` — used once a durable context summary already covers
+/// that prefix, so a long, already-compacted story doesn't pay to reload and
+/// re-decode history that's known to be superseded on every single turn.
+pub fn list_logical_entries_since(
+    conn: &rusqlite::Connection,
+    branch_id: &str,
+    since_seq: i64,
+) -> AppResult<Vec<TimelineEntry>> {
+    logical_entries_inner(conn, branch_id, None, Some(since_seq), &mut HashSet::new())
 }
 
 pub fn image_paths_for_entry(
@@ -236,6 +257,67 @@ mod tests {
                 .map(|e| e.content.as_deref().unwrap_or(""))
                 .collect::<Vec<_>>(),
             vec!["one", "branch action"]
+        );
+    }
+
+    #[test]
+    fn since_seq_includes_boundary_and_excludes_earlier_entries() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE stories(id TEXT PRIMARY KEY, updated_at TEXT NOT NULL);
+            CREATE TABLE branches(id TEXT PRIMARY KEY, story_id TEXT NOT NULL, parent_branch_id TEXT, forked_at_entry_id TEXT);
+            CREATE TABLE timeline_entries(id TEXT PRIMARY KEY, branch_id TEXT NOT NULL, seq INTEGER NOT NULL, kind TEXT NOT NULL, visibility TEXT NOT NULL, content TEXT, payload_json TEXT NOT NULL, target_entry_id TEXT, created_at TEXT NOT NULL, UNIQUE(branch_id,seq));").unwrap();
+        conn.execute("INSERT INTO stories VALUES ('s','now')", [])
+            .unwrap();
+        conn.execute("INSERT INTO branches VALUES ('b','s',NULL,NULL)", [])
+            .unwrap();
+
+        let one = append_entry(
+            &conn,
+            "b",
+            "narration",
+            "visible",
+            Some("one"),
+            &json!({}),
+            None,
+        )
+        .unwrap();
+        append_entry(
+            &conn,
+            "b",
+            "narration",
+            "visible",
+            Some("two"),
+            &json!({}),
+            None,
+        )
+        .unwrap();
+        append_entry(
+            &conn,
+            "b",
+            "narration",
+            "visible",
+            Some("three"),
+            &json!({}),
+            None,
+        )
+        .unwrap();
+
+        let since = list_logical_entries_since(&conn, "b", one.seq).unwrap();
+        assert_eq!(
+            since
+                .iter()
+                .map(|e| e.content.as_deref().unwrap_or(""))
+                .collect::<Vec<_>>(),
+            vec!["one", "two", "three"]
+        );
+
+        let since_later = list_logical_entries_since(&conn, "b", one.seq + 1).unwrap();
+        assert_eq!(
+            since_later
+                .iter()
+                .map(|e| e.content.as_deref().unwrap_or(""))
+                .collect::<Vec<_>>(),
+            vec!["two", "three"]
         );
     }
 

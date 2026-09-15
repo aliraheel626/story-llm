@@ -82,6 +82,25 @@ fn format_summary(summary: &ContextSummary) -> String {
     )
 }
 
+/// The most recently persisted summary, reconstructed for `Compactor::compact`'s
+/// `carry_over` parameter so a new compaction pass is told about the prior
+/// summary through its dedicated channel instead of only via the raw
+/// transcript text.
+fn latest_summary_artifact(pool: &Pool, branch_id: &str) -> Option<SummaryArtifact> {
+    let conn = pool.get().ok()?;
+    let payload_json: String = conn
+        .query_row(
+            "SELECT payload_json FROM timeline_entries WHERE branch_id = ?1 AND kind = ?2 ORDER BY seq DESC LIMIT 1",
+            rusqlite::params![branch_id, kind::CONTEXT_SUMMARY],
+            |row| row.get(0),
+        )
+        .ok()?;
+    let value: serde_json::Value = serde_json::from_str(&payload_json).ok()?;
+    serde_json::from_value::<ContextSummary>(value)
+        .ok()
+        .map(SummaryArtifact)
+}
+
 fn messages(history: &[HistoryTurn]) -> Vec<Message> {
     history
         .iter()
@@ -139,9 +158,23 @@ pub async fn prepare_history(
         .rev()
         .find_map(|turn| turn.entry_id.clone());
 
+    // When history already opens with a prior summary, route it through
+    // `carry_over` instead of re-sending it as part of the evicted
+    // transcript, so it isn't duplicated in the compaction prompt.
+    let carry_over = history
+        .first()
+        .is_some_and(|turn| turn.content.starts_with("[Authoritative context summary]"))
+        .then(|| latest_summary_artifact(pool, branch_id))
+        .flatten();
+    let evict_from = usize::from(carry_over.is_some());
+
     let compactor = NarratorCompactor::new(config.clone());
     match compactor
-        .compact(branch_id, &history_messages[..split], None)
+        .compact(
+            branch_id,
+            &history_messages[evict_from..split],
+            carry_over.as_ref(),
+        )
         .await
     {
         Ok(artifact) => {
@@ -203,7 +236,9 @@ pub async fn prepare_history(
                 fallback.extend(recent);
                 fallback
             } else {
-                let skip = history.len().saturating_sub(kept.len());
+                // Same floor as the success path: a failed compaction call
+                // must not be able to drop below the raw tail guarantee.
+                let skip = history.len().saturating_sub(keep_count);
                 history.into_iter().skip(skip).collect()
             }
         }

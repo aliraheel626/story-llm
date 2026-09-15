@@ -10,7 +10,10 @@ use uuid::Uuid;
 use crate::ai;
 use crate::features::{
     settings,
-    timeline::{model::kind as timeline_kind, repository as timeline_repository},
+    timeline::{
+        model::kind as timeline_kind, reducer as timeline_reducer,
+        repository as timeline_repository,
+    },
 };
 use crate::shared::db::Pool;
 use crate::shared::error::{AppError, AppResult};
@@ -202,24 +205,19 @@ pub fn maybe_auto_title(app: &AppHandle, pool: &Pool, story_id: &str) {
     }
     let Some(branch_id) = branch_id else { return };
 
-    // The opening exchange: the earliest one or two visible timeline entries.
-    let opening = {
-        let Ok(mut stmt) = conn.prepare(
-            "SELECT kind, content FROM timeline_entries
-             WHERE branch_id = ?1 AND kind IN ('player_message', 'narration') ORDER BY seq ASC LIMIT 2",
-        ) else {
+    // The opening exchange: the earliest one or two visible timeline entries,
+    // folded through the reducer so an edit/swipe made before this fires
+    // (auto-title only runs once, right after the first exchange) titles
+    // from what the player actually sees rather than the discarded original.
+    let opening: Vec<(String, String)> = {
+        let Ok(raw) = timeline_repository::list_logical_entries(&conn, &branch_id) else {
             return;
         };
-        let rows = match stmt.query_map([&branch_id], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
-        }) {
-            Ok(rows) => rows,
-            Err(_) => return,
-        };
-        match rows.collect::<rusqlite::Result<Vec<_>>>() {
-            Ok(v) => v,
-            Err(_) => return,
-        }
+        timeline_reducer::active_visible_entries(&raw)
+            .into_iter()
+            .take(2)
+            .map(|e| (e.kind, e.content.unwrap_or_default()))
+            .collect()
     };
     if opening.is_empty() {
         return;

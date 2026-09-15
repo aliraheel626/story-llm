@@ -24,7 +24,7 @@ interface TimelinePayloadBase extends Record<string, unknown> {
 export interface NarrativePayload extends TimelinePayloadBase { input_mode: InputMode }
 export interface NarrationVariantPayload extends TimelinePayloadBase { reason: "retry" | "swipe" | string; input_mode: InputMode }
 export interface NarrationSelectedPayload extends TimelinePayloadBase { selected_entry_id: string; reason?: string }
-export interface ContentEditedPayload extends TimelinePayloadBase { reason: "user_edit" | string }
+export interface ContentEditedPayload extends TimelinePayloadBase { reason: "user_edit" | string; applies_to?: string }
 export interface EntityEventPayload extends TimelinePayloadBase {
   entity_id: string; name?: string; kind?: EntityKind; appearance_anchor?: string | null;
   before?: Record<string, unknown> | null; after?: Record<string, unknown> | null;
@@ -100,16 +100,33 @@ export function timelineInputMode(entry: TimelineEntry): InputMode {
 }
 export function isPlayerEntry(entry: TimelineEntry): boolean { return entry.kind === "player_message" }
 
+// Mirrors src-tauri/src/features/timeline/reducer.rs::active_visible_entries.
+// An edit is recorded against whichever variant was active when it was made
+// (`applies_to`), so it stays attached to that variant across reselection
+// instead of being wiped out by an unrelated later selection.
 export function foldVisibleTimeline(entries: TimelineEntry[]): TimelineEntry[] {
   const byId = new Map(entries.map((entry) => [entry.id, entry]));
-  const content = new Map<string, string>();
+  const selectedVariant = new Map<string, string>();
+  const edits = new Map<string, string>(); // key: `${target}|${appliesTo}`
   for (const entry of entries) {
-    if (entry.kind === "content_edited" && entry.target_entry_id && entry.content != null) content.set(entry.target_entry_id, entry.content);
     if (entry.kind === "narration_selected" && entry.target_entry_id) {
-      const selected = typeof entry.payload.selected_entry_id === "string" ? byId.get(entry.payload.selected_entry_id) : undefined;
-      if (selected?.content != null) content.set(entry.target_entry_id, selected.content);
+      const selectedId = entry.payload.selected_entry_id;
+      if (typeof selectedId === "string") selectedVariant.set(entry.target_entry_id, selectedId);
+    }
+    if (entry.kind === "content_edited" && entry.target_entry_id && entry.content != null) {
+      const appliesTo = entry.payload.applies_to ?? entry.target_entry_id;
+      edits.set(`${entry.target_entry_id}|${appliesTo}`, entry.content);
     }
   }
   return entries.filter((entry) => entry.kind === "player_message" || entry.kind === "narration")
-    .map((entry) => content.has(entry.id) ? { ...entry, content: content.get(entry.id)! } : entry);
+    .map((entry) => {
+      const variantId = selectedVariant.get(entry.id) ?? entry.id;
+      const edited = edits.get(`${entry.id}|${variantId}`);
+      if (edited != null) return { ...entry, content: edited };
+      if (variantId !== entry.id) {
+        const variantContent = byId.get(variantId)?.content;
+        if (variantContent != null) return { ...entry, content: variantContent };
+      }
+      return entry;
+    });
 }

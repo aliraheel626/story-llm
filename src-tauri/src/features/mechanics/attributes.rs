@@ -252,6 +252,17 @@ pub fn apply_attribute_delta(
     dramatic: bool,
 ) -> AppResult<(f64, f64)> {
     let before = get_or_init_entity_attribute(conn, branch_id, entity_id, attribute, entry_id)?;
+    let current_source: String = conn.query_row(
+        "SELECT source FROM entity_attributes WHERE branch_id = ?1 AND entity_id = ?2 AND attribute_id = ?3",
+        rusqlite::params![branch_id, entity_id, attribute.id],
+        |r| r.get(0),
+    )?;
+    if current_source == "user" {
+        // The narrator preamble tells the model user overrides take
+        // precedence over inferred updates; honor that here rather than
+        // silently overwriting a value the player explicitly set.
+        return Ok((before, before));
+    }
     let range = attribute.max - attribute.min;
     let max_step = if dramatic {
         range

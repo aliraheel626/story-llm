@@ -1,20 +1,48 @@
 use std::collections::HashMap;
 
+use rusqlite::OptionalExtension;
+
 use crate::ai::HistoryTurn;
 use crate::features::timeline::{model::kind, reducer, repository};
 use crate::shared::db::Pool;
 use crate::shared::error::AppResult;
 
+/// The most recent durable summary's `through_seq` for a branch, if one
+/// exists — everything at or before it is superseded and doesn't need to be
+/// refetched/redecoded on every turn.
+fn latest_summary_through_seq(
+    conn: &rusqlite::Connection,
+    branch_id: &str,
+) -> AppResult<Option<i64>> {
+    let payload_json: Option<String> = conn
+        .query_row(
+            "SELECT payload_json FROM timeline_entries WHERE branch_id = ?1 AND kind = ?2 ORDER BY seq DESC LIMIT 1",
+            rusqlite::params![branch_id, kind::CONTEXT_SUMMARY],
+            |row| row.get(0),
+        )
+        .optional()?;
+    Ok(payload_json
+        .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+        .and_then(|v| v.get("through_seq").and_then(|t| t.as_i64())))
+}
+
 /// Reconstructs model history from the logical branch timeline. The latest
 /// durable summary replaces its covered prefix; later revisions and hidden
-/// authoritative events are replayed in chronological order.
+/// authoritative events are replayed in chronological order. When a summary
+/// already exists, only entries from its boundary onward are even fetched —
+/// a long, already-compacted branch doesn't reload and re-decode everything
+/// before it on every turn.
 pub(super) fn load_history(
     pool: &Pool,
     branch_id: &str,
     before_seq: Option<i64>,
 ) -> AppResult<Vec<HistoryTurn>> {
     let conn = pool.get()?;
-    let mut raw = repository::list_logical_entries(&conn, branch_id)?;
+    let since_seq = latest_summary_through_seq(&conn, branch_id)?;
+    let mut raw = match since_seq {
+        Some(seq) => repository::list_logical_entries_since(&conn, branch_id, seq)?,
+        None => repository::list_logical_entries(&conn, branch_id)?,
+    };
     if let Some(seq) = before_seq {
         raw.retain(|entry| entry.branch_id != branch_id || entry.seq < seq);
     }
@@ -81,11 +109,13 @@ fn history_from_entries(
             });
             continue;
         }
+        // CONTENT_EDITED/NARRATION_SELECTED are deliberately excluded here:
+        // their effect is already folded into the primary turn above via
+        // `active`, so surfacing them again would duplicate that same text
+        // as a second, decontextualized "authoritative event" line.
         let contextual = matches!(
             entry.kind.as_str(),
-            kind::CONTENT_EDITED
-                | kind::NARRATION_SELECTED
-                | kind::MECHANICAL_RESULT
+            kind::MECHANICAL_RESULT
                 | kind::ENTITY_CREATED
                 | kind::ENTITY_UPDATED
                 | kind::ENTITY_DELETED
@@ -99,20 +129,10 @@ fn history_from_entries(
         if !contextual {
             continue;
         }
-        let content = if entry.kind == kind::NARRATION_SELECTED {
-            entry
-                .payload
-                .get("selected_entry_id")
-                .and_then(|v| v.as_str())
-                .and_then(|id| raw.iter().find(|candidate| candidate.id == id))
-                .and_then(|candidate| candidate.content.clone())
-                .unwrap_or_default()
-        } else {
-            entry
-                .content
-                .clone()
-                .unwrap_or_else(|| entry.payload.to_string())
-        };
+        let content = entry
+            .content
+            .clone()
+            .unwrap_or_else(|| entry.payload.to_string());
         history.push(HistoryTurn {
             entry_id: Some(entry.id.clone()),
             is_player: false,
@@ -151,6 +171,38 @@ mod tests {
             target_entry_id: None,
             created_at: "now".into(),
         }
+    }
+
+    #[test]
+    fn edited_and_reselected_narration_appears_only_once() {
+        let mut narration = entry(
+            "n1",
+            0,
+            kind::NARRATION,
+            Some("original"),
+            json!({"input_mode":"generated"}),
+        );
+        let mut edited = entry(
+            "e1",
+            1,
+            kind::CONTENT_EDITED,
+            Some("edited text"),
+            json!({"reason":"user_edit","applies_to":"n1"}),
+        );
+        edited.target_entry_id = Some("n1".into());
+        let mut selected = entry(
+            "s1",
+            2,
+            kind::NARRATION_SELECTED,
+            None,
+            json!({"selected_entry_id":"n1"}),
+        );
+        selected.target_entry_id = Some("n1".into());
+        narration.target_entry_id = None;
+
+        let history = history_from_entries(&[narration, edited, selected]);
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].content, "edited text");
     }
 
     #[test]

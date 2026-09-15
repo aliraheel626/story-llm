@@ -57,9 +57,12 @@ fn run_migrations(conn: &PooledConn, app_data_dir: &Path) -> AppResult<()> {
             PRAGMA foreign_keys = ON;
             "#,
         )?;
+        // Best-effort: the schema reset above already committed, so a locked
+        // or permission-denied file here must not abort startup — the app
+        // would be unable to launch with the story tables already gone.
         let images_dir = app_data_dir.join("images");
         if images_dir.is_dir() {
-            std::fs::remove_dir_all(images_dir)?;
+            let _ = std::fs::remove_dir_all(images_dir);
         }
     }
 

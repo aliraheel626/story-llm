@@ -1,4 +1,5 @@
 use chrono::Utc;
+use rusqlite::OptionalExtension;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, State};
 use uuid::Uuid;
@@ -13,7 +14,7 @@ use crate::features::{
     settings, stories,
     timeline::{
         model::{kind as timeline_kind, NarrationVariant, TimelineEntry},
-        repository as timeline_repository,
+        reducer, repository as timeline_repository,
     },
 };
 use crate::shared::db::Pool;
@@ -168,30 +169,41 @@ fn story_context_preamble(pool: &Pool, story_id: &str, branch_id: &str) -> AppRe
     let author_note = author_note_preamble(pool, story_id)?;
     let conn = pool.get()?;
     let entities = crate::features::entities::list_entities_sync(&conn, story_id, branch_id, None)?;
+
+    let mut attrs_by_entity: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
+    {
+        let mut stmt = conn.prepare(
+            "SELECT entity_attributes.entity_id, attribute_registry.canonical_name, entity_attributes.value
+             FROM entity_attributes JOIN attribute_registry ON attribute_registry.id = entity_attributes.attribute_id
+             WHERE entity_attributes.branch_id = ?1 ORDER BY attribute_registry.canonical_name",
+        )?;
+        let rows = stmt.query_map([branch_id], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, f64>(2)?,
+            ))
+        })?;
+        for row in rows {
+            let (entity_id, name, value) = row?;
+            attrs_by_entity
+                .entry(entity_id)
+                .or_default()
+                .push(format!("{name}={value}"));
+        }
+    }
+
     let mut lines = vec!["Current entity state is authoritative. User overrides take precedence over inferred updates. Mechanical outcomes must not be contradicted.".to_string()];
     for entity in entities {
-        let mut stmt = conn.prepare(
-            "SELECT attribute_registry.canonical_name, entity_attributes.value
-             FROM entity_attributes JOIN attribute_registry ON attribute_registry.id = entity_attributes.attribute_id
-             WHERE entity_attributes.branch_id = ?1 AND entity_attributes.entity_id = ?2 ORDER BY attribute_registry.canonical_name")?;
-        let attrs = stmt
-            .query_map(rusqlite::params![branch_id, entity.id], |row| {
-                Ok(format!(
-                    "{}={}",
-                    row.get::<_, String>(0)?,
-                    row.get::<_, f64>(1)?
-                ))
-            })?
-            .collect::<Result<Vec<_>, _>>()?;
         let appearance = entity
             .appearance_anchor
             .as_deref()
             .map(|a| format!("; appearance: {a}"))
             .unwrap_or_default();
-        let attributes = if attrs.is_empty() {
-            String::new()
-        } else {
-            format!("; attributes: {}", attrs.join(", "))
+        let attributes = match attrs_by_entity.get(&entity.id) {
+            Some(attrs) if !attrs.is_empty() => format!("; attributes: {}", attrs.join(", ")),
+            _ => String::new(),
         };
         lines.push(format!(
             "- {} ({}){appearance}{attributes}",
@@ -208,6 +220,29 @@ fn combine_preambles(parts: &[String]) -> String {
         .cloned()
         .collect::<Vec<_>>()
         .join("\n\n")
+}
+
+/// The mechanical roll that produced `entry_id`'s narration, if any — folded
+/// into retry/swipe's preamble so regenerating a roll-driven turn stays
+/// consistent with the outcome that already happened. The roll's timeline
+/// seq is assigned after the narration it explains, so it falls outside the
+/// history window a retry/swipe deliberately cuts off at the target's seq;
+/// this is the only channel that outcome reaches the regenerated call by.
+fn roll_context_preamble(pool: &Pool, entry_id: &str) -> AppResult<String> {
+    let conn = pool.get()?;
+    let content: Option<String> = conn
+        .query_row(
+            "SELECT content FROM timeline_entries WHERE target_entry_id = ?1 AND kind = ?2 ORDER BY seq DESC LIMIT 1",
+            rusqlite::params![entry_id, timeline_kind::MECHANICAL_RESULT],
+            |row| row.get(0),
+        )
+        .optional()?;
+    Ok(match content {
+        Some(content) => {
+            format!("The roll that determined this outcome must not be contradicted: {content}")
+        }
+        None => String::new(),
+    })
 }
 
 /// Inserts a fresh narration entry. If mechanics produced a roll, its hidden
@@ -723,7 +758,10 @@ pub async fn retry_narration(
         let conn = pool.get()?;
         get_story_id_for_branch(&conn, &branch_id)?
     };
-    let extra_preamble = story_context_preamble(pool.inner(), &story_id, &branch_id)?;
+    let extra_preamble = combine_preambles(&[
+        story_context_preamble(pool.inner(), &story_id, &branch_id)?,
+        roll_context_preamble(pool.inner(), &target.id)?,
+    ]);
 
     let stream_id = Uuid::new_v4().to_string();
     spawn_narration(
@@ -795,7 +833,10 @@ pub async fn generate_narration_variant(
         let conn = pool.get()?;
         get_story_id_for_branch(&conn, &branch_id)?
     };
-    let extra_preamble = story_context_preamble(pool.inner(), &story_id, &branch_id)?;
+    let extra_preamble = combine_preambles(&[
+        story_context_preamble(pool.inner(), &story_id, &branch_id)?,
+        roll_context_preamble(pool.inner(), &target.id)?,
+    ]);
 
     let stream_id = Uuid::new_v4().to_string();
     let prompt = if target.input_mode == "generated_story" {
@@ -918,8 +959,11 @@ pub fn select_narration_variant(
     timeline_repository::active_entry(&conn, &entry_id)
 }
 
-/// "Edit": append a content override for any visible timeline entry. If it currently has a selected
-/// variant, that variant's stored text is kept in sync too.
+/// "Edit": append a content override for any visible timeline entry. The
+/// override is recorded against whichever variant is currently active
+/// (`applies_to`), so it stays attached to that specific variant and survives
+/// paging away and back — re-selecting a *different* variant correctly shows
+/// that variant's own text instead.
 #[tauri::command]
 pub fn edit_timeline_entry(
     pool: State<Pool>,
@@ -934,13 +978,15 @@ pub fn edit_timeline_entry(
     let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
     let image_paths = image_paths_for_entry(&tx, &entry_id)?;
     let target = timeline_repository::get_entry(&tx, &entry_id)?;
+    let raw = timeline_repository::list_logical_entries(&tx, &target.branch_id)?;
+    let applies_to = reducer::active_variant_id(&raw, &entry_id);
     timeline_repository::append_entry(
         &tx,
         &target.branch_id,
         timeline_kind::CONTENT_EDITED,
         "hidden",
         Some(content),
-        &serde_json::json!({"reason":"user_edit"}),
+        &serde_json::json!({"reason":"user_edit", "applies_to": applies_to}),
         Some(&entry_id),
     )?;
     tx.execute("DELETE FROM image_assets WHERE entry_id = ?1", [&entry_id])?;
@@ -980,11 +1026,34 @@ fn erase_last_exchange_in_conn(
         }
     }
 
+    // Only drop summaries that actually covered one of the erased entries —
+    // a summary covering older, still-intact history must survive so a long
+    // story doesn't have to redo all its prior compaction after one Erase.
+    {
+        let mut stmt = tx.prepare(
+            "SELECT id, payload_json FROM timeline_entries WHERE branch_id = ?1 AND kind = ?2",
+        )?;
+        let summaries: Vec<(String, String)> = stmt
+            .query_map(
+                rusqlite::params![branch_id, timeline_kind::CONTEXT_SUMMARY],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            )?
+            .collect::<Result<_, _>>()?;
+        for (summary_id, payload_json) in summaries {
+            let through_entry_id = serde_json::from_str::<serde_json::Value>(&payload_json)
+                .ok()
+                .and_then(|v| {
+                    v.get("through_entry_id")
+                        .and_then(|t| t.as_str())
+                        .map(str::to_string)
+                });
+            if through_entry_id.is_some_and(|through| removed.contains(&through)) {
+                tx.execute("DELETE FROM timeline_entries WHERE id = ?1", [&summary_id])?;
+            }
+        }
+    }
+
     let now = Utc::now().to_rfc3339();
-    tx.execute(
-        "DELETE FROM timeline_entries WHERE branch_id = ?1 AND kind = ?2",
-        rusqlite::params![branch_id, timeline_kind::CONTEXT_SUMMARY],
-    )?;
     crate::features::timeline::projections::rebuild_branch(&tx, branch_id)?;
     tx.execute(
         "UPDATE stories SET updated_at = ?1 WHERE id = (
