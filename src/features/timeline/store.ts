@@ -1,11 +1,11 @@
 import { create } from "zustand";
-import type { NarrationDonePayload, NarrationVariant, RollDetail, StoryImage, SwipeDonePayload, TimelineEntry } from "../../shared/types";
+import type { NarrationDonePayload, NarrationToolActivityPayload, NarrationVariant, RollDetail, StoryImage, SwipeDonePayload, TimelineEntry } from "../../shared/types";
 import { foldVisibleTimeline } from "../../shared/types";
 import { useAppStore } from "../../app/store";
 import { useCharacterStore } from "../characters/store";
 import { timelineApi } from "./api";
 
-interface StreamingState { streamId: string; branchId: string; text: string; thoughts: string; mode: "append" | "replace"; targetEntryId?: string }
+interface StreamingState { streamId: string; branchId: string; text: string; thoughts: string; mode: "append" | "replace"; targetEntryId?: string; toolActivity?: { label: string; phase: "started" | "finished" } | null }
 interface StoryState {
   entriesByBranch: Record<string, TimelineEntry[]>; timelineLoading: boolean;
   streamingByBranch: Record<string, StreamingState>; turnError: string | null;
@@ -22,6 +22,7 @@ interface StoryState {
   loadImagesForBranch: (branchId: string) => Promise<void>; generateImageForEntry: (entryId: string, hint?: string) => Promise<void>;
   loadRollsForBranch: (branchId: string) => Promise<void>; loadRollDetail: (entryId: string) => Promise<void>;
   _appendDelta: (streamId: string, text: string) => void; _appendThoughts: (streamId: string, text: string) => void;
+  _toolActivity: (payload: NarrationToolActivityPayload) => void;
   _finalize: (payload: NarrationDonePayload) => void; _swipeDone: (payload: SwipeDonePayload) => void; _fail: (streamId: string, message: string) => void;
   _imagePending: (entryId: string) => void; _imageGenerated: (image: StoryImage) => void; _imageFailed: (entryId: string) => void;
 }
@@ -83,6 +84,7 @@ export const useStoryStore = create<StoryState>((set, get) => ({
   loadRollDetail: async (entryId) => { try { const detail = await timelineApi.getRollDetail(entryId); if (detail) set((s) => ({ rollDetailByEntry: { ...s.rollDetailByEntry, [entryId]: detail } })); } catch (e) { console.error("failed to load roll detail", e); } },
   _appendDelta: (id, text) => { const found = findStream(get().streamingByBranch, id); if (!found) return; const [branchId, current] = found; set((s) => ({ streamingByBranch: { ...s.streamingByBranch, [branchId]: { ...current, text: current.text + text } } })); },
   _appendThoughts: (id, text) => { const found = findStream(get().streamingByBranch, id); if (!found) return; const [branchId, current] = found; set((s) => ({ streamingByBranch: { ...s.streamingByBranch, [branchId]: { ...current, thoughts: current.thoughts + text } } })); },
+  _toolActivity: (payload) => { const found = findStream(get().streamingByBranch, payload.stream_id); if (!found) return; const [branchId, current] = found; set((s) => ({ streamingByBranch: { ...s.streamingByBranch, [branchId]: { ...current, toolActivity: { label: payload.label, phase: payload.phase } } } })); },
   _finalize: (payload) => { const found = findStream(get().streamingByBranch, payload.stream_id); if (!found) return; const [, current] = found; const branchId = payload.entry.branch_id; set((s) => ({ entriesByBranch: { ...s.entriesByBranch, [branchId]: current.mode === "replace" && current.targetEntryId ? replaceEntry(s.entriesByBranch[branchId] ?? [], current.targetEntryId, payload.entry) : [...(s.entriesByBranch[branchId] ?? []), payload.entry] }, streamingByBranch: withoutStream(s.streamingByBranch, branchId), ...(current.mode === "replace" && current.targetEntryId ? { imagesByEntry: { ...s.imagesByEntry, [current.targetEntryId]: [] } } : {}) })); if (current.mode === "replace" && current.targetEntryId) get().loadVariantsForEntry(current.targetEntryId); get().loadRollsForBranch(branchId); },
   _swipeDone: (payload) => { const found = findStream(get().streamingByBranch, payload.stream_id); if (!found) return; const [, current] = found; const branchId = current.branchId; set((s) => ({ entriesByBranch: { ...s.entriesByBranch, [branchId]: replaceEntry(s.entriesByBranch[branchId] ?? [], payload.entry.id, payload.entry) }, variantsByEntry: { ...s.variantsByEntry, [payload.entry.id]: payload.variants }, imagesByEntry: { ...s.imagesByEntry, [payload.entry.id]: [] }, streamingByBranch: withoutStream(s.streamingByBranch, branchId) })); },
   _fail: (id, message) => { const found = findStream(get().streamingByBranch, id); if (!found) return; set((s) => ({ streamingByBranch: withoutStream(s.streamingByBranch, found[0]), turnError: message })); },

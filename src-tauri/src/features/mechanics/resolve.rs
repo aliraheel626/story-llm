@@ -12,6 +12,9 @@
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
+use crate::features::timeline::{model::kind as timeline_kind, repository as timeline_repository};
+use crate::shared::error::AppResult;
+
 /// Never mechanically impossible or guaranteed, however lopsided the gap.
 pub const P_FLOOR: f64 = 0.05;
 pub const P_CEIL: f64 = 0.95;
@@ -29,6 +32,7 @@ pub struct ResolveInput {
     pub modifier: f64,
 }
 
+#[derive(Debug, Clone, Copy)]
 pub struct ResolveOutput {
     pub p_success: f64,
     pub seed: i64,
@@ -38,6 +42,47 @@ pub struct ResolveOutput {
     pub needed: i64,
     pub outcome: &'static str,
     pub degree: &'static str,
+}
+
+/// A resolved roll waiting to be persisted alongside the passage it explains
+/// — carried from resolution through to `persist_roll` (or, for the
+/// narrator-tool path, through `TurnStaging` until the turn commits).
+#[derive(Debug, Clone)]
+pub struct PendingRoll {
+    pub actor_entity_id: String,
+    pub target_entity_id: Option<String>,
+    pub actor_attribute_id: Option<String>,
+    pub target_attribute_id: Option<String>,
+    pub actor_value: f64,
+    pub target_value: f64,
+    pub output: ResolveOutput,
+}
+
+pub fn persist_roll(
+    conn: &rusqlite::Connection,
+    entry_id: &str,
+    pending: PendingRoll,
+) -> AppResult<()> {
+    let base = timeline_repository::get_entry(conn, entry_id)?;
+    timeline_repository::append_entry(
+        conn,
+        &base.branch_id,
+        timeline_kind::MECHANICAL_RESULT,
+        "hidden",
+        Some(&format!(
+            "Mechanical outcome: rolled {} and got {} ({}).",
+            pending.output.roll, pending.output.outcome, pending.output.degree
+        )),
+        &serde_json::json!({
+            "actor_entity_id": pending.actor_entity_id, "target_entity_id": pending.target_entity_id,
+            "actor_attribute_id": pending.actor_attribute_id, "target_attribute_id": pending.target_attribute_id,
+            "actor_value": pending.actor_value, "target_value": pending.target_value,
+            "p_success": pending.output.p_success, "seed": pending.output.seed, "roll": pending.output.roll,
+            "outcome": pending.output.outcome, "degree": pending.output.degree, "modifiers": {}
+        }),
+        Some(entry_id),
+    )?;
+    Ok(())
 }
 
 /// Recomputes `needed` from `p_success` — the frontend calls the equivalent

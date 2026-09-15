@@ -1,16 +1,19 @@
+use std::sync::Arc;
+
 use chrono::Utc;
+use rig_agent::tool::DynamicTool;
 use rusqlite::OptionalExtension;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, State};
+use tokio::sync::Mutex;
 use uuid::Uuid;
 
-use crate::ai::{self, HistoryTurn, NarrateRequest, NarratorChunk, TextModelConfig};
+use crate::ai::{
+    self, HistoryTurn, NarrateRequest, NarratorChunk, TextModelConfig, ToolActivityPhase,
+};
 use crate::features::{
     images,
-    mechanics::{
-        commands as mechanics_settings,
-        pipeline::{self, DiceMode, PendingRoll},
-    },
+    mechanics::{commands as mechanics_settings, pipeline::DiceMode},
     settings, stories,
     timeline::{
         model::{kind as timeline_kind, NarrationVariant, TimelineEntry},
@@ -26,6 +29,7 @@ use super::repository::{
     get_active_story_entry, get_last_story_entry, get_story_id_for_branch, image_paths_for_entry,
     insert_story_entry,
 };
+use super::tools::{self, TurnStaging};
 
 const NARRATOR_PREAMBLE: &str = "You are the narrator of an interactive story. Continue the scene \
 in vivid, literary prose that follows naturally from what has already happened and from the \
@@ -87,6 +91,7 @@ pub fn submit_story(
             history,
             prompt: STORY_CONTINUE_PROMPT.to_string(),
             extra_preamble,
+            tools: Vec::new(),
             stream_id: stream_id.clone(),
         },
         move |app, pool, sid, visible, thoughts| {
@@ -245,21 +250,31 @@ fn roll_context_preamble(pool: &Pool, entry_id: &str) -> AppResult<String> {
     })
 }
 
-/// Inserts a fresh narration entry. If mechanics produced a roll, its hidden
-/// result event is persisted in the same transaction.
-fn append_narration_entry(
+/// Inserts a fresh narration entry. If the narrator's tool calls staged any
+/// entity/attribute/roll writes this turn, they're committed in the same
+/// transaction — atomically with the passage, and not at all if anything
+/// above this point failed first.
+async fn append_narration_entry(
     pool: &Pool,
     branch_id: &str,
     input_mode: &str,
     visible: &str,
     thoughts: Option<&str>,
-    roll: Option<PendingRoll>,
+    staging: Option<Arc<Mutex<TurnStaging>>>,
 ) -> AppResult<ActiveStoryEntry> {
+    // Acquired before the transaction opens (not held across an `.await`
+    // with it live) so the whole rest of this function stays synchronous —
+    // a `rusqlite::Transaction` isn't `Send`, so awaiting anything while one
+    // is alive would make this future unusable from `spawn_narration`.
+    let staging_guard = match &staging {
+        Some(s) => Some(s.lock().await),
+        None => None,
+    };
     let mut conn = pool.get()?;
     let tx = conn.transaction()?;
     let passage = insert_story_entry(&tx, branch_id, "narrator", input_mode, visible, thoughts)?;
-    if let Some(roll) = roll {
-        pipeline::persist_roll(&tx, &passage.id, roll)?;
+    if let Some(guard) = staging_guard {
+        guard.commit(&tx, &passage.id)?;
     }
     tx.commit()?;
     Ok(passage)
@@ -338,7 +353,20 @@ struct NarrationJob {
     history: Vec<HistoryTurn>,
     prompt: String,
     extra_preamble: String,
+    /// Non-empty only for `submit_turn`'s tool-calling path (see `tools`
+    /// module) — every other narration-triggering command passes `Vec::new()`.
+    tools: Vec<DynamicTool>,
     stream_id: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct NarrationToolActivityPayload<'a> {
+    stream_id: &'a str,
+    label: String,
+    phase: &'static str,
+    /// `None` while starting; `Some(false)` lets the frontend show a tool
+    /// call didn't succeed instead of just quietly disappearing.
+    ok: Option<bool>,
 }
 
 fn spawn_narration<F, Fut>(job: NarrationJob, on_success: F)
@@ -354,6 +382,7 @@ where
         history,
         prompt,
         extra_preamble,
+        tools,
         stream_id,
     } = job;
     tauri::async_runtime::spawn(async move {
@@ -371,6 +400,7 @@ where
             preamble,
             history,
             prompt,
+            tools,
         };
 
         let app_for_chunks = app.clone();
@@ -391,6 +421,25 @@ where
                     NarrationDeltaPayload {
                         stream_id: &stream_id_for_chunks,
                         text: &text,
+                    },
+                );
+            }
+            NarratorChunk::ToolActivity {
+                tool_name,
+                args,
+                phase,
+            } => {
+                let (phase_str, ok) = match phase {
+                    ToolActivityPhase::Started => ("started", None),
+                    ToolActivityPhase::Finished { ok } => ("finished", Some(ok)),
+                };
+                let _ = app_for_chunks.emit(
+                    "narration-tool-activity",
+                    NarrationToolActivityPayload {
+                        stream_id: &stream_id_for_chunks,
+                        label: tools::friendly_tool_label(&tool_name, &args),
+                        phase: phase_str,
+                        ok,
                     },
                 );
             }
@@ -460,7 +509,8 @@ async fn finish_append(
         &visible,
         thoughts.as_deref(),
         None,
-    )?;
+    )
+    .await?;
     let entry_id = passage.id.clone();
     let entry = {
         let conn = pool.get()?;
@@ -472,12 +522,28 @@ async fn finish_append(
     Ok(())
 }
 
+/// Instructs the narrator on when to use `roll_check`, phrased from the
+/// story's dice-mode setting — replaces the old classifier's deterministic
+/// gate with guidance the narrator applies itself.
+fn dice_mode_instruction(dice_mode: DiceMode) -> &'static str {
+    match dice_mode {
+        DiceMode::Always => {
+            "Call the roll_check tool for every meaningful action before narrating its outcome."
+        }
+        DiceMode::Classifier => {
+            "Call the roll_check tool only when the outcome is genuinely uncertain — routine or \
+             clearly one-sided actions don't need it."
+        }
+        DiceMode::Never => "Do not call the roll_check tool; narrate outcomes purely from context.",
+    }
+}
+
 /// "Do"/"Say" input modes: persists the player's passage immediately, then
 /// streams a narrator continuation in the background (see `spawn_narration`).
-/// When Attributes are enabled for the story, Stage 1 (classify) and Stage 2
-/// (resolve) run first — cheap/fast and deterministic respectively — so
-/// their outcome can be folded into Stage 3's preamble as a hard constraint;
-/// Stage 4 (update) runs after the passage is saved.
+/// When Attributes are enabled for the story, the narrator gets a tool set
+/// (see `tools`) to check, create, and update entities and their attributes,
+/// and to roll dice, mid-generation — their writes are staged and committed
+/// atomically alongside the passage in `append_narration_entry`.
 #[tauri::command]
 pub async fn submit_turn(
     app: AppHandle,
@@ -512,50 +578,35 @@ pub async fn submit_turn(
 
     let prompt = format_prompt(&input_mode, content);
 
-    let (extra_preamble, roll_to_persist) = if mechanics.attributes_enabled {
-        let recent_context = history
-            .iter()
-            .rev()
-            .take(4)
-            .rev()
-            .map(|t| {
-                format!(
-                    "{}: {}",
-                    if t.is_player { "Player" } else { "Narrator" },
-                    t.content
-                )
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-        let dice_mode = DiceMode::from_str_or_default(&mechanics.dice_mode);
-        match pipeline::run_classify_and_resolve(
-            pool.inner(),
-            &config,
-            &story_id,
-            &branch_id,
-            &player_passage.id,
-            dice_mode,
-            &recent_context,
-            &prompt,
-        )
-        .await
-        {
-            Ok(result) => (result.extra_preamble, result.roll_to_persist),
-            Err(_) => (String::new(), None),
-        }
+    let (tool_set, staging) = if mechanics.attributes_enabled {
+        let staging = Arc::new(Mutex::new(TurnStaging::new(
+            pool.inner().clone(),
+            story_id.clone(),
+            branch_id.clone(),
+        )));
+        let tool_set = tools::narrator_tools(staging.clone(), config.clone());
+        (tool_set, Some(staging))
     } else {
-        (String::new(), None)
+        (Vec::new(), None)
+    };
+
+    let tools_preamble = if tool_set.is_empty() {
+        String::new()
+    } else {
+        let dice_mode = DiceMode::from_str_or_default(&mechanics.dice_mode);
+        format!(
+            "You have tools to check, create, and update entities and their attributes as the story \
+             unfolds — use them to keep the world consistent. {}",
+            dice_mode_instruction(dice_mode)
+        )
     };
     let extra_preamble = combine_preambles(&[
         story_context_preamble(pool.inner(), &story_id, &branch_id)?,
-        extra_preamble,
+        tools_preamble,
     ]);
 
     let stream_id = Uuid::new_v4().to_string();
     let branch_id_bg = branch_id.clone();
-    let attributes_enabled = mechanics.attributes_enabled;
-    let story_id_bg = story_id.clone();
-    let config_bg = config.clone();
 
     spawn_narration(
         NarrationJob {
@@ -566,6 +617,7 @@ pub async fn submit_turn(
             history,
             prompt,
             extra_preamble,
+            tools: tool_set,
             stream_id: stream_id.clone(),
         },
         move |app, pool, sid, visible, thoughts| async move {
@@ -575,8 +627,9 @@ pub async fn submit_turn(
                 "generated",
                 &visible,
                 thoughts.as_deref(),
-                roll_to_persist,
-            )?;
+                staging,
+            )
+            .await?;
             let entry = {
                 let conn = pool.get()?;
                 timeline_repository::active_entry(&conn, &passage.id)?
@@ -590,17 +643,6 @@ pub async fn submit_turn(
             );
             kick_auto_title(&app, &pool, &branch_id_bg);
             images::maybe_auto_image(&app, &pool, &passage.id, &visible);
-            if attributes_enabled {
-                let _ = pipeline::run_update(
-                    &pool,
-                    &config_bg,
-                    &story_id_bg,
-                    &branch_id_bg,
-                    &passage.id,
-                    &visible,
-                )
-                .await;
-            }
             Ok(())
         },
     );
@@ -651,6 +693,7 @@ pub async fn submit_guide(
             history,
             prompt,
             extra_preamble,
+            tools: Vec::new(),
             stream_id: stream_id.clone(),
         },
         move |app, pool, sid, visible, thoughts| {
@@ -707,6 +750,7 @@ pub async fn continue_scene(
             history,
             prompt: prompt.to_string(),
             extra_preamble,
+            tools: Vec::new(),
             stream_id: stream_id.clone(),
         },
         move |app, pool, sid, visible, thoughts| {
@@ -773,6 +817,7 @@ pub async fn retry_narration(
             history,
             prompt: prompt.to_string(),
             extra_preamble,
+            tools: Vec::new(),
             stream_id: stream_id.clone(),
         },
         move |app, pool, sid, visible, thoughts| async move {
@@ -853,6 +898,7 @@ pub async fn generate_narration_variant(
             history,
             prompt: prompt.to_string(),
             extra_preamble,
+            tools: Vec::new(),
             stream_id: stream_id.clone(),
         },
         move |app, pool, sid, visible, _thoughts| async move {

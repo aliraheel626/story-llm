@@ -190,11 +190,31 @@ pub async fn resolve_or_create_attribute(
     mint_new(&conn, proposed_name, entity_kind, story_id)
 }
 
+/// Reads an entity's current value for an attribute without writing
+/// anything — unlike `get_or_init_entity_attribute`, a "just checking" read
+/// (e.g. a narrator tool call previewing state mid-turn, before anything is
+/// committed) must not persist an init event as a side effect.
+pub fn peek_entity_attribute(
+    conn: &rusqlite::Connection,
+    branch_id: &str,
+    entity_id: &str,
+    attribute: &AttributeRegistryEntry,
+) -> AppResult<f64> {
+    let existing: Option<f64> = conn
+        .query_row(
+            "SELECT value FROM entity_attributes WHERE branch_id = ?1 AND entity_id = ?2 AND attribute_id = ?3",
+            rusqlite::params![branch_id, entity_id, attribute.id],
+            |r| r.get(0),
+        )
+        .optional()?;
+    Ok(existing.unwrap_or_else(|| (attribute.min + attribute.max) / 2.0))
+}
+
 /// Reads an entity's current value for an attribute, initializing it to the
 /// attribute's midpoint on first use (a fresh entity has no story yet — it
 /// shouldn't start maxed or bottomed on a stat nobody's set).
 pub fn get_or_init_entity_attribute(
-    conn: &PooledConn,
+    conn: &rusqlite::Connection,
     branch_id: &str,
     entity_id: &str,
     attribute: &AttributeRegistryEntry,
@@ -238,11 +258,31 @@ pub fn get_or_init_entity_attribute(
 /// scale unless the caller flags the change as dramatic.
 const NON_DRAMATIC_MAX_FRACTION: f64 = 0.3;
 
+/// Applies clamping and rate-limiting to a proposed delta, without touching
+/// the database — shared by the real write path below and by narrator-tool
+/// staging previews that need to show what a pending delta *would* do before
+/// it's committed.
+pub fn clamp_delta(
+    before: f64,
+    delta: f64,
+    dramatic: bool,
+    attribute: &AttributeRegistryEntry,
+) -> f64 {
+    let range = attribute.max - attribute.min;
+    let max_step = if dramatic {
+        range
+    } else {
+        range * NON_DRAMATIC_MAX_FRACTION
+    };
+    let clamped_delta = delta.clamp(-max_step, max_step);
+    (before + clamped_delta).clamp(attribute.min, attribute.max)
+}
+
 /// Applies a proposed delta with clamping and rate-limiting, and logs an
 /// append-only timeline event. Returns `(before, after)`.
 #[allow(clippy::too_many_arguments)]
 pub fn apply_attribute_delta(
-    conn: &PooledConn,
+    conn: &rusqlite::Connection,
     branch_id: &str,
     entity_id: &str,
     attribute: &AttributeRegistryEntry,
@@ -263,14 +303,7 @@ pub fn apply_attribute_delta(
         // silently overwriting a value the player explicitly set.
         return Ok((before, before));
     }
-    let range = attribute.max - attribute.min;
-    let max_step = if dramatic {
-        range
-    } else {
-        range * NON_DRAMATIC_MAX_FRACTION
-    };
-    let clamped_delta = delta.clamp(-max_step, max_step);
-    let after = (before + clamped_delta).clamp(attribute.min, attribute.max);
+    let after = clamp_delta(before, delta, dramatic, attribute);
 
     let now = Utc::now().to_rfc3339();
     let event = append_entry(

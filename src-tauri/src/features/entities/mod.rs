@@ -65,9 +65,15 @@ pub fn list_entities(
     list_entities_sync(&conn, &story_id, &branch_id, kind.as_deref())
 }
 
+/// Inserts a new entity with a caller-supplied id — split out of
+/// `create_entity_sync` so a narrator tool can synthesize an entity's id
+/// before this row exists (a later tool call in the same turn may need to
+/// reference an entity that's only staged, not yet committed) and reuse the
+/// exact same id when the staged write is actually applied.
 #[allow(clippy::too_many_arguments)]
-pub fn create_entity_sync(
+pub fn create_entity_with_id_sync(
     conn: &rusqlite::Connection,
+    id: &str,
     story_id: &str,
     branch_id: &str,
     entity_kind: &str,
@@ -90,7 +96,6 @@ pub fn create_entity_sync(
     if name.is_empty() {
         return Err(AppError::Invalid("name must not be empty".into()));
     }
-    let id = Uuid::new_v4().to_string();
     let now = Utc::now().to_rfc3339();
     let anchor = appearance_anchor.map(str::trim).filter(|s| !s.is_empty());
     conn.execute(
@@ -114,7 +119,7 @@ pub fn create_entity_sync(
         rusqlite::params![branch_id, id, name, anchor, now, event.id],
     )?;
     Ok(Entity {
-        id,
+        id: id.to_string(),
         story_id: story_id.into(),
         branch_id: branch_id.into(),
         kind: entity_kind.into(),
@@ -122,6 +127,31 @@ pub fn create_entity_sync(
         appearance_anchor: anchor.map(str::to_string),
         created_at: now,
     })
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn create_entity_sync(
+    conn: &rusqlite::Connection,
+    story_id: &str,
+    branch_id: &str,
+    entity_kind: &str,
+    name: &str,
+    appearance_anchor: Option<&str>,
+    source: &str,
+    target_entry_id: Option<&str>,
+) -> AppResult<Entity> {
+    let id = Uuid::new_v4().to_string();
+    create_entity_with_id_sync(
+        conn,
+        &id,
+        story_id,
+        branch_id,
+        entity_kind,
+        name,
+        appearance_anchor,
+        source,
+        target_entry_id,
+    )
 }
 
 #[tauri::command]
@@ -149,34 +179,33 @@ pub fn create_entity(
     Ok(entity)
 }
 
-#[tauri::command]
-pub fn update_entity(
-    pool: State<Pool>,
-    branch_id: String,
-    entity_id: String,
-    name: String,
-    appearance_anchor: Option<String>,
+/// Renames/updates an entity's appearance, mirroring `create_entity_sync`'s
+/// `source`/`target_entry_id` shape so both the user-facing command and a
+/// narrator tool's staged commit can call it identically.
+pub fn update_entity_sync(
+    conn: &rusqlite::Connection,
+    branch_id: &str,
+    entity_id: &str,
+    name: &str,
+    appearance_anchor: Option<&str>,
+    source: &str,
+    target_entry_id: Option<&str>,
 ) -> AppResult<Entity> {
     let name = name.trim();
     if name.is_empty() {
         return Err(AppError::Invalid("name must not be empty".into()));
     }
-    let mut conn = pool.get()?;
-    let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-    let before: Entity = tx.query_row(
+    let before: Entity = conn.query_row(
         "SELECT entities.id, entities.story_id, branch_entity_state.branch_id, entities.kind, branch_entity_state.name,
                 branch_entity_state.appearance_anchor, entities.created_at
          FROM entities JOIN branch_entity_state ON branch_entity_state.entity_id = entities.id
          WHERE entities.id = ?1 AND branch_entity_state.branch_id = ?2 AND branch_entity_state.is_present = 1",
         rusqlite::params![entity_id, branch_id], row_to_entity,
     ).optional()?.ok_or_else(|| AppError::NotFound(format!("entity {entity_id} not found")))?;
-    let anchor = appearance_anchor
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty());
+    let anchor = appearance_anchor.map(str::trim).filter(|s| !s.is_empty());
     let event = append_entry(
-        &tx,
-        &branch_id,
+        conn,
+        branch_id,
         kind::ENTITY_UPDATED,
         "hidden",
         Some(&format!(
@@ -185,19 +214,41 @@ pub fn update_entity(
         )),
         &json!({
             "entity_id": entity_id, "before": {"name": before.name, "appearance_anchor": before.appearance_anchor},
-            "after": {"name": name, "appearance_anchor": anchor}, "source": "user"
+            "after": {"name": name, "appearance_anchor": anchor}, "source": source
         }),
-        None,
+        target_entry_id,
     )?;
     let now = Utc::now().to_rfc3339();
-    tx.execute("UPDATE branch_entity_state SET name = ?1, appearance_anchor = ?2, updated_at = ?3, last_event_id = ?4 WHERE branch_id = ?5 AND entity_id = ?6",
+    conn.execute("UPDATE branch_entity_state SET name = ?1, appearance_anchor = ?2, updated_at = ?3, last_event_id = ?4 WHERE branch_id = ?5 AND entity_id = ?6",
         rusqlite::params![name, anchor, now, event.id, branch_id, entity_id])?;
-    tx.commit()?;
     Ok(Entity {
         name: name.into(),
         appearance_anchor: anchor.map(str::to_string),
         ..before
     })
+}
+
+#[tauri::command]
+pub fn update_entity(
+    pool: State<Pool>,
+    branch_id: String,
+    entity_id: String,
+    name: String,
+    appearance_anchor: Option<String>,
+) -> AppResult<Entity> {
+    let mut conn = pool.get()?;
+    let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+    let entity = update_entity_sync(
+        &tx,
+        &branch_id,
+        &entity_id,
+        &name,
+        appearance_anchor.as_deref(),
+        "user",
+        None,
+    )?;
+    tx.commit()?;
+    Ok(entity)
 }
 
 #[tauri::command]

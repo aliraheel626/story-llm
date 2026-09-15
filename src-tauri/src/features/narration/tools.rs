@@ -1,0 +1,797 @@
+//! Tools the narrator calls mid-generation: rolling dice, and reading,
+//! creating, and updating entities and their attributes. Replaces the old
+//! classify/resolve/update pipeline (`mechanics::pipeline`) — the narrator
+//! now discovers and records world state itself instead of being handed
+//! pre-computed context.
+//!
+//! Writes are staged in `TurnStaging` during generation and only committed
+//! (via `TurnStaging::commit`) atomically alongside the narration insert once
+//! the whole turn succeeds — matching how every other generation path in
+//! this app (retry, swipe, image generation) already fails clean.
+
+use std::sync::Arc;
+
+use rig_agent::tool::{DynamicTool, ToolContext, ToolExecutionError, ToolOutput};
+use serde_json::json;
+use tokio::sync::Mutex;
+use uuid::Uuid;
+
+use crate::ai::TextModelConfig;
+use crate::features::entities::{self, model::Entity};
+use crate::features::mechanics::attributes::{self, clamp_delta};
+use crate::features::mechanics::model::AttributeRegistryEntry;
+use crate::features::mechanics::resolve::{self, PendingRoll, ResolveInput};
+use crate::shared::db::Pool;
+use crate::shared::error::{AppError, AppResult};
+
+/// One staged write, replayed in call order at commit.
+#[derive(Debug, Clone)]
+enum PendingOp {
+    /// `id` is generated at staging time (not commit time) so a later tool
+    /// call in the same turn can reference an entity that only exists as a
+    /// pending op so far.
+    CreateEntity {
+        id: String,
+        kind: String,
+        name: String,
+        appearance_anchor: Option<String>,
+    },
+    UpdateEntity {
+        id: String,
+        name: String,
+        appearance_anchor: Option<String>,
+    },
+    AdjustAttribute {
+        entity_id: String,
+        attribute: AttributeRegistryEntry,
+        delta: f64,
+        cause: String,
+        dramatic: bool,
+    },
+    Roll(PendingRoll),
+}
+
+/// Everything a narrator turn's tool calls read and write, before any of it
+/// is durable. Built fresh per `submit_turn` call.
+pub struct TurnStaging {
+    pool: Pool,
+    story_id: String,
+    branch_id: String,
+    pending: Vec<PendingOp>,
+}
+
+impl TurnStaging {
+    pub fn new(pool: Pool, story_id: String, branch_id: String) -> Self {
+        Self {
+            pool,
+            story_id,
+            branch_id,
+            pending: Vec::new(),
+        }
+    }
+
+    /// Committed entities plus any staged create/update replayed on top, so
+    /// mid-turn tool calls see each other's not-yet-committed effects.
+    fn effective_entities(&self, kind: Option<&str>, name: Option<&str>) -> AppResult<Vec<Entity>> {
+        let conn = self.pool.get()?;
+        let mut list = entities::list_entities_sync(&conn, &self.story_id, &self.branch_id, kind)?;
+        for op in &self.pending {
+            match op {
+                PendingOp::CreateEntity {
+                    id,
+                    kind: op_kind,
+                    name: op_name,
+                    appearance_anchor,
+                } => {
+                    if kind.is_some_and(|k| k != op_kind) {
+                        continue;
+                    }
+                    list.push(Entity {
+                        id: id.clone(),
+                        story_id: self.story_id.clone(),
+                        branch_id: self.branch_id.clone(),
+                        kind: op_kind.clone(),
+                        name: op_name.clone(),
+                        appearance_anchor: appearance_anchor.clone(),
+                        created_at: chrono::Utc::now().to_rfc3339(),
+                    });
+                }
+                PendingOp::UpdateEntity {
+                    id,
+                    name: new_name,
+                    appearance_anchor,
+                } => {
+                    if let Some(e) = list.iter_mut().find(|e| &e.id == id) {
+                        e.name = new_name.clone();
+                        e.appearance_anchor = appearance_anchor.clone();
+                    }
+                }
+                _ => {}
+            }
+        }
+        if let Some(name) = name {
+            list.retain(|e| e.name.eq_ignore_ascii_case(name));
+        }
+        Ok(list)
+    }
+
+    fn find_effective_entity(&self, entity_id: &str) -> AppResult<Option<Entity>> {
+        Ok(self
+            .effective_entities(None, None)?
+            .into_iter()
+            .find(|e| e.id == entity_id))
+    }
+
+    /// Case-insensitive lookup against the effective view; stages a create if
+    /// absent. Returns the entity and whether it was just staged.
+    fn resolve_or_stage_entity(
+        &mut self,
+        kind: &str,
+        name: &str,
+        appearance_anchor: Option<&str>,
+    ) -> AppResult<(Entity, bool)> {
+        if let Some(existing) = self
+            .effective_entities(Some(kind), Some(name))?
+            .into_iter()
+            .next()
+        {
+            return Ok((existing, false));
+        }
+        let id = Uuid::new_v4().to_string();
+        let entity = Entity {
+            id: id.clone(),
+            story_id: self.story_id.clone(),
+            branch_id: self.branch_id.clone(),
+            kind: kind.to_string(),
+            name: name.to_string(),
+            appearance_anchor: appearance_anchor.map(str::to_string),
+            created_at: chrono::Utc::now().to_rfc3339(),
+        };
+        self.pending.push(PendingOp::CreateEntity {
+            id,
+            kind: kind.to_string(),
+            name: name.to_string(),
+            appearance_anchor: appearance_anchor.map(str::to_string),
+        });
+        Ok((entity, true))
+    }
+
+    /// Committed value plus any staged deltas for this exact (entity,
+    /// attribute) pair folded on top, via the same clamp math the real write
+    /// uses — a mid-turn read must not itself write an init event.
+    fn effective_attribute_value(
+        &self,
+        entity_id: &str,
+        attribute: &AttributeRegistryEntry,
+    ) -> AppResult<f64> {
+        let conn = self.pool.get()?;
+        let mut value =
+            attributes::peek_entity_attribute(&conn, &self.branch_id, entity_id, attribute)?;
+        for op in &self.pending {
+            if let PendingOp::AdjustAttribute {
+                entity_id: op_entity,
+                attribute: op_attr,
+                delta,
+                dramatic,
+                ..
+            } = op
+            {
+                if op_entity == entity_id && op_attr.id == attribute.id {
+                    value = clamp_delta(value, *delta, *dramatic, attribute);
+                }
+            }
+        }
+        Ok(value)
+    }
+
+    fn attribute_snapshot(&self, entity_id: &str) -> AppResult<Vec<serde_json::Value>> {
+        let conn = self.pool.get()?;
+        let mut stmt = conn.prepare(
+            "SELECT attribute_registry.id, attribute_registry.canonical_name, entity_attributes.value,
+                    attribute_registry.min, attribute_registry.max
+             FROM entity_attributes JOIN attribute_registry ON attribute_registry.id = entity_attributes.attribute_id
+             WHERE entity_attributes.branch_id = ?1 AND entity_attributes.entity_id = ?2",
+        )?;
+        let rows = stmt.query_map(rusqlite::params![self.branch_id, entity_id], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, f64>(2)?,
+                row.get::<_, f64>(3)?,
+                row.get::<_, f64>(4)?,
+            ))
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            let (attribute_id, name, mut value, min, max) = row?;
+            for op in &self.pending {
+                if let PendingOp::AdjustAttribute {
+                    entity_id: op_entity,
+                    attribute,
+                    delta,
+                    dramatic,
+                    ..
+                } = op
+                {
+                    if op_entity == entity_id && attribute.id == attribute_id {
+                        value = clamp_delta(value, *delta, *dramatic, attribute);
+                    }
+                }
+            }
+            out.push(json!({"name": name, "value": value, "min": min, "max": max}));
+        }
+        Ok(out)
+    }
+
+    /// Replays every staged op against the real transaction, using the same
+    /// helpers a live write would use today. Applying each op before the
+    /// next is read means chained ops (e.g. two deltas on the same
+    /// attribute) compose correctly with no special-casing.
+    pub fn commit(&self, tx: &rusqlite::Transaction, passage_id: &str) -> AppResult<()> {
+        for op in &self.pending {
+            match op {
+                PendingOp::CreateEntity {
+                    id,
+                    kind,
+                    name,
+                    appearance_anchor,
+                } => {
+                    entities::create_entity_with_id_sync(
+                        tx,
+                        id,
+                        &self.story_id,
+                        &self.branch_id,
+                        kind,
+                        name,
+                        appearance_anchor.as_deref(),
+                        "narrator_tool",
+                        Some(passage_id),
+                    )?;
+                }
+                PendingOp::UpdateEntity {
+                    id,
+                    name,
+                    appearance_anchor,
+                } => {
+                    entities::update_entity_sync(
+                        tx,
+                        &self.branch_id,
+                        id,
+                        name,
+                        appearance_anchor.as_deref(),
+                        "narrator_tool",
+                        Some(passage_id),
+                    )?;
+                }
+                PendingOp::AdjustAttribute {
+                    entity_id,
+                    attribute,
+                    delta,
+                    cause,
+                    dramatic,
+                } => {
+                    attributes::apply_attribute_delta(
+                        tx,
+                        &self.branch_id,
+                        entity_id,
+                        attribute,
+                        *delta,
+                        cause,
+                        passage_id,
+                        *dramatic,
+                    )?;
+                }
+                PendingOp::Roll(pending) => {
+                    resolve::persist_roll(tx, passage_id, pending.clone())?;
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+fn to_tool_error(e: AppError) -> ToolExecutionError {
+    ToolExecutionError::other(e.to_string())
+}
+
+/// `roll_check` + args → a friendly, generic activity label for the frontend
+/// (e.g. "Rolling for Stealth…") — kept next to the tool definitions since it
+/// needs to know each tool's argument shape.
+pub fn friendly_tool_label(tool_name: &str, args_json: &str) -> String {
+    let args: serde_json::Value =
+        serde_json::from_str(args_json).unwrap_or(serde_json::Value::Null);
+    let str_arg = |key: &str| args.get(key).and_then(|v| v.as_str()).map(str::to_string);
+    match tool_name {
+        "roll_check" => format!(
+            "Rolling for {}…",
+            str_arg("attribute").unwrap_or_else(|| "a check".into())
+        ),
+        "get_entities" => "Checking who's here…".to_string(),
+        "create_entity" => format!(
+            "Introducing {}…",
+            str_arg("name").unwrap_or_else(|| "someone new".into())
+        ),
+        "update_entity" => "Updating an entity…".to_string(),
+        "adjust_entity_attribute" => {
+            format!(
+                "Adjusting {}…",
+                str_arg("attribute").unwrap_or_else(|| "an attribute".into())
+            )
+        }
+        other => format!("Running {other}…"),
+    }
+}
+
+fn roll_check_tool(staging: Arc<Mutex<TurnStaging>>, config: TextModelConfig) -> DynamicTool {
+    DynamicTool::new(
+        "roll_check",
+        "Roll the dice for an uncertain action. Resolves the player's relevant attribute against an \
+         optional opposing entity/attribute and returns the outcome. Call this before narrating the \
+         result of any action whose success is genuinely in doubt.",
+        json!({
+            "type": "object",
+            "properties": {
+                "attribute": {"type": "string", "description": "The player's attribute this action draws on, e.g. \"Stealth\"."},
+                "target_entity_id": {"type": "string", "description": "Id of the opposing entity, from get_entities, if any."},
+                "target_attribute": {"type": "string", "description": "The opposing entity's attribute, if target_entity_id is given."},
+                "modifier": {"type": "number", "description": "Situational adjustment to success probability, e.g. 0.1 for +10%."}
+            },
+            "required": ["attribute"]
+        }),
+        move |_ctx: &mut ToolContext, args: serde_json::Value| {
+            let staging = staging.clone();
+            let config = config.clone();
+            Box::pin(async move {
+                let attribute_name = args
+                    .get("attribute")
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.trim().is_empty())
+                    .ok_or_else(|| ToolExecutionError::invalid_args("attribute is required"))?
+                    .to_string();
+                let target_entity_id = args.get("target_entity_id").and_then(|v| v.as_str()).map(str::to_string);
+                let target_attribute_name = args.get("target_attribute").and_then(|v| v.as_str()).map(str::to_string);
+                let modifier = args.get("modifier").and_then(|v| v.as_f64()).unwrap_or(0.0);
+
+                let (story_id, actor) = {
+                    let mut staging = staging.lock().await;
+                    let story_id = staging.story_id.clone();
+                    let (actor, _) = staging
+                        .resolve_or_stage_entity("character", "You", None)
+                        .map_err(to_tool_error)?;
+                    (story_id, actor)
+                };
+
+                let actor_attribute = attributes::resolve_or_create_attribute(
+                    &staging.lock().await.pool.clone(),
+                    &config.api_key,
+                    &attribute_name,
+                    "character",
+                    &story_id,
+                )
+                .await
+                .map_err(to_tool_error)?;
+
+                let actor_value = staging
+                    .lock()
+                    .await
+                    .effective_attribute_value(&actor.id, &actor_attribute)
+                    .map_err(to_tool_error)?;
+
+                let target = match &target_entity_id {
+                    Some(id) => staging.lock().await.find_effective_entity(id).map_err(to_tool_error)?,
+                    None => None,
+                };
+
+                let (target_value, target_attribute) = match (&target, &target_attribute_name) {
+                    (Some(target), Some(target_attr_name)) => {
+                        let target_attribute = attributes::resolve_or_create_attribute(
+                            &staging.lock().await.pool.clone(),
+                            &config.api_key,
+                            target_attr_name,
+                            &target.kind,
+                            &story_id,
+                        )
+                        .await
+                        .map_err(to_tool_error)?;
+                        let value = staging
+                            .lock()
+                            .await
+                            .effective_attribute_value(&target.id, &target_attribute)
+                            .map_err(to_tool_error)?;
+                        (value, Some(target_attribute))
+                    }
+                    _ => (actor_attribute.min + (actor_attribute.max - actor_attribute.min) / 2.0, None),
+                };
+
+                let output = resolve::resolve(ResolveInput {
+                    actor_value,
+                    target_value,
+                    min: actor_attribute.min,
+                    max: actor_attribute.max,
+                    modifier,
+                });
+
+                {
+                    let mut staging = staging.lock().await;
+                    staging.pending.push(PendingOp::Roll(PendingRoll {
+                        actor_entity_id: actor.id.clone(),
+                        target_entity_id: target.as_ref().map(|t| t.id.clone()),
+                        actor_attribute_id: Some(actor_attribute.id.clone()),
+                        target_attribute_id: target_attribute.as_ref().map(|a| a.id.clone()),
+                        actor_value,
+                        target_value,
+                        output,
+                    }));
+                }
+
+                Ok(ToolOutput::json(json!({
+                    "roll": output.roll, "needed": output.needed,
+                    "outcome": output.outcome, "degree": output.degree,
+                    "actor_value": actor_value, "target_value": target_value,
+                })))
+            })
+        },
+    )
+}
+
+fn get_entities_tool(staging: Arc<Mutex<TurnStaging>>) -> DynamicTool {
+    DynamicTool::new(
+        "get_entities",
+        "List known entities (characters, objects, locations) and their current attribute values. \
+         Use this to check who or what is present before narrating, rolling, or adjusting state.",
+        json!({
+            "type": "object",
+            "properties": {
+                "kind": {"type": "string", "description": "Filter by kind: character, object, location, relationship, or campaign."},
+                "name": {"type": "string", "description": "Filter to an exact (case-insensitive) name match."}
+            }
+        }),
+        move |_ctx: &mut ToolContext, args: serde_json::Value| {
+            let staging = staging.clone();
+            Box::pin(async move {
+                let kind = args.get("kind").and_then(|v| v.as_str());
+                let name = args.get("name").and_then(|v| v.as_str());
+                let staging = staging.lock().await;
+                let entities = staging
+                    .effective_entities(kind, name)
+                    .map_err(to_tool_error)?;
+                let mut out = Vec::new();
+                for entity in entities {
+                    let attributes = staging
+                        .attribute_snapshot(&entity.id)
+                        .map_err(to_tool_error)?;
+                    out.push(json!({
+                        "id": entity.id, "kind": entity.kind, "name": entity.name,
+                        "appearance_anchor": entity.appearance_anchor, "attributes": attributes,
+                    }));
+                }
+                Ok(ToolOutput::json(json!({"entities": out})))
+            })
+        },
+    )
+}
+
+fn create_entity_tool(staging: Arc<Mutex<TurnStaging>>) -> DynamicTool {
+    DynamicTool::new(
+        "create_entity",
+        "Introduce a new entity (character, object, or location) the story just established. \
+         Idempotent by name — calling this for an entity that already exists just returns it.",
+        json!({
+            "type": "object",
+            "properties": {
+                "kind": {"type": "string", "description": "character, object, location, relationship, or campaign."},
+                "name": {"type": "string", "description": "The entity's name, exactly as it should appear in the story."},
+                "appearance_anchor": {"type": "string", "description": "A short, stable visual description to keep the entity consistent."}
+            },
+            "required": ["kind", "name"]
+        }),
+        move |_ctx: &mut ToolContext, args: serde_json::Value| {
+            let staging = staging.clone();
+            Box::pin(async move {
+                let kind = args
+                    .get("kind")
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.trim().is_empty())
+                    .ok_or_else(|| ToolExecutionError::invalid_args("kind is required"))?;
+                let name = args
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.trim().is_empty())
+                    .ok_or_else(|| ToolExecutionError::invalid_args("name is required"))?;
+                let appearance_anchor = args.get("appearance_anchor").and_then(|v| v.as_str());
+
+                let mut staging = staging.lock().await;
+                let (entity, created) = staging
+                    .resolve_or_stage_entity(kind, name, appearance_anchor)
+                    .map_err(to_tool_error)?;
+                Ok(ToolOutput::json(json!({
+                    "id": entity.id, "kind": entity.kind, "name": entity.name, "created": created,
+                })))
+            })
+        },
+    )
+}
+
+fn update_entity_tool(staging: Arc<Mutex<TurnStaging>>) -> DynamicTool {
+    DynamicTool::new(
+        "update_entity",
+        "Rename an entity or update its appearance description. Look it up with get_entities first.",
+        json!({
+            "type": "object",
+            "properties": {
+                "id": {"type": "string", "description": "Entity id from get_entities/create_entity."},
+                "name": {"type": "string", "description": "The entity's (possibly unchanged) name."},
+                "appearance_anchor": {"type": "string", "description": "The entity's (possibly unchanged) appearance description."}
+            },
+            "required": ["id", "name"]
+        }),
+        move |_ctx: &mut ToolContext, args: serde_json::Value| {
+            let staging = staging.clone();
+            Box::pin(async move {
+                let id = args
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| ToolExecutionError::invalid_args("id is required"))?
+                    .to_string();
+                let name = args
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.trim().is_empty())
+                    .ok_or_else(|| ToolExecutionError::invalid_args("name is required"))?
+                    .to_string();
+                let appearance_anchor = args.get("appearance_anchor").and_then(|v| v.as_str()).map(str::to_string);
+
+                let mut staging = staging.lock().await;
+                if staging.find_effective_entity(&id).map_err(to_tool_error)?.is_none() {
+                    return Err(ToolExecutionError::invalid_args(format!("no such entity: {id}")));
+                }
+                staging.pending.push(PendingOp::UpdateEntity {
+                    id: id.clone(),
+                    name: name.clone(),
+                    appearance_anchor: appearance_anchor.clone(),
+                });
+                Ok(ToolOutput::json(json!({"id": id, "name": name, "appearance_anchor": appearance_anchor})))
+            })
+        },
+    )
+}
+
+fn adjust_entity_attribute_tool(
+    staging: Arc<Mutex<TurnStaging>>,
+    config: TextModelConfig,
+) -> DynamicTool {
+    DynamicTool::new(
+        "adjust_entity_attribute",
+        "Change an entity's attribute by a delta implied by what just happened (an injury, growing \
+         trust, a depleted resource). Most changes are minor; only set dramatic for a genuinely \
+         major, story-changing swing.",
+        json!({
+            "type": "object",
+            "properties": {
+                "entity_id": {"type": "string", "description": "Entity id from get_entities/create_entity. Use \"You\" for the player via get_entities first."},
+                "attribute": {"type": "string", "description": "Attribute name, e.g. \"Trust\"."},
+                "delta": {"type": "number", "description": "Positive or negative change, on the attribute's own scale."},
+                "dramatic": {"type": "boolean", "description": "True only for a major, story-changing swing."},
+                "reason": {"type": "string", "description": "Why this changed, for the audit log."}
+            },
+            "required": ["entity_id", "attribute", "delta", "reason"]
+        }),
+        move |_ctx: &mut ToolContext, args: serde_json::Value| {
+            let staging = staging.clone();
+            let config = config.clone();
+            Box::pin(async move {
+                let entity_id = args
+                    .get("entity_id")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| ToolExecutionError::invalid_args("entity_id is required"))?
+                    .to_string();
+                let attribute_name = args
+                    .get("attribute")
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.trim().is_empty())
+                    .ok_or_else(|| ToolExecutionError::invalid_args("attribute is required"))?
+                    .to_string();
+                let delta = args
+                    .get("delta")
+                    .and_then(|v| v.as_f64())
+                    .ok_or_else(|| ToolExecutionError::invalid_args("delta is required"))?;
+                let dramatic = args.get("dramatic").and_then(|v| v.as_bool()).unwrap_or(false);
+                let reason = args.get("reason").and_then(|v| v.as_str()).unwrap_or("narration").to_string();
+
+                let (story_id, entity, pool) = {
+                    let staging = staging.lock().await;
+                    let entity = staging
+                        .find_effective_entity(&entity_id)
+                        .map_err(to_tool_error)?
+                        .ok_or_else(|| ToolExecutionError::invalid_args(format!("no such entity: {entity_id}")))?;
+                    (staging.story_id.clone(), entity, staging.pool.clone())
+                };
+
+                let attribute = attributes::resolve_or_create_attribute(&pool, &config.api_key, &attribute_name, &entity.kind, &story_id)
+                    .await
+                    .map_err(to_tool_error)?;
+
+                let mut staging = staging.lock().await;
+                let before = staging.effective_attribute_value(&entity.id, &attribute).map_err(to_tool_error)?;
+                let after = clamp_delta(before, delta, dramatic, &attribute);
+                staging.pending.push(PendingOp::AdjustAttribute {
+                    entity_id: entity.id.clone(),
+                    attribute,
+                    delta,
+                    cause: reason,
+                    dramatic,
+                });
+                Ok(ToolOutput::json(json!({"before": before, "after": after})))
+            })
+        },
+    )
+}
+
+/// The full narrator tool set for one turn.
+pub fn narrator_tools(
+    staging: Arc<Mutex<TurnStaging>>,
+    config: TextModelConfig,
+) -> Vec<DynamicTool> {
+    vec![
+        roll_check_tool(staging.clone(), config.clone()),
+        get_entities_tool(staging.clone()),
+        create_entity_tool(staging.clone()),
+        update_entity_tool(staging.clone()),
+        adjust_entity_attribute_tool(staging, config),
+    ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::features::timeline::repository::append_entry;
+    use chrono::Utc;
+
+    fn setup() -> (Pool, String, String) {
+        let pool = crate::shared::db::test_pool();
+        let conn = pool.get().unwrap();
+        let story_id = Uuid::new_v4().to_string();
+        let branch_id = Uuid::new_v4().to_string();
+        let now = Utc::now().to_rfc3339();
+        conn.execute(
+            "INSERT INTO stories (id, title, created_at, updated_at, settings_json, default_branch_id) VALUES (?1, 't', ?2, ?2, '{}', ?3)",
+            rusqlite::params![story_id, now, branch_id],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO branches (id, story_id, parent_branch_id, forked_at_entry_id, name, created_at) VALUES (?1, ?2, NULL, NULL, 'main', ?3)",
+            rusqlite::params![branch_id, story_id, now],
+        )
+        .unwrap();
+        (pool, story_id, branch_id)
+    }
+
+    fn find_attribute(conn: &rusqlite::Connection, name: &str) -> AttributeRegistryEntry {
+        conn.query_row(
+            "SELECT id, canonical_name, aliases_json, entity_kinds_json, min, max, category, is_user_created, created_in_story_id, created_at
+             FROM attribute_registry WHERE canonical_name = ?1",
+            [name],
+            |row| {
+                Ok(AttributeRegistryEntry {
+                    id: row.get(0)?,
+                    canonical_name: row.get(1)?,
+                    aliases_json: row.get(2)?,
+                    entity_kinds_json: row.get(3)?,
+                    min: row.get(4)?,
+                    max: row.get(5)?,
+                    category: row.get(6)?,
+                    is_user_created: row.get::<_, i64>(7)? != 0,
+                    created_in_story_id: row.get(8)?,
+                    created_at: row.get(9)?,
+                })
+            },
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn staged_entity_is_visible_before_commit_and_not_duplicated() {
+        let (pool, story_id, branch_id) = setup();
+        let mut staging = TurnStaging::new(pool, story_id, branch_id);
+
+        let (created, was_new) = staging
+            .resolve_or_stage_entity("character", "Mira", Some("silver hair"))
+            .unwrap();
+        assert!(was_new);
+        assert!(staging
+            .find_effective_entity(&created.id)
+            .unwrap()
+            .is_some());
+
+        // A second lookup by name finds the already-staged entity instead of
+        // creating a duplicate.
+        let (found, was_new_again) = staging
+            .resolve_or_stage_entity("character", "mira", None)
+            .unwrap();
+        assert!(!was_new_again);
+        assert_eq!(found.id, created.id);
+        assert_eq!(staging.pending.len(), 1);
+    }
+
+    #[test]
+    fn staged_attribute_delta_folds_onto_the_registry_midpoint() {
+        let (pool, story_id, branch_id) = setup();
+        let attribute = find_attribute(&pool.get().unwrap(), "Trust");
+        let mut staging = TurnStaging::new(pool, story_id, branch_id);
+        let (entity, _) = staging
+            .resolve_or_stage_entity("character", "Mira", None)
+            .unwrap();
+
+        let midpoint = (attribute.min + attribute.max) / 2.0;
+        assert_eq!(
+            staging
+                .effective_attribute_value(&entity.id, &attribute)
+                .unwrap(),
+            midpoint
+        );
+
+        staging.pending.push(PendingOp::AdjustAttribute {
+            entity_id: entity.id.clone(),
+            attribute: attribute.clone(),
+            delta: 2.0,
+            cause: "test".into(),
+            dramatic: false,
+        });
+        assert_eq!(
+            staging
+                .effective_attribute_value(&entity.id, &attribute)
+                .unwrap(),
+            midpoint + 2.0
+        );
+    }
+
+    #[test]
+    fn commit_applies_every_staged_op_atomically() {
+        let (pool, story_id, branch_id) = setup();
+        let attribute = find_attribute(&pool.get().unwrap(), "Trust");
+        let mut staging = TurnStaging::new(pool.clone(), story_id, branch_id.clone());
+        let (entity, _) = staging
+            .resolve_or_stage_entity("character", "Mira", Some("silver hair"))
+            .unwrap();
+        staging.pending.push(PendingOp::AdjustAttribute {
+            entity_id: entity.id.clone(),
+            attribute: attribute.clone(),
+            delta: 3.0,
+            cause: "test".into(),
+            dramatic: false,
+        });
+
+        let mut conn = pool.get().unwrap();
+        let passage = append_entry(
+            &conn,
+            &branch_id,
+            "narration",
+            "visible",
+            Some("scene"),
+            &json!({}),
+            None,
+        )
+        .unwrap();
+        let tx = conn.transaction().unwrap();
+        staging.commit(&tx, &passage.id).unwrap();
+        tx.commit().unwrap();
+
+        let conn = pool.get().unwrap();
+        let name: String = conn
+            .query_row(
+                "SELECT name FROM branch_entity_state WHERE entity_id = ?1",
+                [&entity.id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(name, "Mira");
+        let value: f64 = conn
+            .query_row(
+                "SELECT value FROM entity_attributes WHERE entity_id = ?1 AND attribute_id = ?2",
+                rusqlite::params![entity.id, attribute.id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(value, (attribute.min + attribute.max) / 2.0 + 3.0);
+    }
+}

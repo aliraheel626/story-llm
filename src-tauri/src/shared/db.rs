@@ -209,6 +209,17 @@ fn seed_attribute_registry(conn: &PooledConn) -> AppResult<()> {
     Ok(())
 }
 
+/// A real pool against the app's actual (temp-dir-backed) schema, migrations,
+/// and seeded attribute registry — used by tests that need more than a
+/// hand-written `CREATE TABLE` subset (e.g. narrator-tool staging, which
+/// touches five-plus tables). Callers are responsible for creating their own
+/// story/branch rows.
+#[cfg(test)]
+pub fn test_pool() -> Pool {
+    let dir = std::env::temp_dir().join(format!("dungeon-test-{}", Uuid::new_v4()));
+    init_pool(&dir).expect("initialize test schema")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

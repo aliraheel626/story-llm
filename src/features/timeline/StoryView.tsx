@@ -112,6 +112,9 @@ export function StoryView() {
 
           {isStreamingAppend && (
             <div ref={pinRef} className="animate-fade-in">
+              {streaming!.toolActivity?.phase === "started" && (
+                <p className="mb-1 text-[11px] italic text-muted">{streaming!.toolActivity.label}</p>
+              )}
               <p className="whitespace-pre-wrap font-prose text-base leading-8 text-text">
                 {streaming!.text}
                 <span className="ml-0.5 inline-block h-4 w-1.5 translate-y-0.5 animate-pulse bg-muted motion-reduce:animate-none" />

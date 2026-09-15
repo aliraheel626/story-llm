@@ -54,8 +54,8 @@ export function AttributesPanel() {
         <span>
           <span className="text-text">Attributes</span>
           <span className="block text-xs text-muted">
-            Entities track stats (Accuracy, Trust, …) that shape both dice odds and narration tone. Off disables
-            classify/resolve/update entirely.
+            Entities track stats (Accuracy, Trust, …) that shape both dice odds and narration tone. Off removes the
+            narrator's dice-roll and entity-tracking tools entirely.
           </span>
         </span>
       </label>
