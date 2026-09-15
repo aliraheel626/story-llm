@@ -1,7 +1,73 @@
-# Tauri + React + Typescript
+# Dungeon
 
-This template should help get you started developing with Tauri, React and Typescript in Vite.
+Dungeon is a local-first AI storytelling desktop app built with Tauri, React,
+TypeScript, and Rust. Stories, passages, characters, world notes, mechanics,
+model settings, and generated-image metadata are persisted in a local SQLite
+database. Text and image generation use OpenRouter when configured.
 
-## Recommended IDE Setup
+## Development
 
-- [VS Code](https://code.visualstudio.com/) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)
+Prerequisites: Node.js, pnpm, the Rust toolchain, and the platform dependencies
+required by Tauri 2.
+
+```bash
+pnpm install
+pnpm tauri dev
+```
+
+Useful verification commands:
+
+```bash
+pnpm build
+cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+cargo test --manifest-path src-tauri/Cargo.toml
+cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+```
+
+## Architecture
+
+The application is organized as vertical feature modules. Each feature owns its
+UI, state, IPC adapter, backend commands, persistence operations, and domain
+types where applicable.
+
+```text
+src/
+  app/                 application shell and event wiring
+  features/
+    characters/
+    layout/
+    mechanics/
+    passages/
+    settings/
+    stories/
+    world/
+  shared/              genuinely cross-feature types and UI
+
+src-tauri/src/
+  ai/                   shared narration client and stream parsing
+  features/
+    entities/
+    images/
+    mechanics/
+    passages/
+    settings/
+    stories/
+  shared/               database setup and application errors
+```
+
+Frontend feature APIs are deliberately thin wrappers around Tauri commands.
+Zustand stores coordinate feature state and streamed narration events. On the
+backend, Tauri commands form the feature boundary, while repositories and
+feature-local helpers contain persistence and domain behavior.
+
+Passage generation is streamed to the UI and persisted only after successful
+completion. Retrying replaces the existing narrator passage transactionally,
+so configuration or generation failures leave the previous passage intact.
+Passage and mechanics-roll writes share one transaction, and mutations also
+refresh the owning story's `updated_at` value.
+
+## Local data
+
+The SQLite database and generated images live in the operating system's Tauri
+application-data directory. OpenRouter API keys are stored through the app's
+settings commands; do not commit secrets or local application data.
