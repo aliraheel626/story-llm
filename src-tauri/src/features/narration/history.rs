@@ -41,7 +41,7 @@ fn latest_summary_through_seq(
 /// already exists, only entries from its boundary onward are even fetched —
 /// a long, already-compacted branch doesn't reload and re-decode everything
 /// before it on every turn.
-pub(super) fn load_history(
+pub(crate) fn load_history(
     pool: &Pool,
     branch_id: &str,
     before_seq: Option<i64>,

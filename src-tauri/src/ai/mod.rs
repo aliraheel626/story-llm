@@ -43,10 +43,8 @@ pub struct NarrateRequest {
     pub preamble: String,
     pub history: Vec<HistoryTurn>,
     pub prompt: String,
-    /// Tools the narrator may call mid-generation (see `narration::tools`).
-    /// Empty for every call site except `submit_turn`'s tool-calling path —
-    /// `ai::mod` deliberately never sees the concrete tool types, only Rig's
-    /// own runtime-defined `DynamicTool`.
+    /// Tools the agent may call mid-generation. `ai::mod` deliberately never
+    /// sees the concrete tool types, only Rig's runtime-defined `DynamicTool`.
     /// OpenRouter reasoning effort for this request (`none`/`low`/`high`/…).
     /// `None` leaves the model at its own default. Sent as an OpenRouter
     /// request-body extension; changing it mid-story changes the request
