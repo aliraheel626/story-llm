@@ -15,6 +15,55 @@ use super::pipeline::DiceMode;
 pub struct MechanicsSettings {
     pub dice_mode: String,
     pub attributes_enabled: bool,
+    /// OpenRouter reasoning effort for narration, e.g. "low" or "high". `None`
+    /// leaves the model at its own default.
+    pub reasoning_effort: Option<String>,
+}
+
+/// The effort levels OpenRouter accepts; anything else is ignored rather than
+/// forwarded, so a stale setting can't make every narration 400.
+pub fn normalize_reasoning_effort(value: &str) -> Option<&'static str> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "none" => Some("none"),
+        "minimal" => Some("minimal"),
+        "low" => Some("low"),
+        "medium" => Some("medium"),
+        "high" => Some("high"),
+        "xhigh" => Some("xhigh"),
+        "max" => Some("max"),
+        _ => None,
+    }
+}
+
+/// The configured reasoning effort for whichever story owns `branch_id`,
+/// best-effort: a missing story or unreadable settings simply means "leave it
+/// to the model", since a narration must not fail over a display setting.
+pub fn reasoning_effort_for_branch(pool: &Pool, branch_id: &str) -> Option<String> {
+    let conn = pool.get().ok()?;
+    let story_id: Option<String> = conn
+        .query_row(
+            "SELECT story_id FROM branches WHERE id = ?1",
+            [branch_id],
+            |r| r.get(0),
+        )
+        .optional()
+        .ok()
+        .flatten();
+    let raw: String = conn
+        .query_row(
+            "SELECT settings_json FROM stories WHERE id = ?1",
+            [story_id?],
+            |r| r.get(0),
+        )
+        .optional()
+        .ok()
+        .flatten()?;
+    let settings: Value = serde_json::from_str(&raw).ok()?;
+    settings
+        .get("reasoning_effort")
+        .and_then(Value::as_str)
+        .and_then(normalize_reasoning_effort)
+        .map(str::to_string)
 }
 
 fn story_settings(pool: &State<Pool>, story_id: &str) -> AppResult<Value> {
@@ -48,6 +97,11 @@ pub fn get_story_mechanics_settings(
             .get("attributes_enabled")
             .and_then(Value::as_bool)
             .unwrap_or(true),
+        reasoning_effort: settings
+            .get("reasoning_effort")
+            .and_then(Value::as_str)
+            .and_then(normalize_reasoning_effort)
+            .map(str::to_string),
     })
 }
 
@@ -58,11 +112,26 @@ pub fn save_story_mechanics_settings(
     branch_id: String,
     dice_mode: String,
     attributes_enabled: bool,
+    reasoning_effort: Option<String>,
 ) -> AppResult<()> {
     let mut settings = story_settings(&pool, &story_id)?;
     let dice_mode = DiceMode::from_str_or_default(&dice_mode).as_str();
+    // Unrecognized levels are rejected rather than stored, so the story never
+    // carries an effort the provider would refuse.
+    let reasoning_effort = reasoning_effort
+        .as_deref()
+        .and_then(normalize_reasoning_effort)
+        .map(str::to_string);
     settings["dice_mode"] = json!(dice_mode);
     settings["attributes_enabled"] = json!(attributes_enabled);
+    match &reasoning_effort {
+        Some(effort) => settings["reasoning_effort"] = json!(effort),
+        None => {
+            if let Some(object) = settings.as_object_mut() {
+                object.remove("reasoning_effort");
+            }
+        }
+    }
     let mut conn = pool.get()?;
     let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
     tx.execute(
@@ -70,8 +139,9 @@ pub fn save_story_mechanics_settings(
         rusqlite::params![settings.to_string(), Utc::now().to_rfc3339(), story_id],
     )?;
     timeline::append_entry(&tx, &branch_id, kind::MECHANICS_SETTINGS_CHANGED, "hidden",
-        Some(&format!("Mechanics settings changed: dice mode {dice_mode}, attributes enabled {attributes_enabled}.")),
-        &json!({"dice_mode": dice_mode, "attributes_enabled": attributes_enabled}), None)?;
+        Some(&format!("Mechanics settings changed: dice mode {dice_mode}, attributes enabled {attributes_enabled}, reasoning effort {}.",
+            reasoning_effort.as_deref().unwrap_or("model default"))),
+        &json!({"dice_mode": dice_mode, "attributes_enabled": attributes_enabled, "reasoning_effort": reasoning_effort}), None)?;
     tx.commit()?;
     Ok(())
 }
@@ -354,4 +424,24 @@ pub fn get_roll_detail(pool: State<Pool>, entry_id: String) -> AppResult<Option<
         .and_then(parse_roll);
     roll.map(|roll| detail(&conn, &base.branch_id, roll, true))
         .transpose()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_reasoning_effort;
+
+    #[test]
+    fn reasoning_effort_accepts_only_provider_levels() {
+        assert_eq!(normalize_reasoning_effort("none"), Some("none"));
+        assert_eq!(normalize_reasoning_effort("MINIMAL"), Some("minimal"));
+        assert_eq!(normalize_reasoning_effort(" high "), Some("high"));
+        assert_eq!(normalize_reasoning_effort("xhigh"), Some("xhigh"));
+        assert_eq!(normalize_reasoning_effort("max"), Some("max"));
+        // Anything else is dropped rather than forwarded, so a hand-edited or
+        // stale setting can't make every narration request fail.
+        assert_eq!(normalize_reasoning_effort(""), None);
+        assert_eq!(normalize_reasoning_effort("off"), None);
+        assert_eq!(normalize_reasoning_effort("medium "), Some("medium"));
+        assert_eq!(normalize_reasoning_effort("turbo"), None);
+    }
 }

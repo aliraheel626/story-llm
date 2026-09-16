@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { useAppStore } from "../../app/store";
+import { DEFAULT_MECHANICS_SETTINGS, useMechanicsStore } from "../mechanics/store";
 import { useImageModelStore } from "../settings/imageModelStore";
 import { useStoryStore } from "./store";
+import type { ReasoningEffort } from "../../shared/types";
 
 type Mode = "do" | "say" | "story" | "guide" | "see";
 
@@ -11,6 +13,17 @@ const MODES: { id: Mode; label: string; placeholder: string }[] = [
   { id: "story", label: "Story", placeholder: "Write the next passage yourself..." },
   { id: "guide", label: "Guide", placeholder: "Steer the story out of character (won't appear as an action)..." },
   { id: "see", label: "See", placeholder: 'Optional: what to show — "the bucket", "the girl you are seeing"...' },
+];
+
+const EFFORT_OPTIONS: { value: ReasoningEffort | ""; label: string }[] = [
+  { value: "", label: "Model default" },
+  { value: "none", label: "None" },
+  { value: "minimal", label: "Minimal" },
+  { value: "low", label: "Low" },
+  { value: "medium", label: "Medium" },
+  { value: "high", label: "High" },
+  { value: "xhigh", label: "Extra high" },
+  { value: "max", label: "Max" },
 ];
 
 /** `branchId` is null while composing a not-yet-persisted draft story; the
@@ -36,6 +49,19 @@ export function Composer({ branchId }: { branchId: string | null }) {
   const imageError = useStoryStore((s) => s.imageError);
   const imageSettings = useImageModelStore((s) => s.settings);
   const loadImageSettings = useImageModelStore((s) => s.load);
+  const activeStoryId = useAppStore((s) => s.activeStoryId);
+  const saveSettings = useMechanicsStore((s) => s.saveSettings);
+  const reasoningEffort =
+    (useMechanicsStore((s) => (activeStoryId ? s.settingsByStory[activeStoryId] : s.draftSettings)) ?? DEFAULT_MECHANICS_SETTINGS)
+      .reasoning_effort;
+
+  const changeReasoningEffort = async (value: string) => {
+    try {
+      await saveSettings(activeStoryId, branchId, { reasoning_effort: (value || null) as ReasoningEffort | null });
+    } catch (e) {
+      console.error("failed to save reasoning effort", e);
+    }
+  };
 
   const busy = submitting || !!streaming;
   const lastEntry = entries && entries.length > 0 ? entries[entries.length - 1] : undefined;
@@ -173,17 +199,37 @@ export function Composer({ branchId }: { branchId: string | null }) {
           disabled={busy || (mode === "see" && imagesDisabled)}
           className="w-full resize-none overflow-y-auto rounded border border-border bg-bg px-3 py-2 font-prose text-sm leading-6 text-text placeholder:text-muted focus:outline-none focus:border-accent disabled:opacity-60"
         />
-        <div className="mt-2 flex items-center justify-between">
+        <div className="mt-2 flex items-center justify-between gap-2">
           <span className="text-xs text-muted">
             {displayedError ? <span className="text-danger">{displayedError}</span> : statusHint}
           </span>
-          <button
-            onClick={onSubmit}
-            disabled={submitDisabled}
-            className="rounded bg-accent px-4 py-1.5 text-xs font-medium text-bg hover:bg-accent-hover disabled:opacity-40 transition-colors"
-          >
-            {submitLabel}
-          </button>
+          <div className="flex shrink-0 items-center gap-2">
+            <label
+              className="flex items-center gap-1.5 text-xs text-muted"
+              title="How much the model reasons before writing. Changing it mid-story changes the request prefix, so the provider's prompt cache is invalidated once."
+            >
+              <span>Effort</span>
+              <select
+                value={reasoningEffort ?? ""}
+                onChange={(e) => changeReasoningEffort(e.target.value)}
+                disabled={busy}
+                className="rounded border border-border bg-bg px-1.5 py-0.5 text-xs text-text focus:border-accent focus:outline-none disabled:opacity-60"
+              >
+                {EFFORT_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button
+              onClick={onSubmit}
+              disabled={submitDisabled}
+              className="rounded bg-accent px-4 py-1.5 text-xs font-medium text-bg hover:bg-accent-hover disabled:opacity-40 transition-colors"
+            >
+              {submitLabel}
+            </button>
+          </div>
         </div>
       </div>
     </div>

@@ -47,6 +47,11 @@ pub struct NarrateRequest {
     /// Empty for every call site except `submit_turn`'s tool-calling path —
     /// `ai::mod` deliberately never sees the concrete tool types, only Rig's
     /// own runtime-defined `DynamicTool`.
+    /// OpenRouter reasoning effort for this request (`none`/`low`/`high`/…).
+    /// `None` leaves the model at its own default. Sent as an OpenRouter
+    /// request-body extension; changing it mid-story changes the request
+    /// prefix, which invalidates the provider's prompt cache.
+    pub reasoning_effort: Option<String>,
     pub tools: Vec<DynamicTool>,
 }
 
@@ -129,7 +134,12 @@ where
     F: FnMut(NarratorChunk),
 {
     let has_tools = !req.tools.is_empty();
-    let agent = build_agent(&req.config, &req.preamble, req.tools)?;
+    let agent = build_agent(
+        &req.config,
+        &req.preamble,
+        req.tools,
+        req.reasoning_effort.as_deref(),
+    )?;
 
     let history: Vec<rig_core::completion::Message> = req
         .history
@@ -207,17 +217,25 @@ pub async fn prompt_typed<T>(
 where
     T: schemars::JsonSchema + serde::de::DeserializeOwned + Send + 'static,
 {
-    let agent = build_agent(config, preamble, Vec::new())?;
+    let agent = build_agent(config, preamble, Vec::new(), None)?;
     agent
         .prompt_typed::<T>(prompt)
         .await
         .map_err(|e| AppError::Other(format!("structured prompt failed: {e}")))
 }
 
+/// Model round-trips a tool-calling turn may take. Rig's builder defaults to
+/// `max_turns: 1`, which aborts the whole turn the moment the model calls any
+/// tool (`MaxTurnsError`) — it never gets to see the tool result and narrate.
+/// This allows a realistic sequence (look up entities, roll, adjust state,
+/// then narrate) while still bounding a confused model's loop.
+const MAX_TOOL_TURNS: usize = 8;
+
 fn build_agent(
     config: &TextModelConfig,
     preamble: &str,
     tools: Vec<DynamicTool>,
+    reasoning_effort: Option<&str>,
 ) -> AppResult<rig_agent::Agent> {
     match config.provider {
         TextProviderKind::OpenRouter => {
@@ -227,10 +245,22 @@ fn build_agent(
                 .build()
                 .map_err(|e| AppError::Other(format!("failed to build OpenRouter client: {e}")))?;
             let builder = client.agent(config.model.clone()).preamble(preamble);
+            // OpenRouter accepts provider-specific request fields it doesn't
+            // model natively; `reasoning.effort` is how the effort selector
+            // reaches the upstream model.
+            let builder = match reasoning_effort {
+                Some(effort) => builder.additional_params(serde_json::json!({
+                    "reasoning": { "effort": effort },
+                })),
+                None => builder,
+            };
             let agent = if tools.is_empty() {
                 builder.build()
             } else {
-                builder.dynamic_tools(tools).build()
+                builder
+                    .dynamic_tools(tools)
+                    .default_max_turns(MAX_TOOL_TURNS)
+                    .build()
             };
             Ok(agent)
         }

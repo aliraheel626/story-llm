@@ -1,8 +1,10 @@
 import { useEffect, useRef } from "react";
 import { useAppStore } from "../../app/store";
 import { DEFAULT_STORY_TITLE, timelineInputMode } from "../../shared/types";
+import type { NarrativePayload, TimelineEntry } from "../../shared/types";
 import { EditableStoryTitle } from "../stories/EditableStoryTitle";
 import { TimelineEntryView } from "./TimelineEntryView";
+import { TurnActivity, toolCallsFromEvents, type TurnActivityData } from "./TurnActivity";
 import { Composer } from "./Composer";
 import { useStoryStore } from "./store";
 
@@ -25,11 +27,36 @@ export function StoryView() {
   const variantsByEntry = useStoryStore((s) => s.variantsByEntry);
   const rollByEntry = useStoryStore((s) => s.rollByEntry);
   const streaming = useStoryStore((s) => (branchId ? s.streamingByBranch[branchId] : undefined));
+  const hidden = useStoryStore((s) => (branchId ? s.hiddenByBranch[branchId] : undefined));
+  const lastTurnActivity = useStoryStore((s) => (branchId ? s.turnActivityByBranch[branchId] : undefined));
 
   const entries = branchId ? entriesByBranch[branchId] ?? [] : [];
   const scrollRef = useRef<HTMLDivElement>(null);
   const pinRef = useRef<HTMLDivElement>(null);
   const reducedMotion = usePrefersReducedMotion();
+
+  /**
+   * Reasoning and tool calls for one narration entry. Committed turns read
+   * from the entry's own payload plus the hidden events it targeted (so the
+   * panel survives a reload); the newest turn also falls back to the
+   * in-session snapshot for anything the fetched events don't cover yet.
+   */
+  const activityFor = (entry: TimelineEntry, isLastEntry: boolean): TurnActivityData | undefined => {
+    if (entry.kind !== "narration") return undefined;
+    const selected = variantsByEntry[entry.id]?.find((variant) => variant.is_selected);
+    const thoughts = selected ? selected.thoughts : (entry.payload as NarrativePayload).thoughts;
+    const tools = toolCallsFromEvents(entry.id, hidden);
+    // Hidden events for the turn that just finished aren't in the store until
+    // a reload, so fill whichever half is missing from the session snapshot.
+    const snapshot = isLastEntry ? lastTurnActivity : undefined;
+    const activity: TurnActivityData = {
+      thoughts: thoughts ?? snapshot?.thoughts,
+      tools: tools.length > 0
+        ? tools
+        : (snapshot?.tools.map((tool, i) => ({ key: `${i}`, label: tool.label, done: tool.phase === "finished" })) ?? []),
+    };
+    return activity.thoughts || activity.tools.length > 0 ? activity : undefined;
+  };
 
   useEffect(() => {
     if (branchId) {
@@ -96,8 +123,10 @@ export function StoryView() {
             }
             const isLastEntry = i === entries.length - 1;
             const pinHere = isStreamingReplace ? entry.id === streaming!.targetEntryId : isLastEntry && !isStreamingAppend;
+            const activity = activityFor(entry, isLastEntry);
             return (
               <div key={entry.id} ref={pinHere ? pinRef : undefined}>
+                {activity && <TurnActivity activity={activity} />}
                 <TimelineEntryView
                   entry={entry}
                   branchId={branchId!}
@@ -112,9 +141,13 @@ export function StoryView() {
 
           {isStreamingAppend && (
             <div ref={pinRef} className="animate-fade-in">
-              {streaming!.toolActivity?.phase === "started" && (
-                <p className="mb-1 text-[11px] italic text-muted">{streaming!.toolActivity.label}</p>
-              )}
+              <TurnActivity
+                live
+                activity={{
+                  thoughts: streaming!.thoughts,
+                  tools: streaming!.toolLog.map((tool, i) => ({ key: `${i}`, label: tool.label, done: tool.phase === "finished" })),
+                }}
+              />
               <p className="whitespace-pre-wrap font-prose text-base leading-8 text-text">
                 {streaming!.text}
                 <span className="ml-0.5 inline-block h-4 w-1.5 translate-y-0.5 animate-pulse bg-muted motion-reduce:animate-none" />

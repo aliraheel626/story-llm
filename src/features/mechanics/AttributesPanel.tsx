@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useAppStore } from "../../app/store";
 import type { DiceMode } from "../../shared/types";
-import { DEFAULT_MECHANICS_SETTINGS, useMechanicsStore } from "./store";
+import { DEFAULT_MECHANICS_SETTINGS, useMechanicsStore, type MechanicsPatch } from "./store";
 
 const DICE_MODES: { id: DiceMode; label: string; hint: string }[] = [
   { id: "always", label: "Always", hint: "Every Do action rolls." },
@@ -30,10 +30,10 @@ export function AttributesPanel() {
     return <div className="text-xs text-muted py-1">Loading...</div>;
   }
 
-  const update = async (diceMode: DiceMode, attributesEnabled: boolean) => {
+  const update = async (patch: MechanicsPatch) => {
     setSaving(true);
     try {
-      await saveSettings(activeStoryId, activeBranchId, diceMode, attributesEnabled);
+      await saveSettings(activeStoryId, activeBranchId, patch);
     } catch (e) {
       console.error(e);
     } finally {
@@ -47,7 +47,7 @@ export function AttributesPanel() {
         <input
           type="checkbox"
           checked={settings.attributes_enabled}
-          onChange={(e) => update(settings.dice_mode, e.target.checked)}
+          onChange={(e) => update({ attributes_enabled: e.target.checked })}
           disabled={saving}
           className="mt-0.5 accent-accent"
         />
@@ -69,7 +69,7 @@ export function AttributesPanel() {
                 type="radio"
                 name="dice-mode"
                 checked={settings.dice_mode === m.id}
-                onChange={() => update(m.id, settings.attributes_enabled)}
+                onChange={() => update({ dice_mode: m.id })}
                 disabled={saving}
                 className="mt-0.5 accent-accent"
               />

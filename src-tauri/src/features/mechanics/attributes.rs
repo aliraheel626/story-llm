@@ -326,3 +326,64 @@ pub fn apply_attribute_delta(
     )?;
     Ok((before, after))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn attribute(min: f64, max: f64) -> AttributeRegistryEntry {
+        AttributeRegistryEntry {
+            id: "test".into(),
+            canonical_name: "Test".into(),
+            aliases_json: "[]".into(),
+            entity_kinds_json: r#"["character"]"#.into(),
+            min,
+            max,
+            category: "test".into(),
+            is_user_created: false,
+            created_in_story_id: None,
+            created_at: "now".into(),
+        }
+    }
+
+    #[test]
+    fn plain_deltas_pass_through_unchanged() {
+        let attr = attribute(0.0, 10.0);
+        assert_eq!(clamp_delta(5.0, 1.0, false, &attr), 6.0);
+        assert_eq!(clamp_delta(5.0, -1.0, false, &attr), 4.0);
+    }
+
+    #[test]
+    fn non_dramatic_deltas_are_capped_at_30_percent_of_range() {
+        let attr = attribute(0.0, 10.0);
+        assert_eq!(clamp_delta(5.0, 9.0, false, &attr), 8.0);
+        assert_eq!(clamp_delta(5.0, -9.0, false, &attr), 2.0);
+        // The cap is a rate limit, not a target: an in-range result that
+        // exceeds it is still clamped by the cap.
+        assert_eq!(clamp_delta(9.0, 3.0, false, &attr), 10.0);
+    }
+
+    #[test]
+    fn dramatic_deltas_may_span_the_full_range_but_not_exceed_it() {
+        let attr = attribute(0.0, 10.0);
+        assert_eq!(clamp_delta(5.0, 4.0, true, &attr), 9.0);
+        assert_eq!(clamp_delta(5.0, 20.0, true, &attr), 10.0);
+        assert_eq!(clamp_delta(1.0, -20.0, true, &attr), 0.0);
+    }
+
+    #[test]
+    fn negative_ranges_scale_by_width_not_absolute_value() {
+        // Trust-style attribute: -10..10, so the non-dramatic cap is 6.
+        let attr = attribute(-10.0, 10.0);
+        assert_eq!(clamp_delta(0.0, 4.0, false, &attr), 4.0);
+        assert_eq!(clamp_delta(0.0, 9.0, false, &attr), 6.0);
+        assert_eq!(clamp_delta(0.0, -9.0, false, &attr), -6.0);
+    }
+
+    #[test]
+    fn results_never_leave_the_attribute_bounds() {
+        let attr = attribute(0.0, 10.0);
+        assert_eq!(clamp_delta(0.0, -5.0, true, &attr), 0.0);
+        assert_eq!(clamp_delta(10.0, 5.0, true, &attr), 10.0);
+    }
+}

@@ -66,6 +66,16 @@ pub fn active_visible_entries(entries: &[TimelineEntry]) -> Vec<TimelineEntry> {
         .collect()
 }
 
+/// A revision's reasoning, if it recorded any. Display only.
+fn thoughts_of(payload: &serde_json::Value) -> Option<String> {
+    payload
+        .get("thoughts")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+        .map(str::to_string)
+}
+
 pub fn variants_for_entry(entries: &[TimelineEntry], entry_id: &str) -> Vec<NarrationVariant> {
     let selected = entries
         .iter()
@@ -90,6 +100,7 @@ pub fn variants_for_entry(entries: &[TimelineEntry], entry_id: &str) -> Vec<Narr
                 content,
                 is_selected: selected.is_none() || selected == Some(base.id.as_str()),
                 created_at: base.created_at.clone(),
+                thoughts: thoughts_of(&base.payload),
             });
         }
     }
@@ -110,6 +121,7 @@ pub fn variants_for_entry(entries: &[TimelineEntry], entry_id: &str) -> Vec<Narr
                     content,
                     is_selected: selected == Some(e.id.as_str()),
                     created_at: e.created_at.clone(),
+                    thoughts: thoughts_of(&e.payload),
                 })
             }),
     );

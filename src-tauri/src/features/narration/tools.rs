@@ -11,7 +11,7 @@
 
 use std::sync::Arc;
 
-use rig_agent::tool::{DynamicTool, ToolContext, ToolExecutionError, ToolOutput};
+use rig_agent::tool::{DynamicTool, PortableDynamicTool, ToolExecutionError, ToolOutput};
 use serde_json::json;
 use tokio::sync::Mutex;
 use uuid::Uuid;
@@ -322,8 +322,11 @@ pub fn friendly_tool_label(tool_name: &str, args_json: &str) -> String {
     }
 }
 
-fn roll_check_tool(staging: Arc<Mutex<TurnStaging>>, config: TextModelConfig) -> DynamicTool {
-    DynamicTool::new(
+fn roll_check_tool(
+    staging: Arc<Mutex<TurnStaging>>,
+    config: TextModelConfig,
+) -> PortableDynamicTool {
+    PortableDynamicTool::new(
         "roll_check",
         "Roll the dice for an uncertain action. Resolves the player's relevant attribute against an \
          optional opposing entity/attribute and returns the outcome. Call this before narrating the \
@@ -338,7 +341,7 @@ fn roll_check_tool(staging: Arc<Mutex<TurnStaging>>, config: TextModelConfig) ->
             },
             "required": ["attribute"]
         }),
-        move |_ctx: &mut ToolContext, args: serde_json::Value| {
+        move |args: serde_json::Value| {
             let staging = staging.clone();
             let config = config.clone();
             Box::pin(async move {
@@ -434,8 +437,8 @@ fn roll_check_tool(staging: Arc<Mutex<TurnStaging>>, config: TextModelConfig) ->
     )
 }
 
-fn get_entities_tool(staging: Arc<Mutex<TurnStaging>>) -> DynamicTool {
-    DynamicTool::new(
+fn get_entities_tool(staging: Arc<Mutex<TurnStaging>>) -> PortableDynamicTool {
+    PortableDynamicTool::new(
         "get_entities",
         "List known entities (characters, objects, locations) and their current attribute values. \
          Use this to check who or what is present before narrating, rolling, or adjusting state.",
@@ -446,7 +449,7 @@ fn get_entities_tool(staging: Arc<Mutex<TurnStaging>>) -> DynamicTool {
                 "name": {"type": "string", "description": "Filter to an exact (case-insensitive) name match."}
             }
         }),
-        move |_ctx: &mut ToolContext, args: serde_json::Value| {
+        move |args: serde_json::Value| {
             let staging = staging.clone();
             Box::pin(async move {
                 let kind = args.get("kind").and_then(|v| v.as_str());
@@ -471,8 +474,8 @@ fn get_entities_tool(staging: Arc<Mutex<TurnStaging>>) -> DynamicTool {
     )
 }
 
-fn create_entity_tool(staging: Arc<Mutex<TurnStaging>>) -> DynamicTool {
-    DynamicTool::new(
+fn create_entity_tool(staging: Arc<Mutex<TurnStaging>>) -> PortableDynamicTool {
+    PortableDynamicTool::new(
         "create_entity",
         "Introduce a new entity (character, object, or location) the story just established. \
          Idempotent by name — calling this for an entity that already exists just returns it.",
@@ -485,7 +488,7 @@ fn create_entity_tool(staging: Arc<Mutex<TurnStaging>>) -> DynamicTool {
             },
             "required": ["kind", "name"]
         }),
-        move |_ctx: &mut ToolContext, args: serde_json::Value| {
+        move |args: serde_json::Value| {
             let staging = staging.clone();
             Box::pin(async move {
                 let kind = args
@@ -512,8 +515,8 @@ fn create_entity_tool(staging: Arc<Mutex<TurnStaging>>) -> DynamicTool {
     )
 }
 
-fn update_entity_tool(staging: Arc<Mutex<TurnStaging>>) -> DynamicTool {
-    DynamicTool::new(
+fn update_entity_tool(staging: Arc<Mutex<TurnStaging>>) -> PortableDynamicTool {
+    PortableDynamicTool::new(
         "update_entity",
         "Rename an entity or update its appearance description. Look it up with get_entities first.",
         json!({
@@ -525,7 +528,7 @@ fn update_entity_tool(staging: Arc<Mutex<TurnStaging>>) -> DynamicTool {
             },
             "required": ["id", "name"]
         }),
-        move |_ctx: &mut ToolContext, args: serde_json::Value| {
+        move |args: serde_json::Value| {
             let staging = staging.clone();
             Box::pin(async move {
                 let id = args
@@ -559,8 +562,8 @@ fn update_entity_tool(staging: Arc<Mutex<TurnStaging>>) -> DynamicTool {
 fn adjust_entity_attribute_tool(
     staging: Arc<Mutex<TurnStaging>>,
     config: TextModelConfig,
-) -> DynamicTool {
-    DynamicTool::new(
+) -> PortableDynamicTool {
+    PortableDynamicTool::new(
         "adjust_entity_attribute",
         "Change an entity's attribute by a delta implied by what just happened (an injury, growing \
          trust, a depleted resource). Most changes are minor; only set dramatic for a genuinely \
@@ -576,7 +579,7 @@ fn adjust_entity_attribute_tool(
             },
             "required": ["entity_id", "attribute", "delta", "reason"]
         }),
-        move |_ctx: &mut ToolContext, args: serde_json::Value| {
+        move |args: serde_json::Value| {
             let staging = staging.clone();
             let config = config.clone();
             Box::pin(async move {
@@ -627,11 +630,14 @@ fn adjust_entity_attribute_tool(
     )
 }
 
-/// The full narrator tool set for one turn.
-pub fn narrator_tools(
+/// The full narrator tool set for one turn, as the canonical context-free
+/// portable tools. This is the definition the tests exercise directly (Rig's
+/// `DynamicTool` dispatch is crate-private, so a `DynamicTool`'s callback can't
+/// be invoked from here); `narrator_tools` adapts these for the agent runner.
+pub fn narrator_portable_tools(
     staging: Arc<Mutex<TurnStaging>>,
     config: TextModelConfig,
-) -> Vec<DynamicTool> {
+) -> Vec<PortableDynamicTool> {
     vec![
         roll_check_tool(staging.clone(), config.clone()),
         get_entities_tool(staging.clone()),
@@ -639,6 +645,19 @@ pub fn narrator_tools(
         update_entity_tool(staging.clone()),
         adjust_entity_attribute_tool(staging, config),
     ]
+}
+
+/// The same set as runtime tools for the agent runner. `from_portable`
+/// forwards each tool's `ToolOutput`/`ToolExecutionError` unchanged, so both
+/// entry points execute identical logic.
+pub fn narrator_tools(
+    staging: Arc<Mutex<TurnStaging>>,
+    config: TextModelConfig,
+) -> Vec<DynamicTool> {
+    narrator_portable_tools(staging, config)
+        .into_iter()
+        .map(DynamicTool::from_portable)
+        .collect()
 }
 
 #[cfg(test)]
@@ -687,6 +706,50 @@ mod tests {
             },
         )
         .unwrap()
+    }
+
+    fn test_config() -> TextModelConfig {
+        TextModelConfig {
+            provider: crate::ai::TextProviderKind::OpenRouter,
+            model: "test/model".into(),
+            // Every test uses a *seeded* attribute name, so
+            // `resolve_or_create_attribute` short-circuits on its exact-match
+            // lookup and never reaches the embedding call this key would need.
+            api_key: String::new(),
+            context_window: 0,
+        }
+    }
+
+    /// The portable tool set, so each tool's real body (arg parsing, error
+    /// mapping, staging) can be executed without Rig's private dispatch.
+    fn portable_tools(staging: Arc<Mutex<TurnStaging>>) -> Vec<PortableDynamicTool> {
+        narrator_portable_tools(staging, test_config())
+    }
+
+    fn tool_named<'a>(tools: &'a [PortableDynamicTool], name: &str) -> &'a PortableDynamicTool {
+        tools
+            .iter()
+            .find(|tool| tool.name() == name)
+            .unwrap_or_else(|| panic!("no tool named {name}"))
+    }
+
+    /// Commits staged ops against a real narration entry the way
+    /// `append_narration_entry` does — one transaction, no model involved.
+    fn persist_staging(pool: &Pool, branch_id: &str, staging: &TurnStaging) {
+        let mut conn = pool.get().unwrap();
+        let passage = append_entry(
+            &conn,
+            branch_id,
+            "narration",
+            "visible",
+            Some("scene"),
+            &json!({}),
+            None,
+        )
+        .unwrap();
+        let tx = conn.transaction().unwrap();
+        staging.commit(&tx, &passage.id).unwrap();
+        tx.commit().unwrap();
     }
 
     #[test]
@@ -793,5 +856,279 @@ mod tests {
             )
             .unwrap();
         assert_eq!(value, (attribute.min + attribute.max) / 2.0 + 3.0);
+    }
+
+    #[test]
+    fn friendly_labels_describe_each_tool_and_degrade_safely() {
+        assert_eq!(
+            friendly_tool_label("roll_check", r#"{"attribute":"Stealth"}"#),
+            "Rolling for Stealth…"
+        );
+        assert_eq!(
+            friendly_tool_label("get_entities", "{}"),
+            "Checking who's here…"
+        );
+        assert_eq!(
+            friendly_tool_label("create_entity", r#"{"name":"Mira"}"#),
+            "Introducing Mira…"
+        );
+        assert_eq!(
+            friendly_tool_label("adjust_entity_attribute", r#"{"attribute":"Trust"}"#),
+            "Adjusting Trust…"
+        );
+        // Missing args and malformed JSON must not panic — they are only
+        // labels for a transient UI line.
+        assert_eq!(
+            friendly_tool_label("roll_check", "{}"),
+            "Rolling for a check…"
+        );
+        assert_eq!(
+            friendly_tool_label("roll_check", "not json"),
+            "Rolling for a check…"
+        );
+        assert_eq!(
+            friendly_tool_label("mystery_tool", "{}"),
+            "Running mystery_tool…"
+        );
+    }
+
+    #[tokio::test]
+    async fn create_entity_tool_is_idempotent_by_name_and_reports_staging() {
+        let (pool, story_id, branch_id) = setup();
+        let staging = Arc::new(Mutex::new(TurnStaging::new(pool, story_id, branch_id)));
+        let tools = portable_tools(staging.clone());
+
+        let first = tool_named(&tools, "create_entity")
+            .execute(
+                json!({"kind": "character", "name": "Mira", "appearance_anchor": "silver hair"}),
+            )
+            .await
+            .unwrap();
+        let first = first.as_json().unwrap();
+        assert_eq!(first["created"], json!(true));
+        assert_eq!(first["name"], json!("Mira"));
+
+        // Same name, different case: the second call must find the staged
+        // entity rather than staging a duplicate.
+        let second = tool_named(&tools, "create_entity")
+            .execute(json!({"kind": "character", "name": "mira"}))
+            .await
+            .unwrap();
+        let second = second.as_json().unwrap();
+        assert_eq!(second["created"], json!(false));
+        assert_eq!(second["id"], first["id"]);
+        assert_eq!(staging.lock().await.pending.len(), 1);
+
+        // A missing required argument is a recoverable error, not a panic.
+        let err = tool_named(&tools, "create_entity")
+            .execute(json!({"kind": "character", "name": "   "}))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("name is required"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn update_entity_tool_rejects_unknown_ids_and_overlays_renames() {
+        let (pool, story_id, branch_id) = setup();
+        let mut staging = TurnStaging::new(pool, story_id, branch_id);
+        let (mira, _) = staging
+            .resolve_or_stage_entity("character", "Mira", None)
+            .unwrap();
+        let staging = Arc::new(Mutex::new(staging));
+        let tools = portable_tools(staging.clone());
+
+        let err = tool_named(&tools, "update_entity")
+            .execute(json!({"id": "does-not-exist", "name": "Nobody"}))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("no such entity"), "{err}");
+
+        let out = tool_named(&tools, "update_entity")
+            .execute(json!({"id": mira.id, "name": "Mira the Bold"}))
+            .await
+            .unwrap();
+        assert_eq!(out.as_json().unwrap()["name"], json!("Mira the Bold"));
+
+        // The overlay a later tool call sees reflects the staged rename.
+        let staging = staging.lock().await;
+        assert_eq!(
+            staging
+                .find_effective_entity(&mira.id)
+                .unwrap()
+                .unwrap()
+                .name,
+            "Mira the Bold"
+        );
+        assert!(staging
+            .effective_entities(Some("character"), Some("mira the bold"))
+            .unwrap()
+            .iter()
+            .any(|e| e.id == mira.id));
+    }
+
+    #[tokio::test]
+    async fn adjust_attribute_tool_previews_clamped_delta_and_rejects_unknown_entity() {
+        let (pool, story_id, branch_id) = setup();
+        let stealth = find_attribute(&pool.get().unwrap(), "Stealth");
+        let mut staging = TurnStaging::new(pool, story_id, branch_id);
+        let (mira, _) = staging
+            .resolve_or_stage_entity("character", "Mira", None)
+            .unwrap();
+        let staging = Arc::new(Mutex::new(staging));
+        let tools = portable_tools(staging.clone());
+
+        let err = tool_named(&tools, "adjust_entity_attribute")
+            .execute(
+                json!({"entity_id": "ghost", "attribute": "Stealth", "delta": 1.0, "reason": "x"}),
+            )
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("no such entity"), "{err}");
+
+        // Stealth is a seeded 0-10 character attribute, so a non-dramatic
+        // +9 is rate-limited to +3 off its 5.0 midpoint.
+        let out = tool_named(&tools, "adjust_entity_attribute")
+            .execute(
+                json!({"entity_id": mira.id, "attribute": "Stealth", "delta": 9.0, "reason": "sneaking"}),
+            )
+            .await
+            .unwrap();
+        let out = out.as_json().unwrap();
+        assert_eq!(out["before"], json!(5.0));
+        assert_eq!(out["after"], json!(8.0));
+
+        let staging = staging.lock().await;
+        let staged = staging
+            .pending
+            .iter()
+            .find_map(|op| match op {
+                PendingOp::AdjustAttribute {
+                    delta,
+                    cause,
+                    dramatic,
+                    ..
+                } => Some((*delta, cause.clone(), *dramatic)),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(staged, (9.0, "sneaking".to_string(), false));
+        assert_eq!(
+            staging
+                .effective_attribute_value(&mira.id, &stealth)
+                .unwrap(),
+            8.0
+        );
+    }
+
+    #[tokio::test]
+    async fn roll_check_tool_stages_a_player_roll_against_a_target() {
+        let (pool, story_id, branch_id) = setup();
+        let mut staging = TurnStaging::new(pool, story_id, branch_id);
+        let (ghoul, _) = staging
+            .resolve_or_stage_entity("character", "Ghoul", None)
+            .unwrap();
+        let staging = Arc::new(Mutex::new(staging));
+        let tools = portable_tools(staging.clone());
+
+        let out = tool_named(&tools, "roll_check")
+            .execute(json!({
+                "attribute": "Stealth",
+                "target_entity_id": ghoul.id,
+                "target_attribute": "Perception",
+                "modifier": 0.1
+            }))
+            .await
+            .unwrap();
+
+        // The player is auto-resolved (staged on first use) and the roll is
+        // staged rather than persisted, so a failed turn leaves no trace.
+        let staging = staging.lock().await;
+        let player = staging
+            .effective_entities(Some("character"), Some("You"))
+            .unwrap()
+            .into_iter()
+            .next()
+            .expect("actor staged");
+        let roll = staging
+            .pending
+            .iter()
+            .find_map(|op| match op {
+                PendingOp::Roll(pending) => Some(pending),
+                _ => None,
+            })
+            .expect("roll staged");
+        assert_eq!(roll.actor_entity_id, player.id);
+        assert_eq!(roll.target_entity_id.as_deref(), Some(ghoul.id.as_str()));
+        assert_eq!(roll.actor_value, 5.0);
+        assert_eq!(roll.target_value, 5.0);
+
+        let out = out.as_json().unwrap();
+        assert!(out["roll"].is_i64() || out["roll"].is_u64(), "{out}");
+        assert!(out["needed"].is_i64() || out["needed"].is_u64(), "{out}");
+        assert!(out["outcome"].is_string(), "{out}");
+    }
+
+    #[tokio::test]
+    async fn get_entities_tool_reports_staged_entities_with_attributes() {
+        let (pool, story_id, branch_id) = setup();
+        let mut staging = TurnStaging::new(pool, story_id, branch_id);
+        staging
+            .resolve_or_stage_entity("location", "The Drowned Keep", None)
+            .unwrap();
+        let staging = Arc::new(Mutex::new(staging));
+        let tools = portable_tools(staging.clone());
+
+        let out = tool_named(&tools, "get_entities")
+            .execute(json!({"kind": "location"}))
+            .await
+            .unwrap();
+        let entities = out.as_json().unwrap()["entities"].clone();
+        let entities = entities.as_array().unwrap();
+        assert_eq!(entities.len(), 1);
+        assert_eq!(entities[0]["name"], json!("The Drowned Keep"));
+        assert_eq!(entities[0]["kind"], json!("location"));
+        assert_eq!(entities[0]["attributes"], json!([]));
+    }
+
+    #[test]
+    fn committed_tool_delta_does_not_override_a_user_set_attribute() {
+        let (pool, story_id, branch_id) = setup();
+        let stealth = find_attribute(&pool.get().unwrap(), "Stealth");
+        let mut staging = TurnStaging::new(pool.clone(), story_id.clone(), branch_id.clone());
+        let (mira, _) = staging
+            .resolve_or_stage_entity("character", "Mira", None)
+            .unwrap();
+
+        // Land the entity, then set a value the player owns explicitly.
+        persist_staging(&pool, &branch_id, &staging);
+        let conn = pool.get().unwrap();
+        conn.execute(
+            "INSERT INTO entity_attributes (branch_id, entity_id, attribute_id, value, source, updated_at, last_event_id)
+             VALUES (?1, ?2, ?3, 7.0, 'user', 'now', NULL)",
+            rusqlite::params![branch_id, mira.id, stealth.id],
+        )
+        .unwrap();
+
+        let mut staged = TurnStaging::new(pool.clone(), story_id, branch_id.clone());
+        staged.pending.push(PendingOp::AdjustAttribute {
+            entity_id: mira.id.clone(),
+            attribute: stealth.clone(),
+            delta: 5.0,
+            cause: "the narrator decided so".into(),
+            dramatic: true,
+        });
+        persist_staging(&pool, &branch_id, &staged);
+
+        // The preamble promises the model that user overrides win; an
+        // inferred tool delta must not quietly overwrite this.
+        let (value, source): (f64, String) = conn
+            .query_row(
+                "SELECT value, source FROM entity_attributes WHERE entity_id = ?1 AND attribute_id = ?2",
+                rusqlite::params![mira.id, stealth.id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(value, 7.0);
+        assert_eq!(source, "user");
     }
 }

@@ -1,10 +1,14 @@
 import { create } from "zustand";
-import type { DiceMode, MechanicsSettings } from "../../shared/types";
+import type { MechanicsSettings } from "../../shared/types";
 import { mechanicsApi } from "./api";
 
 /** Backend defaults for a story whose `settings_json` has no mechanics keys —
  *  see `commands::mechanics::get_story_mechanics_settings`. */
-export const DEFAULT_MECHANICS_SETTINGS: MechanicsSettings = { dice_mode: "classifier", attributes_enabled: true };
+export const DEFAULT_MECHANICS_SETTINGS: MechanicsSettings = { dice_mode: "classifier", attributes_enabled: true, reasoning_effort: null };
+
+/** A partial settings change. Callers pass only the field they touched so a
+ *  save can't silently reset the others. */
+export type MechanicsPatch = Partial<MechanicsSettings>;
 
 interface MechanicsState {
   settingsByStory: Record<string, MechanicsSettings>;
@@ -14,7 +18,7 @@ interface MechanicsState {
   loading: boolean;
 
   loadSettings: (storyId: string) => Promise<void>;
-  saveSettings: (storyId: string | null, branchId: string | null, diceMode: DiceMode, attributesEnabled: boolean) => Promise<void>;
+  saveSettings: (storyId: string | null, branchId: string | null, patch: MechanicsPatch) => Promise<void>;
   resetDraftSettings: () => void;
   promoteDraftSettings: (storyId: string) => void;
 }
@@ -35,13 +39,15 @@ export const useMechanicsStore = create<MechanicsState>((set, get) => ({
     }
   },
 
-  saveSettings: async (storyId: string | null, branchId: string | null, diceMode: DiceMode, attributesEnabled: boolean) => {
+  saveSettings: async (storyId: string | null, branchId: string | null, patch: MechanicsPatch) => {
+    const current = (storyId ? get().settingsByStory[storyId] : get().draftSettings) ?? DEFAULT_MECHANICS_SETTINGS;
+    const next: MechanicsSettings = { ...current, ...patch };
     if (!storyId || !branchId) {
-      set({ draftSettings: { dice_mode: diceMode, attributes_enabled: attributesEnabled } });
+      set({ draftSettings: next });
       return;
     }
-    await mechanicsApi.saveSettings(storyId, branchId, diceMode, attributesEnabled);
-    set((s) => ({ settingsByStory: { ...s.settingsByStory, [storyId]: { dice_mode: diceMode, attributes_enabled: attributesEnabled } } }));
+    await mechanicsApi.saveSettings(storyId, branchId, next.dice_mode, next.attributes_enabled, next.reasoning_effort);
+    set((s) => ({ settingsByStory: { ...s.settingsByStory, [storyId]: next } }));
   },
 
   resetDraftSettings: () => set({ draftSettings: null }),

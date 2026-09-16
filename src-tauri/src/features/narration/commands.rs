@@ -158,6 +158,17 @@ fn format_prompt(input_mode: &str, content: &str) -> String {
     }
 }
 
+/// Retry/swipe variant payloads share this shape. Reasoning rides along for
+/// display only — like a narration entry's, it is never fed back as context.
+fn variant_payload(reason: &str, input_mode: &str, thoughts: Option<&str>) -> serde_json::Value {
+    match thoughts.map(str::trim).filter(|t| !t.is_empty()) {
+        Some(thoughts) => {
+            serde_json::json!({"reason": reason, "input_mode": input_mode, "thoughts": thoughts})
+        }
+        None => serde_json::json!({"reason": reason, "input_mode": input_mode}),
+    }
+}
+
 /// Author's Note (spec §6.6), formatted for the preamble, if the story has
 /// one set. Empty string when there isn't one, so callers can always append
 /// it unconditionally via `combine_preambles`.
@@ -286,7 +297,7 @@ fn append_retry_variant(
     pool: &Pool,
     target: &ActiveStoryEntry,
     visible: &str,
-    _thoughts: Option<&str>,
+    thoughts: Option<&str>,
 ) -> AppResult<ActiveStoryEntry> {
     let mut conn = pool.get()?;
     let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
@@ -302,7 +313,7 @@ fn append_retry_variant(
         timeline_kind::NARRATION_VARIANT,
         "hidden",
         Some(visible),
-        &serde_json::json!({"reason":"retry", "input_mode": target.input_mode}),
+        &variant_payload("retry", &target.input_mode, thoughts),
         Some(&target.id),
     )?;
     timeline_repository::append_entry(
@@ -400,6 +411,7 @@ where
             preamble,
             history,
             prompt,
+            reasoning_effort: mechanics_settings::reasoning_effort_for_branch(&pool, &branch_id),
             tools,
         };
 
@@ -901,7 +913,7 @@ pub async fn generate_narration_variant(
             tools: Vec::new(),
             stream_id: stream_id.clone(),
         },
-        move |app, pool, sid, visible, _thoughts| async move {
+        move |app, pool, sid, visible, thoughts| async move {
             let mut conn = pool.get()?;
             let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
             let image_paths = image_paths_for_entry(&tx, &target.id)?;
@@ -916,7 +928,7 @@ pub async fn generate_narration_variant(
                 timeline_kind::NARRATION_VARIANT,
                 "hidden",
                 Some(&visible),
-                &serde_json::json!({"reason":"swipe", "input_mode": target.input_mode}),
+                &variant_payload("swipe", &target.input_mode, thoughts.as_deref()),
                 Some(&target.id),
             )?;
             timeline_repository::append_entry(

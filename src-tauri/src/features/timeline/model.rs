@@ -21,6 +21,9 @@ pub struct NarrationVariant {
     pub content: String,
     pub is_selected: bool,
     pub created_at: String,
+    /// That revision's own reasoning, for the composer's activity panel.
+    /// Display only — never fed back to the model as context.
+    pub thoughts: Option<String>,
 }
 
 pub mod kind {

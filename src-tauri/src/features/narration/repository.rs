@@ -67,12 +67,19 @@ pub(super) fn insert_story_entry(
     role: &str,
     input_mode: &str,
     content: &str,
-    _thoughts: Option<&str>,
+    thoughts: Option<&str>,
 ) -> AppResult<ActiveStoryEntry> {
     let event_kind = if role == "player" {
         kind::PLAYER_MESSAGE
     } else {
         kind::NARRATION
+    };
+    // Reasoning is stored for display only — it is deliberately left out of
+    // `load_history`, so it never reaches the model as context.
+    let thoughts = thoughts.map(str::trim).filter(|t| !t.is_empty());
+    let payload = match thoughts {
+        Some(thoughts) => serde_json::json!({ "input_mode": input_mode, "thoughts": thoughts }),
+        None => serde_json::json!({ "input_mode": input_mode }),
     };
     let entry = timeline::append_entry(
         conn,
@@ -80,7 +87,7 @@ pub(super) fn insert_story_entry(
         event_kind,
         "visible",
         Some(content),
-        &serde_json::json!({ "input_mode": input_mode }),
+        &payload,
         None,
     )?;
     Ok(to_story_entry(entry))

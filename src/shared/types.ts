@@ -21,8 +21,8 @@ interface TimelinePayloadBase extends Record<string, unknown> {
   source?: "user" | "mechanics" | "inferred" | string;
   through_entry_id?: string;
 }
-export interface NarrativePayload extends TimelinePayloadBase { input_mode: InputMode }
-export interface NarrationVariantPayload extends TimelinePayloadBase { reason: "retry" | "swipe" | string; input_mode: InputMode }
+export interface NarrativePayload extends TimelinePayloadBase { input_mode: InputMode; thoughts?: string }
+export interface NarrationVariantPayload extends TimelinePayloadBase { reason: "retry" | "swipe" | string; input_mode: InputMode; thoughts?: string }
 export interface NarrationSelectedPayload extends TimelinePayloadBase { selected_entry_id: string; reason?: string }
 export interface ContentEditedPayload extends TimelinePayloadBase { reason: "user_edit" | string; applies_to?: string }
 export interface EntityEventPayload extends TimelinePayloadBase {
@@ -55,7 +55,7 @@ export type TimelineEntry =
   | (TimelineEntryBase & { kind: "mechanical_result" | "context_note_updated" | "mechanics_settings_changed" | "world_event"; payload: TimelinePayloadBase });
 
 export interface NarrationVariant {
-  id: string; entry_id: string; content: string; is_selected: boolean; created_at: string;
+  id: string; entry_id: string; content: string; is_selected: boolean; created_at: string; thoughts?: string | null;
 }
 export interface SubmitTurnResult { entry: TimelineEntry; stream_id: string }
 export interface RetryResult { entry_id: string; stream_id: string }
@@ -75,7 +75,14 @@ export interface Entity {
   appearance_anchor: string | null; created_at: string;
 }
 export type DiceMode = "always" | "classifier" | "never";
-export interface MechanicsSettings { dice_mode: DiceMode; attributes_enabled: boolean }
+export interface MechanicsSettings {
+  dice_mode: DiceMode;
+  attributes_enabled: boolean;
+  /** How much the model reasons before writing. `null` = the model's own
+   *  default. See `normalize_reasoning_effort` in the backend. */
+  reasoning_effort: ReasoningEffort | null;
+}
+export type ReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 export interface AttributeRegistryEntry {
   id: string; canonical_name: string; aliases_json: string; entity_kinds_json: string;
   min: number; max: number; category: string; is_user_created: boolean;
