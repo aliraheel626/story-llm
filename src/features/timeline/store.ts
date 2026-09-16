@@ -5,7 +5,7 @@ import { useAppStore } from "../../app/store";
 import { useCharacterStore } from "../characters/store";
 import { timelineApi } from "./api";
 
-type ToolActivity = { label: string; phase: "started" | "finished" };
+type ToolActivity = { callId: string; label: string; phase: "started" | "finished" };
 interface StreamingState { streamId: string; branchId: string; text: string; thoughts: string; mode: "append" | "replace"; targetEntryId?: string; toolActivity?: ToolActivity | null; toolLog: ToolActivity[] }
 /** The last finished turn's thinking and tool calls, kept so the composer's
  *  activity panel still has something to show once streaming ends. Reasoning
@@ -44,8 +44,8 @@ const newStream = (streamId: string, branchId: string, mode: "append" | "replace
   ({ streamId, branchId, text: "", thoughts: "", mode, targetEntryId, toolLog: [] });
 const rememberActivity = (byBranch: Record<string, TurnActivity>, branchId: string, stream: StreamingState) =>
   ({ ...byBranch, [branchId]: { thoughts: stream.thoughts, tools: stream.toolLog } });
-const closeOpenTool = (log: ToolActivity[]): ToolActivity[] => {
-  const open = log.map((tool) => tool.phase).lastIndexOf("started");
+const closeTool = (log: ToolActivity[], callId: string): ToolActivity[] => {
+  const open = log.findIndex((tool) => tool.callId === callId && tool.phase === "started");
   return open < 0 ? log : log.map((tool, i) => (i === open ? { ...tool, phase: "finished" as const } : tool));
 };
 
@@ -55,7 +55,13 @@ export const useStoryStore = create<StoryState>((set, get) => ({
   variantsByEntry: {}, imagesByEntry: {}, imagePendingFor: [], imageError: null, rollByEntry: {}, rollDetailByEntry: {},
   loadTimeline: async (branchId) => {
     set({ timelineLoading: true });
-    try { const raw = await timelineApi.list(branchId); set((s) => ({ entriesByBranch: { ...s.entriesByBranch, [branchId]: foldVisibleTimeline(raw) }, hiddenByBranch: { ...s.hiddenByBranch, [branchId]: raw.filter((entry) => entry.visibility === "hidden") }, timelineLoading: false })); }
+    try {
+      const raw = await timelineApi.list(branchId);
+      const selectedEntryIds = [...new Set(raw.flatMap((entry) => entry.kind === "narration_selected" && entry.target_entry_id ? [entry.target_entry_id] : []))];
+      set((s) => ({ entriesByBranch: { ...s.entriesByBranch, [branchId]: foldVisibleTimeline(raw) }, hiddenByBranch: { ...s.hiddenByBranch, [branchId]: raw.filter((entry) => entry.visibility === "hidden") } }));
+      await Promise.all(selectedEntryIds.map((entryId) => get().loadVariantsForEntry(entryId)));
+      set({ timelineLoading: false });
+    }
     catch (e) { console.error("failed to load timeline", e); set({ timelineLoading: false }); }
   },
   submitStoryText: async (branchId, content) => {
@@ -110,12 +116,12 @@ export const useStoryStore = create<StoryState>((set, get) => ({
     // panel lists each call once with its current state.
     let toolLog: ToolActivity[];
     if (payload.phase === "started") {
-      toolLog = [...current.toolLog, { label: payload.label, phase: "started" }];
+      toolLog = [...current.toolLog, { callId: payload.call_id, label: payload.label, phase: "started" }];
     } else {
-      const closed = closeOpenTool(current.toolLog);
-      toolLog = closed === current.toolLog ? [...current.toolLog, { label: payload.label, phase: "finished" }] : closed;
+      const closed = closeTool(current.toolLog, payload.call_id);
+      toolLog = closed === current.toolLog ? [...current.toolLog, { callId: payload.call_id, label: payload.label, phase: "finished" }] : closed;
     }
-    set((s) => ({ streamingByBranch: { ...s.streamingByBranch, [branchId]: { ...current, toolLog, toolActivity: { label: payload.label, phase: payload.phase } } } }));
+    set((s) => ({ streamingByBranch: { ...s.streamingByBranch, [branchId]: { ...current, toolLog, toolActivity: { callId: payload.call_id, label: payload.label, phase: payload.phase } } } }));
   },
   _finalize: (payload) => { const found = findStream(get().streamingByBranch, payload.stream_id); if (!found) return; const [, current] = found; const branchId = payload.entry.branch_id; set((s) => ({ entriesByBranch: { ...s.entriesByBranch, [branchId]: current.mode === "replace" && current.targetEntryId ? replaceEntry(s.entriesByBranch[branchId] ?? [], current.targetEntryId, payload.entry) : [...(s.entriesByBranch[branchId] ?? []), payload.entry] }, streamingByBranch: withoutStream(s.streamingByBranch, branchId), turnActivityByBranch: rememberActivity(s.turnActivityByBranch, branchId, current), ...(current.mode === "replace" && current.targetEntryId ? { imagesByEntry: { ...s.imagesByEntry, [current.targetEntryId]: [] } } : {}) })); if (current.mode === "replace" && current.targetEntryId) get().loadVariantsForEntry(current.targetEntryId); get().loadRollsForBranch(branchId); },
   _swipeDone: (payload) => { const found = findStream(get().streamingByBranch, payload.stream_id); if (!found) return; const [, current] = found; const branchId = current.branchId; set((s) => ({ entriesByBranch: { ...s.entriesByBranch, [branchId]: replaceEntry(s.entriesByBranch[branchId] ?? [], payload.entry.id, payload.entry) }, variantsByEntry: { ...s.variantsByEntry, [payload.entry.id]: payload.variants }, imagesByEntry: { ...s.imagesByEntry, [payload.entry.id]: [] }, streamingByBranch: withoutStream(s.streamingByBranch, branchId), turnActivityByBranch: rememberActivity(s.turnActivityByBranch, branchId, current) })); },

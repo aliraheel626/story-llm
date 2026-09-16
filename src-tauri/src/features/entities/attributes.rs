@@ -2,6 +2,8 @@
 //! Evasion/Dodge/Agility as three incomparable stats, plus the read/write
 //! helpers for per-entity attribute values.
 
+use std::collections::HashMap;
+
 use chrono::Utc;
 use rig_agent::prelude::*;
 use rig_core::embeddings::distance::VectorDistance;
@@ -12,7 +14,7 @@ use tauri::State;
 use uuid::Uuid;
 
 use crate::features::timeline::{model::kind as timeline_kind, repository::append_entry};
-use crate::shared::db::{Pool, PooledConn};
+use crate::shared::db::Pool;
 use crate::shared::error::{AppError, AppResult};
 
 use super::model::{AttributeRegistryEntry, EntityAttributeValue};
@@ -38,8 +40,8 @@ fn row_to_entry(row: &rusqlite::Row) -> rusqlite::Result<AttributeRegistryEntry>
 const SELECT_COLUMNS: &str =
     "id, canonical_name, aliases_json, entity_kinds_json, min, max, category, is_user_created, created_in_story_id, created_at";
 
-fn find_exact_match(
-    conn: &PooledConn,
+pub(crate) fn find_exact_match(
+    conn: &rusqlite::Connection,
     proposed_name: &str,
 ) -> AppResult<Option<AttributeRegistryEntry>> {
     let needle = proposed_name.trim().to_lowercase();
@@ -59,7 +61,7 @@ fn find_exact_match(
 }
 
 fn load_registry_for_kind(
-    conn: &PooledConn,
+    conn: &rusqlite::Connection,
     entity_kind: &str,
 ) -> AppResult<Vec<AttributeRegistryEntry>> {
     let mut stmt = conn.prepare(&format!(
@@ -74,7 +76,23 @@ fn load_registry_for_kind(
     Ok(out)
 }
 
-fn add_alias(conn: &PooledConn, attribute_id: &str, alias: &str) -> AppResult<()> {
+pub(crate) fn find_attribute_by_id(
+    conn: &rusqlite::Connection,
+    attribute_id: &str,
+) -> AppResult<AttributeRegistryEntry> {
+    conn.query_row(
+        &format!("SELECT {SELECT_COLUMNS} FROM attribute_registry WHERE id = ?1"),
+        [attribute_id],
+        row_to_entry,
+    )
+    .map_err(Into::into)
+}
+
+pub(crate) fn add_alias(
+    conn: &rusqlite::Connection,
+    attribute_id: &str,
+    alias: &str,
+) -> AppResult<()> {
     let current: String = conn.query_row(
         "SELECT aliases_json FROM attribute_registry WHERE id = ?1",
         [attribute_id],
@@ -92,22 +110,15 @@ fn add_alias(conn: &PooledConn, attribute_id: &str, alias: &str) -> AppResult<()
     Ok(())
 }
 
-fn mint_new(
-    conn: &PooledConn,
+fn build_minted_attribute(
     proposed_name: &str,
     entity_kind: &str,
     story_id: &str,
-) -> AppResult<AttributeRegistryEntry> {
+) -> AttributeRegistryEntry {
     let id = Uuid::new_v4().to_string();
     let now = Utc::now().to_rfc3339();
     let kinds_json = serde_json::to_string(&[entity_kind]).unwrap_or_else(|_| "[]".to_string());
-    conn.execute(
-        "INSERT INTO attribute_registry
-         (id, canonical_name, aliases_json, entity_kinds_json, min, max, category, is_user_created, created_in_story_id, created_at)
-         VALUES (?1, ?2, '[]', ?3, 0.0, 10.0, 'user', 1, ?4, ?5)",
-        rusqlite::params![id, proposed_name.trim(), kinds_json, story_id, now],
-    )?;
-    Ok(AttributeRegistryEntry {
+    AttributeRegistryEntry {
         id,
         canonical_name: proposed_name.trim().to_string(),
         aliases_json: "[]".to_string(),
@@ -118,21 +129,62 @@ fn mint_new(
         is_user_created: true,
         created_in_story_id: Some(story_id.to_string()),
         created_at: now,
-    })
+    }
 }
 
-/// Resolves a model-proposed attribute name against the registry: exact
-/// match (name or alias) wins immediately; otherwise an embedding
-/// similarity pass against same-kind candidates either registers the
-/// proposal as an alias of the closest match or, below threshold, mints a
-/// genuinely new canonical entry flagged `is_user_created`.
-pub async fn resolve_or_create_attribute(
+pub(crate) fn insert_minted_attribute(
+    conn: &rusqlite::Connection,
+    entry: &AttributeRegistryEntry,
+) -> AppResult<()> {
+    conn.execute(
+        "INSERT INTO attribute_registry
+         (id, canonical_name, aliases_json, entity_kinds_json, min, max, category, is_user_created, created_in_story_id, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+        rusqlite::params![
+            entry.id,
+            entry.canonical_name,
+            entry.aliases_json,
+            entry.entity_kinds_json,
+            entry.min,
+            entry.max,
+            entry.category,
+            entry.is_user_created,
+            entry.created_in_story_id,
+            entry.created_at,
+        ],
+    )?;
+    Ok(())
+}
+
+pub(crate) enum AttributeResolution {
+    Existing(AttributeRegistryEntry),
+    AddAlias {
+        attribute: AttributeRegistryEntry,
+        alias: String,
+    },
+    Mint(AttributeRegistryEntry),
+}
+
+impl AttributeResolution {
+    pub(crate) fn attribute(&self) -> &AttributeRegistryEntry {
+        match self {
+            Self::Existing(attribute)
+            | Self::AddAlias { attribute, .. }
+            | Self::Mint(attribute) => attribute,
+        }
+    }
+}
+
+/// Decides how a proposed attribute should resolve without writing anything.
+/// Callers can apply the returned registry operation immediately or stage it
+/// alongside a larger transaction.
+pub(crate) async fn resolve_attribute(
     pool: &Pool,
     api_key: &str,
     proposed_name: &str,
     entity_kind: &str,
     story_id: &str,
-) -> AppResult<AttributeRegistryEntry> {
+) -> AppResult<AttributeResolution> {
     let proposed_name = proposed_name.trim();
     if proposed_name.is_empty() {
         return Err(AppError::Invalid("attribute name must not be empty".into()));
@@ -142,7 +194,7 @@ pub async fn resolve_or_create_attribute(
         let conn = pool.get()?;
         find_exact_match(&conn, proposed_name)?
     } {
-        return Ok(entry);
+        return Ok(AttributeResolution::Existing(entry));
     }
 
     let candidates = {
@@ -150,8 +202,11 @@ pub async fn resolve_or_create_attribute(
         load_registry_for_kind(&conn, entity_kind)?
     };
     if candidates.is_empty() {
-        let conn = pool.get()?;
-        return mint_new(&conn, proposed_name, entity_kind, story_id);
+        return Ok(AttributeResolution::Mint(build_minted_attribute(
+            proposed_name,
+            entity_kind,
+            story_id,
+        )));
     }
 
     let client = openrouter::Client::builder()
@@ -168,8 +223,11 @@ pub async fn resolve_or_create_attribute(
         .map_err(|e| AppError::Other(format!("attribute embedding request failed: {e}")))?;
 
     let Some((proposed_emb, candidate_embs)) = embeddings.split_first() else {
-        let conn = pool.get()?;
-        return mint_new(&conn, proposed_name, entity_kind, story_id);
+        return Ok(AttributeResolution::Mint(build_minted_attribute(
+            proposed_name,
+            entity_kind,
+            story_id,
+        )));
     };
 
     let mut best: Option<(f64, &AttributeRegistryEntry)> = None;
@@ -182,34 +240,43 @@ pub async fn resolve_or_create_attribute(
 
     if let Some((similarity, entry)) = best {
         if similarity >= SIMILARITY_THRESHOLD {
-            let conn = pool.get()?;
-            add_alias(&conn, &entry.id, proposed_name)?;
-            return Ok(entry.clone());
+            return Ok(AttributeResolution::AddAlias {
+                attribute: entry.clone(),
+                alias: proposed_name.to_string(),
+            });
         }
     }
 
-    let conn = pool.get()?;
-    mint_new(&conn, proposed_name, entity_kind, story_id)
+    Ok(AttributeResolution::Mint(build_minted_attribute(
+        proposed_name,
+        entity_kind,
+        story_id,
+    )))
 }
 
 /// Reads an entity's current value for an attribute without writing
 /// anything — unlike `get_or_init_entity_attribute`, a "just checking" read
 /// (e.g. a narrator tool call previewing state mid-turn, before anything is
-/// committed) must not persist an init event as a side effect.
+/// committed) must not persist an init event as a side effect. The optional
+/// source is `None` for the implicit midpoint and identifies player-locked
+/// rows without a second write-oriented lookup.
 pub fn peek_entity_attribute(
     conn: &rusqlite::Connection,
     branch_id: &str,
     entity_id: &str,
     attribute: &AttributeRegistryEntry,
-) -> AppResult<f64> {
-    let existing: Option<f64> = conn
+) -> AppResult<(f64, Option<String>)> {
+    let existing: Option<(f64, String)> = conn
         .query_row(
-            "SELECT value FROM entity_attributes WHERE branch_id = ?1 AND entity_id = ?2 AND attribute_id = ?3",
+            "SELECT value, source FROM entity_attributes WHERE branch_id = ?1 AND entity_id = ?2 AND attribute_id = ?3",
             rusqlite::params![branch_id, entity_id, attribute.id],
-            |r| r.get(0),
+            |r| Ok((r.get(0)?, r.get(1)?)),
         )
         .optional()?;
-    Ok(existing.unwrap_or_else(|| (attribute.min + attribute.max) / 2.0))
+    Ok(match existing {
+        Some((value, source)) => (value, Some(source)),
+        None => ((attribute.min + attribute.max) / 2.0, None),
+    })
 }
 
 /// Reads an entity's current value for an attribute, initializing it to the
@@ -358,6 +425,42 @@ pub(crate) fn list_entity_attributes_sync(
         row_to_entity_attribute,
     )?;
     Ok(rows.collect::<Result<Vec<_>, _>>()?)
+}
+
+/// Loads committed attributes for many entities with one registry join.
+/// Entries for requested entities with no stored attributes are empty.
+pub(crate) fn list_entity_attributes_for_entities_sync(
+    conn: &rusqlite::Connection,
+    branch_id: &str,
+    entity_ids: &[&str],
+) -> AppResult<HashMap<String, Vec<EntityAttributeValue>>> {
+    let mut out: HashMap<String, Vec<EntityAttributeValue>> = entity_ids
+        .iter()
+        .map(|entity_id| ((*entity_id).to_string(), Vec::new()))
+        .collect();
+    if entity_ids.is_empty() {
+        return Ok(out);
+    }
+
+    let placeholders = std::iter::repeat_n("?", entity_ids.len())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let mut stmt = conn.prepare(&format!(
+        "SELECT entity_attributes.branch_id, entity_attributes.entity_id, entity_attributes.attribute_id, attribute_registry.canonical_name,
+                entity_attributes.value, attribute_registry.min, attribute_registry.max, entity_attributes.updated_at, entity_attributes.source
+         FROM entity_attributes JOIN attribute_registry ON attribute_registry.id = entity_attributes.attribute_id
+         WHERE entity_attributes.branch_id = ? AND entity_attributes.entity_id IN ({placeholders})
+         ORDER BY entity_attributes.entity_id, attribute_registry.canonical_name ASC"
+    ))?;
+    let params = std::iter::once(branch_id).chain(entity_ids.iter().copied());
+    let rows = stmt.query_map(rusqlite::params_from_iter(params), row_to_entity_attribute)?;
+    for row in rows {
+        let attribute = row?;
+        out.entry(attribute.entity_id.clone())
+            .or_default()
+            .push(attribute);
+    }
+    Ok(out)
 }
 
 #[tauri::command]

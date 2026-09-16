@@ -1,7 +1,5 @@
 use std::collections::HashMap;
 
-use rusqlite::OptionalExtension;
-
 use crate::ai::HistoryTurn;
 use crate::features::timeline::{model::kind, reducer, repository};
 use crate::shared::db::Pool;
@@ -13,17 +11,28 @@ use crate::shared::error::AppResult;
 fn latest_summary_through_seq(
     conn: &rusqlite::Connection,
     branch_id: &str,
+    before_seq: Option<i64>,
 ) -> AppResult<Option<i64>> {
-    let payload_json: Option<String> = conn
-        .query_row(
-            "SELECT payload_json FROM timeline_entries WHERE branch_id = ?1 AND kind = ?2 ORDER BY seq DESC LIMIT 1",
-            rusqlite::params![branch_id, kind::CONTEXT_SUMMARY],
-            |row| row.get(0),
-        )
-        .optional()?;
-    Ok(payload_json
-        .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
-        .and_then(|v| v.get("through_seq").and_then(|t| t.as_i64())))
+    let mut stmt = conn.prepare(
+        "SELECT seq, payload_json FROM timeline_entries WHERE branch_id = ?1 AND kind = ?2 ORDER BY seq DESC",
+    )?;
+    let rows = stmt.query_map(rusqlite::params![branch_id, kind::CONTEXT_SUMMARY], |row| {
+        Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+    })?;
+    for row in rows {
+        let (summary_seq, payload_json) = row?;
+        let through_seq = serde_json::from_str::<serde_json::Value>(&payload_json)
+            .ok()
+            .and_then(|value| value.get("through_seq").and_then(|seq| seq.as_i64()));
+        if let Some(through_seq) = through_seq {
+            if before_seq
+                .is_none_or(|before_seq| summary_seq < before_seq && through_seq < before_seq)
+            {
+                return Ok(Some(through_seq));
+            }
+        }
+    }
+    Ok(None)
 }
 
 /// Reconstructs model history from the logical branch timeline. The latest
@@ -38,7 +47,7 @@ pub(super) fn load_history(
     before_seq: Option<i64>,
 ) -> AppResult<Vec<HistoryTurn>> {
     let conn = pool.get()?;
-    let since_seq = latest_summary_through_seq(&conn, branch_id)?;
+    let since_seq = latest_summary_through_seq(&conn, branch_id, before_seq)?;
     let mut raw = match since_seq {
         Some(seq) => repository::list_logical_entries_since(&conn, branch_id, seq)?,
         None => repository::list_logical_entries(&conn, branch_id)?,
@@ -276,5 +285,97 @@ mod tests {
         let history = history_from_entries(&rows);
         assert_eq!(history.len(), 1);
         assert_eq!(history[0].content, "keep me");
+    }
+
+    #[test]
+    fn retry_between_summaries_uses_the_older_summary_boundary() {
+        let pool = crate::shared::db::test_pool();
+        let conn = pool.get().unwrap();
+        conn.execute(
+            "INSERT INTO stories (id, title, created_at, updated_at, settings_json, default_branch_id) VALUES ('s', 'story', 'now', 'now', '{}', 'b')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO branches (id, story_id, parent_branch_id, forked_at_entry_id, name, created_at) VALUES ('b', 's', NULL, NULL, 'main', 'now')",
+            [],
+        )
+        .unwrap();
+
+        let old_narration = repository::append_entry(
+            &conn,
+            "b",
+            kind::NARRATION,
+            "visible",
+            Some("The archive was entered."),
+            &json!({"input_mode":"generated"}),
+            None,
+        )
+        .unwrap();
+        repository::append_entry(
+            &conn,
+            "b",
+            kind::CONTEXT_SUMMARY,
+            "hidden",
+            Some("The party entered the archive."),
+            &json!({"through_entry_id":old_narration.id,"through_seq":old_narration.seq}),
+            None,
+        )
+        .unwrap();
+        let intervening_player = repository::append_entry(
+            &conn,
+            "b",
+            kind::PLAYER_MESSAGE,
+            "visible",
+            Some("I inspect the sealed door."),
+            &json!({"input_mode":"do"}),
+            None,
+        )
+        .unwrap();
+        let retry_target = repository::append_entry(
+            &conn,
+            "b",
+            kind::NARRATION,
+            "visible",
+            Some("The seal begins to glow."),
+            &json!({"input_mode":"generated"}),
+            None,
+        )
+        .unwrap();
+        repository::append_entry(
+            &conn,
+            "b",
+            kind::CONTEXT_SUMMARY,
+            "hidden",
+            Some("The party reached the sealed door."),
+            &json!({"through_entry_id":retry_target.id,"through_seq":retry_target.seq}),
+            None,
+        )
+        .unwrap();
+        // A retry can append a new compaction event after the entry being
+        // retried even when that summary covers an earlier prefix. It must not
+        // be selected because the before-seq cutoff would then remove the
+        // summary event itself along with the target.
+        repository::append_entry(
+            &conn,
+            "b",
+            kind::CONTEXT_SUMMARY,
+            "hidden",
+            Some("A later retry summarized through the player's action."),
+            &json!({
+                "through_entry_id": intervening_player.id,
+                "through_seq": intervening_player.seq,
+            }),
+            None,
+        )
+        .unwrap();
+        drop(conn);
+
+        let history = load_history(&pool, "b", Some(retry_target.seq)).unwrap();
+        assert_eq!(history.len(), 2);
+        assert!(history[0]
+            .content
+            .contains("The party entered the archive."));
+        assert_eq!(history[1].content, "I inspect the sealed door.");
     }
 }

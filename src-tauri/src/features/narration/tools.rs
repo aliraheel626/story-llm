@@ -9,7 +9,7 @@
 //! the whole turn succeeds — matching how every other generation path in
 //! this app (retry, swipe, image generation) already fails clean.
 
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use rig_agent::tool::{DynamicTool, PortableDynamicTool, ToolExecutionError, ToolOutput};
 use serde_json::json;
@@ -17,7 +17,10 @@ use tokio::sync::Mutex;
 use uuid::Uuid;
 
 use crate::ai::TextModelConfig;
-use crate::features::dicerolls::resolve::{self, PendingRoll, ResolveInput};
+use crate::features::dicerolls::{
+    model::DiceMode,
+    resolve::{self, PendingRoll, ResolveInput},
+};
 use crate::features::entities::{
     self,
     attributes::{self, clamp_delta},
@@ -50,7 +53,36 @@ enum PendingOp {
         cause: String,
         dramatic: bool,
     },
+    MintAttribute(AttributeRegistryEntry),
+    AddAlias {
+        attribute_id: String,
+        alias: String,
+    },
     Roll(PendingRoll),
+}
+
+fn fold_pending_delta(
+    base: f64,
+    entity_id: &str,
+    attribute_id: &str,
+    pending: &[PendingOp],
+    locked: bool,
+) -> f64 {
+    if locked {
+        return base;
+    }
+    pending.iter().fold(base, |value, op| match op {
+        PendingOp::AdjustAttribute {
+            entity_id: op_entity,
+            attribute: op_attribute,
+            delta,
+            dramatic,
+            ..
+        } if op_entity == entity_id && op_attribute.id == attribute_id => {
+            clamp_delta(value, *delta, *dramatic, op_attribute)
+        }
+        _ => value,
+    })
 }
 
 /// Everything a narrator turn's tool calls read and write, before any of it
@@ -124,6 +156,37 @@ impl TurnStaging {
             .find(|e| e.id == entity_id))
     }
 
+    fn staged_attribute_match(
+        &self,
+        proposed_name: &str,
+    ) -> AppResult<Option<AttributeRegistryEntry>> {
+        let proposed_name = proposed_name.trim();
+        for op in &self.pending {
+            match op {
+                PendingOp::MintAttribute(attribute) => {
+                    let aliases: Vec<String> =
+                        serde_json::from_str(&attribute.aliases_json).unwrap_or_default();
+                    if attribute.canonical_name.eq_ignore_ascii_case(proposed_name)
+                        || aliases
+                            .iter()
+                            .any(|alias| alias.eq_ignore_ascii_case(proposed_name))
+                    {
+                        return Ok(Some(attribute.clone()));
+                    }
+                }
+                PendingOp::AddAlias {
+                    attribute_id,
+                    alias,
+                } if alias.eq_ignore_ascii_case(proposed_name) => {
+                    let conn = self.pool.get()?;
+                    return attributes::find_attribute_by_id(&conn, attribute_id).map(Some);
+                }
+                _ => {}
+            }
+        }
+        Ok(None)
+    }
+
     /// Case-insensitive lookup against the effective view; stages a create if
     /// absent. Returns the entity and whether it was just staged.
     fn resolve_or_stage_entity(
@@ -166,61 +229,59 @@ impl TurnStaging {
         entity_id: &str,
         attribute: &AttributeRegistryEntry,
     ) -> AppResult<f64> {
-        let conn = self.pool.get()?;
-        let mut value =
-            attributes::peek_entity_attribute(&conn, &self.branch_id, entity_id, attribute)?;
-        for op in &self.pending {
-            if let PendingOp::AdjustAttribute {
-                entity_id: op_entity,
-                attribute: op_attr,
-                delta,
-                dramatic,
-                ..
-            } = op
-            {
-                if op_entity == entity_id && op_attr.id == attribute.id {
-                    value = clamp_delta(value, *delta, *dramatic, attribute);
-                }
-            }
-        }
-        Ok(value)
+        Ok(self.effective_attribute_state(entity_id, attribute)?.0)
     }
 
-    fn attribute_snapshot(&self, entity_id: &str) -> AppResult<Vec<serde_json::Value>> {
+    fn effective_attribute_state(
+        &self,
+        entity_id: &str,
+        attribute: &AttributeRegistryEntry,
+    ) -> AppResult<(f64, bool)> {
         let conn = self.pool.get()?;
-        let mut stmt = conn.prepare(
-            "SELECT attribute_registry.id, attribute_registry.canonical_name, entity_attributes.value,
-                    attribute_registry.min, attribute_registry.max
-             FROM entity_attributes JOIN attribute_registry ON attribute_registry.id = entity_attributes.attribute_id
-             WHERE entity_attributes.branch_id = ?1 AND entity_attributes.entity_id = ?2",
+        let (value, source) =
+            attributes::peek_entity_attribute(&conn, &self.branch_id, entity_id, attribute)?;
+        let locked = source.as_deref() == Some("user");
+        Ok((
+            fold_pending_delta(value, entity_id, &attribute.id, &self.pending, locked),
+            locked,
+        ))
+    }
+
+    fn attribute_snapshot_for_entities(
+        &self,
+        entity_ids: &[&str],
+    ) -> AppResult<HashMap<String, Vec<serde_json::Value>>> {
+        let mut out: HashMap<String, Vec<serde_json::Value>> = entity_ids
+            .iter()
+            .map(|entity_id| ((*entity_id).to_string(), Vec::new()))
+            .collect();
+        if entity_ids.is_empty() {
+            return Ok(out);
+        }
+
+        let conn = self.pool.get()?;
+        let committed = attributes::list_entity_attributes_for_entities_sync(
+            &conn,
+            &self.branch_id,
+            entity_ids,
         )?;
-        let rows = stmt.query_map(rusqlite::params![self.branch_id, entity_id], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, f64>(2)?,
-                row.get::<_, f64>(3)?,
-                row.get::<_, f64>(4)?,
-            ))
-        })?;
-        let mut out = Vec::new();
-        for row in rows {
-            let (attribute_id, name, mut value, min, max) = row?;
-            for op in &self.pending {
-                if let PendingOp::AdjustAttribute {
-                    entity_id: op_entity,
-                    attribute,
-                    delta,
-                    dramatic,
-                    ..
-                } = op
-                {
-                    if op_entity == entity_id && attribute.id == attribute_id {
-                        value = clamp_delta(value, *delta, *dramatic, attribute);
-                    }
-                }
+        for (entity_id, entity_attributes) in committed {
+            let snapshot = out.entry(entity_id.clone()).or_default();
+            for attribute in entity_attributes {
+                let value = fold_pending_delta(
+                    attribute.value,
+                    &entity_id,
+                    &attribute.attribute_id,
+                    &self.pending,
+                    attribute.source == "user",
+                );
+                snapshot.push(json!({
+                "name": attribute.canonical_name,
+                "value": value,
+                "min": attribute.min,
+                "max": attribute.max,
+                }));
             }
-            out.push(json!({"name": name, "value": value, "min": min, "max": max}));
         }
         Ok(out)
     }
@@ -283,6 +344,15 @@ impl TurnStaging {
                         *dramatic,
                     )?;
                 }
+                PendingOp::MintAttribute(attribute) => {
+                    attributes::insert_minted_attribute(tx, attribute)?;
+                }
+                PendingOp::AddAlias {
+                    attribute_id,
+                    alias,
+                } => {
+                    attributes::add_alias(tx, attribute_id, alias)?;
+                }
                 PendingOp::Roll(pending) => {
                     resolve::persist_roll(tx, passage_id, pending.clone())?;
                 }
@@ -294,6 +364,60 @@ impl TurnStaging {
 
 fn to_tool_error(e: AppError) -> ToolExecutionError {
     ToolExecutionError::other(e.to_string())
+}
+
+async fn resolve_or_stage_attribute(
+    staging: &Arc<Mutex<TurnStaging>>,
+    config: &TextModelConfig,
+    proposed_name: &str,
+    entity_kind: &str,
+) -> Result<AttributeRegistryEntry, ToolExecutionError> {
+    let (pool, story_id) = {
+        let staging = staging.lock().await;
+        if let Some(attribute) = staging
+            .staged_attribute_match(proposed_name)
+            .map_err(to_tool_error)?
+        {
+            return Ok(attribute);
+        }
+        (staging.pool.clone(), staging.story_id.clone())
+    };
+
+    // Attribute similarity may require a network request. Never retain the
+    // staging mutex while awaiting it, or unrelated tool reads would block.
+    let resolution = attributes::resolve_attribute(
+        &pool,
+        &config.api_key,
+        proposed_name,
+        entity_kind,
+        &story_id,
+    )
+    .await
+    .map_err(to_tool_error)?;
+
+    let mut staging = staging.lock().await;
+    if let Some(attribute) = staging
+        .staged_attribute_match(proposed_name)
+        .map_err(to_tool_error)?
+    {
+        return Ok(attribute);
+    }
+    let attribute = resolution.attribute().clone();
+    match resolution {
+        attributes::AttributeResolution::Existing(_) => {}
+        attributes::AttributeResolution::AddAlias { alias, .. } => {
+            staging.pending.push(PendingOp::AddAlias {
+                attribute_id: attribute.id.clone(),
+                alias,
+            });
+        }
+        attributes::AttributeResolution::Mint(_) => {
+            staging
+                .pending
+                .push(PendingOp::MintAttribute(attribute.clone()));
+        }
+    }
+    Ok(attribute)
 }
 
 /// `roll_check` + args → a friendly, generic activity label for the frontend
@@ -357,24 +481,21 @@ fn roll_check_tool(
                 let target_attribute_name = args.get("target_attribute").and_then(|v| v.as_str()).map(str::to_string);
                 let modifier = args.get("modifier").and_then(|v| v.as_f64()).unwrap_or(0.0);
 
-                let (story_id, actor) = {
+                let actor = {
                     let mut staging = staging.lock().await;
-                    let story_id = staging.story_id.clone();
                     let (actor, _) = staging
                         .resolve_or_stage_entity("character", "You", None)
                         .map_err(to_tool_error)?;
-                    (story_id, actor)
+                    actor
                 };
 
-                let actor_attribute = attributes::resolve_or_create_attribute(
-                    &staging.lock().await.pool.clone(),
-                    &config.api_key,
+                let actor_attribute = resolve_or_stage_attribute(
+                    &staging,
+                    &config,
                     &attribute_name,
                     "character",
-                    &story_id,
                 )
-                .await
-                .map_err(to_tool_error)?;
+                .await?;
 
                 let actor_value = staging
                     .lock()
@@ -389,15 +510,13 @@ fn roll_check_tool(
 
                 let (target_value, target_attribute) = match (&target, &target_attribute_name) {
                     (Some(target), Some(target_attr_name)) => {
-                        let target_attribute = attributes::resolve_or_create_attribute(
-                            &staging.lock().await.pool.clone(),
-                            &config.api_key,
+                        let target_attribute = resolve_or_stage_attribute(
+                            &staging,
+                            &config,
                             target_attr_name,
                             &target.kind,
-                            &story_id,
                         )
-                        .await
-                        .map_err(to_tool_error)?;
+                        .await?;
                         let value = staging
                             .lock()
                             .await
@@ -460,11 +579,14 @@ fn get_entities_tool(staging: Arc<Mutex<TurnStaging>>) -> PortableDynamicTool {
                 let entities = staging
                     .effective_entities(kind, name)
                     .map_err(to_tool_error)?;
+                let entity_ids: Vec<&str> =
+                    entities.iter().map(|entity| entity.id.as_str()).collect();
+                let mut attributes_by_entity = staging
+                    .attribute_snapshot_for_entities(&entity_ids)
+                    .map_err(to_tool_error)?;
                 let mut out = Vec::new();
                 for entity in entities {
-                    let attributes = staging
-                        .attribute_snapshot(&entity.id)
-                        .map_err(to_tool_error)?;
+                    let attributes = attributes_by_entity.remove(&entity.id).unwrap_or_default();
                     out.push(json!({
                         "id": entity.id, "kind": entity.kind, "name": entity.name,
                         "appearance_anchor": entity.appearance_anchor, "attributes": attributes,
@@ -603,21 +725,35 @@ fn adjust_entity_attribute_tool(
                 let dramatic = args.get("dramatic").and_then(|v| v.as_bool()).unwrap_or(false);
                 let reason = args.get("reason").and_then(|v| v.as_str()).unwrap_or("narration").to_string();
 
-                let (story_id, entity, pool) = {
+                let entity = {
                     let staging = staging.lock().await;
                     let entity = staging
                         .find_effective_entity(&entity_id)
                         .map_err(to_tool_error)?
                         .ok_or_else(|| ToolExecutionError::invalid_args(format!("no such entity: {entity_id}")))?;
-                    (staging.story_id.clone(), entity, staging.pool.clone())
+                    entity
                 };
 
-                let attribute = attributes::resolve_or_create_attribute(&pool, &config.api_key, &attribute_name, &entity.kind, &story_id)
-                    .await
-                    .map_err(to_tool_error)?;
+                let attribute = resolve_or_stage_attribute(
+                    &staging,
+                    &config,
+                    &attribute_name,
+                    &entity.kind,
+                )
+                .await?;
 
                 let mut staging = staging.lock().await;
-                let before = staging.effective_attribute_value(&entity.id, &attribute).map_err(to_tool_error)?;
+                let (before, locked) = staging
+                    .effective_attribute_state(&entity.id, &attribute)
+                    .map_err(to_tool_error)?;
+                if locked {
+                    return Ok(ToolOutput::json(json!({
+                        "before": before,
+                        "after": before,
+                        "applied": false,
+                        "reason": "locked to a player-set value",
+                    })));
+                }
                 let after = clamp_delta(before, delta, dramatic, &attribute);
                 staging.pending.push(PendingOp::AdjustAttribute {
                     entity_id: entity.id.clone(),
@@ -626,7 +762,7 @@ fn adjust_entity_attribute_tool(
                     cause: reason,
                     dramatic,
                 });
-                Ok(ToolOutput::json(json!({"before": before, "after": after})))
+                Ok(ToolOutput::json(json!({"before": before, "after": after, "applied": true})))
             })
         },
     )
@@ -639,14 +775,20 @@ fn adjust_entity_attribute_tool(
 pub fn narrator_portable_tools(
     staging: Arc<Mutex<TurnStaging>>,
     config: TextModelConfig,
+    dice_mode: DiceMode,
 ) -> Vec<PortableDynamicTool> {
-    vec![
-        roll_check_tool(staging.clone(), config.clone()),
+    let roll_tool =
+        (dice_mode != DiceMode::Never).then(|| roll_check_tool(staging.clone(), config.clone()));
+    let mut tools = vec![
         get_entities_tool(staging.clone()),
         create_entity_tool(staging.clone()),
         update_entity_tool(staging.clone()),
         adjust_entity_attribute_tool(staging, config),
-    ]
+    ];
+    if let Some(roll_tool) = roll_tool {
+        tools.insert(0, roll_tool);
+    }
+    tools
 }
 
 /// The same set as runtime tools for the agent runner. `from_portable`
@@ -655,8 +797,9 @@ pub fn narrator_portable_tools(
 pub fn narrator_tools(
     staging: Arc<Mutex<TurnStaging>>,
     config: TextModelConfig,
+    dice_mode: DiceMode,
 ) -> Vec<DynamicTool> {
-    narrator_portable_tools(staging, config)
+    narrator_portable_tools(staging, config, dice_mode)
         .into_iter()
         .map(DynamicTool::from_portable)
         .collect()
@@ -714,9 +857,9 @@ mod tests {
         TextModelConfig {
             provider: crate::ai::TextProviderKind::OpenRouter,
             model: "test/model".into(),
-            // Every test uses a *seeded* attribute name, so
-            // `resolve_or_create_attribute` short-circuits on its exact-match
-            // lookup and never reaches the embedding call this key would need.
+            // Tool tests use seeded attribute names unless they deliberately
+            // exercise the no-candidate mint path, so no embedding call needs
+            // this key.
             api_key: String::new(),
             context_window: 0,
         }
@@ -725,7 +868,7 @@ mod tests {
     /// The portable tool set, so each tool's real body (arg parsing, error
     /// mapping, staging) can be executed without Rig's private dispatch.
     fn portable_tools(staging: Arc<Mutex<TurnStaging>>) -> Vec<PortableDynamicTool> {
-        narrator_portable_tools(staging, test_config())
+        narrator_portable_tools(staging, test_config(), DiceMode::Classifier)
     }
 
     fn tool_named<'a>(tools: &'a [PortableDynamicTool], name: &str) -> &'a PortableDynamicTool {
@@ -752,6 +895,24 @@ mod tests {
         let tx = conn.transaction().unwrap();
         staging.commit(&tx, &passage.id).unwrap();
         tx.commit().unwrap();
+    }
+
+    #[test]
+    fn never_dice_mode_omits_only_the_roll_tool() {
+        let (pool, story_id, branch_id) = setup();
+        let staging = Arc::new(Mutex::new(TurnStaging::new(pool, story_id, branch_id)));
+        let tools = narrator_portable_tools(staging, test_config(), DiceMode::Never);
+        let names: Vec<&str> = tools.iter().map(|tool| tool.name()).collect();
+
+        assert_eq!(
+            names,
+            vec![
+                "get_entities",
+                "create_entity",
+                "update_entity",
+                "adjust_entity_attribute",
+            ]
+        );
     }
 
     #[test]
@@ -808,6 +969,61 @@ mod tests {
                 .unwrap(),
             midpoint + 2.0
         );
+    }
+
+    #[tokio::test]
+    async fn newly_minted_attributes_are_staged_and_reused_before_commit() {
+        let (pool, story_id, branch_id) = setup();
+        let staging = Arc::new(Mutex::new(TurnStaging::new(
+            pool.clone(),
+            story_id,
+            branch_id.clone(),
+        )));
+        let config = test_config();
+
+        // This kind has no committed candidates, so resolution builds a mint
+        // locally without making an embedding request.
+        let first = resolve_or_stage_attribute(&staging, &config, "Resonance", "artifact")
+            .await
+            .unwrap();
+        let second = resolve_or_stage_attribute(&staging, &config, "resonance", "artifact")
+            .await
+            .unwrap();
+        assert_eq!(first.id, second.id);
+
+        let before_commit: i64 = pool
+            .get()
+            .unwrap()
+            .query_row(
+                "SELECT COUNT(*) FROM attribute_registry WHERE id = ?1",
+                [&first.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(before_commit, 0);
+
+        let staging = staging.lock().await;
+        assert_eq!(
+            staging
+                .pending
+                .iter()
+                .filter(|op| matches!(op, PendingOp::MintAttribute(_)))
+                .count(),
+            1
+        );
+        persist_staging(&pool, &branch_id, &staging);
+        drop(staging);
+
+        let after_commit: i64 = pool
+            .get()
+            .unwrap()
+            .query_row(
+                "SELECT COUNT(*) FROM attribute_registry WHERE id = ?1",
+                [&first.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(after_commit, 1);
     }
 
     #[test]
@@ -1092,8 +1308,8 @@ mod tests {
         assert_eq!(entities[0]["attributes"], json!([]));
     }
 
-    #[test]
-    fn committed_tool_delta_does_not_override_a_user_set_attribute() {
+    #[tokio::test]
+    async fn committed_tool_delta_does_not_override_a_user_set_attribute() {
         let (pool, story_id, branch_id) = setup();
         let stealth = find_attribute(&pool.get().unwrap(), "Stealth");
         let mut staging = TurnStaging::new(pool.clone(), story_id.clone(), branch_id.clone());
@@ -1111,14 +1327,54 @@ mod tests {
         )
         .unwrap();
 
-        let mut staged = TurnStaging::new(pool.clone(), story_id, branch_id.clone());
-        staged.pending.push(PendingOp::AdjustAttribute {
+        // Even if a delta was staged before the lock became visible, every
+        // preview path must mirror commit's no-op behavior.
+        let mut stale_preview = TurnStaging::new(pool.clone(), story_id.clone(), branch_id.clone());
+        stale_preview.pending.push(PendingOp::AdjustAttribute {
             entity_id: mira.id.clone(),
             attribute: stealth.clone(),
             delta: 5.0,
-            cause: "the narrator decided so".into(),
+            cause: "stale preview".into(),
             dramatic: true,
         });
+        assert_eq!(
+            stale_preview
+                .effective_attribute_value(&mira.id, &stealth)
+                .unwrap(),
+            7.0
+        );
+        let snapshot = stale_preview
+            .attribute_snapshot_for_entities(&[&mira.id])
+            .unwrap();
+        assert_eq!(snapshot[&mira.id][0]["value"], json!(7.0));
+
+        let staged = Arc::new(Mutex::new(TurnStaging::new(
+            pool.clone(),
+            story_id,
+            branch_id.clone(),
+        )));
+        let tools = portable_tools(staged.clone());
+        let preview = tool_named(&tools, "adjust_entity_attribute")
+            .execute(json!({
+                "entity_id": mira.id,
+                "attribute": "Stealth",
+                "delta": 5.0,
+                "dramatic": true,
+                "reason": "the narrator decided so",
+            }))
+            .await
+            .unwrap();
+        let preview = preview.as_json().unwrap();
+        assert_eq!(preview["before"], json!(7.0));
+        assert_eq!(preview["after"], json!(7.0));
+        assert_eq!(preview["applied"], json!(false));
+        assert_eq!(preview["reason"], json!("locked to a player-set value"));
+
+        let staged = staged.lock().await;
+        assert!(!staged
+            .pending
+            .iter()
+            .any(|op| matches!(op, PendingOp::AdjustAttribute { .. })));
         persist_staging(&pool, &branch_id, &staged);
 
         // The preamble promises the model that user overrides win; an

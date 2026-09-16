@@ -10,6 +10,17 @@ export const DEFAULT_DICEROLL_SETTINGS: DicerollSettings = { dice_mode: "classif
  *  save can't silently reset the others. */
 export type DicerollSettingsPatch = Partial<DicerollSettings>;
 
+const settingsQueues = new Map<string, Promise<void>>();
+
+const enqueueSettings = (storyId: string, operation: () => Promise<void>): Promise<void> => {
+  const previous = settingsQueues.get(storyId) ?? Promise.resolve();
+  const current = previous.catch(() => undefined).then(operation);
+  settingsQueues.set(storyId, current);
+  return current.finally(() => {
+    if (settingsQueues.get(storyId) === current) settingsQueues.delete(storyId);
+  });
+};
+
 interface DicerollState {
   settingsByStory: Record<string, DicerollSettings>;
   /** Settings chosen while composing a not-yet-persisted draft story; passed
@@ -31,8 +42,11 @@ export const useDicerollStore = create<DicerollState>((set, get) => ({
   loadSettings: async (storyId: string) => {
     set({ loading: true });
     try {
-      const settings = await dicerollApi.getSettings(storyId);
-      set((s) => ({ settingsByStory: { ...s.settingsByStory, [storyId]: settings }, loading: false }));
+      await enqueueSettings(storyId, async () => {
+        const settings = await dicerollApi.getSettings(storyId);
+        set((s) => ({ settingsByStory: { ...s.settingsByStory, [storyId]: settings } }));
+      });
+      set({ loading: false });
     } catch (e) {
       console.error("failed to load dice-roll settings", e);
       set({ loading: false });
@@ -40,14 +54,19 @@ export const useDicerollStore = create<DicerollState>((set, get) => ({
   },
 
   saveSettings: async (storyId: string | null, branchId: string | null, patch: DicerollSettingsPatch) => {
-    const current = (storyId ? get().settingsByStory[storyId] : get().draftSettings) ?? DEFAULT_DICEROLL_SETTINGS;
-    const next: DicerollSettings = { ...current, ...patch };
     if (!storyId || !branchId) {
+      let current = storyId ? get().settingsByStory[storyId] : get().draftSettings;
+      if (storyId && !current) current = await dicerollApi.getSettings(storyId);
+      const next: DicerollSettings = { ...(current ?? DEFAULT_DICEROLL_SETTINGS), ...patch };
       set({ draftSettings: next });
       return;
     }
-    await dicerollApi.saveSettings(storyId, branchId, next.dice_mode, next.attributes_enabled, next.reasoning_effort);
-    set((s) => ({ settingsByStory: { ...s.settingsByStory, [storyId]: next } }));
+    await enqueueSettings(storyId, async () => {
+      const current = get().settingsByStory[storyId] ?? await dicerollApi.getSettings(storyId);
+      const next: DicerollSettings = { ...current, ...patch };
+      await dicerollApi.saveSettings(storyId, branchId, next.dice_mode, next.attributes_enabled, next.reasoning_effort);
+      set((s) => ({ settingsByStory: { ...s.settingsByStory, [storyId]: next } }));
+    });
   },
 
   resetDraftSettings: () => set({ draftSettings: null }),

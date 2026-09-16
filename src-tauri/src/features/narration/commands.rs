@@ -68,6 +68,9 @@ pub fn submit_story(
         let conn = pool.get()?;
         get_story_id_for_branch(&conn, &branch_id)?
     };
+    let reasoning_effort =
+        diceroll_settings::get_story_diceroll_settings(pool.clone(), story_id.clone())?
+            .reasoning_effort;
     let extra_preamble = story_context_preamble(pool.inner(), &story_id, &branch_id)?;
 
     let authored = {
@@ -91,6 +94,7 @@ pub fn submit_story(
             prompt: STORY_CONTINUE_PROMPT.to_string(),
             extra_preamble,
             tools: Vec::new(),
+            reasoning_effort,
             stream_id: stream_id.clone(),
         },
         move |app, pool, sid, visible, thoughts| {
@@ -184,30 +188,13 @@ fn story_context_preamble(pool: &Pool, story_id: &str, branch_id: &str) -> AppRe
     let author_note = author_note_preamble(pool, story_id)?;
     let conn = pool.get()?;
     let entities = crate::features::entities::list_entities_sync(&conn, story_id, branch_id, None)?;
-
-    let mut attrs_by_entity: std::collections::HashMap<String, Vec<String>> =
-        std::collections::HashMap::new();
-    {
-        let mut stmt = conn.prepare(
-            "SELECT entity_attributes.entity_id, attribute_registry.canonical_name, entity_attributes.value
-             FROM entity_attributes JOIN attribute_registry ON attribute_registry.id = entity_attributes.attribute_id
-             WHERE entity_attributes.branch_id = ?1 ORDER BY attribute_registry.canonical_name",
+    let entity_ids: Vec<&str> = entities.iter().map(|entity| entity.id.as_str()).collect();
+    let attrs_by_entity =
+        crate::features::entities::attributes::list_entity_attributes_for_entities_sync(
+            &conn,
+            branch_id,
+            &entity_ids,
         )?;
-        let rows = stmt.query_map([branch_id], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, f64>(2)?,
-            ))
-        })?;
-        for row in rows {
-            let (entity_id, name, value) = row?;
-            attrs_by_entity
-                .entry(entity_id)
-                .or_default()
-                .push(format!("{name}={value}"));
-        }
-    }
 
     let mut lines = vec!["Current entity state is authoritative. User overrides take precedence over inferred updates. Dice-roll outcomes must not be contradicted.".to_string()];
     for entity in entities {
@@ -217,7 +204,16 @@ fn story_context_preamble(pool: &Pool, story_id: &str, branch_id: &str) -> AppRe
             .map(|a| format!("; appearance: {a}"))
             .unwrap_or_default();
         let attributes = match attrs_by_entity.get(&entity.id) {
-            Some(attrs) if !attrs.is_empty() => format!("; attributes: {}", attrs.join(", ")),
+            Some(attrs) if !attrs.is_empty() => format!(
+                "; attributes: {}",
+                attrs
+                    .iter()
+                    .map(|attribute| {
+                        format!("{}={}", attribute.canonical_name, attribute.value)
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
             _ => String::new(),
         };
         lines.push(format!(
@@ -366,12 +362,14 @@ struct NarrationJob {
     /// Non-empty only for `submit_turn`'s tool-calling path (see `tools`
     /// module) — every other narration-triggering command passes `Vec::new()`.
     tools: Vec<DynamicTool>,
+    reasoning_effort: Option<String>,
     stream_id: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
 struct NarrationToolActivityPayload<'a> {
     stream_id: &'a str,
+    call_id: String,
     label: String,
     phase: &'static str,
     /// `None` while starting; `Some(false)` lets the frontend show a tool
@@ -393,6 +391,7 @@ where
         prompt,
         extra_preamble,
         tools,
+        reasoning_effort,
         stream_id,
     } = job;
     tauri::async_runtime::spawn(async move {
@@ -410,7 +409,7 @@ where
             preamble,
             history,
             prompt,
-            reasoning_effort: diceroll_settings::reasoning_effort_for_branch(&pool, &branch_id),
+            reasoning_effort,
             tools,
         };
 
@@ -436,6 +435,7 @@ where
                 );
             }
             NarratorChunk::ToolActivity {
+                call_id,
                 tool_name,
                 args,
                 phase,
@@ -448,6 +448,7 @@ where
                     "narration-tool-activity",
                     NarrationToolActivityPayload {
                         stream_id: &stream_id_for_chunks,
+                        call_id,
                         label: tools::friendly_tool_label(&tool_name, &args),
                         phase: phase_str,
                         ok,
@@ -580,6 +581,8 @@ pub async fn submit_turn(
         get_story_id_for_branch(&conn, &branch_id)?
     };
     let dicerolls = diceroll_settings::get_story_diceroll_settings(pool.clone(), story_id.clone())?;
+    let dice_mode = DiceMode::from_str_or_default(&dicerolls.dice_mode);
+    let reasoning_effort = dicerolls.reasoning_effort.clone();
 
     let player_passage = {
         let conn = pool.get()?;
@@ -594,7 +597,7 @@ pub async fn submit_turn(
             story_id.clone(),
             branch_id.clone(),
         )));
-        let tool_set = tools::narrator_tools(staging.clone(), config.clone());
+        let tool_set = tools::narrator_tools(staging.clone(), config.clone(), dice_mode);
         (tool_set, Some(staging))
     } else {
         (Vec::new(), None)
@@ -603,7 +606,6 @@ pub async fn submit_turn(
     let tools_preamble = if tool_set.is_empty() {
         String::new()
     } else {
-        let dice_mode = DiceMode::from_str_or_default(&dicerolls.dice_mode);
         format!(
             "You have tools to check, create, and update entities and their attributes as the story \
              unfolds — use them to keep the world consistent. {}",
@@ -628,6 +630,7 @@ pub async fn submit_turn(
             prompt,
             extra_preamble,
             tools: tool_set,
+            reasoning_effort,
             stream_id: stream_id.clone(),
         },
         move |app, pool, sid, visible, thoughts| async move {
@@ -686,6 +689,9 @@ pub async fn submit_guide(
         let conn = pool.get()?;
         get_story_id_for_branch(&conn, &branch_id)?
     };
+    let reasoning_effort =
+        diceroll_settings::get_story_diceroll_settings(pool.clone(), story_id.clone())?
+            .reasoning_effort;
     let extra_preamble = story_context_preamble(pool.inner(), &story_id, &branch_id)?;
 
     let stream_id = Uuid::new_v4().to_string();
@@ -704,6 +710,7 @@ pub async fn submit_guide(
             prompt,
             extra_preamble,
             tools: Vec::new(),
+            reasoning_effort,
             stream_id: stream_id.clone(),
         },
         move |app, pool, sid, visible, thoughts| {
@@ -735,6 +742,9 @@ pub async fn continue_scene(
         let conn = pool.get()?;
         get_story_id_for_branch(&conn, &branch_id)?
     };
+    let reasoning_effort =
+        diceroll_settings::get_story_diceroll_settings(pool.clone(), story_id.clone())?
+            .reasoning_effort;
     let extra_preamble = story_context_preamble(pool.inner(), &story_id, &branch_id)?;
 
     // A trailing story draft was never rendered (its generation failed), so
@@ -761,6 +771,7 @@ pub async fn continue_scene(
             prompt: prompt.to_string(),
             extra_preamble,
             tools: Vec::new(),
+            reasoning_effort,
             stream_id: stream_id.clone(),
         },
         move |app, pool, sid, visible, thoughts| {
@@ -812,6 +823,9 @@ pub async fn retry_narration(
         let conn = pool.get()?;
         get_story_id_for_branch(&conn, &branch_id)?
     };
+    let reasoning_effort =
+        diceroll_settings::get_story_diceroll_settings(pool.clone(), story_id.clone())?
+            .reasoning_effort;
     let extra_preamble = combine_preambles(&[
         story_context_preamble(pool.inner(), &story_id, &branch_id)?,
         roll_context_preamble(pool.inner(), &target.id)?,
@@ -828,6 +842,7 @@ pub async fn retry_narration(
             prompt: prompt.to_string(),
             extra_preamble,
             tools: Vec::new(),
+            reasoning_effort,
             stream_id: stream_id.clone(),
         },
         move |app, pool, sid, visible, thoughts| async move {
@@ -888,6 +903,9 @@ pub async fn generate_narration_variant(
         let conn = pool.get()?;
         get_story_id_for_branch(&conn, &branch_id)?
     };
+    let reasoning_effort =
+        diceroll_settings::get_story_diceroll_settings(pool.clone(), story_id.clone())?
+            .reasoning_effort;
     let extra_preamble = combine_preambles(&[
         story_context_preamble(pool.inner(), &story_id, &branch_id)?,
         roll_context_preamble(pool.inner(), &target.id)?,
@@ -909,6 +927,7 @@ pub async fn generate_narration_variant(
             prompt: prompt.to_string(),
             extra_preamble,
             tools: Vec::new(),
+            reasoning_effort,
             stream_id: stream_id.clone(),
         },
         move |app, pool, sid, visible, thoughts| async move {

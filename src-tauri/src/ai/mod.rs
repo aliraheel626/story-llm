@@ -66,6 +66,7 @@ pub enum NarratorChunk {
     Text(String),
     Reasoning(String),
     ToolActivity {
+        call_id: String,
         tool_name: String,
         args: String,
         phase: ToolActivityPhase,
@@ -90,6 +91,7 @@ impl AgentHook for ActivityHook {
     ) -> rig_agent::agent::ToolCallAction {
         if let Ok(mut buf) = self.buffer.lock() {
             buf.push(NarratorChunk::ToolActivity {
+                call_id: event.internal_call_id.to_string(),
                 tool_name: event.tool_name.to_string(),
                 args: event.args.to_string(),
                 phase: ToolActivityPhase::Started,
@@ -105,6 +107,7 @@ impl AgentHook for ActivityHook {
     ) -> rig_agent::agent::ToolResultAction {
         if let Ok(mut buf) = self.buffer.lock() {
             buf.push(NarratorChunk::ToolActivity {
+                call_id: event.internal_call_id.to_string(),
                 tool_name: event.tool_name.to_string(),
                 args: event.args.to_string(),
                 phase: ToolActivityPhase::Finished {
@@ -120,6 +123,19 @@ impl AgentHook for ActivityHook {
             kind,
             rig_agent::agent::StepEventKind::ToolCall | rig_agent::agent::StepEventKind::ToolResult
         )
+    }
+}
+
+fn drain_activity_buffer<F>(activity_buffer: &Mutex<Vec<NarratorChunk>>, on_chunk: &mut F)
+where
+    F: FnMut(NarratorChunk),
+{
+    let queued = {
+        let mut buffer = activity_buffer.lock().unwrap_or_else(|e| e.into_inner());
+        std::mem::take(&mut *buffer)
+    };
+    for chunk in queued {
+        on_chunk(chunk);
     }
 }
 
@@ -168,13 +184,7 @@ where
 
     while let Some(item) = stream.next().await {
         if has_tools {
-            let queued: Vec<NarratorChunk> = {
-                let mut buf = activity_buffer.lock().unwrap_or_else(|e| e.into_inner());
-                std::mem::take(&mut *buf)
-            };
-            for chunk in queued {
-                on_chunk(chunk);
-            }
+            drain_activity_buffer(&activity_buffer, &mut on_chunk);
         }
         match item {
             Ok(MultiTurnStreamItem::StreamAssistantItem(StreamedAssistantContent::Text(t))) => {
@@ -195,6 +205,10 @@ where
                 return Err(AppError::Other(format!("narrator stream error: {e}")));
             }
         }
+    }
+
+    if has_tools {
+        drain_activity_buffer(&activity_buffer, &mut on_chunk);
     }
 
     let tail = text_stripper.finalize();

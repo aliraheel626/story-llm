@@ -36,37 +36,6 @@ pub fn normalize_reasoning_effort(value: &str) -> Option<&'static str> {
     }
 }
 
-/// The configured reasoning effort for whichever story owns `branch_id`,
-/// best-effort: a missing story or unreadable settings simply means "leave it
-/// to the model", since a narration must not fail over a display setting.
-pub fn reasoning_effort_for_branch(pool: &Pool, branch_id: &str) -> Option<String> {
-    let conn = pool.get().ok()?;
-    let story_id: Option<String> = conn
-        .query_row(
-            "SELECT story_id FROM branches WHERE id = ?1",
-            [branch_id],
-            |r| r.get(0),
-        )
-        .optional()
-        .ok()
-        .flatten();
-    let raw: String = conn
-        .query_row(
-            "SELECT settings_json FROM stories WHERE id = ?1",
-            [story_id?],
-            |r| r.get(0),
-        )
-        .optional()
-        .ok()
-        .flatten()?;
-    let settings: Value = serde_json::from_str(&raw).ok()?;
-    settings
-        .get("reasoning_effort")
-        .and_then(Value::as_str)
-        .and_then(normalize_reasoning_effort)
-        .map(str::to_string)
-}
-
 fn story_settings(pool: &State<Pool>, story_id: &str) -> AppResult<Value> {
     let conn = pool.get()?;
     let raw: String = conn
