@@ -1,7 +1,7 @@
 import { AccordionPanel } from "../../shared/ui/AccordionPanel";
 import { StoriesPanel } from "../stories/StoriesPanel";
 import { CharactersPanel } from "../characters/CharactersPanel";
-import { AttributesPanel } from "../mechanics/AttributesPanel";
+import { AttributesPanel } from "../dicerolls/AttributesPanel";
 import { WorldPanel } from "../world/WorldPanel";
 import { TextModelPanel } from "../settings/TextModelPanel";
 import { ImageModelPanel } from "../settings/ImageModelPanel";

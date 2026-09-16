@@ -1,7 +1,7 @@
 # Dungeon
 
 Dungeon is a local-first AI storytelling desktop app built with Tauri, React,
-TypeScript, and Rust. Stories, passages, characters, world notes, mechanics,
+TypeScript, and Rust. Stories, passages, characters, world notes, dice rolls,
 model settings, and generated-image metadata are persisted in a local SQLite
 database. Text and image generation use OpenRouter when configured.
 
@@ -36,7 +36,7 @@ src/
   features/
     characters/
     layout/
-    mechanics/
+    dicerolls/
     passages/
     settings/
     stories/
@@ -48,7 +48,7 @@ src-tauri/src/
   features/
     entities/
     images/
-    mechanics/
+    dicerolls/
     passages/
     settings/
     stories/
@@ -63,7 +63,7 @@ feature-local helpers contain persistence and domain behavior.
 Passage generation is streamed to the UI and persisted only after successful
 completion. Retrying replaces the existing narrator passage transactionally,
 so configuration or generation failures leave the previous passage intact.
-Passage and mechanics-roll writes share one transaction, and mutations also
+Narration and dice-roll writes share one transaction, and mutations also
 refresh the owning story's `updated_at` value.
 
 ## Local data

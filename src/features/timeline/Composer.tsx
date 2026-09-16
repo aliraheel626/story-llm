@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useAppStore } from "../../app/store";
-import { DEFAULT_MECHANICS_SETTINGS, useMechanicsStore } from "../mechanics/store";
+import { DEFAULT_DICEROLL_SETTINGS, useDicerollStore } from "../dicerolls/store";
 import { useImageModelStore } from "../settings/imageModelStore";
 import { useStoryStore } from "./store";
 import type { ReasoningEffort } from "../../shared/types";
@@ -50,9 +50,9 @@ export function Composer({ branchId }: { branchId: string | null }) {
   const imageSettings = useImageModelStore((s) => s.settings);
   const loadImageSettings = useImageModelStore((s) => s.load);
   const activeStoryId = useAppStore((s) => s.activeStoryId);
-  const saveSettings = useMechanicsStore((s) => s.saveSettings);
+  const saveSettings = useDicerollStore((s) => s.saveSettings);
   const reasoningEffort =
-    (useMechanicsStore((s) => (activeStoryId ? s.settingsByStory[activeStoryId] : s.draftSettings)) ?? DEFAULT_MECHANICS_SETTINGS)
+    (useDicerollStore((s) => (activeStoryId ? s.settingsByStory[activeStoryId] : s.draftSettings)) ?? DEFAULT_DICEROLL_SETTINGS)
       .reasoning_effort;
 
   const changeReasoningEffort = async (value: string) => {

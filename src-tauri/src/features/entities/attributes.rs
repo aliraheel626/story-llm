@@ -7,13 +7,15 @@ use rig_agent::prelude::*;
 use rig_core::embeddings::distance::VectorDistance;
 use rig_core::providers::openrouter;
 use rusqlite::OptionalExtension;
+use serde_json::json;
+use tauri::State;
 use uuid::Uuid;
 
 use crate::features::timeline::{model::kind as timeline_kind, repository::append_entry};
 use crate::shared::db::{Pool, PooledConn};
 use crate::shared::error::{AppError, AppResult};
 
-use super::model::AttributeRegistryEntry;
+use super::model::{AttributeRegistryEntry, EntityAttributeValue};
 
 const EMBEDDING_MODEL: &str = "openai/text-embedding-3-small";
 const SIMILARITY_THRESHOLD: f64 = 0.85;
@@ -325,6 +327,144 @@ pub fn apply_attribute_delta(
         rusqlite::params![after, now, event.id, branch_id, entity_id, attribute.id],
     )?;
     Ok((before, after))
+}
+
+fn row_to_entity_attribute(row: &rusqlite::Row) -> rusqlite::Result<EntityAttributeValue> {
+    Ok(EntityAttributeValue {
+        branch_id: row.get(0)?,
+        entity_id: row.get(1)?,
+        attribute_id: row.get(2)?,
+        canonical_name: row.get(3)?,
+        value: row.get(4)?,
+        min: row.get(5)?,
+        max: row.get(6)?,
+        updated_at: row.get(7)?,
+        source: row.get(8)?,
+    })
+}
+
+pub(crate) fn list_entity_attributes_sync(
+    conn: &rusqlite::Connection,
+    branch_id: &str,
+    entity_id: &str,
+) -> AppResult<Vec<EntityAttributeValue>> {
+    let mut stmt = conn.prepare(
+        "SELECT entity_attributes.branch_id, entity_attributes.entity_id, entity_attributes.attribute_id, attribute_registry.canonical_name,
+                entity_attributes.value, attribute_registry.min, attribute_registry.max, entity_attributes.updated_at, entity_attributes.source
+         FROM entity_attributes JOIN attribute_registry ON attribute_registry.id = entity_attributes.attribute_id
+         WHERE entity_attributes.branch_id = ?1 AND entity_attributes.entity_id = ?2 ORDER BY attribute_registry.canonical_name ASC")?;
+    let rows = stmt.query_map(
+        rusqlite::params![branch_id, entity_id],
+        row_to_entity_attribute,
+    )?;
+    Ok(rows.collect::<Result<Vec<_>, _>>()?)
+}
+
+#[tauri::command]
+pub fn list_entity_attributes(
+    pool: State<Pool>,
+    branch_id: String,
+    entity_id: String,
+) -> AppResult<Vec<EntityAttributeValue>> {
+    let conn = pool.get()?;
+    list_entity_attributes_sync(&conn, &branch_id, &entity_id)
+}
+
+#[tauri::command]
+pub fn list_attribute_registry(pool: State<Pool>) -> AppResult<Vec<AttributeRegistryEntry>> {
+    let conn = pool.get()?;
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {SELECT_COLUMNS} FROM attribute_registry ORDER BY canonical_name ASC"
+    ))?;
+    let rows = stmt.query_map([], row_to_entry)?;
+    Ok(rows.collect::<Result<Vec<_>, _>>()?)
+}
+
+#[tauri::command]
+pub fn set_entity_attribute(
+    pool: State<Pool>,
+    branch_id: String,
+    entity_id: String,
+    attribute_id: String,
+    value: f64,
+) -> AppResult<EntityAttributeValue> {
+    let mut conn = pool.get()?;
+    let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+    let (name, min, max): (String, f64, f64) = tx
+        .query_row(
+            "SELECT canonical_name, min, max FROM attribute_registry WHERE id = ?1",
+            [&attribute_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .map_err(|_| AppError::NotFound(format!("attribute {attribute_id} not found")))?;
+    if !value.is_finite() || value < min || value > max {
+        return Err(AppError::Invalid(format!(
+            "{name} must be between {min} and {max}"
+        )));
+    }
+    tx.query_row("SELECT 1 FROM branch_entity_state WHERE branch_id = ?1 AND entity_id = ?2 AND is_present = 1", rusqlite::params![branch_id, entity_id], |_| Ok(()))
+        .map_err(|_| AppError::NotFound(format!("entity {entity_id} not found")))?;
+    let before: Option<f64> = tx.query_row("SELECT value FROM entity_attributes WHERE branch_id = ?1 AND entity_id = ?2 AND attribute_id = ?3", rusqlite::params![branch_id, entity_id, attribute_id], |r| r.get(0)).optional()?;
+    let event = append_entry(
+        &tx,
+        &branch_id,
+        timeline_kind::ENTITY_ATTRIBUTE_CHANGED,
+        "hidden",
+        Some(&format!(
+            "User changed {name} from {} to {value}.",
+            before
+                .map(|v| v.to_string())
+                .unwrap_or_else(|| "unset".into())
+        )),
+        &json!({"entity_id": entity_id, "attribute_id": attribute_id, "attribute_name": name, "before": before, "after": value, "source": "user"}),
+        None,
+    )?;
+    let now = Utc::now().to_rfc3339();
+    tx.execute("INSERT INTO entity_attributes (branch_id, entity_id, attribute_id, value, source, updated_at, last_event_id)
+                VALUES (?1, ?2, ?3, ?4, 'user', ?5, ?6)
+                ON CONFLICT(branch_id, entity_id, attribute_id) DO UPDATE SET value=excluded.value, source='user', updated_at=excluded.updated_at, last_event_id=excluded.last_event_id",
+        rusqlite::params![branch_id, entity_id, attribute_id, value, now, event.id])?;
+    tx.commit()?;
+    Ok(EntityAttributeValue {
+        branch_id,
+        entity_id,
+        attribute_id,
+        canonical_name: name,
+        value,
+        min,
+        max,
+        updated_at: now,
+        source: "user".into(),
+    })
+}
+
+#[tauri::command]
+pub fn remove_entity_attribute(
+    pool: State<Pool>,
+    branch_id: String,
+    entity_id: String,
+    attribute_id: String,
+) -> AppResult<()> {
+    let mut conn = pool.get()?;
+    let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+    let prior: Option<(f64, String)> = tx.query_row(
+        "SELECT entity_attributes.value, attribute_registry.canonical_name FROM entity_attributes JOIN attribute_registry ON attribute_registry.id = entity_attributes.attribute_id WHERE entity_attributes.branch_id = ?1 AND entity_attributes.entity_id = ?2 AND entity_attributes.attribute_id = ?3",
+        rusqlite::params![branch_id, entity_id, attribute_id], |r| Ok((r.get(0)?, r.get(1)?))).optional()?;
+    let Some((before, name)) = prior else {
+        return Ok(());
+    };
+    append_entry(
+        &tx,
+        &branch_id,
+        timeline_kind::ENTITY_ATTRIBUTE_REMOVED,
+        "hidden",
+        Some(&format!("User removed {name} (previously {before}).")),
+        &json!({"entity_id": entity_id, "attribute_id": attribute_id, "attribute_name": name, "before": before, "source": "user"}),
+        None,
+    )?;
+    tx.execute("DELETE FROM entity_attributes WHERE branch_id = ?1 AND entity_id = ?2 AND attribute_id = ?3", rusqlite::params![branch_id, entity_id, attribute_id])?;
+    tx.commit()?;
+    Ok(())
 }
 
 #[cfg(test)]

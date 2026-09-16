@@ -6,7 +6,7 @@ function attrLine(attrs: EntityAttributeValue[]): string {
   return attrs.map((a) => `${a.canonical_name} ${Math.round(a.value)}/${Math.round(a.max)}`).join(", ");
 }
 
-/** Roll-high-succeeds: mirrors src-tauri/src/mechanics/resolve.rs::needed_roll. */
+/** Roll-high-succeeds: mirrors src-tauri/src/features/dicerolls/resolve.rs::needed_roll. */
 function neededRoll(pSuccess: number): number {
   return Math.round(100 - pSuccess * 100);
 }

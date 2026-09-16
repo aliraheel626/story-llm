@@ -1,6 +1,6 @@
 //! Tools the narrator calls mid-generation: rolling dice, and reading,
 //! creating, and updating entities and their attributes. Replaces the old
-//! classify/resolve/update pipeline (`mechanics::pipeline`) — the narrator
+//! former classify/resolve/update pipeline — the narrator
 //! now discovers and records world state itself instead of being handed
 //! pre-computed context.
 //!
@@ -17,10 +17,12 @@ use tokio::sync::Mutex;
 use uuid::Uuid;
 
 use crate::ai::TextModelConfig;
-use crate::features::entities::{self, model::Entity};
-use crate::features::mechanics::attributes::{self, clamp_delta};
-use crate::features::mechanics::model::AttributeRegistryEntry;
-use crate::features::mechanics::resolve::{self, PendingRoll, ResolveInput};
+use crate::features::dicerolls::resolve::{self, PendingRoll, ResolveInput};
+use crate::features::entities::{
+    self,
+    attributes::{self, clamp_delta},
+    model::{AttributeRegistryEntry, Entity},
+};
 use crate::shared::db::Pool;
 use crate::shared::error::{AppError, AppResult};
 

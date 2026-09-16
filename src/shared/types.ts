@@ -75,7 +75,7 @@ export interface Entity {
   appearance_anchor: string | null; created_at: string;
 }
 export type DiceMode = "always" | "classifier" | "never";
-export interface MechanicsSettings {
+export interface DicerollSettings {
   dice_mode: DiceMode;
   attributes_enabled: boolean;
   /** How much the model reasons before writing. `null` = the model's own

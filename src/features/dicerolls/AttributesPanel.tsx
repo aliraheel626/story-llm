@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useAppStore } from "../../app/store";
 import type { DiceMode } from "../../shared/types";
-import { DEFAULT_MECHANICS_SETTINGS, useMechanicsStore, type MechanicsPatch } from "./store";
+import { DEFAULT_DICEROLL_SETTINGS, useDicerollStore, type DicerollSettingsPatch } from "./store";
 
 const DICE_MODES: { id: DiceMode; label: string; hint: string }[] = [
   { id: "always", label: "Always", hint: "Every Do action rolls." },
@@ -12,15 +12,15 @@ const DICE_MODES: { id: DiceMode; label: string; hint: string }[] = [
 export function AttributesPanel() {
   const activeStoryId = useAppStore((s) => s.activeStoryId);
   const activeBranchId = useAppStore((s) => s.stories.find((story) => story.id === s.activeStoryId)?.default_branch_id ?? null);
-  const settingsByStory = useMechanicsStore((s) => s.settingsByStory);
-  const draftSettings = useMechanicsStore((s) => s.draftSettings);
-  const loading = useMechanicsStore((s) => s.loading);
-  const loadSettings = useMechanicsStore((s) => s.loadSettings);
-  const saveSettings = useMechanicsStore((s) => s.saveSettings);
+  const settingsByStory = useDicerollStore((s) => s.settingsByStory);
+  const draftSettings = useDicerollStore((s) => s.draftSettings);
+  const loading = useDicerollStore((s) => s.loading);
+  const loadSettings = useDicerollStore((s) => s.loadSettings);
+  const saveSettings = useDicerollStore((s) => s.saveSettings);
 
   const [saving, setSaving] = useState(false);
   const loaded = activeStoryId ? settingsByStory[activeStoryId] : undefined;
-  const settings = loaded ?? draftSettings ?? DEFAULT_MECHANICS_SETTINGS;
+  const settings = loaded ?? draftSettings ?? DEFAULT_DICEROLL_SETTINGS;
 
   useEffect(() => {
     if (activeStoryId) loadSettings(activeStoryId);
@@ -30,7 +30,7 @@ export function AttributesPanel() {
     return <div className="text-xs text-muted py-1">Loading...</div>;
   }
 
-  const update = async (patch: MechanicsPatch) => {
+  const update = async (patch: DicerollSettingsPatch) => {
     setSaving(true);
     try {
       await saveSettings(activeStoryId, activeBranchId, patch);

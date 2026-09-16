@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { storiesApi } from "../features/stories/api";
 import type { Story } from "../shared/types";
-import { useMechanicsStore } from "../features/mechanics/store";
+import { useDicerollStore } from "../features/dicerolls/store";
 
 export const SIDEBAR_PANELS = [
   "stories",
@@ -64,12 +64,12 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
   startDraft: () => {
     set({ activeStoryId: null, draft: true });
-    useMechanicsStore.getState().resetDraftSettings();
+    useDicerollStore.getState().resetDraftSettings();
   },
   createStory: async () => {
-    const draft = useMechanicsStore.getState().draftSettings;
+    const draft = useDicerollStore.getState().draftSettings;
     const story = await storiesApi.create(undefined, draft);
-    useMechanicsStore.getState().promoteDraftSettings(story.id);
+    useDicerollStore.getState().promoteDraftSettings(story.id);
     set((s) => ({ stories: [story, ...s.stories], activeStoryId: story.id, draft: false }));
     return story;
   },
@@ -90,7 +90,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   setActiveStory: (id: string) => {
     if (get().activeStoryId !== id || get().draft) {
       set({ activeStoryId: id, draft: false });
-      useMechanicsStore.getState().resetDraftSettings();
+      useDicerollStore.getState().resetDraftSettings();
     }
   },
 }));

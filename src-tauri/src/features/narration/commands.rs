@@ -12,9 +12,8 @@ use crate::ai::{
     self, HistoryTurn, NarrateRequest, NarratorChunk, TextModelConfig, ToolActivityPhase,
 };
 use crate::features::{
-    images,
-    mechanics::{commands as mechanics_settings, pipeline::DiceMode},
-    settings, stories,
+    dicerolls::{commands as diceroll_settings, model::DiceMode},
+    images, settings, stories,
     timeline::{
         model::{kind as timeline_kind, NarrationVariant, TimelineEntry},
         reducer, repository as timeline_repository,
@@ -411,7 +410,7 @@ where
             preamble,
             history,
             prompt,
-            reasoning_effort: mechanics_settings::reasoning_effort_for_branch(&pool, &branch_id),
+            reasoning_effort: diceroll_settings::reasoning_effort_for_branch(&pool, &branch_id),
             tools,
         };
 
@@ -502,7 +501,7 @@ where
     });
 }
 
-/// Shared terminal step for the plain (non-mechanics) append flows: insert
+/// Shared terminal step for plain append flows without narrator tools: insert
 /// the passage, persist a roll if one was already resolved for it, emit
 /// `narration-done`.
 async fn finish_append(
@@ -580,8 +579,7 @@ pub async fn submit_turn(
         let conn = pool.get()?;
         get_story_id_for_branch(&conn, &branch_id)?
     };
-    let mechanics =
-        mechanics_settings::get_story_mechanics_settings(pool.clone(), story_id.clone())?;
+    let dicerolls = diceroll_settings::get_story_diceroll_settings(pool.clone(), story_id.clone())?;
 
     let player_passage = {
         let conn = pool.get()?;
@@ -590,7 +588,7 @@ pub async fn submit_turn(
 
     let prompt = format_prompt(&input_mode, content);
 
-    let (tool_set, staging) = if mechanics.attributes_enabled {
+    let (tool_set, staging) = if dicerolls.attributes_enabled {
         let staging = Arc::new(Mutex::new(TurnStaging::new(
             pool.inner().clone(),
             story_id.clone(),
@@ -605,7 +603,7 @@ pub async fn submit_turn(
     let tools_preamble = if tool_set.is_empty() {
         String::new()
     } else {
-        let dice_mode = DiceMode::from_str_or_default(&mechanics.dice_mode);
+        let dice_mode = DiceMode::from_str_or_default(&dicerolls.dice_mode);
         format!(
             "You have tools to check, create, and update entities and their attributes as the story \
              unfolds — use them to keep the world consistent. {}",

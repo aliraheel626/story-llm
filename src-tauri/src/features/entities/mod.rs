@@ -1,3 +1,4 @@
+pub mod attributes;
 pub mod model;
 
 use chrono::Utc;

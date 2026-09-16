@@ -206,9 +206,9 @@ where
     Ok((visible, thoughts))
 }
 
-/// Structured, schema-validated completion (used by the mechanics engine's
-/// classify/update stages) — Rig's native structured-output mode, not prose
-/// parsing. `T` must round-trip through `agent.prompt_typed::<T>()`.
+/// Structured, schema-validated completion using Rig's native structured-output
+/// mode rather than prose parsing. `T` must round-trip through
+/// `agent.prompt_typed::<T>()`.
 pub async fn prompt_typed<T>(
     config: &TextModelConfig,
     preamble: &str,

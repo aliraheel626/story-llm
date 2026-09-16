@@ -1,30 +1,31 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AttributeRegistryEntry {
-    pub id: String,
-    pub canonical_name: String,
-    pub aliases_json: String,
-    pub entity_kinds_json: String,
-    pub min: f64,
-    pub max: f64,
-    pub category: String,
-    pub is_user_created: bool,
-    pub created_in_story_id: Option<String>,
-    pub created_at: String,
+use crate::features::entities::model::EntityAttributeValue;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DiceMode {
+    Always,
+    Classifier,
+    Never,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EntityAttributeValue {
-    pub branch_id: String,
-    pub entity_id: String,
-    pub attribute_id: String,
-    pub canonical_name: String,
-    pub value: f64,
-    pub min: f64,
-    pub max: f64,
-    pub updated_at: String,
-    pub source: String,
+impl DiceMode {
+    pub fn from_str_or_default(s: &str) -> Self {
+        match s {
+            "always" => Self::Always,
+            "never" => Self::Never,
+            _ => Self::Classifier,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Always => "always",
+            Self::Classifier => "classifier",
+            Self::Never => "never",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
