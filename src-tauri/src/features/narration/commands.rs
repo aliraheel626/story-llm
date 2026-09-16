@@ -583,6 +583,11 @@ pub async fn submit_turn(
     let dicerolls = diceroll_settings::get_story_diceroll_settings(pool.clone(), story_id.clone())?;
     let dice_mode = DiceMode::from_str_or_default(&dicerolls.dice_mode);
     let reasoning_effort = dicerolls.reasoning_effort.clone();
+    let image_settings = settings::read_image_model_settings(&app, pool.inner())?;
+    let image_enabled =
+        image_settings.enabled && image_settings.narrator_images && image_settings.has_api_key;
+    let image_requests: Arc<Mutex<Vec<images::model::ImageRequest>>> =
+        Arc::new(Mutex::new(Vec::new()));
 
     let player_passage = {
         let conn = pool.get()?;
@@ -591,7 +596,7 @@ pub async fn submit_turn(
 
     let prompt = format_prompt(&input_mode, content);
 
-    let (tool_set, staging) = if dicerolls.attributes_enabled {
+    let (mut tool_set, staging) = if dicerolls.attributes_enabled {
         let staging = Arc::new(Mutex::new(TurnStaging::new(
             pool.inner().clone(),
             story_id.clone(),
@@ -603,18 +608,25 @@ pub async fn submit_turn(
         (Vec::new(), None)
     };
 
-    let tools_preamble = if tool_set.is_empty() {
-        String::new()
-    } else {
-        format!(
+    let mut tools_preamble = Vec::new();
+    if dicerolls.attributes_enabled {
+        tools_preamble.push(format!(
             "You have tools to check, create, and update entities and their attributes as the story \
              unfolds — use them to keep the world consistent. {}",
             dice_mode_instruction(dice_mode)
-        )
-    };
+        ));
+    }
+    if image_enabled {
+        tool_set.push(DynamicTool::from_portable(tools::illustrate_scene_tool(
+            image_requests.clone(),
+        )));
+        tools_preamble.push(
+            "You can illustrate a striking moment with the illustrate_scene tool.".to_string(),
+        );
+    }
     let extra_preamble = combine_preambles(&[
         story_context_preamble(pool.inner(), &story_id, &branch_id)?,
-        tools_preamble,
+        tools_preamble.join(" "),
     ]);
 
     let stream_id = Uuid::new_v4().to_string();
@@ -655,7 +667,16 @@ pub async fn submit_turn(
                 },
             );
             kick_auto_title(&app, &pool, &branch_id_bg);
-            images::maybe_auto_image(&app, &pool, &passage.id, &visible);
+            let requests = std::mem::take(&mut *image_requests.lock().await);
+            if !requests.is_empty() {
+                images::generate_from_narrator_requests(
+                    &app,
+                    &pool,
+                    &passage.id,
+                    &visible,
+                    requests,
+                );
+            }
             Ok(())
         },
     );

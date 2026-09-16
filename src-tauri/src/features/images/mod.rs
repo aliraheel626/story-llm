@@ -12,7 +12,7 @@ use crate::features::settings;
 use crate::features::timeline::{model::kind as timeline_kind, repository as timeline_repository};
 use crate::shared::db::Pool;
 use crate::shared::error::{AppError, AppResult};
-use model::StoryImage;
+use model::{ImageRequest, StoryImage};
 
 fn contains_name_ci(haystack: &str, name: &str) -> bool {
     haystack.to_lowercase().contains(&name.to_lowercase())
@@ -84,9 +84,9 @@ async fn write_image_description(
     Ok(description)
 }
 
-/// Composes the final image prompt: style prefix + the model-written scene
-/// description, plus a literal character-appearance block so the image
-/// model can't drift on a look even if the description paraphrases it away.
+/// Composes the final image prompt: style prefix + the scene description, plus
+/// a literal character-appearance block so the image model can't drift on a
+/// look even if the description paraphrases it away.
 fn compose_image_prompt(style: &str, description: &str, matched: &[&(String, String)]) -> String {
     let mut prompt = format!("{style} {description}");
     if !matched.is_empty() {
@@ -98,11 +98,11 @@ fn compose_image_prompt(style: &str, description: &str, matched: &[&(String, Str
     prompt
 }
 
-/// The "See" tool itself: turns a passage — plus an optional guiding `hint`
-/// naming what to focus on — into a generated, stored scene image. Both the
-/// player's manual trigger and the narrator's own decision to illustrate
-/// (`maybe_auto_image`) come through here, so an auto-drawn image is composed
-/// exactly like a player-drawn one.
+/// Turns a finalized passage plus an optional guiding `hint` into a generated,
+/// stored scene image. This serves the player's manual "See" trigger and the
+/// legacy auto-image classifier used by narration paths without tools.
+/// `submit_turn`'s narrator instead supplies its own description through
+/// `generate_from_description`.
 pub(crate) async fn generate_for_entry(
     app: &AppHandle,
     pool: &Pool,
@@ -151,7 +151,103 @@ pub(crate) async fn generate_for_entry(
     let prompt = compose_image_prompt(&settings.style, &description, &matched);
 
     let generated = openrouter::generate_image(&api_key, &settings.model, &prompt).await?;
+    persist_and_store_image(
+        app,
+        pool,
+        entry_id,
+        &passage_content,
+        &description,
+        prompt,
+        generated,
+    )
+    .await
+}
 
+fn characters_by_ids(
+    conn: &rusqlite::Connection,
+    story_id: &str,
+    branch_id: &str,
+    ids: &[String],
+) -> AppResult<Vec<(String, String)>> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let placeholders = std::iter::repeat_n("?", ids.len())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let mut stmt = conn.prepare(&format!(
+        "SELECT branch_entity_state.name, branch_entity_state.appearance_anchor
+         FROM entities JOIN branch_entity_state ON branch_entity_state.entity_id = entities.id
+         WHERE entities.story_id = ? AND branch_entity_state.branch_id = ?
+           AND entities.kind = 'character' AND branch_entity_state.is_present = 1
+           AND branch_entity_state.appearance_anchor IS NOT NULL
+           AND entities.id IN ({placeholders})"
+    ))?;
+    let params = std::iter::once(story_id)
+        .chain(std::iter::once(branch_id))
+        .chain(ids.iter().map(String::as_str));
+    let characters = stmt
+        .query_map(rusqlite::params_from_iter(params), |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?
+        .collect::<Result<_, _>>()?;
+    Ok(characters)
+}
+
+async fn generate_from_description(
+    app: &AppHandle,
+    pool: &Pool,
+    entry_id: &str,
+    expected_content: &str,
+    description: &str,
+    character_ids: &[String],
+) -> AppResult<StoryImage> {
+    let settings = settings::read_image_model_settings(app, pool)?;
+    if !settings.enabled {
+        return Err(AppError::Invalid(
+            "image generation is disabled in the Image Model panel".into(),
+        ));
+    }
+    let api_key = settings::read_api_key(app, "openrouter")?;
+
+    let characters = {
+        let conn = pool.get()?;
+        let (story_id, branch_id): (String, String) = conn
+            .query_row(
+                "SELECT branches.story_id, timeline_entries.branch_id
+                 FROM timeline_entries JOIN branches ON branches.id = timeline_entries.branch_id
+                 WHERE timeline_entries.id = ?1",
+                [entry_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .map_err(|_| AppError::NotFound(format!("timeline entry {entry_id} not found")))?;
+        characters_by_ids(&conn, &story_id, &branch_id, character_ids)?
+    };
+    let matched: Vec<&(String, String)> = characters.iter().collect();
+    let prompt = compose_image_prompt(&settings.style, description, &matched);
+    let generated = openrouter::generate_image(&api_key, &settings.model, &prompt).await?;
+    persist_and_store_image(
+        app,
+        pool,
+        entry_id,
+        expected_content,
+        description,
+        prompt,
+        generated,
+    )
+    .await
+}
+
+async fn persist_and_store_image(
+    app: &AppHandle,
+    pool: &Pool,
+    entry_id: &str,
+    expected_content: &str,
+    description: &str,
+    prompt: String,
+    generated: openrouter::GeneratedImage,
+) -> AppResult<StoryImage> {
     let app_data_dir = app
         .path()
         .app_data_dir()
@@ -176,7 +272,7 @@ pub(crate) async fn generate_for_entry(
         let current_content = timeline_repository::active_entry(&tx, entry_id)?
             .content
             .unwrap_or_default();
-        if current_content != passage_content {
+        if current_content != expected_content {
             return Err(AppError::Other(
                 "the passage changed while its image was being generated".into(),
             ));
@@ -248,8 +344,8 @@ new place, a character appearing for the first time, or a dramatic turn worth se
 draw, name in a short phrase what the image should focus on. Respond with the structured output \
 only.";
 
-/// The narrator's own call on whether to illustrate the passage it just
-/// wrote — the "See" tool, invoked by the narrator instead of the player.
+/// The legacy narrator-side classifier for narration paths that do not expose
+/// tools. It decides whether to illustrate the passage after generation.
 /// Fire-and-forget and best-effort throughout (mirroring
 /// `stories::maybe_auto_title`): it never blocks or fails the passage write,
 /// and reports back via the `scene-image-generated` event. The focus phrase
@@ -294,6 +390,44 @@ pub(crate) fn maybe_auto_image(app: &AppHandle, pool: &Pool, entry_id: &str, nar
             // Still best-effort — but the placeholder has to be cleared.
             Err(_) => {
                 let _ = app.emit("scene-image-failed", &entry_id);
+            }
+        }
+    });
+}
+
+/// Starts the slow image work requested by `submit_turn`'s narrator after the
+/// passage and its staged entity changes have committed. Each request keeps
+/// the existing pending/generated/failed event contract used by the frontend.
+pub(crate) fn generate_from_narrator_requests(
+    app: &AppHandle,
+    pool: &Pool,
+    entry_id: &str,
+    narrated_text: &str,
+    requests: Vec<ImageRequest>,
+) {
+    let app = app.clone();
+    let pool = pool.clone();
+    let entry_id = entry_id.to_string();
+    let narrated_text = narrated_text.to_string();
+    tauri::async_runtime::spawn(async move {
+        for request in requests {
+            let _ = app.emit("scene-image-pending", &entry_id);
+            match generate_from_description(
+                &app,
+                &pool,
+                &entry_id,
+                &narrated_text,
+                &request.description,
+                &request.character_ids,
+            )
+            .await
+            {
+                Ok(image) => {
+                    let _ = app.emit("scene-image-generated", image);
+                }
+                Err(_) => {
+                    let _ = app.emit("scene-image-failed", &entry_id);
+                }
             }
         }
     });

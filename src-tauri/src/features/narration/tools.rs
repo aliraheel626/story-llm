@@ -1,6 +1,6 @@
-//! Tools the narrator calls mid-generation: rolling dice, and reading,
-//! creating, and updating entities and their attributes. Replaces the old
-//! former classify/resolve/update pipeline — the narrator
+//! Tools the narrator calls mid-generation: rolling dice, illustrating scenes,
+//! and reading, creating, and updating entities and their attributes. Replaces
+//! the old former classify/resolve/update pipeline — the narrator
 //! now discovers and records world state itself instead of being handed
 //! pre-computed context.
 //!
@@ -26,6 +26,7 @@ use crate::features::entities::{
     attributes::{self, clamp_delta},
     model::{AttributeRegistryEntry, Entity},
 };
+use crate::features::images::model::ImageRequest;
 use crate::shared::db::Pool;
 use crate::shared::error::{AppError, AppResult};
 
@@ -444,8 +445,63 @@ pub fn friendly_tool_label(tool_name: &str, args_json: &str) -> String {
                 str_arg("attribute").unwrap_or_else(|| "an attribute".into())
             )
         }
+        "illustrate_scene" => "Sketching the scene…".to_string(),
         other => format!("Running {other}…"),
     }
+}
+
+pub fn illustrate_scene_tool(image_requests: Arc<Mutex<Vec<ImageRequest>>>) -> PortableDynamicTool {
+    PortableDynamicTool::new(
+        "illustrate_scene",
+        "Illustrate this moment with a generated scene image. Use sparingly — reserve for a \
+         genuinely striking visual moment (a new place revealed, a character's first appearance, \
+         a dramatic turn worth seeing); most beats don't need one. Write a vivid, concrete visual \
+         description: subject, setting, composition, lighting. Do not mention art style or medium; \
+         that's applied separately.",
+        json!({
+            "type": "object",
+            "properties": {
+                "description": {"type": "string", "description": "A vivid, concrete visual description of the scene's subject, setting, composition, and lighting."},
+                "character_ids": {"type": "array", "items": {"type": "string"}, "description": "Ids of characters visible in the scene, from get_entities."}
+            },
+            "required": ["description"]
+        }),
+        move |args: serde_json::Value| {
+            let image_requests = image_requests.clone();
+            Box::pin(async move {
+                let description = args
+                    .get("description")
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .ok_or_else(|| ToolExecutionError::invalid_args("description is required"))?
+                    .to_string();
+                let character_ids = match args.get("character_ids") {
+                    None => Vec::new(),
+                    Some(value) => value
+                        .as_array()
+                        .ok_or_else(|| {
+                            ToolExecutionError::invalid_args("character_ids must be an array")
+                        })?
+                        .iter()
+                        .map(|id| {
+                            id.as_str().map(str::to_string).ok_or_else(|| {
+                                ToolExecutionError::invalid_args(
+                                    "character_ids must contain only strings",
+                                )
+                            })
+                        })
+                        .collect::<Result<Vec<_>, _>>()?,
+                };
+
+                image_requests.lock().await.push(ImageRequest {
+                    description,
+                    character_ids,
+                });
+                Ok(ToolOutput::json(json!({"queued": true})))
+            })
+        },
+    )
 }
 
 fn roll_check_tool(
@@ -1094,6 +1150,10 @@ mod tests {
             friendly_tool_label("adjust_entity_attribute", r#"{"attribute":"Trust"}"#),
             "Adjusting Trust…"
         );
+        assert_eq!(
+            friendly_tool_label("illustrate_scene", "{}"),
+            "Sketching the scene…"
+        );
         // Missing args and malformed JSON must not panic — they are only
         // labels for a transient UI line.
         assert_eq!(
@@ -1108,6 +1168,40 @@ mod tests {
             friendly_tool_label("mystery_tool", "{}"),
             "Running mystery_tool…"
         );
+    }
+
+    #[tokio::test]
+    async fn illustrate_scene_tool_queues_requests_and_rejects_empty_descriptions() {
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let tool = illustrate_scene_tool(requests.clone());
+
+        let output = tool
+            .execute(json!({
+                "description": "  Mira stands beneath a lightning-split sky.  ",
+                "character_ids": ["mira", "watcher"]
+            }))
+            .await
+            .unwrap();
+        assert_eq!(output.as_json().unwrap()["queued"], json!(true));
+
+        let requests_guard = requests.lock().await;
+        assert_eq!(requests_guard.len(), 1);
+        assert_eq!(
+            requests_guard[0].description,
+            "Mira stands beneath a lightning-split sky."
+        );
+        assert_eq!(requests_guard[0].character_ids, ["mira", "watcher"]);
+        drop(requests_guard);
+
+        let error = tool
+            .execute(json!({"description": "   "}))
+            .await
+            .unwrap_err();
+        assert!(
+            error.to_string().contains("description is required"),
+            "{error}"
+        );
+        assert_eq!(requests.lock().await.len(), 1);
     }
 
     #[tokio::test]

@@ -153,9 +153,9 @@ pub struct ImageModelSettings {
     /// Images reuse the OpenRouter key set in the Text Model panel — there is
     /// only one provider (OpenRouter) for both text and images.
     pub has_api_key: bool,
-    /// Whether the narrator decides on its own that a passage is worth
-    /// illustrating (see `commands::images::maybe_auto_image`), rather than
-    /// images only ever coming from the player's "See" composer mode.
+    /// Whether narrator-driven images are enabled. This gates the
+    /// `illustrate_scene` tool in `submit_turn` and the legacy
+    /// `maybe_auto_image` classifier used by other narration paths.
     pub narrator_images: bool,
 }
 
