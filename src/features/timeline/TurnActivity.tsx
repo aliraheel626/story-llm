@@ -8,7 +8,7 @@ export interface TurnActivityData { thoughts?: string | null; tools: ToolCall[] 
  *  as opposed to a revision of its own prose. A turn's tool log is rebuilt
  *  from the events it targeted, so it survives a reload. */
 const TOOL_EVENT_KINDS = new Set([
-  "mechanical_result",
+  "diceroll",
   "entity_created",
   "entity_updated",
   "entity_deleted",
@@ -18,7 +18,7 @@ const TOOL_EVENT_KINDS = new Set([
 ]);
 
 const eventLabel = (entry: TimelineEntry): string => {
-  const text = (entry.content ?? "").replace(/^Mechanical outcome:\s*/i, "").replace(/\.$/, "");
+  const text = (entry.content ?? "").replace(/^Dice-roll outcome:\s*/i, "").replace(/\.$/, "");
   return text || entry.kind.replace(/_/g, " ");
 };
 

@@ -209,7 +209,7 @@ fn story_context_preamble(pool: &Pool, story_id: &str, branch_id: &str) -> AppRe
         }
     }
 
-    let mut lines = vec!["Current entity state is authoritative. User overrides take precedence over inferred updates. Mechanical outcomes must not be contradicted.".to_string()];
+    let mut lines = vec!["Current entity state is authoritative. User overrides take precedence over inferred updates. Dice-roll outcomes must not be contradicted.".to_string()];
     for entity in entities {
         let appearance = entity
             .appearance_anchor
@@ -237,7 +237,7 @@ fn combine_preambles(parts: &[String]) -> String {
         .join("\n\n")
 }
 
-/// The mechanical roll that produced `entry_id`'s narration, if any — folded
+/// The dice roll that produced `entry_id`'s narration, if any — folded
 /// into retry/swipe's preamble so regenerating a roll-driven turn stays
 /// consistent with the outcome that already happened. The roll's timeline
 /// seq is assigned after the narration it explains, so it falls outside the
@@ -248,7 +248,7 @@ fn roll_context_preamble(pool: &Pool, entry_id: &str) -> AppResult<String> {
     let content: Option<String> = conn
         .query_row(
             "SELECT content FROM timeline_entries WHERE target_entry_id = ?1 AND kind = ?2 ORDER BY seq DESC LIMIT 1",
-            rusqlite::params![entry_id, timeline_kind::MECHANICAL_RESULT],
+            rusqlite::params![entry_id, timeline_kind::DICEROLL],
             |row| row.get(0),
         )
         .optional()?;

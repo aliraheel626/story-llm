@@ -139,7 +139,7 @@ pub fn save_story_diceroll_settings(
         "UPDATE stories SET settings_json = ?1, updated_at = ?2 WHERE id = ?3",
         rusqlite::params![settings.to_string(), Utc::now().to_rfc3339(), story_id],
     )?;
-    timeline::append_entry(&tx, &branch_id, kind::MECHANICS_SETTINGS_CHANGED, "hidden",
+    timeline::append_entry(&tx, &branch_id, kind::DICEROLL_SETTINGS_CHANGED, "hidden",
         Some(&format!("Dice-roll settings changed: dice mode {dice_mode}, attributes enabled {attributes_enabled}, reasoning effort {}.",
             reasoning_effort.as_deref().unwrap_or("model default"))),
         &json!({"dice_mode": dice_mode, "attributes_enabled": attributes_enabled, "reasoning_effort": reasoning_effort}), None)?;
@@ -245,9 +245,7 @@ pub fn list_rolls_for_entry(pool: State<Pool>, entry_id: String) -> AppResult<Ve
     let base = timeline::get_entry(&conn, &entry_id)?;
     Ok(timeline::list_logical_entries(&conn, &base.branch_id)?
         .iter()
-        .filter(|e| {
-            e.kind == kind::MECHANICAL_RESULT && e.target_entry_id.as_deref() == Some(&entry_id)
-        })
+        .filter(|e| e.kind == kind::DICEROLL && e.target_entry_id.as_deref() == Some(&entry_id))
         .filter_map(parse_roll)
         .collect())
 }
@@ -257,7 +255,7 @@ pub fn list_rolls_for_branch(pool: State<Pool>, branch_id: String) -> AppResult<
     let conn = pool.get()?;
     timeline::list_logical_entries(&conn, &branch_id)?
         .iter()
-        .filter(|e| e.kind == kind::MECHANICAL_RESULT)
+        .filter(|e| e.kind == kind::DICEROLL)
         .filter_map(parse_roll)
         .map(|roll| detail(&conn, &branch_id, roll, false))
         .collect()
@@ -270,9 +268,7 @@ pub fn get_roll_detail(pool: State<Pool>, entry_id: String) -> AppResult<Option<
     let roll = timeline::list_logical_entries(&conn, &base.branch_id)?
         .iter()
         .rev()
-        .find(|e| {
-            e.kind == kind::MECHANICAL_RESULT && e.target_entry_id.as_deref() == Some(&entry_id)
-        })
+        .find(|e| e.kind == kind::DICEROLL && e.target_entry_id.as_deref() == Some(&entry_id))
         .and_then(parse_roll);
     roll.map(|roll| detail(&conn, &base.branch_id, roll, true))
         .transpose()

@@ -67,10 +67,10 @@ pub fn persist_roll(
     timeline_repository::append_entry(
         conn,
         &base.branch_id,
-        timeline_kind::MECHANICAL_RESULT,
+        timeline_kind::DICEROLL,
         "hidden",
         Some(&format!(
-            "Mechanical outcome: rolled {} and got {} ({}).",
+            "Dice-roll outcome: rolled {} and got {} ({}).",
             pending.output.roll, pending.output.outcome, pending.output.degree
         )),
         &serde_json::json!({

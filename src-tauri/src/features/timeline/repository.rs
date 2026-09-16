@@ -345,7 +345,7 @@ mod tests {
         append_entry(
             &conn,
             "b",
-            kind::MECHANICAL_RESULT,
+            kind::DICEROLL,
             "hidden",
             None,
             &json!({"roll":17,"outcome":"success"}),
@@ -368,7 +368,7 @@ mod tests {
             entries.iter().map(|entry| entry.seq).collect::<Vec<_>>(),
             vec![0, 1, 2]
         );
-        assert_eq!(entries[1].kind, kind::MECHANICAL_RESULT);
+        assert_eq!(entries[1].kind, kind::DICEROLL);
         assert_eq!(entries[1].payload["roll"], 17);
         assert_eq!(entries[1].payload["outcome"], "success");
     }

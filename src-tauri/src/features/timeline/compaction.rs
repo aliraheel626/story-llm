@@ -62,7 +62,7 @@ impl Compactor for NarratorCompactor {
             let prompt = format!(
                 "Previous summary:\n{prior}\n\nOlder timeline messages to compact:\n{transcript}"
             );
-            let preamble = "Summarize an interactive story's older context. Preserve concrete facts, promises, relationships, unresolved plot threads, mechanical outcomes, and entity-relevant details. Do not invent events. Return structured output only.";
+            let preamble = "Summarize an interactive story's older context. Preserve concrete facts, promises, relationships, unresolved plot threads, dice-roll outcomes, and entity-relevant details. Do not invent events. Return structured output only.";
             ai::prompt_typed::<ContextSummary>(&self.config, preamble, prompt)
                 .await
                 .map(SummaryArtifact)

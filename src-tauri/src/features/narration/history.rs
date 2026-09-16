@@ -115,7 +115,7 @@ fn history_from_entries(
         // as a second, decontextualized "authoritative event" line.
         let contextual = matches!(
             entry.kind.as_str(),
-            kind::MECHANICAL_RESULT
+            kind::DICEROLL
                 | kind::ENTITY_CREATED
                 | kind::ENTITY_UPDATED
                 | kind::ENTITY_DELETED
@@ -123,7 +123,7 @@ fn history_from_entries(
                 | kind::ENTITY_ATTRIBUTE_REMOVED
                 | kind::IMAGE_GENERATED
                 | kind::CONTEXT_NOTE_UPDATED
-                | kind::MECHANICS_SETTINGS_CHANGED
+                | kind::DICEROLL_SETTINGS_CHANGED
                 | kind::WORLD_EVENT
         );
         if !contextual {
@@ -230,9 +230,9 @@ mod tests {
                 json!({"through_entry_id":"n1"}),
             ),
             entry(
-                "mechanic",
+                "diceroll",
                 3,
-                kind::MECHANICAL_RESULT,
+                kind::DICEROLL,
                 Some("Stealth succeeded."),
                 json!({}),
             ),

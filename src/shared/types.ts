@@ -9,9 +9,9 @@ export type InputMode = "do" | "say" | "story" | "generated" | "generated_guide"
 export type TimelineVisibility = "visible" | "hidden";
 export type TimelineEntryKind =
   | "player_message" | "narration" | "narration_variant" | "narration_selected" | "content_edited"
-  | "mechanical_result" | "entity_created" | "entity_updated" | "entity_deleted"
+  | "diceroll" | "entity_created" | "entity_updated" | "entity_deleted"
   | "entity_attribute_changed" | "entity_attribute_removed" | "image_generated"
-  | "context_note_updated" | "mechanics_settings_changed" | "world_event" | "context_summary";
+  | "context_note_updated" | "diceroll_settings_changed" | "world_event" | "context_summary";
 
 interface TimelinePayloadBase extends Record<string, unknown> {
   input_mode?: InputMode;
@@ -52,7 +52,7 @@ export type TimelineEntry =
   | (TimelineEntryBase & { kind: "entity_attribute_changed" | "entity_attribute_removed"; payload: EntityAttributeEventPayload })
   | (TimelineEntryBase & { kind: "image_generated"; payload: ImageGeneratedPayload })
   | (TimelineEntryBase & { kind: "context_summary"; payload: ContextSummaryPayload })
-  | (TimelineEntryBase & { kind: "mechanical_result" | "context_note_updated" | "mechanics_settings_changed" | "world_event"; payload: TimelinePayloadBase });
+  | (TimelineEntryBase & { kind: "diceroll" | "context_note_updated" | "diceroll_settings_changed" | "world_event"; payload: TimelinePayloadBase });
 
 export interface NarrationVariant {
   id: string; entry_id: string; content: string; is_selected: boolean; created_at: string; thoughts?: string | null;
