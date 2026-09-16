@@ -31,7 +31,7 @@ interface DicerollState {
   loadSettings: (storyId: string) => Promise<void>;
   saveSettings: (storyId: string | null, branchId: string | null, patch: DicerollSettingsPatch) => Promise<void>;
   resetDraftSettings: () => void;
-  promoteDraftSettings: (storyId: string) => void;
+  promoteDraftSettings: (storyId: string, settings: DicerollSettings | null) => void;
 }
 
 export const useDicerollStore = create<DicerollState>((set, get) => ({
@@ -74,9 +74,8 @@ export const useDicerollStore = create<DicerollState>((set, get) => ({
   // Seeds the new story's cache entry from the draft so the shared panels
   // don't flash backend defaults before their first fetch lands; persistence
   // already happened inside `create_story`.
-  promoteDraftSettings: (storyId: string) => {
-    const draft = get().draftSettings;
-    if (!draft) return;
-    set((s) => ({ settingsByStory: { ...s.settingsByStory, [storyId]: draft }, draftSettings: null }));
-  },
+  promoteDraftSettings: (storyId, settings) => set((s) => ({
+    settingsByStory: settings ? { ...s.settingsByStory, [storyId]: settings } : s.settingsByStory,
+    draftSettings: null,
+  })),
 }));

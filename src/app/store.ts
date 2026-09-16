@@ -69,7 +69,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   createStory: async () => {
     const draft = useDicerollStore.getState().draftSettings;
     const story = await storiesApi.create(undefined, draft);
-    useDicerollStore.getState().promoteDraftSettings(story.id);
+    useDicerollStore.getState().promoteDraftSettings(story.id, draft);
     set((s) => ({ stories: [story, ...s.stories], activeStoryId: story.id, draft: false }));
     return story;
   },

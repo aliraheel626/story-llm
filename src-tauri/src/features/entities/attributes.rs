@@ -135,11 +135,15 @@ fn build_minted_attribute(
 pub(crate) fn insert_minted_attribute(
     conn: &rusqlite::Connection,
     entry: &AttributeRegistryEntry,
-) -> AppResult<()> {
+) -> AppResult<String> {
+    if let Some(id) = find_canonical_id_case_insensitive(conn, &entry.canonical_name)? {
+        return Ok(id);
+    }
     conn.execute(
         "INSERT INTO attribute_registry
          (id, canonical_name, aliases_json, entity_kinds_json, min, max, category, is_user_created, created_in_story_id, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+         ON CONFLICT DO NOTHING",
         rusqlite::params![
             entry.id,
             entry.canonical_name,
@@ -153,7 +157,30 @@ pub(crate) fn insert_minted_attribute(
             entry.created_at,
         ],
     )?;
-    Ok(())
+    find_canonical_id_case_insensitive(conn, &entry.canonical_name)?.ok_or_else(|| {
+        AppError::Other(format!(
+            "minted attribute was not found after insert: {}",
+            entry.canonical_name
+        ))
+    })
+}
+
+fn find_canonical_id_case_insensitive(
+    conn: &rusqlite::Connection,
+    canonical_name: &str,
+) -> AppResult<Option<String>> {
+    let needle = canonical_name.trim().to_lowercase();
+    let mut stmt = conn.prepare("SELECT id, canonical_name FROM attribute_registry")?;
+    let rows = stmt.query_map([], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    })?;
+    for row in rows {
+        let (id, candidate) = row?;
+        if candidate.to_lowercase() == needle {
+            return Ok(Some(id));
+        }
+    }
+    Ok(None)
 }
 
 pub(crate) enum AttributeResolution {

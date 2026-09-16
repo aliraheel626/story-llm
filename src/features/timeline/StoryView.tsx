@@ -53,7 +53,7 @@ export function StoryView() {
       thoughts: thoughts ?? snapshot?.thoughts,
       tools: tools.length > 0
         ? tools
-        : (snapshot?.tools.map((tool) => ({ key: tool.callId, label: tool.label, done: tool.phase === "finished" })) ?? []),
+        : (snapshot?.tools.map((tool) => ({ key: tool.callId, label: tool.label, done: tool.phase === "finished", ok: tool.ok })) ?? []),
     };
     return activity.thoughts || activity.tools.length > 0 ? activity : undefined;
   };
@@ -133,7 +133,7 @@ export function StoryView() {
                   isLast={isLastEntry}
                   images={imagesByEntry[entry.id]}
                   variants={variantsByEntry[entry.id]}
-                  rollSummary={rollByEntry[entry.id]}
+                  rollSummaries={rollByEntry[entry.id]}
                 />
               </div>
             );
@@ -145,7 +145,7 @@ export function StoryView() {
                 live
                 activity={{
                   thoughts: streaming!.thoughts,
-                  tools: streaming!.toolLog.map((tool) => ({ key: tool.callId, label: tool.label, done: tool.phase === "finished" })),
+                  tools: streaming!.toolLog.map((tool) => ({ key: tool.callId, label: tool.label, done: tool.phase === "finished", ok: tool.ok })),
                 }}
               />
               <p className="whitespace-pre-wrap font-prose text-base leading-8 text-text">

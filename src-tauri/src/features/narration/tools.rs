@@ -292,6 +292,7 @@ impl TurnStaging {
     /// next is read means chained ops (e.g. two deltas on the same
     /// attribute) compose correctly with no special-casing.
     pub fn commit(&self, tx: &rusqlite::Transaction, passage_id: &str) -> AppResult<()> {
+        let mut attribute_id_remap = HashMap::<String, String>::new();
         for op in &self.pending {
             match op {
                 PendingOp::CreateEntity {
@@ -334,11 +335,15 @@ impl TurnStaging {
                     cause,
                     dramatic,
                 } => {
+                    let mut attribute = attribute.clone();
+                    if let Some(canonical_id) = attribute_id_remap.get(&attribute.id) {
+                        attribute.id = canonical_id.clone();
+                    }
                     attributes::apply_attribute_delta(
                         tx,
                         &self.branch_id,
                         entity_id,
-                        attribute,
+                        &attribute,
                         *delta,
                         cause,
                         passage_id,
@@ -346,16 +351,34 @@ impl TurnStaging {
                     )?;
                 }
                 PendingOp::MintAttribute(attribute) => {
-                    attributes::insert_minted_attribute(tx, attribute)?;
+                    let canonical_id = attributes::insert_minted_attribute(tx, attribute)?;
+                    attribute_id_remap.insert(attribute.id.clone(), canonical_id);
                 }
                 PendingOp::AddAlias {
                     attribute_id,
                     alias,
                 } => {
+                    let attribute_id = attribute_id_remap
+                        .get(attribute_id)
+                        .map(String::as_str)
+                        .unwrap_or(attribute_id);
                     attributes::add_alias(tx, attribute_id, alias)?;
                 }
                 PendingOp::Roll(pending) => {
-                    resolve::persist_roll(tx, passage_id, pending.clone())?;
+                    let mut pending = pending.clone();
+                    pending.actor_attribute_id = pending.actor_attribute_id.as_ref().map(|id| {
+                        attribute_id_remap
+                            .get(id)
+                            .cloned()
+                            .unwrap_or_else(|| id.clone())
+                    });
+                    pending.target_attribute_id = pending.target_attribute_id.as_ref().map(|id| {
+                        attribute_id_remap
+                            .get(id)
+                            .cloned()
+                            .unwrap_or_else(|| id.clone())
+                    });
+                    resolve::persist_roll(tx, passage_id, pending)?;
                 }
             }
         }
@@ -586,8 +609,10 @@ fn roll_check_tool(
                 let output = resolve::resolve(ResolveInput {
                     actor_value,
                     target_value,
-                    min: actor_attribute.min,
-                    max: actor_attribute.max,
+                    actor_min: actor_attribute.min,
+                    actor_max: actor_attribute.max,
+                    target_min: target_attribute.as_ref().map(|attribute| attribute.min),
+                    target_max: target_attribute.as_ref().map(|attribute| attribute.max),
                     modifier,
                 });
 
@@ -600,6 +625,7 @@ fn roll_check_tool(
                         target_attribute_id: target_attribute.as_ref().map(|a| a.id.clone()),
                         actor_value,
                         target_value,
+                        modifier,
                         output,
                     }));
                 }
@@ -1335,7 +1361,7 @@ mod tests {
     #[tokio::test]
     async fn roll_check_tool_stages_a_player_roll_against_a_target() {
         let (pool, story_id, branch_id) = setup();
-        let mut staging = TurnStaging::new(pool, story_id, branch_id);
+        let mut staging = TurnStaging::new(pool.clone(), story_id, branch_id.clone());
         let (ghoul, _) = staging
             .resolve_or_stage_entity("character", "Ghoul", None)
             .unwrap();
@@ -1373,11 +1399,144 @@ mod tests {
         assert_eq!(roll.target_entity_id.as_deref(), Some(ghoul.id.as_str()));
         assert_eq!(roll.actor_value, 5.0);
         assert_eq!(roll.target_value, 5.0);
+        assert_eq!(roll.modifier, 0.1);
 
         let out = out.as_json().unwrap();
         assert!(out["roll"].is_i64() || out["roll"].is_u64(), "{out}");
         assert!(out["needed"].is_i64() || out["needed"].is_u64(), "{out}");
         assert!(out["outcome"].is_string(), "{out}");
+
+        persist_staging(&pool, &branch_id, &staging);
+        drop(staging);
+        let payload_json: String = pool
+            .get()
+            .unwrap()
+            .query_row(
+                "SELECT payload_json FROM timeline_entries WHERE kind = ?1 ORDER BY seq DESC LIMIT 1",
+                [crate::features::timeline::model::kind::DICEROLL],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let payload: serde_json::Value = serde_json::from_str(&payload_json).unwrap();
+        assert_eq!(payload["modifiers"]["situational"], json!(0.1));
+    }
+
+    #[tokio::test]
+    async fn independently_staged_same_name_mints_commit_to_one_canonical_attribute() {
+        let (pool, story_id, branch_id) = setup();
+        let first = Arc::new(Mutex::new(TurnStaging::new(
+            pool.clone(),
+            story_id.clone(),
+            branch_id.clone(),
+        )));
+        let second = Arc::new(Mutex::new(TurnStaging::new(
+            pool.clone(),
+            story_id,
+            branch_id.clone(),
+        )));
+
+        let first_entity = first
+            .lock()
+            .await
+            .resolve_or_stage_entity("artifact", "First Prism", None)
+            .unwrap()
+            .0;
+        let second_entity = second
+            .lock()
+            .await
+            .resolve_or_stage_entity("artifact", "Second Prism", None)
+            .unwrap()
+            .0;
+        // Both resolutions happen before either staging commits, reproducing
+        // the race where each turn independently chooses a fresh local id.
+        let first_attribute =
+            resolve_or_stage_attribute(&first, &test_config(), "Resonance", "artifact")
+                .await
+                .unwrap();
+        let second_attribute =
+            resolve_or_stage_attribute(&second, &test_config(), "resonance", "artifact")
+                .await
+                .unwrap();
+        assert_ne!(first_attribute.id, second_attribute.id);
+
+        for (staging, entity, attribute, modifier) in [
+            (&first, &first_entity, &first_attribute, 0.1),
+            (&second, &second_entity, &second_attribute, -0.1),
+        ] {
+            let output = resolve::resolve(ResolveInput {
+                actor_value: 5.0,
+                target_value: 5.0,
+                actor_min: 0.0,
+                actor_max: 10.0,
+                target_min: None,
+                target_max: None,
+                modifier,
+            });
+            let mut staging = staging.lock().await;
+            staging.pending.push(PendingOp::AdjustAttribute {
+                entity_id: entity.id.clone(),
+                attribute: attribute.clone(),
+                delta: 1.0,
+                cause: "test".into(),
+                dramatic: false,
+            });
+            staging.pending.push(PendingOp::Roll(PendingRoll {
+                actor_entity_id: entity.id.clone(),
+                target_entity_id: Some(entity.id.clone()),
+                actor_attribute_id: Some(attribute.id.clone()),
+                target_attribute_id: Some(attribute.id.clone()),
+                actor_value: 5.0,
+                target_value: 5.0,
+                modifier,
+                output,
+            }));
+        }
+
+        {
+            let staging = first.lock().await;
+            persist_staging(&pool, &branch_id, &staging);
+        }
+        {
+            let staging = second.lock().await;
+            persist_staging(&pool, &branch_id, &staging);
+        }
+
+        let conn = pool.get().unwrap();
+        let (registry_count, canonical_id): (i64, String) = conn
+            .query_row(
+                "SELECT COUNT(*), MIN(id) FROM attribute_registry WHERE lower(canonical_name) = lower('Resonance')",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(registry_count, 1);
+
+        let (value_count, distinct_attribute_ids): (i64, i64) = conn
+            .query_row(
+                "SELECT COUNT(*), COUNT(DISTINCT attribute_id) FROM entity_attributes
+                 WHERE entity_id IN (?1, ?2)",
+                rusqlite::params![first_entity.id, second_entity.id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!((value_count, distinct_attribute_ids), (2, 1));
+
+        let mut stmt = conn
+            .prepare("SELECT payload_json FROM timeline_entries WHERE kind = ?1 ORDER BY seq ASC")
+            .unwrap();
+        let roll_payloads = stmt
+            .query_map([crate::features::timeline::model::kind::DICEROLL], |row| {
+                row.get::<_, String>(0)
+            })
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(roll_payloads.len(), 2);
+        for payload in roll_payloads {
+            let payload: serde_json::Value = serde_json::from_str(&payload).unwrap();
+            assert_eq!(payload["actor_attribute_id"], json!(canonical_id));
+            assert_eq!(payload["target_attribute_id"], json!(canonical_id));
+        }
     }
 
     #[tokio::test]

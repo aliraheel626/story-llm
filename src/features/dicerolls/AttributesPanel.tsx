@@ -4,7 +4,7 @@ import type { DiceMode } from "../../shared/types";
 import { DEFAULT_DICEROLL_SETTINGS, useDicerollStore, type DicerollSettingsPatch } from "./store";
 
 const DICE_MODES: { id: DiceMode; label: string; hint: string }[] = [
-  { id: "always", label: "Always", hint: "Every Do action rolls." },
+  { id: "always", label: "Always", hint: "The narrator is instructed to roll for every meaningful action." },
   { id: "classifier", label: "Classifier decides", hint: "Rolls only when the action is genuinely uncertain." },
   { id: "never", label: "Never", hint: "Pure narrative — attributes still track, but nothing gates outcomes." },
 ];

@@ -243,6 +243,21 @@ pub fn get_roll_detail(pool: State<Pool>, entry_id: String) -> AppResult<Option<
         .transpose()
 }
 
+#[tauri::command]
+pub fn list_roll_details_for_entry(
+    pool: State<Pool>,
+    entry_id: String,
+) -> AppResult<Vec<RollDetail>> {
+    let conn = pool.get()?;
+    let base = timeline::get_entry(&conn, &entry_id)?;
+    timeline::list_logical_entries(&conn, &base.branch_id)?
+        .iter()
+        .filter(|e| e.kind == kind::DICEROLL && e.target_entry_id.as_deref() == Some(&entry_id))
+        .filter_map(parse_roll)
+        .map(|roll| detail(&conn, &base.branch_id, roll, true))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::normalize_reasoning_effort;

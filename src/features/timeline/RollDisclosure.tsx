@@ -19,15 +19,16 @@ function matchupLabel(summary: RollDetail): string {
 }
 
 /** `summary` is the cheap, always-available version (names, no attribute
- * snapshots) from the branch-wide bulk load; `detail` (with snapshots) is
- * fetched lazily only once the user expands. */
+ * snapshots) from the branch-wide bulk load; all details for the entry are
+ * fetched together, then matched by roll identity. */
 export function RollDisclosure({ entryId, summary }: { entryId: string; summary: RollDetail }) {
   const [open, setOpen] = useState(false);
-  const detail = useStoryStore((s) => s.rollDetailByEntry[entryId]);
+  const details = useStoryStore((s) => s.rollDetailByEntry[entryId]);
+  const detail = details?.find((candidate) => candidate.roll.id === summary.roll.id);
   const loadRollDetail = useStoryStore((s) => s.loadRollDetail);
 
   const toggle = () => {
-    if (!open && !detail) loadRollDetail(entryId);
+    if (!open && !details) loadRollDetail(entryId);
     setOpen((v) => !v);
   };
 

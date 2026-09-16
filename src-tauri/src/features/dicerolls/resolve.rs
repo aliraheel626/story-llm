@@ -22,11 +22,12 @@ pub const P_CEIL: f64 = 0.95;
 pub struct ResolveInput {
     pub actor_value: f64,
     pub target_value: f64,
-    /// The attribute's registered range — the gap is normalized against this
-    /// so the curve behaves consistently whether an attribute runs 0-10 or
-    /// -10-10, rather than assuming a fixed scale.
-    pub min: f64,
-    pub max: f64,
+    pub actor_min: f64,
+    pub actor_max: f64,
+    /// `None` means there is no opposing attribute, which resolves against a
+    /// neutral normalized target of 0.5.
+    pub target_min: Option<f64>,
+    pub target_max: Option<f64>,
     /// Combined campaign difficulty + scene override + situational
     /// modifiers, expressed directly as probability points (e.g. 0.05 = +5%).
     pub modifier: f64,
@@ -55,6 +56,7 @@ pub struct PendingRoll {
     pub target_attribute_id: Option<String>,
     pub actor_value: f64,
     pub target_value: f64,
+    pub modifier: f64,
     pub output: ResolveOutput,
 }
 
@@ -78,7 +80,8 @@ pub fn persist_roll(
             "actor_attribute_id": pending.actor_attribute_id, "target_attribute_id": pending.target_attribute_id,
             "actor_value": pending.actor_value, "target_value": pending.target_value,
             "p_success": pending.output.p_success, "seed": pending.output.seed, "roll": pending.output.roll,
-            "outcome": pending.output.outcome, "degree": pending.output.degree, "modifiers": {}
+            "outcome": pending.output.outcome, "degree": pending.output.degree,
+            "modifiers": {"situational": pending.modifier}
         }),
         Some(entry_id),
     )?;
@@ -91,14 +94,26 @@ pub fn needed_roll(p_success: f64) -> i64 {
     (100.0 - p_success * 100.0).round() as i64
 }
 
-/// Standard logistic-style curve, moderate steepness: the full width of an
-/// attribute's own range maps to the full 50-point swing around a 50/50
-/// baseline, then modifiers and floor/ceiling clamp it. A one-point edge on
-/// a 0-10 attribute barely matters; maxing it out against a bottomed-out
-/// opponent approaches (but never reaches) certainty.
+fn normalize(value: f64, min: f64, max: f64) -> f64 {
+    let range = max - min;
+    if range.abs() < 1e-6 {
+        0.5
+    } else {
+        ((value - min) / range).clamp(0.0, 1.0)
+    }
+}
+
+/// Each attribute is normalized against its own registered range before the
+/// gap is evaluated, so unlike scales remain comparable. The full normalized
+/// gap maps to the full 50-point swing around a 50/50 baseline, then modifiers
+/// and floor/ceiling clamp it.
 pub fn resolve(input: ResolveInput) -> ResolveOutput {
-    let range = (input.max - input.min).max(1e-6);
-    let gap_normalized = (input.actor_value - input.target_value) / range;
+    let actor_normalized = normalize(input.actor_value, input.actor_min, input.actor_max);
+    let target_normalized = match (input.target_min, input.target_max) {
+        (Some(min), Some(max)) => normalize(input.target_value, min, max),
+        _ => 0.5,
+    };
+    let gap_normalized = actor_normalized - target_normalized;
     let p_success = (0.5 + gap_normalized * 0.5 + input.modifier).clamp(P_FLOOR, P_CEIL);
 
     let seed: i64 = rand::random::<u32>() as i64;
@@ -147,8 +162,10 @@ mod tests {
         let out = resolve(ResolveInput {
             actor_value: 5.0,
             target_value: 5.0,
-            min: 0.0,
-            max: 10.0,
+            actor_min: 0.0,
+            actor_max: 10.0,
+            target_min: Some(0.0),
+            target_max: Some(10.0),
             modifier: 0.0,
         });
         assert!((out.p_success - 0.5).abs() < 1e-9);
@@ -160,8 +177,10 @@ mod tests {
         let out = resolve(ResolveInput {
             actor_value: 10.0,
             target_value: 0.0,
-            min: 0.0,
-            max: 10.0,
+            actor_min: 0.0,
+            actor_max: 10.0,
+            target_min: Some(0.0),
+            target_max: Some(10.0),
             modifier: 0.0,
         });
         assert!((out.p_success - P_CEIL).abs() < 1e-9);
@@ -172,8 +191,10 @@ mod tests {
         let out = resolve(ResolveInput {
             actor_value: 0.0,
             target_value: 10.0,
-            min: 0.0,
-            max: 10.0,
+            actor_min: 0.0,
+            actor_max: 10.0,
+            target_min: Some(0.0),
+            target_max: Some(10.0),
             modifier: 0.0,
         });
         assert!((out.p_success - P_FLOOR).abs() < 1e-9);
@@ -186,8 +207,10 @@ mod tests {
         let out = resolve(ResolveInput {
             actor_value: 10.0,
             target_value: -10.0,
-            min: -10.0,
-            max: 10.0,
+            actor_min: -10.0,
+            actor_max: 10.0,
+            target_min: Some(-10.0),
+            target_max: Some(10.0),
             modifier: 0.0,
         });
         assert!((out.p_success - P_CEIL).abs() < 1e-9);
@@ -198,8 +221,10 @@ mod tests {
         let out = resolve(ResolveInput {
             actor_value: 7.0,
             target_value: 3.0,
-            min: 0.0,
-            max: 10.0,
+            actor_min: 0.0,
+            actor_max: 10.0,
+            target_min: Some(0.0),
+            target_max: Some(10.0),
             modifier: 0.0,
         });
         let mut rng = StdRng::seed_from_u64(out.seed as u64);
@@ -212,10 +237,54 @@ mod tests {
         let out = resolve(ResolveInput {
             actor_value: 5.0,
             target_value: 5.0,
-            min: 0.0,
-            max: 10.0,
+            actor_min: 0.0,
+            actor_max: 10.0,
+            target_min: Some(0.0),
+            target_max: Some(10.0),
             modifier: 0.0,
         });
         assert_eq!(out.outcome == "success", out.roll >= out.needed);
+    }
+
+    #[test]
+    fn cross_scale_midpoints_are_even() {
+        let out = resolve(ResolveInput {
+            actor_value: 5.0,
+            target_value: 50.0,
+            actor_min: 0.0,
+            actor_max: 10.0,
+            target_min: Some(0.0),
+            target_max: Some(100.0),
+            modifier: 0.0,
+        });
+        assert!((out.p_success - 0.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn cross_scale_advantage_uses_each_attributes_range() {
+        let out = resolve(ResolveInput {
+            actor_value: 8.0,
+            target_value: 60.0,
+            actor_min: 0.0,
+            actor_max: 10.0,
+            target_min: Some(0.0),
+            target_max: Some(100.0),
+            modifier: 0.0,
+        });
+        assert!((out.p_success - 0.6).abs() < 1e-9);
+    }
+
+    #[test]
+    fn missing_target_attribute_uses_neutral_normalized_value() {
+        let out = resolve(ResolveInput {
+            actor_value: 7.0,
+            target_value: -1_000.0,
+            actor_min: 0.0,
+            actor_max: 10.0,
+            target_min: None,
+            target_max: None,
+            modifier: 0.0,
+        });
+        assert!((out.p_success - 0.6).abs() < 1e-9);
     }
 }

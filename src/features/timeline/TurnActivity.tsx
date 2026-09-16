@@ -1,7 +1,7 @@
 import { useState } from "react";
 import type { TimelineEntry } from "../../shared/types";
 
-export interface ToolCall { key: string; label: string; done: boolean }
+export interface ToolCall { key: string; label: string; done: boolean; ok: boolean | null }
 export interface TurnActivityData { thoughts?: string | null; tools: ToolCall[] }
 
 /** Hidden-event kinds that record something the narrator *did* to the world,
@@ -28,7 +28,7 @@ export function toolCallsFromEvents(entryId: string, hidden: TimelineEntry[] | u
   return hidden
     .filter((event) => event.target_entry_id === entryId && TOOL_EVENT_KINDS.has(event.kind))
     .sort((a, b) => a.seq - b.seq)
-    .map((event) => ({ key: event.id, label: eventLabel(event), done: true }));
+    .map((event) => ({ key: event.id, label: eventLabel(event), done: true, ok: true }));
 }
 
 /**
@@ -70,9 +70,9 @@ export function TurnActivity({ activity, live }: { activity: TurnActivityData; l
           {tools.length > 0 && (
             <ul className="mb-1.5 flex flex-col gap-0.5">
               {tools.map((tool) => (
-                <li key={tool.key} className="flex items-start gap-1.5 text-[11px] text-muted">
-                  <span aria-hidden>{tool.done ? "✓" : "◌"}</span>
-                  <span className="text-text">{tool.label}</span>
+                <li key={tool.key} className={`flex items-start gap-1.5 text-[11px] ${tool.ok === false ? "text-danger" : "text-muted"}`}>
+                  <span aria-hidden>{tool.ok === false ? "×" : tool.done ? "✓" : "◌"}</span>
+                  <span className={tool.ok === false ? "text-danger" : "text-text"}>{tool.label}</span>
                 </li>
               ))}
             </ul>

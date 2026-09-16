@@ -10,10 +10,10 @@ interface TimelineEntryViewProps {
   isLast: boolean;
   images?: StoryImage[];
   variants?: NarrationVariant[];
-  rollSummary?: RollDetail;
+  rollSummaries?: RollDetail[];
 }
 
-export function TimelineEntryView({ entry, branchId, isLast, images, variants, rollSummary }: TimelineEntryViewProps) {
+export function TimelineEntryView({ entry, branchId, isLast, images, variants, rollSummaries }: TimelineEntryViewProps) {
   const streaming = useStoryStore((s) => s.streamingByBranch[branchId]);
   const retryNarration = useStoryStore((s) => s.retryNarration);
   const eraseLastExchange = useStoryStore((s) => s.eraseLastExchange);
@@ -178,7 +178,9 @@ export function TimelineEntryView({ entry, branchId, isLast, images, variants, r
         </p>
       )}
 
-      {rollSummary && <RollDisclosure entryId={entry.id} summary={rollSummary} />}
+      {rollSummaries?.map((summary) => (
+        <RollDisclosure key={summary.roll.id} entryId={entry.id} summary={summary} />
+      ))}
 
       {images?.map((image) => (
         <div key={image.id} className="flex flex-col gap-1">

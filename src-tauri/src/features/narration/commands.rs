@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use chrono::Utc;
 use rig_agent::tool::DynamicTool;
-use rusqlite::OptionalExtension;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, State};
 use tokio::sync::Mutex;
@@ -95,6 +94,7 @@ pub fn submit_story(
             extra_preamble,
             tools: Vec::new(),
             reasoning_effort,
+            before_seq: None,
             stream_id: stream_id.clone(),
         },
         move |app, pool, sid, visible, thoughts| {
@@ -241,18 +241,23 @@ fn combine_preambles(parts: &[String]) -> String {
 /// this is the only channel that outcome reaches the regenerated call by.
 fn roll_context_preamble(pool: &Pool, entry_id: &str) -> AppResult<String> {
     let conn = pool.get()?;
-    let content: Option<String> = conn
-        .query_row(
-            "SELECT content FROM timeline_entries WHERE target_entry_id = ?1 AND kind = ?2 ORDER BY seq DESC LIMIT 1",
+    let mut stmt = conn.prepare(
+        "SELECT content FROM timeline_entries WHERE target_entry_id = ?1 AND kind = ?2 ORDER BY seq ASC",
+    )?;
+    let contents = stmt
+        .query_map(
             rusqlite::params![entry_id, timeline_kind::DICEROLL],
-            |row| row.get(0),
+            |row| row.get::<_, Option<String>>(0),
+        )?
+        .filter_map(Result::transpose)
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(if contents.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "The rolls that determined this outcome must not be contradicted:\n- {}",
+            contents.join("\n- ")
         )
-        .optional()?;
-    Ok(match content {
-        Some(content) => {
-            format!("The roll that determined this outcome must not be contradicted: {content}")
-        }
-        None => String::new(),
     })
 }
 
@@ -363,6 +368,7 @@ struct NarrationJob {
     /// module) — every other narration-triggering command passes `Vec::new()`.
     tools: Vec<DynamicTool>,
     reasoning_effort: Option<String>,
+    before_seq: Option<i64>,
     stream_id: String,
 }
 
@@ -392,6 +398,7 @@ where
         extra_preamble,
         tools,
         reasoning_effort,
+        before_seq,
         stream_id,
     } = job;
     tauri::async_runtime::spawn(async move {
@@ -401,7 +408,7 @@ where
             format!("{NARRATOR_PREAMBLE}\n\n{extra_preamble}")
         };
         let history = crate::features::timeline::compaction::prepare_history(
-            &pool, &branch_id, &config, &preamble, &prompt, history,
+            &pool, &branch_id, &config, &preamble, &prompt, history, before_seq,
         )
         .await;
         let req = NarrateRequest {
@@ -643,6 +650,7 @@ pub async fn submit_turn(
             extra_preamble,
             tools: tool_set,
             reasoning_effort,
+            before_seq: None,
             stream_id: stream_id.clone(),
         },
         move |app, pool, sid, visible, thoughts| async move {
@@ -732,6 +740,7 @@ pub async fn submit_guide(
             extra_preamble,
             tools: Vec::new(),
             reasoning_effort,
+            before_seq: None,
             stream_id: stream_id.clone(),
         },
         move |app, pool, sid, visible, thoughts| {
@@ -793,6 +802,7 @@ pub async fn continue_scene(
             extra_preamble,
             tools: Vec::new(),
             reasoning_effort,
+            before_seq: None,
             stream_id: stream_id.clone(),
         },
         move |app, pool, sid, visible, thoughts| {
@@ -864,6 +874,7 @@ pub async fn retry_narration(
             extra_preamble,
             tools: Vec::new(),
             reasoning_effort,
+            before_seq: Some(target.seq),
             stream_id: stream_id.clone(),
         },
         move |app, pool, sid, visible, thoughts| async move {
@@ -949,6 +960,7 @@ pub async fn generate_narration_variant(
             extra_preamble,
             tools: Vec::new(),
             reasoning_effort,
+            before_seq: Some(target.seq),
             stream_id: stream_id.clone(),
         },
         move |app, pool, sid, visible, thoughts| async move {
@@ -1182,6 +1194,48 @@ mod tests {
     use super::*;
     use crate::features::timeline::repository::append_entry;
     use serde_json::json;
+
+    #[test]
+    fn roll_context_includes_every_roll_in_chronological_order() {
+        let pool = crate::shared::db::test_pool();
+        let conn = pool.get().unwrap();
+        conn.execute(
+            "INSERT INTO stories (id, title, created_at, updated_at, settings_json, default_branch_id) VALUES ('s', 'story', 'now', 'now', '{}', 'b')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO branches (id, story_id, parent_branch_id, forked_at_entry_id, name, created_at) VALUES ('b', 's', NULL, NULL, 'main', 'now')",
+            [],
+        )
+        .unwrap();
+        let narration = append_entry(
+            &conn,
+            "b",
+            timeline_kind::NARRATION,
+            "visible",
+            Some("result"),
+            &json!({"input_mode":"generated"}),
+            None,
+        )
+        .unwrap();
+        for content in ["First roll succeeded.", "Second roll failed."] {
+            append_entry(
+                &conn,
+                "b",
+                timeline_kind::DICEROLL,
+                "hidden",
+                Some(content),
+                &json!({}),
+                Some(&narration.id),
+            )
+            .unwrap();
+        }
+        drop(conn);
+
+        let context = roll_context_preamble(&pool, &narration.id).unwrap();
+        assert!(context.contains("First roll succeeded.\n- Second roll failed."));
+    }
 
     #[test]
     fn hard_erase_removes_exchange_derivatives_summaries_and_projections() {

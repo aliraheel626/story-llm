@@ -86,15 +86,28 @@ fn format_summary(summary: &ContextSummary) -> String {
 /// `carry_over` parameter so a new compaction pass is told about the prior
 /// summary through its dedicated channel instead of only via the raw
 /// transcript text.
-fn latest_summary_artifact(pool: &Pool, branch_id: &str) -> Option<SummaryArtifact> {
+fn latest_summary_artifact(
+    pool: &Pool,
+    branch_id: &str,
+    before_seq: Option<i64>,
+) -> Option<SummaryArtifact> {
     let conn = pool.get().ok()?;
-    let payload_json: String = conn
-        .query_row(
-            "SELECT payload_json FROM timeline_entries WHERE branch_id = ?1 AND kind = ?2 ORDER BY seq DESC LIMIT 1",
-            rusqlite::params![branch_id, kind::CONTEXT_SUMMARY],
-            |row| row.get(0),
-        )
-        .ok()?;
+    let payload_json: String = match before_seq {
+        Some(before_seq) => conn
+            .query_row(
+                "SELECT payload_json FROM timeline_entries WHERE branch_id = ?1 AND kind = ?2 AND seq < ?3 ORDER BY seq DESC LIMIT 1",
+                rusqlite::params![branch_id, kind::CONTEXT_SUMMARY, before_seq],
+                |row| row.get(0),
+            )
+            .ok()?,
+        None => conn
+            .query_row(
+                "SELECT payload_json FROM timeline_entries WHERE branch_id = ?1 AND kind = ?2 ORDER BY seq DESC LIMIT 1",
+                rusqlite::params![branch_id, kind::CONTEXT_SUMMARY],
+                |row| row.get(0),
+            )
+            .ok()?,
+    };
     let value: serde_json::Value = serde_json::from_str(&payload_json).ok()?;
     serde_json::from_value::<ContextSummary>(value)
         .ok()
@@ -121,7 +134,49 @@ pub async fn prepare_history(
     preamble: &str,
     prompt: &str,
     history: Vec<HistoryTurn>,
+    before_seq: Option<i64>,
 ) -> Vec<HistoryTurn> {
+    let compactor = NarratorCompactor::new(config.clone());
+    prepare_history_with_compactor(
+        HistoryPreparation {
+            pool,
+            branch_id,
+            config,
+            preamble,
+            prompt,
+            before_seq,
+        },
+        history,
+        &compactor,
+    )
+    .await
+}
+
+struct HistoryPreparation<'a> {
+    pool: &'a Pool,
+    branch_id: &'a str,
+    config: &'a TextModelConfig,
+    preamble: &'a str,
+    prompt: &'a str,
+    before_seq: Option<i64>,
+}
+
+async fn prepare_history_with_compactor<C>(
+    input: HistoryPreparation<'_>,
+    history: Vec<HistoryTurn>,
+    compactor: &C,
+) -> Vec<HistoryTurn>
+where
+    C: Compactor<Artifact = SummaryArtifact>,
+{
+    let HistoryPreparation {
+        pool,
+        branch_id,
+        config,
+        preamble,
+        prompt,
+        before_seq,
+    } = input;
     let counter = HeuristicTokenCounter::openai();
     let context_window = if config.context_window == 0 {
         FALLBACK_CONTEXT_WINDOW
@@ -164,11 +219,10 @@ pub async fn prepare_history(
     let carry_over = history
         .first()
         .is_some_and(|turn| turn.content.starts_with("[Authoritative context summary]"))
-        .then(|| latest_summary_artifact(pool, branch_id))
+        .then(|| latest_summary_artifact(pool, branch_id, before_seq))
         .flatten();
     let evict_from = usize::from(carry_over.is_some());
 
-    let compactor = NarratorCompactor::new(config.clone());
     match compactor
         .compact(
             branch_id,
@@ -248,15 +302,164 @@ pub async fn prepare_history(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ai::TextProviderKind;
+    use std::sync::{Arc, Mutex};
+
+    fn summary(prose: &str) -> ContextSummary {
+        ContextSummary {
+            prose: prose.into(),
+            facts: Vec::new(),
+            entity_notes: Vec::new(),
+            open_threads: Vec::new(),
+            unresolved_mechanics: Vec::new(),
+        }
+    }
+
     #[test]
     fn structured_summary_renders_all_sections() {
-        let text = format_summary(&ContextSummary {
-            prose: "Earlier".into(),
-            facts: vec!["fact".into()],
-            entity_notes: vec!["note".into()],
-            open_threads: vec!["thread".into()],
-            unresolved_mechanics: vec!["roll".into()],
-        });
+        let mut value = summary("Earlier");
+        value.facts.push("fact".into());
+        value.entity_notes.push("note".into());
+        value.open_threads.push("thread".into());
+        value.unresolved_mechanics.push("roll".into());
+        let text = format_summary(&value);
         assert!(text.contains("Earlier") && text.contains("fact") && text.contains("thread"));
+    }
+
+    #[derive(Clone)]
+    struct RecordingCompactor {
+        carry_over: Arc<Mutex<Option<String>>>,
+    }
+
+    impl Compactor for RecordingCompactor {
+        type Artifact = SummaryArtifact;
+
+        fn compact<'a>(
+            &'a self,
+            _conversation_id: &'a str,
+            _evicted: &'a [Message],
+            carry_over: Option<&'a Self::Artifact>,
+        ) -> WasmBoxedFuture<'a, Result<Self::Artifact, MemoryError>> {
+            Box::pin(async move {
+                *self.carry_over.lock().unwrap() =
+                    carry_over.map(|artifact| artifact.0.prose.clone());
+                Ok(SummaryArtifact(summary("new compacted context")))
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn retry_compaction_carry_over_ignores_summaries_after_the_target() {
+        let pool = crate::shared::db::test_pool();
+        let conn = pool.get().unwrap();
+        conn.execute(
+            "INSERT INTO stories (id, title, created_at, updated_at, settings_json, default_branch_id) VALUES ('s', 'story', 'now', 'now', '{}', 'b')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO branches (id, story_id, parent_branch_id, forked_at_entry_id, name, created_at) VALUES ('b', 's', NULL, NULL, 'main', 'now')",
+            [],
+        )
+        .unwrap();
+        let first = repository::append_entry(
+            &conn,
+            "b",
+            kind::NARRATION,
+            "visible",
+            Some("Earlier narration"),
+            &serde_json::json!({"input_mode":"generated"}),
+            None,
+        )
+        .unwrap();
+        let mut early_payload = serde_json::to_value(summary("safe context")).unwrap();
+        early_payload["through_seq"] = serde_json::json!(first.seq);
+        early_payload["through_entry_id"] = serde_json::json!(first.id);
+        repository::append_entry(
+            &conn,
+            "b",
+            kind::CONTEXT_SUMMARY,
+            "hidden",
+            Some("safe context"),
+            &early_payload,
+            None,
+        )
+        .unwrap();
+        let target = repository::append_entry(
+            &conn,
+            "b",
+            kind::NARRATION,
+            "visible",
+            Some("Retry target"),
+            &serde_json::json!({"input_mode":"generated"}),
+            None,
+        )
+        .unwrap();
+        let mut late_payload = serde_json::to_value(summary("future leaked fact")).unwrap();
+        late_payload["through_seq"] = serde_json::json!(target.seq);
+        late_payload["through_entry_id"] = serde_json::json!(target.id);
+        repository::append_entry(
+            &conn,
+            "b",
+            kind::CONTEXT_SUMMARY,
+            "hidden",
+            Some("future leaked fact"),
+            &late_payload,
+            None,
+        )
+        .unwrap();
+        drop(conn);
+
+        assert_eq!(
+            latest_summary_artifact(&pool, "b", None).unwrap().0.prose,
+            "future leaked fact"
+        );
+        assert_eq!(
+            latest_summary_artifact(&pool, "b", Some(target.seq))
+                .unwrap()
+                .0
+                .prose,
+            "safe context"
+        );
+
+        let carry_over = Arc::new(Mutex::new(None));
+        let compactor = RecordingCompactor {
+            carry_over: carry_over.clone(),
+        };
+        let mut history = vec![HistoryTurn {
+            entry_id: None,
+            is_player: false,
+            content: "[Authoritative context summary]\nsafe context".into(),
+        }];
+        for index in 0..20 {
+            history.push(HistoryTurn {
+                entry_id: None,
+                is_player: index % 2 == 0,
+                content: format!("Long historical turn {index}: {}", "context ".repeat(40)),
+            });
+        }
+        let config = TextModelConfig {
+            provider: TextProviderKind::OpenRouter,
+            model: "test".into(),
+            api_key: "test".into(),
+            context_window: 256,
+        };
+        let compacted = prepare_history_with_compactor(
+            HistoryPreparation {
+                pool: &pool,
+                branch_id: "b",
+                config: &config,
+                preamble: "preamble",
+                prompt: "prompt",
+                before_seq: Some(target.seq),
+            },
+            history,
+            &compactor,
+        )
+        .await;
+
+        assert_eq!(carry_over.lock().unwrap().as_deref(), Some("safe context"));
+        assert!(compacted[0].content.contains("new compacted context"));
+        assert!(!compacted[0].content.contains("future leaked fact"));
     }
 }
