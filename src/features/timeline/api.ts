@@ -16,5 +16,4 @@ export const timelineApi = {
   generateImage: (entryId: string, promptHint?: string) => invoke<StoryImage>("generate_scene_image", { entryId, promptHint: promptHint ?? null }),
   listImages: (branchId: string) => invoke<StoryImage[]>("list_images_for_branch", { branchId }),
   listRolls: (branchId: string) => invoke<RollDetail[]>("list_rolls_for_branch", { branchId }),
-  getRollDetail: (entryId: string) => invoke<RollDetail | null>("get_roll_detail", { entryId }),
 };

@@ -136,8 +136,8 @@ pub(crate) fn insert_minted_attribute(
     conn: &rusqlite::Connection,
     entry: &AttributeRegistryEntry,
 ) -> AppResult<String> {
-    if let Some(id) = find_canonical_id_case_insensitive(conn, &entry.canonical_name)? {
-        return Ok(id);
+    if let Some(existing) = find_exact_match(conn, &entry.canonical_name)? {
+        return Ok(existing.id);
     }
     conn.execute(
         "INSERT INTO attribute_registry
@@ -157,30 +157,14 @@ pub(crate) fn insert_minted_attribute(
             entry.created_at,
         ],
     )?;
-    find_canonical_id_case_insensitive(conn, &entry.canonical_name)?.ok_or_else(|| {
-        AppError::Other(format!(
-            "minted attribute was not found after insert: {}",
-            entry.canonical_name
-        ))
-    })
-}
-
-fn find_canonical_id_case_insensitive(
-    conn: &rusqlite::Connection,
-    canonical_name: &str,
-) -> AppResult<Option<String>> {
-    let needle = canonical_name.trim().to_lowercase();
-    let mut stmt = conn.prepare("SELECT id, canonical_name FROM attribute_registry")?;
-    let rows = stmt.query_map([], |row| {
-        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-    })?;
-    for row in rows {
-        let (id, candidate) = row?;
-        if candidate.to_lowercase() == needle {
-            return Ok(Some(id));
-        }
-    }
-    Ok(None)
+    find_exact_match(conn, &entry.canonical_name)?
+        .map(|existing| existing.id)
+        .ok_or_else(|| {
+            AppError::Other(format!(
+                "minted attribute was not found after insert: {}",
+                entry.canonical_name
+            ))
+        })
 }
 
 pub(crate) enum AttributeResolution {
@@ -614,6 +598,27 @@ mod tests {
             created_in_story_id: None,
             created_at: "now".into(),
         }
+    }
+
+    #[test]
+    fn minted_attribute_remaps_when_name_becomes_an_alias_before_commit() {
+        let pool = crate::shared::db::test_pool();
+        let conn = pool.get().unwrap();
+        let staged = build_minted_attribute("Resonance", "artifact", "story");
+        let existing = find_exact_match(&conn, "Accuracy").unwrap().unwrap();
+
+        add_alias(&conn, &existing.id, "Resonance").unwrap();
+        let resolved_id = insert_minted_attribute(&conn, &staged).unwrap();
+
+        assert_eq!(resolved_id, existing.id);
+        let duplicate_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM attribute_registry WHERE lower(canonical_name) = lower('Resonance')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(duplicate_count, 0);
     }
 
     #[test]

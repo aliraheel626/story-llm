@@ -231,30 +231,28 @@ pub fn list_rolls_for_branch(pool: State<Pool>, branch_id: String) -> AppResult<
 }
 
 #[tauri::command]
-pub fn get_roll_detail(pool: State<Pool>, entry_id: String) -> AppResult<Option<RollDetail>> {
-    let conn = pool.get()?;
-    let base = timeline::get_entry(&conn, &entry_id)?;
-    let roll = timeline::list_logical_entries(&conn, &base.branch_id)?
-        .iter()
-        .rev()
-        .find(|e| e.kind == kind::DICEROLL && e.target_entry_id.as_deref() == Some(&entry_id))
-        .and_then(parse_roll);
-    roll.map(|roll| detail(&conn, &base.branch_id, roll, true))
-        .transpose()
-}
-
-#[tauri::command]
 pub fn list_roll_details_for_entry(
     pool: State<Pool>,
     entry_id: String,
 ) -> AppResult<Vec<RollDetail>> {
     let conn = pool.get()?;
-    let base = timeline::get_entry(&conn, &entry_id)?;
-    timeline::list_logical_entries(&conn, &base.branch_id)?
-        .iter()
-        .filter(|e| e.kind == kind::DICEROLL && e.target_entry_id.as_deref() == Some(&entry_id))
-        .filter_map(parse_roll)
-        .map(|roll| detail(&conn, &base.branch_id, roll, true))
+    let mut stmt = conn.prepare(
+        "SELECT id, branch_id, seq, kind, visibility, content, payload_json, target_entry_id, created_at
+         FROM timeline_entries WHERE target_entry_id = ?1 AND kind = ?2 ORDER BY seq ASC",
+    )?;
+    let entries = stmt
+        .query_map(
+            rusqlite::params![entry_id, kind::DICEROLL],
+            timeline::row_to_entry,
+        )?
+        .collect::<Result<Vec<_>, _>>()?;
+    entries
+        .into_iter()
+        .filter_map(|entry| {
+            let branch_id = entry.branch_id.clone();
+            parse_roll(&entry).map(|roll| (branch_id, roll))
+        })
+        .map(|(branch_id, roll)| detail(&conn, &branch_id, roll, true))
         .collect()
 }
 

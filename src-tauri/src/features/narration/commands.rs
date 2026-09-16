@@ -416,6 +416,7 @@ where
             preamble,
             history,
             prompt,
+            stop_after_tool_result: false,
             reasoning_effort,
             tools,
         };

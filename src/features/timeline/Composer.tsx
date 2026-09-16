@@ -42,6 +42,7 @@ export function Composer({ branchId }: { branchId: string | null }) {
   const submitGuide = useStoryStore((s) => s.submitGuide);
   const continueScene = useStoryStore((s) => s.continueScene);
   const streaming = useStoryStore((s) => (branchId ? s.streamingByBranch[branchId] : undefined));
+  const timelineLoading = useStoryStore((s) => s.timelineLoading);
   const turnError = useStoryStore((s) => s.turnError);
   const entries = useStoryStore((s) => (branchId ? s.entriesByBranch[branchId] : undefined));
   const generateImageForEntry = useStoryStore((s) => s.generateImageForEntry);
@@ -63,7 +64,7 @@ export function Composer({ branchId }: { branchId: string | null }) {
     }
   };
 
-  const busy = submitting || !!streaming;
+  const busy = submitting || !!streaming || timelineLoading;
   const lastEntry = entries && entries.length > 0 ? entries[entries.length - 1] : undefined;
   const imageBusy = !!lastEntry && imagePendingFor.includes(lastEntry.id);
   const imagesDisabled = imageSettings ? !imageSettings.enabled : false;

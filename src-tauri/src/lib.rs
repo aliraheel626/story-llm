@@ -59,7 +59,6 @@ pub fn run() {
             features::dicerolls::commands::save_story_diceroll_settings,
             features::dicerolls::commands::list_rolls_for_entry,
             features::dicerolls::commands::list_rolls_for_branch,
-            features::dicerolls::commands::get_roll_detail,
             features::dicerolls::commands::list_roll_details_for_entry,
         ])
         .run(tauri::generate_context!())

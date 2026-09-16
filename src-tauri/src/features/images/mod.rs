@@ -31,15 +31,15 @@ Call the illustrate_scene tool with a vivid, concrete description — do not ski
 fn illustration_decision_prompt(
     passage_content: &str,
     hint: Option<&str>,
-    present_characters: &[(String, String)],
+    known_characters: &[(String, String)],
 ) -> String {
     let mut prompt = format!("Scene:\n{passage_content}");
     if let Some(hint) = hint {
         prompt.push_str(&format!("\n\nFocus the image on: {hint}"));
     }
-    if !present_characters.is_empty() {
-        prompt.push_str("\n\nCharacters present (id: name):");
-        for (id, name) in present_characters {
+    if !known_characters.is_empty() {
+        prompt.push_str("\n\nKnown characters (id: name) - list only the ids actually visible in this scene when calling illustrate_scene:");
+        for (id, name) in known_characters {
             prompt.push_str(&format!("\n- {id}: {name}"));
         }
     }
@@ -59,14 +59,36 @@ fn finish_illustration_decision(
     Ok(request)
 }
 
-async fn decide_illustration(
-    config: &ai::TextModelConfig,
-    history: Vec<ai::HistoryTurn>,
-    passage_content: &str,
-    hint: Option<&str>,
-    present_characters: &[(String, String)],
+struct IllustrationDecision<'a> {
+    passage_content: &'a str,
+    hint: Option<&'a str>,
+    known_characters: &'a [(String, String)],
     mandatory: bool,
+}
+
+async fn decide_illustration(
+    pool: &Pool,
+    branch_id: &str,
+    before_seq: Option<i64>,
+    config: &ai::TextModelConfig,
+    decision: IllustrationDecision<'_>,
 ) -> AppResult<Option<ImageRequest>> {
+    let preamble = if decision.mandatory {
+        MANDATORY_IMAGE_PREAMBLE
+    } else {
+        SELECTIVE_IMAGE_PREAMBLE
+    }
+    .to_string();
+    let prompt = illustration_decision_prompt(
+        decision.passage_content,
+        decision.hint,
+        decision.known_characters,
+    );
+    let history = narration::history::load_history(pool, branch_id, before_seq)?;
+    let history = crate::features::timeline::compaction::prepare_history(
+        pool, branch_id, config, &preamble, &prompt, history, before_seq,
+    )
+    .await;
     let image_requests = Arc::new(Mutex::new(Vec::new()));
     let tools = vec![DynamicTool::from_portable(
         narration::tools::illustrate_scene_tool(image_requests.clone()),
@@ -74,14 +96,10 @@ async fn decide_illustration(
     ai::stream_narration(
         ai::NarrateRequest {
             config: config.clone(),
-            preamble: if mandatory {
-                MANDATORY_IMAGE_PREAMBLE
-            } else {
-                SELECTIVE_IMAGE_PREAMBLE
-            }
-            .to_string(),
+            preamble,
             history,
-            prompt: illustration_decision_prompt(passage_content, hint, present_characters),
+            prompt,
+            stop_after_tool_result: true,
             reasoning_effort: None,
             tools,
         },
@@ -89,10 +107,10 @@ async fn decide_illustration(
     )
     .await?;
     let requests = std::mem::take(&mut *image_requests.lock().await);
-    finish_illustration_decision(requests, mandatory)
+    finish_illustration_decision(requests, decision.mandatory)
 }
 
-fn present_characters(
+fn known_characters(
     conn: &rusqlite::Connection,
     story_id: &str,
     branch_id: &str,
@@ -126,7 +144,7 @@ fn illustration_context(
             |row| row.get(0),
         )
         .map_err(|_| AppError::NotFound(format!("timeline entry {entry_id} not found")))?;
-    let characters = present_characters(&conn, &story_id, &active.branch_id)?;
+    let characters = known_characters(&conn, &story_id, &active.branch_id)?;
     Ok((active, characters))
 }
 
@@ -147,25 +165,34 @@ fn compose_image_prompt(style: &str, description: &str, matched: &[&(String, Str
 /// Turns a finalized passage plus an optional guiding `hint` into a generated,
 /// stored scene image for the player's manual "See" trigger. A mandatory,
 /// single-tool agent turn writes the description with branch history and
-/// definitive present-character ids as context.
+/// known-character ids as context.
 pub(crate) async fn generate_for_entry(
     app: &AppHandle,
     pool: &Pool,
     entry_id: &str,
     hint: Option<&str>,
 ) -> AppResult<StoryImage> {
-    let (active, present) = illustration_context(pool, entry_id)?;
-    let history = narration::history::load_history(pool, &active.branch_id, Some(active.seq))?;
+    let image_settings = settings::read_image_model_settings(app, pool)?;
+    if !image_settings.enabled {
+        return Err(AppError::Invalid(
+            "image generation is disabled in the Image Model panel".into(),
+        ));
+    }
+    let (active, known) = illustration_context(pool, entry_id)?;
     let passage_content = active.content.unwrap_or_default();
     let hint = hint.map(str::trim).filter(|s| !s.is_empty());
     let text_config = settings::resolve_text_model(app, pool)?;
     let request = decide_illustration(
+        pool,
+        &active.branch_id,
+        Some(active.seq),
         &text_config,
-        history,
-        &passage_content,
-        hint,
-        &present,
-        true,
+        IllustrationDecision {
+            passage_content: &passage_content,
+            hint,
+            known_characters: &known,
+            mandatory: true,
+        },
     )
     .await?
     .ok_or_else(|| AppError::Other("the model did not produce an image description".into()))?;
@@ -331,7 +358,7 @@ async fn persist_and_store_image(
 }
 
 /// Manual scene-image trigger ("See" composer mode). `prompt_hint`, the target
-/// passage, prior branch history, and present-character ids are handed to a
+/// passage, prior branch history, and known-character ids are handed to a
 /// mandatory `illustrate_scene` agent turn before image generation.
 #[tauri::command]
 pub async fn generate_scene_image(
@@ -364,16 +391,22 @@ pub(crate) fn maybe_auto_image(app: &AppHandle, pool: &Pool, entry_id: &str, nar
     let entry_id = entry_id.to_string();
     let narrated_text = narrated_text.to_string();
     tauri::async_runtime::spawn(async move {
-        let Ok((active, present)) = illustration_context(&pool, &entry_id) else {
+        let Ok((active, known)) = illustration_context(&pool, &entry_id) else {
             return;
         };
-        let Ok(history) =
-            narration::history::load_history(&pool, &active.branch_id, Some(active.seq))
-        else {
-            return;
-        };
-        let Ok(Some(request)) =
-            decide_illustration(&config, history, &narrated_text, None, &present, false).await
+        let Ok(Some(request)) = decide_illustration(
+            &pool,
+            &active.branch_id,
+            Some(active.seq),
+            &config,
+            IllustrationDecision {
+                passage_content: &narrated_text,
+                hint: None,
+                known_characters: &known,
+                mandatory: false,
+            },
+        )
+        .await
         else {
             return;
         };
@@ -524,7 +557,7 @@ mod tests {
     }
 
     #[test]
-    fn decision_prompt_includes_hint_and_present_character_ids() {
+    fn decision_prompt_includes_hint_and_known_character_ids() {
         let prompt = illustration_decision_prompt(
             "The observatory doors open.",
             Some("the brass orrery"),
@@ -532,7 +565,7 @@ mod tests {
         );
         assert_eq!(
             prompt,
-            "Scene:\nThe observatory doors open.\n\nFocus the image on: the brass orrery\n\nCharacters present (id: name):\n- mira-id: Mira"
+            "Scene:\nThe observatory doors open.\n\nFocus the image on: the brass orrery\n\nKnown characters (id: name) - list only the ids actually visible in this scene when calling illustrate_scene:\n- mira-id: Mira"
         );
     }
 }

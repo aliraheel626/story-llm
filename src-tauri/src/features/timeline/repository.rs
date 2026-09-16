@@ -9,7 +9,7 @@ use crate::shared::error::{AppError, AppResult};
 
 use super::model::TimelineEntry;
 
-fn row_to_entry(row: &rusqlite::Row) -> rusqlite::Result<TimelineEntry> {
+pub(crate) fn row_to_entry(row: &rusqlite::Row) -> rusqlite::Result<TimelineEntry> {
     let raw: String = row.get(6)?;
     Ok(TimelineEntry {
         id: row.get(0)?,

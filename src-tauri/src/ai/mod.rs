@@ -43,13 +43,16 @@ pub struct NarrateRequest {
     pub preamble: String,
     pub history: Vec<HistoryTurn>,
     pub prompt: String,
-    /// Tools the agent may call mid-generation. `ai::mod` deliberately never
-    /// sees the concrete tool types, only Rig's runtime-defined `DynamicTool`.
+    /// End a tool-bearing run after its first result instead of asking the
+    /// model for a follow-up completion.
+    pub stop_after_tool_result: bool,
     /// OpenRouter reasoning effort for this request (`none`/`low`/`high`/…).
     /// `None` leaves the model at its own default. Sent as an OpenRouter
     /// request-body extension; changing it mid-story changes the request
     /// prefix, which invalidates the provider's prompt cache.
     pub reasoning_effort: Option<String>,
+    /// Tools the agent may call mid-generation. `ai::mod` deliberately never
+    /// sees the concrete tool types, only Rig's runtime-defined `DynamicTool`.
     pub tools: Vec<DynamicTool>,
 }
 
@@ -79,6 +82,19 @@ pub enum NarratorChunk {
 /// "started" indicator.
 struct ActivityHook {
     buffer: Arc<Mutex<Vec<NarratorChunk>>>,
+    stop_after_tool_result: bool,
+}
+
+const DECISION_CAPTURED: &str = "decision captured";
+
+impl ActivityHook {
+    fn tool_result_action(&self) -> rig_agent::agent::ToolResultAction {
+        if self.stop_after_tool_result {
+            rig_agent::agent::ToolResultAction::stop(DECISION_CAPTURED)
+        } else {
+            rig_agent::agent::ToolResultAction::Keep
+        }
+    }
 }
 
 impl AgentHook for ActivityHook {
@@ -113,7 +129,7 @@ impl AgentHook for ActivityHook {
                 },
             });
         }
-        rig_agent::agent::ToolResultAction::Keep
+        self.tool_result_action()
     }
 
     fn observes(&self, kind: rig_agent::agent::StepEventKind) -> bool {
@@ -137,17 +153,30 @@ where
     }
 }
 
+fn is_expected_tool_stop(
+    stop_after_tool_result: bool,
+    error: &rig_agent::agent::StreamingError,
+) -> bool {
+    stop_after_tool_result
+        && matches!(
+            error,
+            rig_agent::agent::StreamingError::Prompt(error)
+                if matches!(
+                    error.as_ref(),
+                    PromptError::PromptCancelled { reason, .. } if reason == DECISION_CAPTURED
+                )
+        )
+}
+
 /// Streams a narration turn, invoking `on_chunk` for every visible-text or
 /// reasoning delta as it arrives. Returns the full visible text and full
 /// reasoning text once the stream ends.
-pub async fn stream_narration<F>(
-    req: NarrateRequest,
-    mut on_chunk: F,
-) -> AppResult<(String, String)>
+pub async fn stream_narration<F>(req: NarrateRequest, on_chunk: F) -> AppResult<(String, String)>
 where
     F: FnMut(NarratorChunk),
 {
     let has_tools = !req.tools.is_empty();
+    let stop_after_tool_result = req.stop_after_tool_result;
     let agent = build_agent(
         &req.config,
         &req.preamble,
@@ -172,17 +201,37 @@ where
     if has_tools {
         runner = runner.add_hook(ActivityHook {
             buffer: activity_buffer.clone(),
+            stop_after_tool_result,
         });
     }
-    let mut stream = runner.stream().await;
+    let stream = runner.stream().await;
+    consume_narration_stream(
+        stream,
+        has_tools,
+        stop_after_tool_result,
+        &activity_buffer,
+        on_chunk,
+    )
+    .await
+}
 
+async fn consume_narration_stream<F>(
+    mut stream: rig_agent::agent::StreamingResult,
+    has_tools: bool,
+    stop_after_tool_result: bool,
+    activity_buffer: &Mutex<Vec<NarratorChunk>>,
+    mut on_chunk: F,
+) -> AppResult<(String, String)>
+where
+    F: FnMut(NarratorChunk),
+{
     let mut text_stripper = ReasoningStripper::new();
     let mut visible = String::new();
     let mut thoughts = String::new();
 
     while let Some(item) = stream.next().await {
         if has_tools {
-            drain_activity_buffer(&activity_buffer, &mut on_chunk);
+            drain_activity_buffer(activity_buffer, &mut on_chunk);
         }
         match item {
             Ok(MultiTurnStreamItem::StreamAssistantItem(StreamedAssistantContent::Text(t))) => {
@@ -199,6 +248,7 @@ where
                 on_chunk(NarratorChunk::Reasoning(reasoning));
             }
             Ok(_) => {}
+            Err(e) if is_expected_tool_stop(stop_after_tool_result, &e) => break,
             Err(e) => {
                 return Err(AppError::Other(format!("narrator stream error: {e}")));
             }
@@ -206,7 +256,7 @@ where
     }
 
     if has_tools {
-        drain_activity_buffer(&activity_buffer, &mut on_chunk);
+        drain_activity_buffer(activity_buffer, &mut on_chunk);
     }
 
     let tail = text_stripper.finalize();
@@ -276,5 +326,54 @@ fn build_agent(
             };
             Ok(agent)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn decision_tool_result_stops_and_ends_the_stream_cleanly() {
+        let hook = ActivityHook {
+            buffer: Arc::new(Mutex::new(Vec::new())),
+            stop_after_tool_result: true,
+        };
+        assert_eq!(
+            hook.tool_result_action(),
+            rig_agent::agent::ToolResultAction::stop(DECISION_CAPTURED)
+        );
+
+        let error =
+            rig_agent::agent::StreamingError::Prompt(Box::new(PromptError::PromptCancelled {
+                chat_history: Vec::new(),
+                reason: DECISION_CAPTURED.to_string(),
+            }));
+        assert!(is_expected_tool_stop(true, &error));
+        assert!(!is_expected_tool_stop(false, &error));
+
+        let stream: rig_agent::agent::StreamingResult =
+            Box::pin(futures::stream::iter(vec![Err(error)]));
+        let activity_buffer = Mutex::new(vec![NarratorChunk::ToolActivity {
+            call_id: "call-1".into(),
+            tool_name: "illustrate_scene".into(),
+            args: "{}".into(),
+            phase: ToolActivityPhase::Finished { ok: true },
+        }]);
+        let mut chunks = Vec::new();
+        let output = consume_narration_stream(stream, true, true, &activity_buffer, |chunk| {
+            chunks.push(chunk)
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(output, (String::new(), String::new()));
+        assert!(matches!(
+            chunks.as_slice(),
+            [NarratorChunk::ToolActivity {
+                phase: ToolActivityPhase::Finished { ok: true },
+                ..
+            }]
+        ));
     }
 }
