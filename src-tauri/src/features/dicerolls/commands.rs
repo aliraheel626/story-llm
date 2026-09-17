@@ -36,8 +36,7 @@ pub fn normalize_reasoning_effort(value: &str) -> Option<&'static str> {
     }
 }
 
-fn story_settings(pool: &State<Pool>, story_id: &str) -> AppResult<Value> {
-    let conn = pool.get()?;
+fn story_settings(conn: &rusqlite::Connection, story_id: &str) -> AppResult<Value> {
     let raw: String = conn
         .query_row(
             "SELECT settings_json FROM stories WHERE id = ?1",
@@ -53,7 +52,8 @@ pub fn get_story_diceroll_settings(
     pool: State<Pool>,
     story_id: String,
 ) -> AppResult<DicerollSettings> {
-    let settings = story_settings(&pool, &story_id)?;
+    let conn = pool.get()?;
+    let settings = story_settings(&conn, &story_id)?;
     Ok(DicerollSettings {
         dice_mode: DiceMode::from_str_or_default(
             settings
@@ -79,12 +79,10 @@ pub fn get_story_diceroll_settings(
 pub fn save_story_diceroll_settings(
     pool: State<Pool>,
     story_id: String,
-    branch_id: String,
     dice_mode: String,
     attributes_enabled: bool,
     reasoning_effort: Option<String>,
 ) -> AppResult<()> {
-    let mut settings = story_settings(&pool, &story_id)?;
     let dice_mode = DiceMode::from_str_or_default(&dice_mode).as_str();
     // Unrecognized levels are rejected rather than stored, so the story never
     // carries an effort the provider would refuse.
@@ -92,22 +90,23 @@ pub fn save_story_diceroll_settings(
         .as_deref()
         .and_then(normalize_reasoning_effort)
         .map(str::to_string);
-    settings["dice_mode"] = json!(dice_mode);
-    settings["attributes_enabled"] = json!(attributes_enabled);
-    match &reasoning_effort {
-        Some(effort) => settings["reasoning_effort"] = json!(effort),
-        None => {
-            if let Some(object) = settings.as_object_mut() {
-                object.remove("reasoning_effort");
+    with_transaction(pool.inner(), |tx| {
+        let mut settings = story_settings(tx, &story_id)?;
+        settings["dice_mode"] = json!(dice_mode);
+        settings["attributes_enabled"] = json!(attributes_enabled);
+        match &reasoning_effort {
+            Some(effort) => settings["reasoning_effort"] = json!(effort),
+            None => {
+                if let Some(object) = settings.as_object_mut() {
+                    object.remove("reasoning_effort");
+                }
             }
         }
-    }
-    with_transaction(pool.inner(), |tx| {
         tx.execute(
             "UPDATE stories SET settings_json = ?1, updated_at = ?2 WHERE id = ?3",
             rusqlite::params![settings.to_string(), Utc::now().to_rfc3339(), story_id],
         )?;
-        timeline::append_entry(tx, &branch_id, kind::DICEROLL_SETTINGS_CHANGED, "hidden",
+        timeline::append_entry(tx, &story_id, kind::DICEROLL_SETTINGS_CHANGED, "hidden",
             Some(&format!("Dice-roll settings changed: dice mode {dice_mode}, attributes enabled {attributes_enabled}, reasoning effort {}.",
                 reasoning_effort.as_deref().unwrap_or("model default"))),
             &json!({"dice_mode": dice_mode, "attributes_enabled": attributes_enabled, "reasoning_effort": reasoning_effort}), None)?;
@@ -149,10 +148,10 @@ fn parse_roll(entry: &crate::features::timeline::model::TimelineEntry) -> Option
     })
 }
 
-fn entity_name(conn: &rusqlite::Connection, branch_id: &str, id: &str) -> String {
+fn entity_name(conn: &rusqlite::Connection, story_id: &str, id: &str) -> String {
     conn.query_row(
-        "SELECT name FROM branch_entity_state WHERE branch_id = ?1 AND entity_id = ?2",
-        rusqlite::params![branch_id, id],
+        "SELECT name FROM story_entity_state WHERE story_id = ?1 AND entity_id = ?2",
+        rusqlite::params![story_id, id],
         |r| r.get(0),
     )
     .unwrap_or_else(|_| id.to_string())
@@ -171,26 +170,26 @@ fn attribute_name(conn: &rusqlite::Connection, id: Option<&str>) -> Option<Strin
 }
 fn detail(
     conn: &rusqlite::Connection,
-    branch_id: &str,
+    story_id: &str,
     roll: Roll,
     snapshots: bool,
 ) -> AppResult<RollDetail> {
-    let actor_name = entity_name(conn, branch_id, &roll.actor_entity_id);
+    let actor_name = entity_name(conn, story_id, &roll.actor_entity_id);
     let target_name = roll
         .target_entity_id
         .as_deref()
-        .map(|id| entity_name(conn, branch_id, id));
+        .map(|id| entity_name(conn, story_id, id));
     let actor_attribute_name = attribute_name(conn, roll.actor_attribute_id.as_deref());
     let target_attribute_name = attribute_name(conn, roll.target_attribute_id.as_deref());
     let actor_attributes = if snapshots {
-        list_entity_attributes_sync(conn, branch_id, &roll.actor_entity_id)?
+        list_entity_attributes_sync(conn, story_id, &roll.actor_entity_id)?
     } else {
         Vec::new()
     };
     let target_attributes = if snapshots {
         roll.target_entity_id
             .as_deref()
-            .map(|id| list_entity_attributes_sync(conn, branch_id, id))
+            .map(|id| list_entity_attributes_sync(conn, story_id, id))
             .transpose()?
             .unwrap_or_default()
     } else {
@@ -208,67 +207,51 @@ fn detail(
 }
 
 #[tauri::command]
-pub fn list_rolls_for_entry(pool: State<Pool>, entry_id: String) -> AppResult<Vec<Roll>> {
+pub fn list_rolls_for_story(pool: State<Pool>, story_id: String) -> AppResult<Vec<RollDetail>> {
     let conn = pool.get()?;
-    let base = timeline::get_entry(&conn, &entry_id)?;
-    Ok(timeline::list_logical_entries(&conn, &base.branch_id)?
-        .iter()
-        .filter(|e| e.kind == kind::DICEROLL && e.target_entry_id.as_deref() == Some(&entry_id))
-        .filter_map(parse_roll)
-        .collect())
-}
-
-#[tauri::command]
-pub fn list_rolls_for_branch(pool: State<Pool>, branch_id: String) -> AppResult<Vec<RollDetail>> {
-    let conn = pool.get()?;
-    timeline::list_logical_entries(&conn, &branch_id)?
+    timeline::list_logical_entries(&conn, &story_id)?
         .iter()
         .filter(|e| e.kind == kind::DICEROLL)
         .filter_map(parse_roll)
-        .map(|roll| detail(&conn, &branch_id, roll, false))
+        .map(|roll| detail(&conn, &story_id, roll, false))
         .collect()
 }
 
 #[tauri::command]
 pub fn list_roll_details_for_entry(
     pool: State<Pool>,
-    branch_id: String,
+    story_id: String,
     entry_id: String,
 ) -> AppResult<Vec<RollDetail>> {
     let conn = pool.get()?;
-    list_roll_details_for_entry_in_conn(&conn, &branch_id, &entry_id)
+    list_roll_details_for_entry_in_conn(&conn, &story_id, &entry_id)
 }
 
 fn list_roll_details_for_entry_in_conn(
     conn: &rusqlite::Connection,
-    branch_id: &str,
+    story_id: &str,
     entry_id: &str,
 ) -> AppResult<Vec<RollDetail>> {
     let base = timeline::get_entry(conn, entry_id)?;
-    if !timeline::branch_contains_entry(conn, branch_id, &base)? {
+    if base.story_id != story_id {
         return Err(AppError::NotFound(format!(
-            "timeline entry {entry_id} not found in branch {branch_id}"
+            "timeline entry {entry_id} not found in story {story_id}"
         )));
     }
-    let allowed_branch_ids = timeline::ancestor_branch_ids(conn, branch_id)?;
     let mut stmt = conn.prepare(
-        "SELECT id, branch_id, seq, kind, visibility, content, payload_json, target_entry_id, created_at
-         FROM timeline_entries WHERE target_entry_id = ?1 AND kind = ?2 ORDER BY seq ASC",
+        "SELECT id, story_id, seq, kind, visibility, content, payload_json, target_entry_id, created_at
+         FROM timeline_entries WHERE target_entry_id = ?1 AND story_id = ?2 AND kind = ?3 ORDER BY seq ASC",
     )?;
     let entries = stmt
         .query_map(
-            rusqlite::params![entry_id, kind::DICEROLL],
+            rusqlite::params![entry_id, story_id, kind::DICEROLL],
             timeline::row_to_entry,
         )?
         .collect::<Result<Vec<_>, _>>()?;
     entries
         .into_iter()
-        .filter(|entry| allowed_branch_ids.contains(&entry.branch_id))
-        .filter_map(|entry| {
-            let branch_id = entry.branch_id.clone();
-            parse_roll(&entry).map(|roll| (branch_id, roll))
-        })
-        .map(|(branch_id, roll)| detail(conn, &branch_id, roll, true))
+        .filter_map(|entry| parse_roll(&entry))
+        .map(|roll| detail(conn, story_id, roll, true))
         .collect()
 }
 
@@ -279,45 +262,29 @@ mod tests {
     use crate::shared::error::AppError;
     use serde_json::json;
 
-    fn insert_branch(
-        conn: &rusqlite::Connection,
-        id: &str,
-        parent: Option<&str>,
-        fork: Option<&str>,
-    ) {
-        conn.execute(
-            "INSERT INTO branches
-             (id, story_id, parent_branch_id, forked_at_entry_id, name, created_at)
-             VALUES (?1, 'story', ?2, ?3, ?1, 'now')",
-            rusqlite::params![id, parent, fork],
-        )
-        .unwrap();
-    }
-
-    fn setup_branches() -> crate::shared::db::Pool {
+    fn setup_story() -> crate::shared::db::Pool {
         let pool = crate::shared::db::test_pool();
         let conn = pool.get().unwrap();
         conn.execute(
             "INSERT INTO stories
-             (id, title, created_at, updated_at, settings_json, default_branch_id)
-             VALUES ('story', 'Story', 'now', 'now', '{}', 'root')",
+             (id, title, created_at, updated_at, settings_json)
+             VALUES ('story', 'Story', 'now', 'now', '{}')",
             [],
         )
         .unwrap();
-        insert_branch(&conn, "root", None, None);
         drop(conn);
         pool
     }
 
     fn append_test_roll(
         conn: &rusqlite::Connection,
-        branch_id: &str,
+        story_id: &str,
         target_entry_id: &str,
         marker: i64,
     ) -> crate::features::timeline::model::TimelineEntry {
         timeline::append_entry(
             conn,
-            branch_id,
+            story_id,
             kind::DICEROLL,
             "hidden",
             Some("test roll"),
@@ -351,9 +318,9 @@ mod tests {
 
     #[test]
     fn roll_details_reject_unknown_entry_id() {
-        let pool = setup_branches();
+        let pool = setup_story();
         let conn = pool.get().unwrap();
-        let error = list_roll_details_for_entry_in_conn(&conn, "root", "missing").unwrap_err();
+        let error = list_roll_details_for_entry_in_conn(&conn, "story", "missing").unwrap_err();
         assert!(matches!(
             error,
             AppError::NotFound(message) if message == "timeline entry missing not found"
@@ -361,12 +328,12 @@ mod tests {
     }
 
     #[test]
-    fn roll_details_exclude_sibling_branch_rolls() {
-        let pool = setup_branches();
+    fn roll_details_are_scoped_to_the_story() {
+        let pool = setup_story();
         let conn = pool.get().unwrap();
         let anchor = timeline::append_entry(
             &conn,
-            "root",
+            "story",
             kind::NARRATION,
             "visible",
             Some("anchor"),
@@ -374,17 +341,13 @@ mod tests {
             None,
         )
         .unwrap();
-        insert_branch(&conn, "left", Some("root"), Some(&anchor.id));
-        insert_branch(&conn, "right", Some("root"), Some(&anchor.id));
-        let kept = append_test_roll(&conn, "left", &anchor.id, 60);
-        let sibling = append_test_roll(&conn, "right", &anchor.id, 70);
+        let kept = append_test_roll(&conn, "story", &anchor.id, 60);
 
-        let details = list_roll_details_for_entry_in_conn(&conn, "left", &anchor.id).unwrap();
+        let details = list_roll_details_for_entry_in_conn(&conn, "story", &anchor.id).unwrap();
         let ids = details
             .iter()
             .map(|detail| detail.roll.id.as_str())
             .collect::<Vec<_>>();
         assert_eq!(ids, vec![kept.id.as_str()]);
-        assert!(!ids.contains(&sibling.id.as_str()));
     }
 }

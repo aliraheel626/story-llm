@@ -40,22 +40,12 @@ fn run_migrations(conn: &mut PooledConn) -> AppResult<()> {
             title TEXT NOT NULL,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL,
-            settings_json TEXT NOT NULL DEFAULT '{}',
-            default_branch_id TEXT
-        );
-
-        CREATE TABLE IF NOT EXISTS branches (
-            id TEXT PRIMARY KEY,
-            story_id TEXT NOT NULL REFERENCES stories(id) ON DELETE CASCADE,
-            parent_branch_id TEXT REFERENCES branches(id) ON DELETE SET NULL,
-            forked_at_entry_id TEXT,
-            name TEXT NOT NULL,
-            created_at TEXT NOT NULL
+            settings_json TEXT NOT NULL DEFAULT '{}'
         );
 
         CREATE TABLE IF NOT EXISTS timeline_entries (
             id TEXT PRIMARY KEY,
-            branch_id TEXT NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
+            story_id TEXT NOT NULL REFERENCES stories(id) ON DELETE CASCADE,
             seq INTEGER NOT NULL,
             kind TEXT NOT NULL,
             visibility TEXT NOT NULL CHECK (visibility IN ('visible', 'hidden')),
@@ -63,11 +53,11 @@ fn run_migrations(conn: &mut PooledConn) -> AppResult<()> {
             payload_json TEXT NOT NULL DEFAULT '{}',
             target_entry_id TEXT REFERENCES timeline_entries(id) ON DELETE CASCADE,
             created_at TEXT NOT NULL,
-            UNIQUE(branch_id, seq)
+            UNIQUE(story_id, seq)
         );
-        CREATE INDEX IF NOT EXISTS idx_timeline_branch_seq ON timeline_entries(branch_id, seq);
+        CREATE INDEX IF NOT EXISTS idx_timeline_story_seq ON timeline_entries(story_id, seq);
         CREATE INDEX IF NOT EXISTS idx_timeline_target ON timeline_entries(target_entry_id);
-        CREATE INDEX IF NOT EXISTS idx_timeline_kind ON timeline_entries(branch_id, kind, seq);
+        CREATE INDEX IF NOT EXISTS idx_timeline_kind ON timeline_entries(story_id, kind, seq);
 
         CREATE TABLE IF NOT EXISTS entities (
             id TEXT PRIMARY KEY,
@@ -76,19 +66,19 @@ fn run_migrations(conn: &mut PooledConn) -> AppResult<()> {
             created_at TEXT NOT NULL
         );
 
-        CREATE TABLE IF NOT EXISTS branch_entity_state (
-            branch_id TEXT NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
+        CREATE TABLE IF NOT EXISTS story_entity_state (
+            story_id TEXT NOT NULL REFERENCES stories(id) ON DELETE CASCADE,
             entity_id TEXT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
             name TEXT NOT NULL,
             appearance_anchor TEXT,
             is_present INTEGER NOT NULL DEFAULT 1,
             updated_at TEXT NOT NULL,
             last_event_id TEXT REFERENCES timeline_entries(id) ON DELETE SET NULL,
-            PRIMARY KEY (branch_id, entity_id)
+            PRIMARY KEY (story_id, entity_id)
         );
-        CREATE INDEX IF NOT EXISTS idx_branch_entities_name ON branch_entity_state(branch_id, name);
-        CREATE UNIQUE INDEX IF NOT EXISTS idx_branch_entities_name_ci
-            ON branch_entity_state(branch_id, name COLLATE NOCASE);
+        CREATE INDEX IF NOT EXISTS idx_story_entities_name ON story_entity_state(story_id, name);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_story_entities_name_ci
+            ON story_entity_state(story_id, name COLLATE NOCASE);
 
         CREATE TABLE IF NOT EXISTS attribute_registry (
             id TEXT PRIMARY KEY,
@@ -106,14 +96,14 @@ fn run_migrations(conn: &mut PooledConn) -> AppResult<()> {
             ON attribute_registry(canonical_name COLLATE NOCASE);
 
         CREATE TABLE IF NOT EXISTS entity_attributes (
-            branch_id TEXT NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
+            story_id TEXT NOT NULL REFERENCES stories(id) ON DELETE CASCADE,
             entity_id TEXT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
             attribute_id TEXT NOT NULL REFERENCES attribute_registry(id) ON DELETE CASCADE,
             value REAL NOT NULL,
             source TEXT NOT NULL,
             updated_at TEXT NOT NULL,
             last_event_id TEXT REFERENCES timeline_entries(id) ON DELETE SET NULL,
-            PRIMARY KEY (branch_id, entity_id, attribute_id)
+            PRIMARY KEY (story_id, entity_id, attribute_id)
         );
 
         CREATE TABLE IF NOT EXISTS image_assets (
@@ -121,8 +111,6 @@ fn run_migrations(conn: &mut PooledConn) -> AppResult<()> {
             entry_id TEXT NOT NULL REFERENCES timeline_entries(id) ON DELETE CASCADE,
             path TEXT NOT NULL,
             prompt TEXT NOT NULL,
-            seed INTEGER,
-            provider TEXT NOT NULL,
             created_at TEXT NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_image_assets_entry ON image_assets(entry_id);
@@ -182,7 +170,7 @@ fn seed_attribute_registry(conn: &PooledConn) -> AppResult<()> {
 /// and seeded attribute registry — used by tests that need more than a
 /// hand-written `CREATE TABLE` subset (e.g. narrator-tool staging, which
 /// touches five-plus tables). Callers are responsible for creating their own
-/// story/branch rows.
+/// story rows.
 #[cfg(test)]
 pub fn test_pool() -> Pool {
     let dir = std::env::temp_dir().join(format!("dungeon-test-{}", Uuid::new_v4()));
@@ -207,8 +195,20 @@ mod tests {
             .unwrap()
         };
         assert!(exists("timeline_entries"));
-        assert!(exists("branch_entity_state"));
+        assert!(exists("story_entity_state"));
+        assert!(!exists("branches"));
         assert!(exists("image_assets"));
+        let image_columns = conn
+            .prepare("PRAGMA table_info(image_assets)")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(
+            image_columns,
+            ["id", "entry_id", "path", "prompt", "created_at"]
+        );
         assert!(!exists("story_cards"));
         assert!(!exists("passages"));
         drop(conn);
@@ -261,28 +261,27 @@ mod tests {
     }
 
     #[test]
-    fn entity_names_are_unique_case_insensitively_per_branch() {
+    fn entity_names_are_unique_case_insensitively_per_story() {
         let pool = test_pool();
         let conn = pool.get().unwrap();
         conn.execute_batch(
-            "INSERT INTO stories (id, title, created_at, updated_at, settings_json, default_branch_id)
-                 VALUES ('story', 'Story', 'now', 'now', '{}', 'first');
-             INSERT INTO branches (id, story_id, parent_branch_id, forked_at_entry_id, name, created_at)
-                 VALUES ('first', 'story', NULL, NULL, 'first', 'now'),
-                        ('second', 'story', NULL, NULL, 'second', 'now');
+            "INSERT INTO stories (id, title, created_at, updated_at, settings_json)
+                 VALUES ('first', 'First', 'now', 'now', '{}'),
+                        ('second', 'Second', 'now', 'now', '{}');
              INSERT INTO entities (id, story_id, kind, created_at)
-                 VALUES ('one', 'story', 'character', 'now'),
-                        ('two', 'story', 'character', 'now');
-             INSERT INTO branch_entity_state
-                 (branch_id, entity_id, name, appearance_anchor, is_present, updated_at, last_event_id)
+                 VALUES ('one', 'first', 'character', 'now'),
+                        ('two', 'first', 'character', 'now'),
+                        ('three', 'second', 'character', 'now');
+             INSERT INTO story_entity_state
+                 (story_id, entity_id, name, appearance_anchor, is_present, updated_at, last_event_id)
                  VALUES ('first', 'one', 'Mira', NULL, 1, 'now', NULL);",
         )
         .unwrap();
 
         let error = conn
             .execute(
-                "INSERT INTO branch_entity_state
-                 (branch_id, entity_id, name, appearance_anchor, is_present, updated_at, last_event_id)
+                "INSERT INTO story_entity_state
+                 (story_id, entity_id, name, appearance_anchor, is_present, updated_at, last_event_id)
                  VALUES ('first', 'two', 'mira', NULL, 1, 'now', NULL)",
                 [],
             )
@@ -298,9 +297,9 @@ mod tests {
             )
         ));
         conn.execute(
-            "INSERT INTO branch_entity_state
-             (branch_id, entity_id, name, appearance_anchor, is_present, updated_at, last_event_id)
-             VALUES ('second', 'two', 'mira', NULL, 1, 'now', NULL)",
+            "INSERT INTO story_entity_state
+             (story_id, entity_id, name, appearance_anchor, is_present, updated_at, last_event_id)
+             VALUES ('second', 'three', 'mira', NULL, 1, 'now', NULL)",
             [],
         )
         .unwrap();

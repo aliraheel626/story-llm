@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
-import { useAppStore } from "../../app/store";
-import type { DiceMode } from "../../shared/types";
-import { DEFAULT_DICEROLL_SETTINGS, useDicerollStore, type DicerollSettingsPatch } from "./store";
+import { REASONING_EFFORT_OPTIONS, type DiceMode, type ReasoningEffort } from "../../shared/types";
+import { DEFAULT_DICEROLL_SETTINGS, useStoryStore, type DicerollSettingsPatch } from "../story/store";
 
 const DICE_MODES: { id: DiceMode; label: string; hint: string }[] = [
   { id: "always", label: "Always", hint: "The narrator is instructed to roll for every meaningful action." },
@@ -10,17 +9,15 @@ const DICE_MODES: { id: DiceMode; label: string; hint: string }[] = [
 ];
 
 export function AttributesPanel() {
-  const activeStoryId = useAppStore((s) => s.activeStoryId);
-  const creatingStory = useAppStore((s) => s.creatingStory);
-  const activeBranchId = useAppStore((s) => s.stories.find((story) => story.id === s.activeStoryId)?.default_branch_id ?? null);
-  const settingsByStory = useDicerollStore((s) => s.settingsByStory);
-  const draftSettings = useDicerollStore((s) => s.draftSettings);
-  const loading = useDicerollStore((s) => s.loading);
-  const loadSettings = useDicerollStore((s) => s.loadSettings);
-  const saveSettings = useDicerollStore((s) => s.saveSettings);
+  const activeStoryId = useStoryStore((s) => s.activeStoryId);
+  const creatingStory = useStoryStore((s) => s.creatingStory);
+  const loaded = useStoryStore((s) => activeStoryId ? s.bundles[activeStoryId]?.diceSettings : undefined);
+  const draftSettings = useStoryStore((s) => s.draftDiceSettings);
+  const loading = useStoryStore((s) => activeStoryId ? (s.bundles[activeStoryId]?.diceSettingsLoading ?? false) : false);
+  const loadSettings = useStoryStore((s) => s.loadDiceSettings);
+  const saveSettings = useStoryStore((s) => s.saveDiceSettings);
 
   const [saving, setSaving] = useState(false);
-  const loaded = activeStoryId ? settingsByStory[activeStoryId] : undefined;
   const settings = loaded ?? draftSettings ?? DEFAULT_DICEROLL_SETTINGS;
 
   useEffect(() => {
@@ -34,7 +31,7 @@ export function AttributesPanel() {
   const update = async (patch: DicerollSettingsPatch) => {
     setSaving(true);
     try {
-      await saveSettings(activeStoryId, activeBranchId, patch);
+      await saveSettings(activeStoryId, patch);
     } catch (e) {
       console.error(e);
     } finally {
@@ -82,6 +79,20 @@ export function AttributesPanel() {
           ))}
         </div>
       </div>
+
+      <label className="flex items-center justify-between gap-2 text-xs text-muted">
+        <span>Reasoning effort</span>
+        <select
+          value={settings.reasoning_effort ?? ""}
+          onChange={(event) => update({ reasoning_effort: (event.target.value || null) as ReasoningEffort | null })}
+          disabled={saving || creatingStory}
+          className="rounded border border-border bg-bg px-1.5 py-1 text-xs text-text focus:border-accent focus:outline-none disabled:opacity-60"
+        >
+          {REASONING_EFFORT_OPTIONS.map((option) => (
+            <option key={option.value} value={option.value}>{option.label}</option>
+          ))}
+        </select>
+      </label>
     </div>
   );
 }

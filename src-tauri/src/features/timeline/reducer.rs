@@ -139,7 +139,7 @@ mod tests {
     ) -> TimelineEntry {
         TimelineEntry {
             id: id.into(),
-            branch_id: "b".into(),
+            story_id: "s".into(),
             seq: 0,
             kind: kind.into(),
             visibility: "hidden".into(),

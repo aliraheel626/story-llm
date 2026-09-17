@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState } from "react";
-import { useAppStore } from "../../app/store";
+import { useStoryStore } from "../story/store";
 import { DEFAULT_STORY_TITLE } from "../../shared/types";
 
 /** Click-to-edit story title. The model fills it in after the first passage
  *  (see the `story-title-updated` event); until then the placeholder shows
  *  in muted italics, ChatGPT-style. */
 export function EditableStoryTitle({ storyId }: { storyId: string }) {
-  const title = useAppStore((s) => s.stories.find((st) => st.id === storyId)?.title ?? DEFAULT_STORY_TITLE);
-  const renameStory = useAppStore((s) => s.renameStory);
+  const title = useStoryStore((s) => s.stories.find((st) => st.id === storyId)?.title ?? DEFAULT_STORY_TITLE);
+  const renameStory = useStoryStore((s) => s.renameStory);
 
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(title);

@@ -15,7 +15,7 @@ fn to_story_entry(entry: TimelineEntry) -> ActiveStoryEntry {
     };
     ActiveStoryEntry {
         id: entry.id,
-        branch_id: entry.branch_id,
+        story_id: entry.story_id,
         seq: entry.seq,
         role: role.to_string(),
         input_mode: entry
@@ -31,18 +31,11 @@ fn to_story_entry(entry: TimelineEntry) -> ActiveStoryEntry {
     }
 }
 
-pub(super) fn get_story_id_for_branch(
-    conn: &rusqlite::Connection,
-    branch_id: &str,
-) -> AppResult<String> {
-    timeline::get_story_id_for_branch(conn, branch_id)
-}
-
 pub(super) fn get_last_story_entry(
     conn: &rusqlite::Connection,
-    branch_id: &str,
+    story_id: &str,
 ) -> AppResult<Option<ActiveStoryEntry>> {
-    let raw = timeline::list_logical_entries(conn, branch_id)?;
+    let raw = timeline::list_logical_entries(conn, story_id)?;
     Ok(reducer::active_visible_entries(&raw)
         .pop()
         .map(to_story_entry))
@@ -50,7 +43,7 @@ pub(super) fn get_last_story_entry(
 
 pub(super) fn insert_story_entry(
     conn: &rusqlite::Connection,
-    branch_id: &str,
+    story_id: &str,
     role: &str,
     input_mode: &str,
     content: &str,
@@ -70,7 +63,7 @@ pub(super) fn insert_story_entry(
     };
     let entry = timeline::append_entry(
         conn,
-        branch_id,
+        story_id,
         event_kind,
         "visible",
         Some(content),
@@ -92,6 +85,6 @@ pub(super) fn list_variants(
     entry_id: &str,
 ) -> AppResult<Vec<NarrationVariant>> {
     let entry = timeline::get_entry(conn, entry_id)?;
-    let raw = timeline::list_logical_entries(conn, &entry.branch_id)?;
+    let raw = timeline::list_logical_entries(conn, &entry.story_id)?;
     Ok(reducer::variants_for_entry(&raw, entry_id))
 }

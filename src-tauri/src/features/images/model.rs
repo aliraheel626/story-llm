@@ -12,7 +12,5 @@ pub struct StoryImage {
     pub entry_id: String,
     pub path: String,
     pub prompt: String,
-    pub seed: Option<i64>,
-    pub provider: String,
     pub created_at: String,
 }

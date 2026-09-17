@@ -47,8 +47,7 @@ pub fn run() {
             features::settings::get_narrator_memory_settings,
             features::settings::save_narrator_memory_settings,
             features::images::generate_scene_image,
-            features::images::list_images_for_entry,
-            features::images::list_images_for_branch,
+            features::images::list_images_for_story,
             features::entities::list_entities,
             features::entities::create_entity,
             features::entities::update_entity,
@@ -59,8 +58,7 @@ pub fn run() {
             features::entities::attributes::remove_entity_attribute,
             features::dicerolls::commands::get_story_diceroll_settings,
             features::dicerolls::commands::save_story_diceroll_settings,
-            features::dicerolls::commands::list_rolls_for_entry,
-            features::dicerolls::commands::list_rolls_for_branch,
+            features::dicerolls::commands::list_rolls_for_story,
             features::dicerolls::commands::list_roll_details_for_entry,
         ])
         .run(tauri::generate_context!())

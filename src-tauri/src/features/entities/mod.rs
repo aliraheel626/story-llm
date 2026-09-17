@@ -16,39 +16,34 @@ fn row_to_entity(row: &rusqlite::Row) -> rusqlite::Result<Entity> {
     Ok(Entity {
         id: row.get(0)?,
         story_id: row.get(1)?,
-        branch_id: row.get(2)?,
-        kind: row.get(3)?,
-        name: row.get(4)?,
-        appearance_anchor: row.get(5)?,
-        created_at: row.get(6)?,
+        kind: row.get(2)?,
+        name: row.get(3)?,
+        appearance_anchor: row.get(4)?,
+        created_at: row.get(5)?,
     })
 }
 
 pub fn list_entities_sync(
     conn: &rusqlite::Connection,
     story_id: &str,
-    branch_id: &str,
     filter_kind: Option<&str>,
 ) -> AppResult<Vec<Entity>> {
-    let mut sql = "SELECT entities.id, entities.story_id, branch_entity_state.branch_id, entities.kind,
-                          branch_entity_state.name, branch_entity_state.appearance_anchor, entities.created_at
-                   FROM entities JOIN branch_entity_state ON branch_entity_state.entity_id = entities.id
-                   WHERE entities.story_id = ?1 AND branch_entity_state.branch_id = ?2 AND branch_entity_state.is_present = 1".to_string();
+    let mut sql = "SELECT entities.id, entities.story_id, entities.kind,
+                          story_entity_state.name, story_entity_state.appearance_anchor, entities.created_at
+                   FROM entities JOIN story_entity_state ON story_entity_state.entity_id = entities.id
+                   WHERE entities.story_id = ?1 AND story_entity_state.story_id = ?1 AND story_entity_state.is_present = 1".to_string();
     if filter_kind.is_some() {
-        sql.push_str(" AND entities.kind = ?3");
+        sql.push_str(" AND entities.kind = ?2");
     }
     sql.push_str(" ORDER BY entities.created_at ASC");
     let mut stmt = conn.prepare(&sql)?;
     let mut out = Vec::new();
     if let Some(filter_kind) = filter_kind {
-        for row in stmt.query_map(
-            rusqlite::params![story_id, branch_id, filter_kind],
-            row_to_entity,
-        )? {
+        for row in stmt.query_map(rusqlite::params![story_id, filter_kind], row_to_entity)? {
             out.push(row?);
         }
     } else {
-        for row in stmt.query_map(rusqlite::params![story_id, branch_id], row_to_entity)? {
+        for row in stmt.query_map([story_id], row_to_entity)? {
             out.push(row?);
         }
     }
@@ -59,11 +54,10 @@ pub fn list_entities_sync(
 pub fn list_entities(
     pool: State<Pool>,
     story_id: String,
-    branch_id: String,
     kind: Option<String>,
 ) -> AppResult<Vec<Entity>> {
     let conn = pool.get()?;
-    list_entities_sync(&conn, &story_id, &branch_id, kind.as_deref())
+    list_entities_sync(&conn, &story_id, kind.as_deref())
 }
 
 /// Inserts a new entity with a caller-supplied id — split out of
@@ -76,23 +70,12 @@ pub fn create_entity_with_id_sync(
     conn: &rusqlite::Connection,
     id: &str,
     story_id: &str,
-    branch_id: &str,
     entity_kind: &str,
     name: &str,
     appearance_anchor: Option<&str>,
     source: &str,
     target_entry_id: Option<&str>,
 ) -> AppResult<Entity> {
-    let branch_story: String = conn
-        .query_row(
-            "SELECT story_id FROM branches WHERE id = ?1",
-            [branch_id],
-            |r| r.get(0),
-        )
-        .map_err(|_| AppError::NotFound(format!("branch {branch_id} not found")))?;
-    if branch_story != story_id {
-        return Err(AppError::Invalid("branch does not belong to story".into()));
-    }
     let name = name.trim();
     if name.is_empty() {
         return Err(AppError::Invalid("name must not be empty".into()));
@@ -105,7 +88,7 @@ pub fn create_entity_with_id_sync(
     )?;
     let event = append_entry(
         conn,
-        branch_id,
+        story_id,
         kind::ENTITY_CREATED,
         "hidden",
         Some(&format!("{name} was added as a {entity_kind}.")),
@@ -115,14 +98,13 @@ pub fn create_entity_with_id_sync(
         target_entry_id,
     )?;
     conn.execute(
-        "INSERT INTO branch_entity_state (branch_id, entity_id, name, appearance_anchor, is_present, updated_at, last_event_id)
+        "INSERT INTO story_entity_state (story_id, entity_id, name, appearance_anchor, is_present, updated_at, last_event_id)
          VALUES (?1, ?2, ?3, ?4, 1, ?5, ?6)",
-        rusqlite::params![branch_id, id, name, anchor, now, event.id],
+        rusqlite::params![story_id, id, name, anchor, now, event.id],
     )?;
     Ok(Entity {
         id: id.to_string(),
         story_id: story_id.into(),
-        branch_id: branch_id.into(),
         kind: entity_kind.into(),
         name: name.into(),
         appearance_anchor: anchor.map(str::to_string),
@@ -134,7 +116,6 @@ pub fn create_entity_with_id_sync(
 pub fn create_entity_sync(
     conn: &rusqlite::Connection,
     story_id: &str,
-    branch_id: &str,
     entity_kind: &str,
     name: &str,
     appearance_anchor: Option<&str>,
@@ -146,7 +127,6 @@ pub fn create_entity_sync(
         conn,
         &id,
         story_id,
-        branch_id,
         entity_kind,
         name,
         appearance_anchor,
@@ -159,7 +139,6 @@ pub fn create_entity_sync(
 pub fn create_entity(
     pool: State<Pool>,
     story_id: String,
-    branch_id: String,
     kind: String,
     name: String,
     appearance_anchor: Option<String>,
@@ -168,7 +147,6 @@ pub fn create_entity(
         create_entity_sync(
             tx,
             &story_id,
-            &branch_id,
             &kind,
             &name,
             appearance_anchor.as_deref(),
@@ -183,7 +161,7 @@ pub fn create_entity(
 /// narrator tool's staged commit can call it identically.
 pub fn update_entity_sync(
     conn: &rusqlite::Connection,
-    branch_id: &str,
+    story_id: &str,
     entity_id: &str,
     name: &str,
     appearance_anchor: Option<&str>,
@@ -195,16 +173,16 @@ pub fn update_entity_sync(
         return Err(AppError::Invalid("name must not be empty".into()));
     }
     let before: Entity = conn.query_row(
-        "SELECT entities.id, entities.story_id, branch_entity_state.branch_id, entities.kind, branch_entity_state.name,
-                branch_entity_state.appearance_anchor, entities.created_at
-         FROM entities JOIN branch_entity_state ON branch_entity_state.entity_id = entities.id
-         WHERE entities.id = ?1 AND branch_entity_state.branch_id = ?2 AND branch_entity_state.is_present = 1",
-        rusqlite::params![entity_id, branch_id], row_to_entity,
+        "SELECT entities.id, entities.story_id, entities.kind, story_entity_state.name,
+                story_entity_state.appearance_anchor, entities.created_at
+         FROM entities JOIN story_entity_state ON story_entity_state.entity_id = entities.id
+         WHERE entities.id = ?1 AND story_entity_state.story_id = ?2 AND story_entity_state.is_present = 1",
+        rusqlite::params![entity_id, story_id], row_to_entity,
     ).optional()?.ok_or_else(|| AppError::NotFound(format!("entity {entity_id} not found")))?;
     let anchor = appearance_anchor.map(str::trim).filter(|s| !s.is_empty());
     let event = append_entry(
         conn,
-        branch_id,
+        story_id,
         kind::ENTITY_UPDATED,
         "hidden",
         Some(&format!(
@@ -218,8 +196,8 @@ pub fn update_entity_sync(
         target_entry_id,
     )?;
     let now = Utc::now().to_rfc3339();
-    conn.execute("UPDATE branch_entity_state SET name = ?1, appearance_anchor = ?2, updated_at = ?3, last_event_id = ?4 WHERE branch_id = ?5 AND entity_id = ?6",
-        rusqlite::params![name, anchor, now, event.id, branch_id, entity_id])?;
+    conn.execute("UPDATE story_entity_state SET name = ?1, appearance_anchor = ?2, updated_at = ?3, last_event_id = ?4 WHERE story_id = ?5 AND entity_id = ?6",
+        rusqlite::params![name, anchor, now, event.id, story_id, entity_id])?;
     Ok(Entity {
         name: name.into(),
         appearance_anchor: anchor.map(str::to_string),
@@ -230,7 +208,7 @@ pub fn update_entity_sync(
 #[tauri::command]
 pub fn update_entity(
     pool: State<Pool>,
-    branch_id: String,
+    story_id: String,
     entity_id: String,
     name: String,
     appearance_anchor: Option<String>,
@@ -238,7 +216,7 @@ pub fn update_entity(
     with_transaction(pool.inner(), |tx| {
         update_entity_sync(
             tx,
-            &branch_id,
+            &story_id,
             &entity_id,
             &name,
             appearance_anchor.as_deref(),
@@ -249,13 +227,13 @@ pub fn update_entity(
 }
 
 #[tauri::command]
-pub fn delete_entity(pool: State<Pool>, branch_id: String, entity_id: String) -> AppResult<()> {
+pub fn delete_entity(pool: State<Pool>, story_id: String, entity_id: String) -> AppResult<()> {
     with_transaction(pool.inner(), |tx| {
-        let name: String = tx.query_row("SELECT name FROM branch_entity_state WHERE branch_id = ?1 AND entity_id = ?2 AND is_present = 1", rusqlite::params![branch_id, entity_id], |r| r.get(0))
+        let name: String = tx.query_row("SELECT name FROM story_entity_state WHERE story_id = ?1 AND entity_id = ?2 AND is_present = 1", rusqlite::params![story_id, entity_id], |r| r.get(0))
             .map_err(|_| AppError::NotFound(format!("entity {entity_id} not found")))?;
         let event = append_entry(
             tx,
-            &branch_id,
+            &story_id,
             kind::ENTITY_DELETED,
             "hidden",
             Some(&format!(
@@ -264,7 +242,7 @@ pub fn delete_entity(pool: State<Pool>, branch_id: String, entity_id: String) ->
             &json!({"entity_id": entity_id, "name": name, "source": "user"}),
             None,
         )?;
-        tx.execute("UPDATE branch_entity_state SET is_present = 0, updated_at = ?1, last_event_id = ?2 WHERE branch_id = ?3 AND entity_id = ?4", rusqlite::params![Utc::now().to_rfc3339(), event.id, branch_id, entity_id])?;
+        tx.execute("UPDATE story_entity_state SET is_present = 0, updated_at = ?1, last_event_id = ?2 WHERE story_id = ?3 AND entity_id = ?4", rusqlite::params![Utc::now().to_rfc3339(), event.id, story_id, entity_id])?;
         Ok(())
     })
 }

@@ -94,16 +94,14 @@ fn fold_pending_delta(
 pub struct TurnStaging {
     pool: Pool,
     story_id: String,
-    branch_id: String,
     pending: Vec<PendingOp>,
 }
 
 impl TurnStaging {
-    pub fn new(pool: Pool, story_id: String, branch_id: String) -> Self {
+    pub fn new(pool: Pool, story_id: String) -> Self {
         Self {
             pool,
             story_id,
-            branch_id,
             pending: Vec::new(),
         }
     }
@@ -112,7 +110,7 @@ impl TurnStaging {
     /// mid-turn tool calls see each other's not-yet-committed effects.
     fn effective_entities(&self, kind: Option<&str>, name: Option<&str>) -> AppResult<Vec<Entity>> {
         let conn = self.pool.get()?;
-        let mut list = entities::list_entities_sync(&conn, &self.story_id, &self.branch_id, kind)?;
+        let mut list = entities::list_entities_sync(&conn, &self.story_id, kind)?;
         for op in &self.pending {
             match op {
                 PendingOp::CreateEntity {
@@ -127,7 +125,6 @@ impl TurnStaging {
                     list.push(Entity {
                         id: id.clone(),
                         story_id: self.story_id.clone(),
-                        branch_id: self.branch_id.clone(),
                         kind: op_kind.clone(),
                         name: op_name.clone(),
                         appearance_anchor: appearance_anchor.clone(),
@@ -179,7 +176,6 @@ impl TurnStaging {
         let entity = Entity {
             id: id.clone(),
             story_id: self.story_id.clone(),
-            branch_id: self.branch_id.clone(),
             kind: kind.to_string(),
             name: name.to_string(),
             appearance_anchor: appearance_anchor.map(str::to_string),
@@ -212,7 +208,7 @@ impl TurnStaging {
     ) -> AppResult<(f64, bool)> {
         let conn = self.pool.get()?;
         let (value, source) =
-            attributes::peek_entity_attribute(&conn, &self.branch_id, entity_id, attribute)?;
+            attributes::peek_entity_attribute(&conn, &self.story_id, entity_id, attribute)?;
         let locked = source.as_deref() == Some("user");
         Ok((
             fold_pending_delta(value, entity_id, &attribute.id, &self.pending, locked),
@@ -235,7 +231,7 @@ impl TurnStaging {
         let conn = self.pool.get()?;
         let committed = attributes::list_entity_attributes_for_entities_sync(
             &conn,
-            &self.branch_id,
+            &self.story_id,
             entity_ids,
         )?;
         for (entity_id, entity_attributes) in committed {
@@ -276,7 +272,6 @@ impl TurnStaging {
                         tx,
                         id,
                         &self.story_id,
-                        &self.branch_id,
                         kind,
                         name,
                         appearance_anchor.as_deref(),
@@ -291,7 +286,7 @@ impl TurnStaging {
                 } => {
                     entities::update_entity_sync(
                         tx,
-                        &self.branch_id,
+                        &self.story_id,
                         id,
                         name,
                         appearance_anchor.as_deref(),
@@ -308,7 +303,7 @@ impl TurnStaging {
                 } => {
                     attributes::apply_attribute_delta(
                         tx,
-                        &self.branch_id,
+                        &self.story_id,
                         entity_id,
                         attribute,
                         *delta,
@@ -326,12 +321,11 @@ impl TurnStaging {
                     name_filter,
                 } => {
                     let wanted = entity_ids.iter().cloned().collect::<HashSet<_>>();
-                    let names =
-                        entities::list_entities_sync(tx, &self.story_id, &self.branch_id, None)?
-                            .into_iter()
-                            .filter(|entity| wanted.contains(&entity.id))
-                            .map(|entity| entity.name)
-                            .collect::<Vec<_>>();
+                    let names = entities::list_entities_sync(tx, &self.story_id, None)?
+                        .into_iter()
+                        .filter(|entity| wanted.contains(&entity.id))
+                        .map(|entity| entity.name)
+                        .collect::<Vec<_>>();
                     let content = if names.is_empty() {
                         "Looked up: no matching entities".to_string()
                     } else {
@@ -339,7 +333,7 @@ impl TurnStaging {
                     };
                     timeline::repository::append_entry(
                         tx,
-                        &self.branch_id,
+                        &self.story_id,
                         timeline::model::kind::ENTITY_QUERIED,
                         "hidden",
                         Some(&content),
@@ -864,23 +858,17 @@ mod tests {
     use crate::features::timeline::repository::append_entry;
     use chrono::Utc;
 
-    fn setup() -> (Pool, String, String) {
+    fn setup() -> (Pool, String) {
         let pool = crate::shared::db::test_pool();
         let conn = pool.get().unwrap();
         let story_id = Uuid::new_v4().to_string();
-        let branch_id = Uuid::new_v4().to_string();
         let now = Utc::now().to_rfc3339();
         conn.execute(
-            "INSERT INTO stories (id, title, created_at, updated_at, settings_json, default_branch_id) VALUES (?1, 't', ?2, ?2, '{}', ?3)",
-            rusqlite::params![story_id, now, branch_id],
+            "INSERT INTO stories (id, title, created_at, updated_at, settings_json) VALUES (?1, 't', ?2, ?2, '{}')",
+            rusqlite::params![story_id, now],
         )
         .unwrap();
-        conn.execute(
-            "INSERT INTO branches (id, story_id, parent_branch_id, forked_at_entry_id, name, created_at) VALUES (?1, ?2, NULL, NULL, 'main', ?3)",
-            rusqlite::params![branch_id, story_id, now],
-        )
-        .unwrap();
-        (pool, story_id, branch_id)
+        (pool, story_id)
     }
 
     fn find_attribute(conn: &rusqlite::Connection, name: &str) -> AttributeRegistryEntry {
@@ -932,11 +920,11 @@ mod tests {
 
     /// Commits staged ops against a real narration entry the way
     /// `append_narration_entry` does — one transaction, no model involved.
-    fn persist_staging(pool: &Pool, branch_id: &str, staging: &TurnStaging) {
+    fn persist_staging(pool: &Pool, story_id: &str, staging: &TurnStaging) {
         let mut conn = pool.get().unwrap();
         let passage = append_entry(
             &conn,
-            branch_id,
+            story_id,
             "narration",
             "visible",
             Some("scene"),
@@ -951,8 +939,8 @@ mod tests {
 
     #[test]
     fn never_dice_mode_omits_only_the_roll_tool() {
-        let (pool, story_id, branch_id) = setup();
-        let staging = Arc::new(Mutex::new(TurnStaging::new(pool, story_id, branch_id)));
+        let (pool, story_id) = setup();
+        let staging = Arc::new(Mutex::new(TurnStaging::new(pool, story_id)));
         let tools = narrator_portable_tools(staging, test_config(), DiceMode::Never);
         let names: Vec<&str> = tools.iter().map(|tool| tool.name()).collect();
 
@@ -969,8 +957,8 @@ mod tests {
 
     #[test]
     fn staged_entity_is_visible_before_commit_and_not_duplicated() {
-        let (pool, story_id, branch_id) = setup();
-        let mut staging = TurnStaging::new(pool, story_id, branch_id);
+        let (pool, story_id) = setup();
+        let mut staging = TurnStaging::new(pool, story_id);
 
         let (created, was_new) = staging
             .resolve_or_stage_entity("character", "Mira", Some("silver hair"))
@@ -993,9 +981,9 @@ mod tests {
 
     #[test]
     fn staged_attribute_delta_folds_onto_the_registry_midpoint() {
-        let (pool, story_id, branch_id) = setup();
+        let (pool, story_id) = setup();
         let attribute = find_attribute(&pool.get().unwrap(), "Trust");
-        let mut staging = TurnStaging::new(pool, story_id, branch_id);
+        let mut staging = TurnStaging::new(pool, story_id);
         let (entity, _) = staging
             .resolve_or_stage_entity("character", "Mira", None)
             .unwrap();
@@ -1025,12 +1013,8 @@ mod tests {
 
     #[tokio::test]
     async fn newly_minted_attributes_are_resolved_and_reused_immediately() {
-        let (pool, story_id, branch_id) = setup();
-        let staging = Arc::new(Mutex::new(TurnStaging::new(
-            pool.clone(),
-            story_id,
-            branch_id.clone(),
-        )));
+        let (pool, story_id) = setup();
+        let staging = Arc::new(Mutex::new(TurnStaging::new(pool.clone(), story_id)));
         let config = test_config();
 
         // This kind has no committed candidates, so resolution mints locally
@@ -1058,9 +1042,9 @@ mod tests {
 
     #[test]
     fn commit_applies_every_staged_op_atomically() {
-        let (pool, story_id, branch_id) = setup();
+        let (pool, story_id) = setup();
         let attribute = find_attribute(&pool.get().unwrap(), "Trust");
-        let mut staging = TurnStaging::new(pool.clone(), story_id, branch_id.clone());
+        let mut staging = TurnStaging::new(pool.clone(), story_id.clone());
         let (entity, _) = staging
             .resolve_or_stage_entity("character", "Mira", Some("silver hair"))
             .unwrap();
@@ -1075,7 +1059,7 @@ mod tests {
         let mut conn = pool.get().unwrap();
         let passage = append_entry(
             &conn,
-            &branch_id,
+            &story_id,
             "narration",
             "visible",
             Some("scene"),
@@ -1090,7 +1074,7 @@ mod tests {
         let conn = pool.get().unwrap();
         let name: String = conn
             .query_row(
-                "SELECT name FROM branch_entity_state WHERE entity_id = ?1",
+                "SELECT name FROM story_entity_state WHERE entity_id = ?1",
                 [&entity.id],
                 |r| r.get(0),
             )
@@ -1108,8 +1092,8 @@ mod tests {
 
     #[test]
     fn query_entities_commit_writes_entity_ids_to_the_timeline() {
-        let (pool, story_id, branch_id) = setup();
-        let mut staging = TurnStaging::new(pool.clone(), story_id, branch_id.clone());
+        let (pool, story_id) = setup();
+        let mut staging = TurnStaging::new(pool.clone(), story_id.clone());
         let (bob, _) = staging
             .resolve_or_stage_entity("character", "Bob", Some("a weathered coat"))
             .unwrap();
@@ -1122,7 +1106,7 @@ mod tests {
         let mut conn = pool.get().unwrap();
         let passage = append_entry(
             &conn,
-            &branch_id,
+            &story_id,
             "narration",
             "visible",
             Some("scene"),
@@ -1224,8 +1208,8 @@ mod tests {
 
     #[tokio::test]
     async fn create_entity_tool_is_idempotent_by_name_and_reports_staging() {
-        let (pool, story_id, branch_id) = setup();
-        let staging = Arc::new(Mutex::new(TurnStaging::new(pool, story_id, branch_id)));
+        let (pool, story_id) = setup();
+        let staging = Arc::new(Mutex::new(TurnStaging::new(pool, story_id)));
         let tools = portable_tools(staging.clone());
 
         let first = tool_named(&tools, "create_entity")
@@ -1259,8 +1243,8 @@ mod tests {
 
     #[tokio::test]
     async fn update_entity_tool_rejects_unknown_ids_and_overlays_renames() {
-        let (pool, story_id, branch_id) = setup();
-        let mut staging = TurnStaging::new(pool, story_id, branch_id);
+        let (pool, story_id) = setup();
+        let mut staging = TurnStaging::new(pool, story_id);
         let (mira, _) = staging
             .resolve_or_stage_entity("character", "Mira", None)
             .unwrap();
@@ -1298,9 +1282,9 @@ mod tests {
 
     #[tokio::test]
     async fn adjust_attribute_tool_previews_clamped_delta_and_rejects_unknown_entity() {
-        let (pool, story_id, branch_id) = setup();
+        let (pool, story_id) = setup();
         let stealth = find_attribute(&pool.get().unwrap(), "Stealth");
-        let mut staging = TurnStaging::new(pool, story_id, branch_id);
+        let mut staging = TurnStaging::new(pool, story_id);
         let (mira, _) = staging
             .resolve_or_stage_entity("character", "Mira", None)
             .unwrap();
@@ -1352,8 +1336,8 @@ mod tests {
 
     #[tokio::test]
     async fn roll_check_tool_stages_a_player_roll_against_a_target() {
-        let (pool, story_id, branch_id) = setup();
-        let mut staging = TurnStaging::new(pool.clone(), story_id, branch_id.clone());
+        let (pool, story_id) = setup();
+        let mut staging = TurnStaging::new(pool.clone(), story_id.clone());
         let (ghoul, _) = staging
             .resolve_or_stage_entity("character", "Ghoul", None)
             .unwrap();
@@ -1398,7 +1382,7 @@ mod tests {
         assert!(out["needed"].is_i64() || out["needed"].is_u64(), "{out}");
         assert!(out["outcome"].is_string(), "{out}");
 
-        persist_staging(&pool, &branch_id, &staging);
+        persist_staging(&pool, &story_id, &staging);
         drop(staging);
         let payload_json: String = pool
             .get()
@@ -1415,12 +1399,8 @@ mod tests {
 
     #[tokio::test]
     async fn roll_check_without_target_attribute_persists_no_target_value() {
-        let (pool, story_id, branch_id) = setup();
-        let staging = Arc::new(Mutex::new(TurnStaging::new(
-            pool.clone(),
-            story_id,
-            branch_id.clone(),
-        )));
+        let (pool, story_id) = setup();
+        let staging = Arc::new(Mutex::new(TurnStaging::new(pool.clone(), story_id.clone())));
         let tools = portable_tools(staging.clone());
 
         let out = tool_named(&tools, "roll_check")
@@ -1439,7 +1419,7 @@ mod tests {
             })
             .expect("roll staged");
         assert_eq!(roll.target_value, None);
-        persist_staging(&pool, &branch_id, &staging);
+        persist_staging(&pool, &story_id, &staging);
         drop(staging);
 
         let payload_json: String = pool
@@ -1457,17 +1437,9 @@ mod tests {
 
     #[tokio::test]
     async fn independently_staged_same_name_mints_commit_to_one_canonical_attribute() {
-        let (pool, story_id, branch_id) = setup();
-        let first = Arc::new(Mutex::new(TurnStaging::new(
-            pool.clone(),
-            story_id.clone(),
-            branch_id.clone(),
-        )));
-        let second = Arc::new(Mutex::new(TurnStaging::new(
-            pool.clone(),
-            story_id,
-            branch_id.clone(),
-        )));
+        let (pool, story_id) = setup();
+        let first = Arc::new(Mutex::new(TurnStaging::new(pool.clone(), story_id.clone())));
+        let second = Arc::new(Mutex::new(TurnStaging::new(pool.clone(), story_id.clone())));
 
         let first_entity = first
             .lock()
@@ -1526,11 +1498,11 @@ mod tests {
 
         {
             let staging = first.lock().await;
-            persist_staging(&pool, &branch_id, &staging);
+            persist_staging(&pool, &story_id, &staging);
         }
         {
             let staging = second.lock().await;
-            persist_staging(&pool, &branch_id, &staging);
+            persist_staging(&pool, &story_id, &staging);
         }
 
         let conn = pool.get().unwrap();
@@ -1596,8 +1568,8 @@ mod tests {
 
     #[tokio::test]
     async fn get_entities_tool_reports_staged_entities_with_attributes() {
-        let (pool, story_id, branch_id) = setup();
-        let mut staging = TurnStaging::new(pool, story_id, branch_id);
+        let (pool, story_id) = setup();
+        let mut staging = TurnStaging::new(pool, story_id);
         staging
             .resolve_or_stage_entity("location", "The Drowned Keep", None)
             .unwrap();
@@ -1627,7 +1599,7 @@ mod tests {
 
     #[tokio::test]
     async fn get_entities_stays_ephemeral_when_persistence_is_disabled() {
-        let (pool, story_id, branch_id) = setup();
+        let (pool, story_id) = setup();
         pool.get()
             .unwrap()
             .execute(
@@ -1635,7 +1607,7 @@ mod tests {
                 [json!({"tool_call_persistence":false,"preamble_mode":"all"}).to_string()],
             )
             .unwrap();
-        let staging = Arc::new(Mutex::new(TurnStaging::new(pool, story_id, branch_id)));
+        let staging = Arc::new(Mutex::new(TurnStaging::new(pool, story_id)));
         let tools = portable_tools(staging.clone());
 
         tool_named(&tools, "get_entities")
@@ -1653,26 +1625,26 @@ mod tests {
 
     #[tokio::test]
     async fn committed_tool_delta_does_not_override_a_user_set_attribute() {
-        let (pool, story_id, branch_id) = setup();
+        let (pool, story_id) = setup();
         let stealth = find_attribute(&pool.get().unwrap(), "Stealth");
-        let mut staging = TurnStaging::new(pool.clone(), story_id.clone(), branch_id.clone());
+        let mut staging = TurnStaging::new(pool.clone(), story_id.clone());
         let (mira, _) = staging
             .resolve_or_stage_entity("character", "Mira", None)
             .unwrap();
 
         // Land the entity, then set a value the player owns explicitly.
-        persist_staging(&pool, &branch_id, &staging);
+        persist_staging(&pool, &story_id, &staging);
         let conn = pool.get().unwrap();
         conn.execute(
-            "INSERT INTO entity_attributes (branch_id, entity_id, attribute_id, value, source, updated_at, last_event_id)
+            "INSERT INTO entity_attributes (story_id, entity_id, attribute_id, value, source, updated_at, last_event_id)
              VALUES (?1, ?2, ?3, 7.0, 'user', 'now', NULL)",
-            rusqlite::params![branch_id, mira.id, stealth.id],
+            rusqlite::params![story_id, mira.id, stealth.id],
         )
         .unwrap();
 
         // Even if a delta was staged before the lock became visible, every
         // preview path must mirror commit's no-op behavior.
-        let mut stale_preview = TurnStaging::new(pool.clone(), story_id.clone(), branch_id.clone());
+        let mut stale_preview = TurnStaging::new(pool.clone(), story_id.clone());
         stale_preview.pending.push(PendingOp::AdjustAttribute {
             entity_id: mira.id.clone(),
             attribute: stealth.clone(),
@@ -1691,11 +1663,7 @@ mod tests {
             .unwrap();
         assert_eq!(snapshot[&mira.id][0]["value"], json!(7.0));
 
-        let staged = Arc::new(Mutex::new(TurnStaging::new(
-            pool.clone(),
-            story_id,
-            branch_id.clone(),
-        )));
+        let staged = Arc::new(Mutex::new(TurnStaging::new(pool.clone(), story_id.clone())));
         let tools = portable_tools(staged.clone());
         let preview = tool_named(&tools, "adjust_entity_attribute")
             .execute(json!({
@@ -1718,7 +1686,7 @@ mod tests {
             .pending
             .iter()
             .any(|op| matches!(op, PendingOp::AdjustAttribute { .. })));
-        persist_staging(&pool, &branch_id, &staged);
+        persist_staging(&pool, &story_id, &staged);
 
         // The preamble promises the model that user overrides win; an
         // inferred tool delta must not quietly overwrite this.

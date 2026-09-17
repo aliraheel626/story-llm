@@ -1,18 +1,18 @@
 import { useEffect, useState } from "react";
-import { useAppStore } from "../../app/store";
 import type { AttributeRegistryEntry, Entity, EntityAttributeValue } from "../../shared/types";
+import { useStoryStore } from "../story/store";
 import { charactersApi } from "./api";
-import { useCharacterStore } from "./store";
+
+const EMPTY_CHARACTERS: Entity[] = [];
 
 export function CharactersPanel() {
-  const activeStoryId = useAppStore((s) => s.activeStoryId);
-  const activeBranchId = useAppStore((s) => s.stories.find((story) => story.id === s.activeStoryId)?.default_branch_id ?? null);
-  const entitiesByStory = useCharacterStore((s) => s.entitiesByStory);
-  const loading = useCharacterStore((s) => s.loading);
-  const loadCharacters = useCharacterStore((s) => s.loadCharacters);
-  const createCharacter = useCharacterStore((s) => s.createCharacter);
-  const updateCharacter = useCharacterStore((s) => s.updateCharacter);
-  const deleteCharacter = useCharacterStore((s) => s.deleteCharacter);
+  const activeStoryId = useStoryStore((s) => s.activeStoryId);
+  const characters = useStoryStore((s) => activeStoryId ? (s.bundles[activeStoryId]?.characters ?? EMPTY_CHARACTERS) : EMPTY_CHARACTERS);
+  const loading = useStoryStore((s) => activeStoryId ? (s.bundles[activeStoryId]?.charactersLoading ?? false) : false);
+  const loadCharacters = useStoryStore((s) => s.loadCharacters);
+  const createCharacter = useStoryStore((s) => s.createCharacter);
+  const updateCharacter = useStoryStore((s) => s.updateCharacter);
+  const deleteCharacter = useStoryStore((s) => s.deleteCharacter);
 
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState("");
@@ -26,15 +26,13 @@ export function CharactersPanel() {
   const [attributeDrafts, setAttributeDrafts] = useState<Record<string, string>>({});
   const [attributeToAdd, setAttributeToAdd] = useState("");
 
-  const characters = activeStoryId ? (entitiesByStory[activeStoryId] ?? []) : [];
-
   useEffect(() => {
-    if (activeStoryId && activeBranchId) loadCharacters(activeStoryId, activeBranchId);
-  }, [activeStoryId, activeBranchId, loadCharacters]);
+    if (activeStoryId) loadCharacters(activeStoryId);
+  }, [activeStoryId, loadCharacters]);
 
   useEffect(() => { charactersApi.listRegistry().then(setRegistry).catch(console.error); }, []);
 
-  if (!activeStoryId || !activeBranchId) {
+  if (!activeStoryId) {
     return <div className="text-xs text-muted py-1">Open a story first.</div>;
   }
 
@@ -43,7 +41,7 @@ export function CharactersPanel() {
     if (!trimmed || busy) return;
     setBusy(true);
     try {
-      await createCharacter(activeStoryId, activeBranchId, trimmed, anchor.trim() || undefined);
+      await createCharacter(activeStoryId, trimmed, anchor.trim() || undefined);
       setName("");
       setAnchor("");
       setCreating(false);
@@ -59,7 +57,7 @@ export function CharactersPanel() {
     setEditName(entity.name);
     setEditAnchor(entity.appearance_anchor ?? "");
     try {
-      const values = await charactersApi.listAttributes(activeBranchId, entity.id);
+      const values = await charactersApi.listAttributes(activeStoryId, entity.id);
       setAttributes(values);
       setAttributeDrafts(Object.fromEntries(values.map((value) => [value.attribute_id, String(value.value)])));
       setAttributeToAdd("");
@@ -75,10 +73,10 @@ export function CharactersPanel() {
       for (const attribute of attributes) {
         const value = Number(attributeDrafts[attribute.attribute_id] ?? attribute.value);
         if (Number.isFinite(value) && value !== attribute.value) {
-          await charactersApi.setAttribute(activeBranchId, editingId, attribute.attribute_id, value);
+          await charactersApi.setAttribute(activeStoryId, editingId, attribute.attribute_id, value);
         }
       }
-      await updateCharacter(activeStoryId, activeBranchId, editingId, trimmed, editAnchor.trim() || undefined);
+      await updateCharacter(activeStoryId, editingId, trimmed, editAnchor.trim() || undefined);
       setEditingId(null);
     } catch (e) {
       console.error(e);
@@ -93,7 +91,7 @@ export function CharactersPanel() {
     if (busy || !editingId) return;
     setBusy(true);
     try {
-      await deleteCharacter(activeStoryId, activeBranchId, editingId);
+      await deleteCharacter(activeStoryId, editingId);
       setEditingId(null);
     } catch (e) {
       console.error(e);
@@ -106,7 +104,7 @@ export function CharactersPanel() {
     if (!editingId) return;
     const value = Number(attributeDrafts[attributeId]);
     if (!Number.isFinite(value)) return;
-    const saved = await charactersApi.setAttribute(activeBranchId, editingId, attributeId, value);
+    const saved = await charactersApi.setAttribute(activeStoryId, editingId, attributeId, value);
     setAttributes((current) => current.some((item) => item.attribute_id === attributeId)
       ? current.map((item) => item.attribute_id === attributeId ? saved : item)
       : [...current, saved].sort((a, b) => a.canonical_name.localeCompare(b.canonical_name)));
@@ -114,7 +112,7 @@ export function CharactersPanel() {
 
   const removeAttribute = async (attributeId: string) => {
     if (!editingId) return;
-    await charactersApi.removeAttribute(activeBranchId, editingId, attributeId);
+    await charactersApi.removeAttribute(activeStoryId, editingId, attributeId);
     setAttributes((current) => current.filter((item) => item.attribute_id !== attributeId));
   };
 
@@ -124,7 +122,7 @@ export function CharactersPanel() {
     const midpoint = (definition.min + definition.max) / 2;
     setAttributeDrafts((current) => ({ ...current, [definition.id]: String(midpoint) }));
     if (!editingId) return;
-    const saved = await charactersApi.setAttribute(activeBranchId, editingId, definition.id, midpoint);
+    const saved = await charactersApi.setAttribute(activeStoryId, editingId, definition.id, midpoint);
     setAttributes((current) => [...current, saved].sort((a, b) => a.canonical_name.localeCompare(b.canonical_name)));
     setAttributeToAdd("");
   };

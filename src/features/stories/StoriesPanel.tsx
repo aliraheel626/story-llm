@@ -1,16 +1,16 @@
 import { useEffect, useState } from "react";
-import { useAppStore } from "../../app/store";
+import { useStoryStore } from "../story/store";
 import { DEFAULT_STORY_TITLE } from "../../shared/types";
 
 export function StoriesPanel() {
-  const stories = useAppStore((s) => s.stories);
-  const storiesLoading = useAppStore((s) => s.storiesLoading);
-  const activeStoryId = useAppStore((s) => s.activeStoryId);
-  const draft = useAppStore((s) => s.draft);
-  const loadStories = useAppStore((s) => s.loadStories);
-  const startDraft = useAppStore((s) => s.startDraft);
-  const setActiveStory = useAppStore((s) => s.setActiveStory);
-  const deleteStory = useAppStore((s) => s.deleteStory);
+  const stories = useStoryStore((s) => s.stories);
+  const storiesLoading = useStoryStore((s) => s.storiesLoading);
+  const activeStoryId = useStoryStore((s) => s.activeStoryId);
+  const draft = useStoryStore((s) => s.draft);
+  const loadStories = useStoryStore((s) => s.loadStories);
+  const startDraft = useStoryStore((s) => s.startDraft);
+  const setActiveStory = useStoryStore((s) => s.setActiveStory);
+  const deleteStory = useStoryStore((s) => s.deleteStory);
 
   const [deletingId, setDeletingId] = useState<string | null>(null);
 

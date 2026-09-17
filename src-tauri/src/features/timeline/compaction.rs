@@ -88,22 +88,22 @@ fn format_summary(summary: &ContextSummary) -> String {
 /// transcript text.
 fn latest_summary_artifact(
     pool: &Pool,
-    branch_id: &str,
+    story_id: &str,
     before_seq: Option<i64>,
 ) -> Option<SummaryArtifact> {
     let conn = pool.get().ok()?;
     let payload_json: String = match before_seq {
         Some(before_seq) => conn
             .query_row(
-                "SELECT payload_json FROM timeline_entries WHERE branch_id = ?1 AND kind = ?2 AND seq < ?3 ORDER BY seq DESC LIMIT 1",
-                rusqlite::params![branch_id, kind::CONTEXT_SUMMARY, before_seq],
+                "SELECT payload_json FROM timeline_entries WHERE story_id = ?1 AND kind = ?2 AND seq < ?3 ORDER BY seq DESC LIMIT 1",
+                rusqlite::params![story_id, kind::CONTEXT_SUMMARY, before_seq],
                 |row| row.get(0),
             )
             .ok()?,
         None => conn
             .query_row(
-                "SELECT payload_json FROM timeline_entries WHERE branch_id = ?1 AND kind = ?2 ORDER BY seq DESC LIMIT 1",
-                rusqlite::params![branch_id, kind::CONTEXT_SUMMARY],
+                "SELECT payload_json FROM timeline_entries WHERE story_id = ?1 AND kind = ?2 ORDER BY seq DESC LIMIT 1",
+                rusqlite::params![story_id, kind::CONTEXT_SUMMARY],
                 |row| row.get(0),
             )
             .ok()?,
@@ -165,7 +165,7 @@ pub(crate) fn raw_tail_boundary(
 
 pub async fn prepare_history(
     pool: &Pool,
-    branch_id: &str,
+    story_id: &str,
     config: &TextModelConfig,
     preamble: &str,
     prompt: &str,
@@ -176,7 +176,7 @@ pub async fn prepare_history(
     prepare_history_with_compactor(
         HistoryPreparation {
             pool,
-            branch_id,
+            story_id,
             config,
             preamble,
             prompt,
@@ -190,7 +190,7 @@ pub async fn prepare_history(
 
 struct HistoryPreparation<'a> {
     pool: &'a Pool,
-    branch_id: &'a str,
+    story_id: &'a str,
     config: &'a TextModelConfig,
     preamble: &'a str,
     prompt: &'a str,
@@ -207,7 +207,7 @@ where
 {
     let HistoryPreparation {
         pool,
-        branch_id,
+        story_id,
         config,
         preamble,
         prompt,
@@ -241,13 +241,13 @@ where
     let carry_over = history
         .first()
         .is_some_and(|turn| turn.content.starts_with("[Authoritative context summary]"))
-        .then(|| latest_summary_artifact(pool, branch_id, before_seq))
+        .then(|| latest_summary_artifact(pool, story_id, before_seq))
         .flatten();
     let evict_from = usize::from(carry_over.is_some());
 
     match compactor
         .compact(
-            branch_id,
+            story_id,
             &history_messages[evict_from..split],
             carry_over.as_ref(),
         )
@@ -262,7 +262,7 @@ where
                 if let Some(boundary) = boundary {
                     repository::append_entry(
                         tx,
-                        branch_id,
+                        story_id,
                         kind::CONTEXT_SUMMARY,
                         "hidden",
                         Some(&summary_text),
@@ -395,7 +395,7 @@ mod tests {
         let compacted = prepare_history_with_compactor(
             HistoryPreparation {
                 pool: &pool,
-                branch_id: "branch",
+                story_id: "story",
                 config: &config,
                 preamble: "preamble",
                 prompt: "prompt",
@@ -415,18 +415,13 @@ mod tests {
         let pool = crate::shared::db::test_pool();
         let conn = pool.get().unwrap();
         conn.execute(
-            "INSERT INTO stories (id, title, created_at, updated_at, settings_json, default_branch_id) VALUES ('s', 'story', 'now', 'now', '{}', 'b')",
-            [],
-        )
-        .unwrap();
-        conn.execute(
-            "INSERT INTO branches (id, story_id, parent_branch_id, forked_at_entry_id, name, created_at) VALUES ('b', 's', NULL, NULL, 'main', 'now')",
+            "INSERT INTO stories (id, title, created_at, updated_at, settings_json) VALUES ('s', 'story', 'now', 'now', '{}')",
             [],
         )
         .unwrap();
         let first = repository::append_entry(
             &conn,
-            "b",
+            "s",
             kind::NARRATION,
             "visible",
             Some("Earlier narration"),
@@ -439,7 +434,7 @@ mod tests {
         early_payload["through_entry_id"] = serde_json::json!(first.id);
         repository::append_entry(
             &conn,
-            "b",
+            "s",
             kind::CONTEXT_SUMMARY,
             "hidden",
             Some("safe context"),
@@ -449,7 +444,7 @@ mod tests {
         .unwrap();
         let target = repository::append_entry(
             &conn,
-            "b",
+            "s",
             kind::NARRATION,
             "visible",
             Some("Retry target"),
@@ -462,7 +457,7 @@ mod tests {
         late_payload["through_entry_id"] = serde_json::json!(target.id);
         repository::append_entry(
             &conn,
-            "b",
+            "s",
             kind::CONTEXT_SUMMARY,
             "hidden",
             Some("future leaked fact"),
@@ -473,11 +468,11 @@ mod tests {
         drop(conn);
 
         assert_eq!(
-            latest_summary_artifact(&pool, "b", None).unwrap().0.prose,
+            latest_summary_artifact(&pool, "s", None).unwrap().0.prose,
             "future leaked fact"
         );
         assert_eq!(
-            latest_summary_artifact(&pool, "b", Some(target.seq))
+            latest_summary_artifact(&pool, "s", Some(target.seq))
                 .unwrap()
                 .0
                 .prose,
@@ -509,7 +504,7 @@ mod tests {
         let compacted = prepare_history_with_compactor(
             HistoryPreparation {
                 pool: &pool,
-                branch_id: "b",
+                story_id: "s",
                 config: &config,
                 preamble: "preamble",
                 prompt: "prompt",
@@ -530,12 +525,7 @@ mod tests {
         let pool = crate::shared::db::test_pool();
         let conn = pool.get().unwrap();
         conn.execute(
-            "INSERT INTO stories (id, title, created_at, updated_at, settings_json, default_branch_id) VALUES ('s', 'story', 'now', 'now', '{}', 'b')",
-            [],
-        )
-        .unwrap();
-        conn.execute(
-            "INSERT INTO branches (id, story_id, parent_branch_id, forked_at_entry_id, name, created_at) VALUES ('b', 's', NULL, NULL, 'main', 'now')",
+            "INSERT INTO stories (id, title, created_at, updated_at, settings_json) VALUES ('s', 'story', 'now', 'now', '{}')",
             [],
         )
         .unwrap();
@@ -543,7 +533,7 @@ mod tests {
         for index in 0..18 {
             repository::append_entry(
                 &conn,
-                "b",
+                "s",
                 if index % 2 == 0 {
                     kind::PLAYER_MESSAGE
                 } else {
@@ -561,7 +551,7 @@ mod tests {
         }
         let player_before_target = repository::append_entry(
             &conn,
-            "b",
+            "s",
             kind::PLAYER_MESSAGE,
             "visible",
             Some("I open the sealed door."),
@@ -571,7 +561,7 @@ mod tests {
         .unwrap();
         let target = repository::append_entry(
             &conn,
-            "b",
+            "s",
             kind::NARRATION,
             "visible",
             Some("The original door response."),
@@ -583,7 +573,7 @@ mod tests {
 
         // This is the exact bounded read and compaction path used by
         // retry_narration before its replacement variant is appended.
-        let history = load_history(&pool, "b", Some(target.seq)).unwrap();
+        let history = load_history(&pool, "s", Some(target.seq)).unwrap();
         assert_eq!(
             history.last().and_then(|turn| turn.entry_id.as_deref()),
             Some(player_before_target.id.as_str())
@@ -600,7 +590,7 @@ mod tests {
         let compacted = prepare_history_with_compactor(
             HistoryPreparation {
                 pool: &pool,
-                branch_id: "b",
+                story_id: "s",
                 config: &config,
                 preamble: "preamble",
                 prompt: "retry prompt",
@@ -626,7 +616,7 @@ mod tests {
 
         let intervening_player = repository::append_entry(
             &conn,
-            "b",
+            "s",
             kind::PLAYER_MESSAGE,
             "visible",
             Some("I step through."),
@@ -636,7 +626,7 @@ mod tests {
         .unwrap();
         let intervening_narration = repository::append_entry(
             &conn,
-            "b",
+            "s",
             kind::NARRATION,
             "visible",
             Some("Dust rises beyond the threshold."),
@@ -646,7 +636,7 @@ mod tests {
         .unwrap();
         let variant = repository::append_entry(
             &conn,
-            "b",
+            "s",
             kind::NARRATION_VARIANT,
             "hidden",
             Some("The retried door response."),
@@ -661,7 +651,7 @@ mod tests {
                 && intervening_narration.seq < variant.seq
         );
 
-        let raw = repository::list_logical_entries(&conn, "b").unwrap();
+        let raw = repository::list_logical_entries(&conn, "s").unwrap();
         let visible = reducer::active_visible_entries(&raw);
         let target_index = visible
             .iter()
@@ -680,7 +670,7 @@ mod tests {
             .any(|item| item.id == variant.id && item.is_selected));
         drop(conn);
 
-        let rebuilt = load_history(&pool, "b", None).unwrap();
+        let rebuilt = load_history(&pool, "s", None).unwrap();
         let rebuilt_text = rebuilt
             .iter()
             .map(|turn| turn.content.as_str())
@@ -704,7 +694,7 @@ mod tests {
         );
         assert!(!rebuilt_text.contains(&"The original door response."));
 
-        let bounded = load_history(&pool, "b", Some(target.seq)).unwrap();
+        let bounded = load_history(&pool, "s", Some(target.seq)).unwrap();
         assert!(!bounded
             .iter()
             .any(|turn| turn.content.contains("new compacted context")));

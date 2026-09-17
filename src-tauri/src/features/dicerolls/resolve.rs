@@ -72,7 +72,7 @@ pub fn persist_roll(
     let base = timeline_repository::get_entry(conn, entry_id)?;
     timeline_repository::append_entry(
         conn,
-        &base.branch_id,
+        &base.story_id,
         timeline_kind::DICEROLL,
         "hidden",
         Some(&format!(

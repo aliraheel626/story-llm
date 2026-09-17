@@ -1,37 +1,35 @@
 import { useEffect, useState } from "react";
-import { useAppStore } from "../../app/store";
-import { useAuthorNoteStore } from "./store";
+import { useStoryStore } from "../story/store";
 
 export function WorldPanel() {
-  const activeStoryId = useAppStore((s) => s.activeStoryId);
-  const activeBranchId = useAppStore((s) => s.stories.find((story) => story.id === s.activeStoryId)?.default_branch_id ?? null);
-  const noteByStory = useAuthorNoteStore((s) => s.noteByStory);
-  const loading = useAuthorNoteStore((s) => s.loading);
-  const saving = useAuthorNoteStore((s) => s.saving);
-  const load = useAuthorNoteStore((s) => s.load);
-  const save = useAuthorNoteStore((s) => s.save);
+  const activeStoryId = useStoryStore((s) => s.activeStoryId);
+  const note = useStoryStore((s) => activeStoryId ? s.bundles[activeStoryId]?.authorNote : undefined);
+  const loading = useStoryStore((s) => activeStoryId ? (s.bundles[activeStoryId]?.authorNoteLoading ?? false) : false);
+  const saving = useStoryStore((s) => activeStoryId ? (s.bundles[activeStoryId]?.authorNoteSaving ?? false) : false);
+  const loadAuthorNote = useStoryStore((s) => s.loadAuthorNote);
+  const saveAuthorNote = useStoryStore((s) => s.saveAuthorNote);
 
   const [draft, setDraft] = useState("");
   const [savedNotice, setSavedNotice] = useState(false);
 
   useEffect(() => {
-    if (activeStoryId) load(activeStoryId);
-  }, [activeStoryId, load]);
+    if (activeStoryId) loadAuthorNote(activeStoryId);
+  }, [activeStoryId, loadAuthorNote]);
 
   useEffect(() => {
-    if (activeStoryId) setDraft(noteByStory[activeStoryId] ?? "");
-  }, [activeStoryId, noteByStory]);
+    if (activeStoryId) setDraft(note ?? "");
+  }, [activeStoryId, note]);
 
-  if (!activeStoryId || !activeBranchId) {
+  if (!activeStoryId) {
     return <div className="text-xs text-muted py-1">Open a story first.</div>;
   }
-  if (loading && noteByStory[activeStoryId] === undefined) {
+  if (loading && note == null) {
     return <div className="text-xs text-muted py-1">Loading...</div>;
   }
 
   const onSave = async () => {
     try {
-      await save(activeStoryId, activeBranchId, draft);
+      await saveAuthorNote(activeStoryId, draft);
       setSavedNotice(true);
       setTimeout(() => setSavedNotice(false), 2000);
     } catch (e) {

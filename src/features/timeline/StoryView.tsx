@@ -1,36 +1,34 @@
 import { useEffect, useRef } from "react";
-import { useAppStore } from "../../app/store";
 import { DEFAULT_STORY_TITLE, timelineInputMode } from "../../shared/types";
 import type { NarrativePayload, TimelineEntry } from "../../shared/types";
+import { useStoryStore } from "../story/store";
 import { EditableStoryTitle } from "../stories/EditableStoryTitle";
 import { TimelineEntryView } from "./TimelineEntryView";
 import { TurnActivity, toolCallsFromEvents, type TurnActivityData } from "./TurnActivity";
 import { Composer } from "./Composer";
-import { branchEntryKey, useStoryStore } from "./store";
+
+const EMPTY_ENTRIES: TimelineEntry[] = [];
 
 function usePrefersReducedMotion() {
   return typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
 
 export function StoryView() {
-  const activeStoryId = useAppStore((s) => s.activeStoryId);
-  const stories = useAppStore((s) => s.stories);
-  const draft = useAppStore((s) => s.draft);
+  const activeStoryId = useStoryStore((s) => s.activeStoryId);
+  const stories = useStoryStore((s) => s.stories);
+  const draft = useStoryStore((s) => s.draft);
   const activeStory = stories.find((s) => s.id === activeStoryId);
-  const branchId = activeStory?.default_branch_id ?? null;
 
-  const entriesByBranch = useStoryStore((s) => s.entriesByBranch);
+  const entries = useStoryStore((s) => activeStoryId ? (s.bundles[activeStoryId]?.entries ?? EMPTY_ENTRIES) : EMPTY_ENTRIES);
   const loadTimeline = useStoryStore((s) => s.loadTimeline);
-  const loadImagesForBranch = useStoryStore((s) => s.loadImagesForBranch);
-  const loadRollsForBranch = useStoryStore((s) => s.loadRollsForBranch);
-  const imagesByEntry = useStoryStore((s) => s.imagesByEntry);
-  const variantsByEntry = useStoryStore((s) => s.variantsByEntry);
-  const rollByEntry = useStoryStore((s) => s.rollByEntry);
-  const streaming = useStoryStore((s) => (branchId ? s.streamingByBranch[branchId] : undefined));
-  const hidden = useStoryStore((s) => (branchId ? s.hiddenByBranch[branchId] : undefined));
-  const lastTurnActivity = useStoryStore((s) => (branchId ? s.turnActivityByBranch[branchId] : undefined));
-
-  const entries = branchId ? entriesByBranch[branchId] ?? [] : [];
+  const loadImagesForStory = useStoryStore((s) => s.loadImagesForStory);
+  const loadRollsForStory = useStoryStore((s) => s.loadRollsForStory);
+  const imagesByEntry = useStoryStore((s) => activeStoryId ? s.bundles[activeStoryId]?.imagesByEntry : undefined);
+  const variantsByEntry = useStoryStore((s) => activeStoryId ? s.bundles[activeStoryId]?.variantsByEntry : undefined);
+  const rollsByEntry = useStoryStore((s) => activeStoryId ? s.bundles[activeStoryId]?.rollsByEntry : undefined);
+  const streaming = useStoryStore((s) => activeStoryId ? s.bundles[activeStoryId]?.streaming : undefined);
+  const hidden = useStoryStore((s) => activeStoryId ? s.bundles[activeStoryId]?.hidden : undefined);
+  const lastTurnActivity = useStoryStore((s) => activeStoryId ? s.bundles[activeStoryId]?.turnActivity : undefined);
   const scrollRef = useRef<HTMLDivElement>(null);
   const pinRef = useRef<HTMLDivElement>(null);
   const reducedMotion = usePrefersReducedMotion();
@@ -43,7 +41,7 @@ export function StoryView() {
    */
   const activityFor = (entry: TimelineEntry, isLastEntry: boolean): TurnActivityData | undefined => {
     if (entry.kind !== "narration") return undefined;
-    const selected = variantsByEntry[entry.id]?.find((variant) => variant.is_selected);
+    const selected = variantsByEntry?.[entry.id]?.find((variant) => variant.is_selected);
     const thoughts = selected ? selected.thoughts : (entry.payload as NarrativePayload).thoughts;
     const tools = toolCallsFromEvents(entry.id, hidden);
     // Hidden events for the turn that just finished aren't in the store until
@@ -59,12 +57,12 @@ export function StoryView() {
   };
 
   useEffect(() => {
-    if (branchId) {
-      loadTimeline(branchId);
-      loadImagesForBranch(branchId);
-      loadRollsForBranch(branchId);
+    if (activeStoryId) {
+      loadTimeline(activeStoryId);
+      loadImagesForStory(activeStoryId);
+      loadRollsForStory(activeStoryId);
     }
-  }, [branchId, loadTimeline, loadImagesForBranch, loadRollsForBranch]);
+  }, [activeStoryId, loadTimeline, loadImagesForStory, loadRollsForStory]);
 
   const isStreamingAppend = streaming?.mode === "append";
   const isStreamingReplace = streaming?.mode === "replace";
@@ -79,10 +77,9 @@ export function StoryView() {
     pinRef.current?.scrollIntoView({ block: "start", behavior: reducedMotion ? "auto" : "smooth" });
   }, [pinKey, reducedMotion]);
 
-  // A draft is a story that doesn't exist yet: composed client-side, created
-  // on first submit (see Composer's ensureBranch).
-  const drafting = draft && !(activeStory && branchId);
-  if ((!activeStory || !branchId) && !drafting) {
+  // A draft is composed client-side and created on first submit.
+  const drafting = draft && !activeStory;
+  if (!activeStory && !drafting) {
     return (
       <div className="flex h-full flex-1 items-center justify-center">
         <div className="text-center">
@@ -129,11 +126,11 @@ export function StoryView() {
                 {activity && <TurnActivity activity={activity} />}
                 <TimelineEntryView
                   entry={entry}
-                  branchId={branchId!}
+                  storyId={activeStoryId!}
                   isLast={isLastEntry}
-                  images={imagesByEntry[entry.id]}
-                  variants={variantsByEntry[entry.id]}
-                  rollSummaries={rollByEntry[branchEntryKey(branchId!, entry.id)]}
+                  images={imagesByEntry?.[entry.id]}
+                  variants={variantsByEntry?.[entry.id]}
+                  rollSummaries={rollsByEntry?.[entry.id]}
                 />
               </div>
             );
@@ -157,7 +154,7 @@ export function StoryView() {
         </div>
       </div>
 
-      <Composer branchId={branchId} />
+      <Composer storyId={activeStoryId} />
     </div>
   );
 }

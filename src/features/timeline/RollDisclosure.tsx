@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { EntityAttributeValue, RollDetail } from "../../shared/types";
-import { branchEntryKey, useStoryStore } from "./store";
+import { useStoryStore } from "../story/store";
 
 function attrLine(attrs: EntityAttributeValue[]): string {
   return attrs.map((a) => `${a.canonical_name} ${Math.round(a.value)}/${Math.round(a.max)}`).join(", ");
@@ -19,16 +19,16 @@ function matchupLabel(summary: RollDetail): string {
 }
 
 /** `summary` is the cheap, always-available version (names, no attribute
- * snapshots) from the branch-wide bulk load; all details for the entry are
+ * snapshots) from the story-wide bulk load; all details for the entry are
  * fetched together, then matched by roll identity. */
-export function RollDisclosure({ branchId, entryId, summary }: { branchId: string; entryId: string; summary: RollDetail }) {
+export function RollDisclosure({ storyId, entryId, summary }: { storyId: string; entryId: string; summary: RollDetail }) {
   const [open, setOpen] = useState(false);
-  const details = useStoryStore((s) => s.rollDetailByEntry[branchEntryKey(branchId, entryId)]);
+  const details = useStoryStore((s) => s.bundles[storyId]?.rollDetailByEntry[entryId]);
   const detail = details?.find((candidate) => candidate.roll.id === summary.roll.id);
   const loadRollDetail = useStoryStore((s) => s.loadRollDetail);
 
   const toggle = () => {
-    if (!open && !details) loadRollDetail(branchId, entryId);
+    if (!open && !details) loadRollDetail(storyId, entryId);
     setOpen((v) => !v);
   };
 

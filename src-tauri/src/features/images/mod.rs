@@ -55,7 +55,7 @@ struct IllustrationDecision<'a> {
 
 async fn decide_illustration(
     pool: &Pool,
-    branch_id: &str,
+    story_id: &str,
     before_seq: Option<i64>,
     config: &ai::TextModelConfig,
     decision: IllustrationDecision<'_>,
@@ -66,9 +66,9 @@ async fn decide_illustration(
         decision.hint,
         decision.known_characters,
     );
-    let history = narration::history::load_history(pool, branch_id, before_seq)?;
+    let history = narration::history::load_history(pool, story_id, before_seq)?;
     let history = crate::features::timeline::compaction::prepare_history(
-        pool, branch_id, config, &preamble, &prompt, history, before_seq,
+        pool, story_id, config, &preamble, &prompt, history, before_seq,
     )
     .await;
     let image_requests = Arc::new(Mutex::new(Vec::new()));
@@ -95,16 +95,15 @@ async fn decide_illustration(
 fn known_characters(
     conn: &rusqlite::Connection,
     story_id: &str,
-    branch_id: &str,
 ) -> AppResult<Vec<(String, String)>> {
     let mut stmt = conn.prepare(
-        "SELECT entities.id, branch_entity_state.name
-         FROM entities JOIN branch_entity_state ON branch_entity_state.entity_id = entities.id
-         WHERE entities.story_id = ?1 AND branch_entity_state.branch_id = ?2
-           AND entities.kind = 'character' AND branch_entity_state.is_present = 1",
+        "SELECT entities.id, story_entity_state.name
+         FROM entities JOIN story_entity_state ON story_entity_state.entity_id = entities.id
+         WHERE entities.story_id = ?1 AND story_entity_state.story_id = ?1
+           AND entities.kind = 'character' AND story_entity_state.is_present = 1",
     )?;
     let characters = stmt
-        .query_map(rusqlite::params![story_id, branch_id], |row| {
+        .query_map([story_id], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
         })?
         .collect::<Result<_, _>>()?;
@@ -117,16 +116,7 @@ fn illustration_context(
 ) -> AppResult<(TimelineEntry, Vec<(String, String)>)> {
     let conn = pool.get()?;
     let active = timeline_repository::active_entry(&conn, entry_id)?;
-    let story_id: String = conn
-        .query_row(
-            "SELECT branches.story_id FROM timeline_entries
-             JOIN branches ON branches.id = timeline_entries.branch_id
-             WHERE timeline_entries.id = ?1",
-            [entry_id],
-            |row| row.get(0),
-        )
-        .map_err(|_| AppError::NotFound(format!("timeline entry {entry_id} not found")))?;
-    let characters = known_characters(&conn, &story_id, &active.branch_id)?;
+    let characters = known_characters(&conn, &active.story_id)?;
     Ok((active, characters))
 }
 
@@ -146,7 +136,7 @@ fn compose_image_prompt(style: &str, description: &str, matched: &[&(String, Str
 
 /// Turns a finalized passage plus an optional guiding `hint` into a generated,
 /// stored scene image for the player's manual "See" trigger. A mandatory,
-/// single-tool agent turn writes the description with branch history and
+/// single-tool agent turn writes the description with story history and
 /// known-character ids as context.
 pub(crate) async fn generate_for_entry(
     app: &AppHandle,
@@ -166,7 +156,7 @@ pub(crate) async fn generate_for_entry(
     let text_config = settings::resolve_text_model(app, pool)?;
     let request = decide_illustration(
         pool,
-        &active.branch_id,
+        &active.story_id,
         Some(active.seq),
         &text_config,
         IllustrationDecision {
@@ -190,7 +180,6 @@ pub(crate) async fn generate_for_entry(
 fn characters_by_ids(
     conn: &rusqlite::Connection,
     story_id: &str,
-    branch_id: &str,
     ids: &[String],
 ) -> AppResult<Vec<(String, String)>> {
     if ids.is_empty() {
@@ -201,15 +190,15 @@ fn characters_by_ids(
         .collect::<Vec<_>>()
         .join(", ");
     let mut stmt = conn.prepare(&format!(
-        "SELECT branch_entity_state.name, branch_entity_state.appearance_anchor
-         FROM entities JOIN branch_entity_state ON branch_entity_state.entity_id = entities.id
-         WHERE entities.story_id = ? AND branch_entity_state.branch_id = ?
-           AND entities.kind = 'character' AND branch_entity_state.is_present = 1
-           AND branch_entity_state.appearance_anchor IS NOT NULL
+        "SELECT story_entity_state.name, story_entity_state.appearance_anchor
+         FROM entities JOIN story_entity_state ON story_entity_state.entity_id = entities.id
+         WHERE entities.story_id = ? AND story_entity_state.story_id = ?
+           AND entities.kind = 'character' AND story_entity_state.is_present = 1
+           AND story_entity_state.appearance_anchor IS NOT NULL
            AND entities.id IN ({placeholders})"
     ))?;
     let params = std::iter::once(story_id)
-        .chain(std::iter::once(branch_id))
+        .chain(std::iter::once(story_id))
         .chain(ids.iter().map(String::as_str));
     let characters = stmt
         .query_map(rusqlite::params_from_iter(params), |row| {
@@ -237,16 +226,14 @@ async fn generate_from_description(
 
     let characters = {
         let conn = pool.get()?;
-        let (story_id, branch_id): (String, String) = conn
+        let story_id: String = conn
             .query_row(
-                "SELECT branches.story_id, timeline_entries.branch_id
-                 FROM timeline_entries JOIN branches ON branches.id = timeline_entries.branch_id
-                 WHERE timeline_entries.id = ?1",
+                "SELECT story_id FROM timeline_entries WHERE id = ?1",
                 [entry_id],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+                |row| row.get(0),
             )
             .map_err(|_| AppError::NotFound(format!("timeline entry {entry_id} not found")))?;
-        characters_by_ids(&conn, &story_id, &branch_id, character_ids)?
+        characters_by_ids(&conn, &story_id, character_ids)?
     };
     let matched: Vec<&(String, String)> = characters.iter().collect();
     let prompt = compose_image_prompt(&settings.style, description, &matched);
@@ -300,20 +287,20 @@ async fn persist_and_store_image(
             ));
         }
         tx.execute(
-            "INSERT INTO image_assets (id, entry_id, path, prompt, seed, provider, created_at)
-             VALUES (?1, ?2, ?3, ?4, NULL, ?5, ?6)",
-            rusqlite::params![id, entry_id, path_str, prompt, "openrouter", now],
+            "INSERT INTO image_assets (id, entry_id, path, prompt, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            rusqlite::params![id, entry_id, path_str, prompt, now],
         )?;
         let base = timeline_repository::get_entry(tx, entry_id)?;
         timeline_repository::append_entry(
             tx,
-            &base.branch_id,
+            &base.story_id,
             timeline_kind::IMAGE_GENERATED,
             "hidden",
             Some(&format!(
                 "A scene image was generated depicting: {description}"
             )),
-            &serde_json::json!({"asset_id": id, "prompt": prompt, "provider": "openrouter"}),
+            &serde_json::json!({"asset_id": id, "prompt": prompt}),
             Some(entry_id),
         )?;
         Ok(())
@@ -328,14 +315,12 @@ async fn persist_and_store_image(
         entry_id: entry_id.to_string(),
         path: path_str,
         prompt,
-        seed: None,
-        provider: "openrouter".to_string(),
         created_at: now,
     })
 }
 
 /// Manual scene-image trigger ("See" composer mode). `prompt_hint`, the target
-/// passage, prior branch history, and known-character ids are handed to a
+/// passage, prior story history, and known-character ids are handed to a
 /// mandatory `illustrate_scene` agent turn before image generation.
 #[tauri::command]
 pub async fn generate_scene_image(
@@ -391,38 +376,21 @@ fn row_to_image(row: &rusqlite::Row) -> rusqlite::Result<StoryImage> {
         entry_id: row.get(1)?,
         path: row.get(2)?,
         prompt: row.get(3)?,
-        seed: row.get(4)?,
-        provider: row.get(5)?,
-        created_at: row.get(6)?,
+        created_at: row.get(4)?,
     })
 }
 
-#[tauri::command]
-pub fn list_images_for_entry(pool: State<Pool>, entry_id: String) -> AppResult<Vec<StoryImage>> {
-    let conn = pool.get()?;
-    let mut stmt = conn.prepare(
-        "SELECT id, entry_id, path, prompt, seed, provider, created_at
-         FROM image_assets WHERE entry_id = ?1 ORDER BY created_at ASC",
-    )?;
-    let rows = stmt.query_map([entry_id], row_to_image)?;
-    let mut out = Vec::new();
-    for r in rows {
-        out.push(r?);
-    }
-    Ok(out)
-}
-
-/// All images for every passage in a branch, in one call — the frontend
+/// All images for every passage in a story, in one call — the frontend
 /// groups them by `entry_id` itself rather than issuing one query per entry.
 #[tauri::command]
-pub fn list_images_for_branch(pool: State<Pool>, branch_id: String) -> AppResult<Vec<StoryImage>> {
+pub fn list_images_for_story(pool: State<Pool>, story_id: String) -> AppResult<Vec<StoryImage>> {
     let conn = pool.get()?;
     let mut stmt = conn.prepare(
-        "SELECT image_assets.id, image_assets.entry_id, image_assets.path, image_assets.prompt, image_assets.seed, image_assets.provider, image_assets.created_at
+        "SELECT image_assets.id, image_assets.entry_id, image_assets.path, image_assets.prompt, image_assets.created_at
          FROM image_assets JOIN timeline_entries ON timeline_entries.id = image_assets.entry_id
-         WHERE timeline_entries.branch_id = ?1 ORDER BY image_assets.created_at ASC",
+         WHERE timeline_entries.story_id = ?1 ORDER BY image_assets.created_at ASC",
     )?;
-    let rows = stmt.query_map([branch_id], row_to_image)?;
+    let rows = stmt.query_map([story_id], row_to_image)?;
     let mut out = Vec::new();
     for r in rows {
         out.push(r?);

@@ -5,18 +5,18 @@ use crate::features::timeline::{model::kind, reducer, repository};
 use crate::shared::db::Pool;
 use crate::shared::error::AppResult;
 
-/// The most recent durable summary's `through_seq` for a branch, if one
+/// The most recent durable summary's `through_seq` for a story, if one
 /// exists — everything at or before it is superseded and doesn't need to be
 /// refetched/redecoded on every turn.
 fn latest_summary_through_seq(
     conn: &rusqlite::Connection,
-    branch_id: &str,
+    story_id: &str,
     before_seq: Option<i64>,
 ) -> AppResult<Option<i64>> {
     let mut stmt = conn.prepare(
-        "SELECT seq, payload_json FROM timeline_entries WHERE branch_id = ?1 AND kind = ?2 ORDER BY seq DESC",
+        "SELECT seq, payload_json FROM timeline_entries WHERE story_id = ?1 AND kind = ?2 ORDER BY seq DESC",
     )?;
-    let rows = stmt.query_map(rusqlite::params![branch_id, kind::CONTEXT_SUMMARY], |row| {
+    let rows = stmt.query_map(rusqlite::params![story_id, kind::CONTEXT_SUMMARY], |row| {
         Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
     })?;
     for row in rows {
@@ -46,25 +46,25 @@ fn latest_summary_through_seq(
     Ok(None)
 }
 
-/// Reconstructs model history from the logical branch timeline. The latest
+/// Reconstructs model history from the story timeline. The latest
 /// durable summary replaces its covered prefix; later revisions and hidden
 /// authoritative events are replayed in chronological order. When a summary
 /// already exists, only entries from its boundary onward are even fetched —
-/// a long, already-compacted branch doesn't reload and re-decode everything
+/// a long, already-compacted story doesn't reload and re-decode everything
 /// before it on every turn.
 pub(crate) fn load_history(
     pool: &Pool,
-    branch_id: &str,
+    story_id: &str,
     before_seq: Option<i64>,
 ) -> AppResult<Vec<HistoryTurn>> {
     let conn = pool.get()?;
-    let since_seq = latest_summary_through_seq(&conn, branch_id, before_seq)?;
+    let since_seq = latest_summary_through_seq(&conn, story_id, before_seq)?;
     let mut raw = match since_seq {
-        Some(seq) => repository::list_logical_entries_since(&conn, branch_id, seq)?,
-        None => repository::list_logical_entries(&conn, branch_id)?,
+        Some(seq) => repository::list_logical_entries_since(&conn, story_id, seq)?,
+        None => repository::list_logical_entries(&conn, story_id)?,
     };
     if let Some(seq) = before_seq {
-        raw.retain(|entry| entry.branch_id != branch_id || entry.seq < seq);
+        raw.retain(|entry| entry.seq < seq);
     }
     Ok(history_from_entries(&raw))
 }
@@ -178,7 +178,7 @@ mod tests {
     ) -> TimelineEntry {
         TimelineEntry {
             id: id.into(),
-            branch_id: "b".into(),
+            story_id: "s".into(),
             seq,
             kind: event_kind.into(),
             visibility: if matches!(event_kind, kind::PLAYER_MESSAGE | kind::NARRATION) {
@@ -322,20 +322,14 @@ mod tests {
         let pool = crate::shared::db::test_pool();
         let conn = pool.get().unwrap();
         conn.execute(
-            "INSERT INTO stories (id, title, created_at, updated_at, settings_json, default_branch_id)
-             VALUES ('s', 'story', 'now', 'now', '{}', 'b')",
-            [],
-        )
-        .unwrap();
-        conn.execute(
-            "INSERT INTO branches (id, story_id, parent_branch_id, forked_at_entry_id, name, created_at)
-             VALUES ('b', 's', NULL, NULL, 'main', 'now')",
+            "INSERT INTO stories (id, title, created_at, updated_at, settings_json)
+             VALUES ('s', 'story', 'now', 'now', '{}')",
             [],
         )
         .unwrap();
         let old = repository::append_entry(
             &conn,
-            "b",
+            "s",
             kind::PLAYER_MESSAGE,
             "visible",
             Some("Keep this older turn."),
@@ -345,7 +339,7 @@ mod tests {
         .unwrap();
         let narration = repository::append_entry(
             &conn,
-            "b",
+            "s",
             kind::NARRATION,
             "visible",
             Some("Temporary narration."),
@@ -355,7 +349,7 @@ mod tests {
         .unwrap();
         let query = repository::append_entry(
             &conn,
-            "b",
+            "s",
             kind::ENTITY_QUERIED,
             "hidden",
             Some("Looked up: Bob"),
@@ -365,7 +359,7 @@ mod tests {
         .unwrap();
         repository::append_entry(
             &conn,
-            "b",
+            "s",
             kind::CONTEXT_SUMMARY,
             "hidden",
             Some("Invalid after the query is deleted."),
@@ -389,7 +383,7 @@ mod tests {
         assert_eq!(query_count, 0);
         drop(conn);
 
-        let history = load_history(&pool, "b", None).unwrap();
+        let history = load_history(&pool, "s", None).unwrap();
         assert_eq!(history.len(), 1);
         assert_eq!(history[0].entry_id.as_deref(), Some(old.id.as_str()));
         assert_eq!(history[0].content, "Keep this older turn.");
@@ -400,19 +394,14 @@ mod tests {
         let pool = crate::shared::db::test_pool();
         let conn = pool.get().unwrap();
         conn.execute(
-            "INSERT INTO stories (id, title, created_at, updated_at, settings_json, default_branch_id) VALUES ('s', 'story', 'now', 'now', '{}', 'b')",
-            [],
-        )
-        .unwrap();
-        conn.execute(
-            "INSERT INTO branches (id, story_id, parent_branch_id, forked_at_entry_id, name, created_at) VALUES ('b', 's', NULL, NULL, 'main', 'now')",
+            "INSERT INTO stories (id, title, created_at, updated_at, settings_json) VALUES ('s', 'story', 'now', 'now', '{}')",
             [],
         )
         .unwrap();
 
         let old_narration = repository::append_entry(
             &conn,
-            "b",
+            "s",
             kind::NARRATION,
             "visible",
             Some("The archive was entered."),
@@ -422,7 +411,7 @@ mod tests {
         .unwrap();
         repository::append_entry(
             &conn,
-            "b",
+            "s",
             kind::CONTEXT_SUMMARY,
             "hidden",
             Some("The party entered the archive."),
@@ -432,7 +421,7 @@ mod tests {
         .unwrap();
         let intervening_player = repository::append_entry(
             &conn,
-            "b",
+            "s",
             kind::PLAYER_MESSAGE,
             "visible",
             Some("I inspect the sealed door."),
@@ -442,7 +431,7 @@ mod tests {
         .unwrap();
         let retry_target = repository::append_entry(
             &conn,
-            "b",
+            "s",
             kind::NARRATION,
             "visible",
             Some("The seal begins to glow."),
@@ -452,7 +441,7 @@ mod tests {
         .unwrap();
         repository::append_entry(
             &conn,
-            "b",
+            "s",
             kind::CONTEXT_SUMMARY,
             "hidden",
             Some("The party reached the sealed door."),
@@ -466,7 +455,7 @@ mod tests {
         // summary event itself along with the target.
         repository::append_entry(
             &conn,
-            "b",
+            "s",
             kind::CONTEXT_SUMMARY,
             "hidden",
             Some("A later retry summarized through the player's action."),
@@ -479,7 +468,7 @@ mod tests {
         .unwrap();
         drop(conn);
 
-        let history = load_history(&pool, "b", Some(retry_target.seq)).unwrap();
+        let history = load_history(&pool, "s", Some(retry_target.seq)).unwrap();
         assert_eq!(history.len(), 2);
         assert!(history[0]
             .content

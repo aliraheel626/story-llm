@@ -1,7 +1,6 @@
 import { useEffect } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { useStoryStore } from "../features/timeline/store";
-import { useAppStore } from "./store";
+import { useStoryStore } from "../features/story/store";
 import type {
   NarrationDonePayload,
   NarrationDeltaPayload,
@@ -35,7 +34,7 @@ export function useNarrationEvents() {
         useStoryStore.getState()._toolActivity(event.payload);
       }),
       listen<StoryTitleUpdatedPayload>("story-title-updated", (event) => {
-        useAppStore.getState().applyStoryTitle(event.payload.story_id, event.payload.title);
+        useStoryStore.getState().applyStoryTitle(event.payload.story_id, event.payload.title);
       }),
       listen<string>("scene-image-pending", (event) => {
         useStoryStore.getState()._imagePending(event.payload);

@@ -1,27 +1,27 @@
 import { useEffect, useRef, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { isPlayerEntry, timelineInputMode, type NarrationVariant, type RollDetail, type StoryImage, type TimelineEntry } from "../../shared/types";
-import { useStoryStore } from "./store";
+import { useStoryStore } from "../story/store";
 import { RollDisclosure } from "./RollDisclosure";
 
 interface TimelineEntryViewProps {
   entry: TimelineEntry;
-  branchId: string;
+  storyId: string;
   isLast: boolean;
   images?: StoryImage[];
   variants?: NarrationVariant[];
   rollSummaries?: RollDetail[];
 }
 
-export function TimelineEntryView({ entry, branchId, isLast, images, variants, rollSummaries }: TimelineEntryViewProps) {
-  const streaming = useStoryStore((s) => s.streamingByBranch[branchId]);
+export function TimelineEntryView({ entry, storyId, isLast, images, variants, rollSummaries }: TimelineEntryViewProps) {
+  const streaming = useStoryStore((s) => s.bundles[storyId]?.streaming);
   const retryNarration = useStoryStore((s) => s.retryNarration);
   const eraseLastExchange = useStoryStore((s) => s.eraseLastExchange);
   const generateVariant = useStoryStore((s) => s.generateVariant);
   const editEntry = useStoryStore((s) => s.editEntry);
   const selectVariant = useStoryStore((s) => s.selectVariant);
   const loadVariantsForEntry = useStoryStore((s) => s.loadVariantsForEntry);
-  const imagePending = useStoryStore((s) => s.imagePendingFor.includes(entry.id));
+  const imagePending = useStoryStore((s) => s.bundles[storyId]?.imagePendingFor.includes(entry.id) ?? false);
 
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(entry.content ?? "");
@@ -35,7 +35,7 @@ export function TimelineEntryView({ entry, branchId, isLast, images, variants, r
 
   useEffect(() => {
     if (isLast && isNarrator && !variants) {
-      loadVariantsForEntry(entry.id);
+      loadVariantsForEntry(storyId, entry.id);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isLast, isNarrator, entry.id]);
@@ -58,7 +58,7 @@ export function TimelineEntryView({ entry, branchId, isLast, images, variants, r
     if (!trimmed) return;
     setActionBusy(true);
     try {
-      await editEntry(branchId, entry.id, trimmed);
+      await editEntry(storyId, entry.id, trimmed);
       setEditing(false);
     } catch (e) {
       console.error("failed to save edit", e);
@@ -86,11 +86,11 @@ export function TimelineEntryView({ entry, branchId, isLast, images, variants, r
 
   const onPrevVariant = () => {
     if (!variants || selectedIndex <= 0) return;
-    runAction(() => selectVariant(branchId, entry.id, variants[selectedIndex - 1].id));
+    runAction(() => selectVariant(storyId, entry.id, variants[selectedIndex - 1].id));
   };
   const onNextVariant = () => {
     if (!variants || selectedIndex === -1 || selectedIndex >= variants.length - 1) return;
-    runAction(() => selectVariant(branchId, entry.id, variants[selectedIndex + 1].id));
+    runAction(() => selectVariant(storyId, entry.id, variants[selectedIndex + 1].id));
   };
 
   const displayContent = isBeingReplaced ? streaming!.text : (entry.content ?? "");
@@ -153,7 +153,7 @@ export function TimelineEntryView({ entry, branchId, isLast, images, variants, r
           {editControls}
           {isLast && !anyStreamBusy && (
             <button
-              onClick={() => runAction(() => eraseLastExchange(branchId))}
+              onClick={() => runAction(() => eraseLastExchange(storyId))}
               disabled={actionBusy}
               className="rounded border border-border bg-bg px-2 py-0.5 text-[11px] text-danger hover:opacity-80 disabled:opacity-40"
             >
@@ -179,7 +179,7 @@ export function TimelineEntryView({ entry, branchId, isLast, images, variants, r
       )}
 
       {rollSummaries?.map((summary) => (
-        <RollDisclosure key={summary.roll.id} branchId={branchId} entryId={entry.id} summary={summary} />
+        <RollDisclosure key={summary.roll.id} storyId={storyId} entryId={entry.id} summary={summary} />
       ))}
 
       {images?.map((image) => (
@@ -223,21 +223,21 @@ export function TimelineEntryView({ entry, branchId, isLast, images, variants, r
             {isLast && !anyStreamBusy && (
               <>
                 <button
-                  onClick={() => runAction(() => generateVariant(branchId, entry.id))}
+                  onClick={() => runAction(() => generateVariant(storyId, entry.id))}
                   disabled={actionBusy}
                   className="rounded border border-border bg-bg px-2 py-0.5 text-[11px] text-muted hover:text-text disabled:opacity-40"
                 >
                   Swipe
                 </button>
                 <button
-                  onClick={() => runAction(() => retryNarration(branchId, entry.id))}
+                  onClick={() => runAction(() => retryNarration(storyId, entry.id))}
                   disabled={actionBusy}
                   className="rounded border border-border bg-bg px-2 py-0.5 text-[11px] text-muted hover:text-text disabled:opacity-40"
                 >
                   Retry
                 </button>
                 <button
-                  onClick={() => runAction(() => eraseLastExchange(branchId))}
+                  onClick={() => runAction(() => eraseLastExchange(storyId))}
                   disabled={actionBusy}
                   className="rounded border border-border bg-bg px-2 py-0.5 text-[11px] text-danger hover:opacity-80 disabled:opacity-40"
                 >

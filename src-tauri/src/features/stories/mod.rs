@@ -23,8 +23,7 @@ use model::Story;
 /// mirrors `DEFAULT_STORY_TITLE` in `src/lib/types.ts`.
 pub const DEFAULT_STORY_TITLE: &str = "New story";
 
-fn read_settings_json(pool: &State<Pool>, story_id: &str) -> AppResult<serde_json::Value> {
-    let conn = pool.get()?;
+fn read_settings_json(conn: &rusqlite::Connection, story_id: &str) -> AppResult<serde_json::Value> {
     let raw: String = conn
         .query_row(
             "SELECT settings_json FROM stories WHERE id = ?1",
@@ -39,7 +38,7 @@ fn read_settings_json(pool: &State<Pool>, story_id: &str) -> AppResult<serde_jso
 pub fn list_stories(pool: State<Pool>) -> AppResult<Vec<Story>> {
     let conn = pool.get()?;
     let mut stmt = conn.prepare(
-        "SELECT id, title, created_at, updated_at, settings_json, default_branch_id
+        "SELECT id, title, created_at, updated_at, settings_json
          FROM stories ORDER BY updated_at DESC",
     )?;
     let rows = stmt.query_map([], |row| {
@@ -49,7 +48,6 @@ pub fn list_stories(pool: State<Pool>) -> AppResult<Vec<Story>> {
             created_at: row.get(2)?,
             updated_at: row.get(3)?,
             settings_json: row.get(4)?,
-            default_branch_id: row.get(5)?,
         })
     })?;
     let mut out = Vec::new();
@@ -76,27 +74,14 @@ pub fn create_story(
         title
     };
     let settings_json = settings.unwrap_or_else(|| json!({})).to_string();
-    let mut conn = pool.get()?;
+    let conn = pool.get()?;
     let now = Utc::now().to_rfc3339();
     let story_id = Uuid::new_v4().to_string();
-    let branch_id = Uuid::new_v4().to_string();
-
-    let tx = conn.transaction()?;
-    tx.execute(
-        "INSERT INTO stories (id, title, created_at, updated_at, settings_json, default_branch_id)
-         VALUES (?1, ?2, ?3, ?3, ?4, NULL)",
+    conn.execute(
+        "INSERT INTO stories (id, title, created_at, updated_at, settings_json)
+         VALUES (?1, ?2, ?3, ?3, ?4)",
         rusqlite::params![story_id, title, now, settings_json],
     )?;
-    tx.execute(
-        "INSERT INTO branches (id, story_id, parent_branch_id, forked_at_entry_id, name, created_at)
-         VALUES (?1, ?2, NULL, NULL, 'main', ?3)",
-        rusqlite::params![branch_id, story_id, now],
-    )?;
-    tx.execute(
-        "UPDATE stories SET default_branch_id = ?1 WHERE id = ?2",
-        rusqlite::params![branch_id, story_id],
-    )?;
-    tx.commit()?;
 
     Ok(Story {
         id: story_id,
@@ -104,7 +89,6 @@ pub fn create_story(
         created_at: now.clone(),
         updated_at: now,
         settings_json,
-        default_branch_id: Some(branch_id),
     })
 }
 
@@ -138,8 +122,7 @@ pub fn delete_story(pool: State<Pool>, story_id: String) -> AppResult<()> {
             let mut stmt = tx.prepare(
                 "SELECT image_assets.path FROM image_assets
                  JOIN timeline_entries ON timeline_entries.id = image_assets.entry_id
-                 JOIN branches ON branches.id = timeline_entries.branch_id
-                 WHERE branches.story_id = ?1",
+                 WHERE timeline_entries.story_id = ?1",
             )?;
             let paths = stmt
                 .query_map([&story_id], |row| row.get(0))?
@@ -193,24 +176,20 @@ const TITLE_MAX_CHARS: usize = 60;
 /// failure leaves the placeholder in place and the next exchange retries.
 pub fn maybe_auto_title(app: &AppHandle, pool: &Pool, story_id: &str) {
     let Ok(conn) = pool.get() else { return };
-    let Ok((title, branch_id)) = conn.query_row(
-        "SELECT title, default_branch_id FROM stories WHERE id = ?1",
-        [story_id],
-        |r| Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?)),
-    ) else {
+    let Ok(title) = conn.query_row("SELECT title FROM stories WHERE id = ?1", [story_id], |r| {
+        r.get::<_, String>(0)
+    }) else {
         return;
     };
     if title != DEFAULT_STORY_TITLE {
         return;
     }
-    let Some(branch_id) = branch_id else { return };
-
     // The opening exchange: the earliest one or two visible timeline entries,
     // folded through the reducer so an edit/swipe made before this fires
     // (auto-title only runs once, right after the first exchange) titles
     // from what the player actually sees rather than the discarded original.
     let opening: Vec<(String, String)> = {
-        let Ok(raw) = timeline_repository::list_logical_entries(&conn, &branch_id) else {
+        let Ok(raw) = timeline_repository::list_logical_entries(&conn, story_id) else {
             return;
         };
         timeline_reducer::active_visible_entries(&raw)
@@ -295,7 +274,8 @@ fn sanitize_title(raw: &str) -> Option<String> {
 /// constraints, whatever the player wants the narrator to keep in mind.
 #[tauri::command]
 pub fn get_author_note(pool: State<Pool>, story_id: String) -> AppResult<String> {
-    let settings = read_settings_json(&pool, &story_id)?;
+    let conn = pool.get()?;
+    let settings = read_settings_json(&conn, &story_id)?;
     Ok(settings
         .get("author_note")
         .and_then(|v| v.as_str())
@@ -304,23 +284,18 @@ pub fn get_author_note(pool: State<Pool>, story_id: String) -> AppResult<String>
 }
 
 #[tauri::command]
-pub fn save_author_note(
-    pool: State<Pool>,
-    story_id: String,
-    branch_id: String,
-    note: String,
-) -> AppResult<()> {
-    let mut settings = read_settings_json(&pool, &story_id)?;
-    settings["author_note"] = json!(note.trim());
+pub fn save_author_note(pool: State<Pool>, story_id: String, note: String) -> AppResult<()> {
     let now = Utc::now().to_rfc3339();
     with_transaction(pool.inner(), |tx| {
+        let mut settings = read_settings_json(tx, &story_id)?;
+        settings["author_note"] = json!(note.trim());
         tx.execute(
             "UPDATE stories SET settings_json = ?1, updated_at = ?2 WHERE id = ?3",
             rusqlite::params![settings.to_string(), now, story_id],
         )?;
         timeline_repository::append_entry(
             tx,
-            &branch_id,
+            &story_id,
             timeline_kind::CONTEXT_NOTE_UPDATED,
             "hidden",
             Some(&format!("Author's note was updated: {}", note.trim())),

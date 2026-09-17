@@ -23,9 +23,7 @@ use crate::shared::error::{AppError, AppResult};
 
 use super::history::load_history;
 use super::model::ActiveStoryEntry;
-use super::repository::{
-    get_last_story_entry, get_story_id_for_branch, image_paths_for_entry, insert_story_entry,
-};
+use super::repository::{get_last_story_entry, image_paths_for_entry, insert_story_entry};
 use super::tools::{self, TurnStaging};
 
 const NARRATOR_PREAMBLE: &str = "You are the narrator of an interactive story. Continue the scene \
@@ -71,7 +69,7 @@ fn narrator_image_tools(
 pub fn submit_story(
     app: AppHandle,
     pool: State<Pool>,
-    branch_id: String,
+    story_id: String,
     content: String,
 ) -> AppResult<SubmitTurnResult> {
     let content = content.trim();
@@ -82,10 +80,6 @@ pub fn submit_story(
     // Resolve everything that can fail before inserting: with no model
     // configured this must error without leaving a draft row the UI never saw.
     let config = settings::resolve_text_model(&app, pool.inner())?;
-    let story_id = {
-        let conn = pool.get()?;
-        get_story_id_for_branch(&conn, &branch_id)?
-    };
     let reasoning_effort =
         diceroll_settings::get_story_diceroll_settings(pool.clone(), story_id.clone())?
             .reasoning_effort;
@@ -94,7 +88,7 @@ pub fn submit_story(
     // settings failure leaves the timeline untouched. The draft is guaranteed
     // to remain in the raw-tail floor, so it does not need a durable entry id
     // for compaction-boundary persistence here.
-    let mut history = load_history(pool.inner(), &branch_id, None)?;
+    let mut history = load_history(pool.inner(), &story_id, None)?;
     history.push(HistoryTurn {
         entry_id: None,
         is_player: false,
@@ -103,7 +97,6 @@ pub fn submit_story(
     let preamble_plan = story_context_preamble(
         pool.inner(),
         &story_id,
-        &branch_id,
         &history,
         &config,
         STORY_CONTINUE_PROMPT,
@@ -112,17 +105,17 @@ pub fn submit_story(
 
     let authored = {
         let conn = pool.get()?;
-        insert_story_entry(&conn, &branch_id, "narrator", "story", content, None)?
+        insert_story_entry(&conn, &story_id, "narrator", "story", content, None)?
     };
-    kick_auto_title(&app, pool.inner(), &branch_id);
+    kick_auto_title(&app, pool.inner(), &story_id);
 
     let stream_id = Uuid::new_v4().to_string();
-    let branch_id_bg = branch_id.clone();
+    let story_id_bg = story_id.clone();
     spawn_narration(
         NarrationJob {
             app,
             pool: pool.inner().clone(),
-            branch_id: branch_id.clone(),
+            story_id: story_id.clone(),
             config,
             history,
             prompt: STORY_CONTINUE_PROMPT.to_string(),
@@ -137,7 +130,7 @@ pub fn submit_story(
                 app,
                 pool,
                 sid,
-                branch_id_bg,
+                story_id_bg,
                 "generated_story".to_string(),
                 visible,
                 thoughts,
@@ -222,12 +215,11 @@ fn author_note_preamble(pool: &Pool, story_id: &str) -> AppResult<String> {
 fn entity_context_preamble(
     pool: &Pool,
     story_id: &str,
-    branch_id: &str,
     detailed_entity_ids: Option<&HashSet<String>>,
 ) -> AppResult<String> {
     let author_note = author_note_preamble(pool, story_id)?;
     let conn = pool.get()?;
-    let entities = crate::features::entities::list_entities_sync(&conn, story_id, branch_id, None)?;
+    let entities = crate::features::entities::list_entities_sync(&conn, story_id, None)?;
     let entity_ids = entities
         .iter()
         .filter(|entity| {
@@ -238,7 +230,7 @@ fn entity_context_preamble(
     let attrs_by_entity =
         crate::features::entities::attributes::list_entity_attributes_for_entities_sync(
             &conn,
-            branch_id,
+            story_id,
             &entity_ids,
         )?;
 
@@ -346,13 +338,12 @@ fn narrator_preamble(extra_preamble: &str) -> String {
 fn story_context_preamble(
     pool: &Pool,
     story_id: &str,
-    branch_id: &str,
     history: &[HistoryTurn],
     config: &TextModelConfig,
     prompt: &str,
     additional_preamble: &str,
 ) -> AppResult<PreamblePlan> {
-    let full_context = entity_context_preamble(pool, story_id, branch_id, None)?;
+    let full_context = entity_context_preamble(pool, story_id, None)?;
     let full_extra = combine_preambles(&[full_context, additional_preamble.to_string()]);
     let memory = settings::read_narrator_memory_settings(pool)?;
     if memory.preamble_mode == "all" {
@@ -373,7 +364,7 @@ fn story_context_preamble(
         prompt,
     );
     let touched = touched_entity_ids(pool, &history[split..])?;
-    let scoped_context = entity_context_preamble(pool, story_id, branch_id, Some(&touched))?;
+    let scoped_context = entity_context_preamble(pool, story_id, Some(&touched))?;
     Ok(PreamblePlan {
         model_extra: combine_preambles(&[scoped_context, additional_preamble.to_string()]),
         compaction_extra: full_extra,
@@ -423,7 +414,7 @@ fn roll_context_preamble(pool: &Pool, entry_id: &str) -> AppResult<String> {
 /// above this point failed first.
 async fn append_narration_entry(
     pool: &Pool,
-    branch_id: &str,
+    story_id: &str,
     input_mode: &str,
     visible: &str,
     thoughts: Option<&str>,
@@ -439,7 +430,7 @@ async fn append_narration_entry(
     };
     let mut conn = pool.get()?;
     let tx = conn.transaction()?;
-    let passage = insert_story_entry(&tx, branch_id, "narrator", input_mode, visible, thoughts)?;
+    let passage = insert_story_entry(&tx, story_id, "narrator", input_mode, visible, thoughts)?;
     if let Some(guard) = staging_guard {
         guard.commit(&tx, &passage.id)?;
     }
@@ -465,7 +456,7 @@ fn append_variant(
         )?;
         timeline_repository::append_entry(
             tx,
-            &target.branch_id,
+            &target.story_id,
             timeline_kind::NARRATION_VARIANT,
             "hidden",
             Some(visible),
@@ -489,15 +480,8 @@ fn append_variant(
 /// has its first passage, ask the text model to name it. Never blocks or
 /// fails the passage write — generation is fire-and-forget and reports back
 /// via the `story-title-updated` event (see `stories::maybe_auto_title`).
-fn kick_auto_title(app: &AppHandle, pool: &Pool, branch_id: &str) {
-    let story_id = {
-        let Ok(conn) = pool.get() else { return };
-        match get_story_id_for_branch(&conn, branch_id) {
-            Ok(id) => id,
-            Err(_) => return,
-        }
-    };
-    stories::maybe_auto_title(app, pool, &story_id);
+fn kick_auto_title(app: &AppHandle, pool: &Pool, story_id: &str) {
+    stories::maybe_auto_title(app, pool, story_id);
 }
 
 /// Spawns the background narration stream shared by every path that produces
@@ -510,7 +494,7 @@ fn kick_auto_title(app: &AppHandle, pool: &Pool, branch_id: &str) {
 struct NarrationJob {
     app: AppHandle,
     pool: Pool,
-    branch_id: String,
+    story_id: String,
     config: TextModelConfig,
     history: Vec<HistoryTurn>,
     prompt: String,
@@ -542,7 +526,7 @@ where
     let NarrationJob {
         app,
         pool,
-        branch_id,
+        story_id,
         config,
         history,
         prompt,
@@ -557,7 +541,7 @@ where
         let compaction_preamble = narrator_preamble(&preamble_plan.compaction_extra);
         let history = crate::features::timeline::compaction::prepare_history(
             &pool,
-            &branch_id,
+            &story_id,
             &config,
             &compaction_preamble,
             &prompt,
@@ -671,14 +655,14 @@ async fn finish_append(
     app: AppHandle,
     pool: Pool,
     stream_id: String,
-    branch_id: String,
+    story_id: String,
     input_mode: String,
     visible: String,
     thoughts: Option<String>,
 ) -> AppResult<()> {
     let passage = append_narration_entry(
         &pool,
-        &branch_id,
+        &story_id,
         &input_mode,
         &visible,
         thoughts.as_deref(),
@@ -691,7 +675,7 @@ async fn finish_append(
         timeline_repository::active_entry(&conn, &entry_id)?
     };
     let _ = app.emit("narration-done", NarrationDonePayload { stream_id, entry });
-    kick_auto_title(&app, &pool, &branch_id);
+    kick_auto_title(&app, &pool, &story_id);
     Ok(())
 }
 
@@ -721,7 +705,7 @@ fn dice_mode_instruction(dice_mode: DiceMode) -> &'static str {
 pub async fn submit_turn(
     app: AppHandle,
     pool: State<'_, Pool>,
-    branch_id: String,
+    story_id: String,
     input_mode: String,
     content: String,
 ) -> AppResult<SubmitTurnResult> {
@@ -735,12 +719,8 @@ pub async fn submit_turn(
         )));
     }
 
-    let history = load_history(&pool, &branch_id, None)?;
+    let history = load_history(&pool, &story_id, None)?;
     let config = settings::resolve_text_model(&app, pool.inner())?;
-    let story_id = {
-        let conn = pool.get()?;
-        get_story_id_for_branch(&conn, &branch_id)?
-    };
     let dicerolls = diceroll_settings::get_story_diceroll_settings(pool.clone(), story_id.clone())?;
     let dice_mode = DiceMode::from_str_or_default(&dicerolls.dice_mode);
     let reasoning_effort = dicerolls.reasoning_effort.clone();
@@ -751,7 +731,7 @@ pub async fn submit_turn(
 
     let player_passage = {
         let conn = pool.get()?;
-        insert_story_entry(&conn, &branch_id, "player", &input_mode, content, None)?
+        insert_story_entry(&conn, &story_id, "player", &input_mode, content, None)?
     };
 
     let prompt = format_prompt(&input_mode, content);
@@ -760,7 +740,6 @@ pub async fn submit_turn(
         let staging = Arc::new(Mutex::new(TurnStaging::new(
             pool.inner().clone(),
             story_id.clone(),
-            branch_id.clone(),
         )));
         let tool_set = tools::narrator_tools(staging.clone(), config.clone(), dice_mode);
         (tool_set, Some(staging))
@@ -784,7 +763,6 @@ pub async fn submit_turn(
     let preamble_plan = story_context_preamble(
         pool.inner(),
         &story_id,
-        &branch_id,
         &history,
         &config,
         &prompt,
@@ -792,13 +770,13 @@ pub async fn submit_turn(
     )?;
 
     let stream_id = Uuid::new_v4().to_string();
-    let branch_id_bg = branch_id.clone();
+    let story_id_bg = story_id.clone();
 
     spawn_narration(
         NarrationJob {
             app,
             pool: pool.inner().clone(),
-            branch_id: branch_id.clone(),
+            story_id: story_id.clone(),
             config,
             history,
             prompt,
@@ -811,7 +789,7 @@ pub async fn submit_turn(
         move |app, pool, sid, visible, thoughts| async move {
             let passage = append_narration_entry(
                 &pool,
-                &branch_id_bg,
+                &story_id_bg,
                 "generated",
                 &visible,
                 thoughts.as_deref(),
@@ -829,7 +807,7 @@ pub async fn submit_turn(
                     entry,
                 },
             );
-            kick_auto_title(&app, &pool, &branch_id_bg);
+            kick_auto_title(&app, &pool, &story_id_bg);
             let requests = std::mem::take(&mut *image_requests.lock().await);
             if !requests.is_empty() {
                 images::generate_from_narrator_requests(
@@ -859,7 +837,7 @@ pub async fn submit_turn(
 pub async fn submit_guide(
     app: AppHandle,
     pool: State<'_, Pool>,
-    branch_id: String,
+    story_id: String,
     note: String,
 ) -> AppResult<String> {
     let note = note.trim();
@@ -867,12 +845,8 @@ pub async fn submit_guide(
         return Err(AppError::Invalid("note must not be empty".into()));
     }
 
-    let history = load_history(&pool, &branch_id, None)?;
+    let history = load_history(&pool, &story_id, None)?;
     let config = settings::resolve_text_model(&app, pool.inner())?;
-    let story_id = {
-        let conn = pool.get()?;
-        get_story_id_for_branch(&conn, &branch_id)?
-    };
     let reasoning_effort =
         diceroll_settings::get_story_diceroll_settings(pool.clone(), story_id.clone())?
             .reasoning_effort;
@@ -880,23 +854,16 @@ pub async fn submit_guide(
         "[Director's note — out of character, steer the story but do not narrate it directly: {note}] \
          Continue the scene, letting that note shape what happens next."
     );
-    let preamble_plan = story_context_preamble(
-        pool.inner(),
-        &story_id,
-        &branch_id,
-        &history,
-        &config,
-        &prompt,
-        "",
-    )?;
+    let preamble_plan =
+        story_context_preamble(pool.inner(), &story_id, &history, &config, &prompt, "")?;
 
     let stream_id = Uuid::new_v4().to_string();
-    let branch_id_bg = branch_id.clone();
+    let story_id_bg = story_id.clone();
     spawn_narration(
         NarrationJob {
             app,
             pool: pool.inner().clone(),
-            branch_id: branch_id.clone(),
+            story_id: story_id.clone(),
             config,
             history,
             prompt,
@@ -911,7 +878,7 @@ pub async fn submit_guide(
                 app,
                 pool,
                 sid,
-                branch_id_bg,
+                story_id_bg,
                 "generated_guide".to_string(),
                 visible,
                 thoughts,
@@ -927,14 +894,10 @@ pub async fn submit_guide(
 pub async fn continue_scene(
     app: AppHandle,
     pool: State<'_, Pool>,
-    branch_id: String,
+    story_id: String,
 ) -> AppResult<String> {
-    let history = load_history(&pool, &branch_id, None)?;
+    let history = load_history(&pool, &story_id, None)?;
     let config = settings::resolve_text_model(&app, pool.inner())?;
-    let story_id = {
-        let conn = pool.get()?;
-        get_story_id_for_branch(&conn, &branch_id)?
-    };
     let reasoning_effort =
         diceroll_settings::get_story_diceroll_settings(pool.clone(), story_id.clone())?
             .reasoning_effort;
@@ -942,30 +905,23 @@ pub async fn continue_scene(
     // Continue completes it into prose instead of writing past the note.
     let (prompt, input_mode) = {
         let conn = pool.get()?;
-        match get_last_story_entry(&conn, &branch_id)? {
+        match get_last_story_entry(&conn, &story_id)? {
             Some(p) if p.input_mode == "story" => {
                 (STORY_CONTINUE_PROMPT, "generated_story".to_string())
             }
             _ => (CONTINUE_PROMPT, "generated_continue".to_string()),
         }
     };
-    let preamble_plan = story_context_preamble(
-        pool.inner(),
-        &story_id,
-        &branch_id,
-        &history,
-        &config,
-        prompt,
-        "",
-    )?;
+    let preamble_plan =
+        story_context_preamble(pool.inner(), &story_id, &history, &config, prompt, "")?;
 
     let stream_id = Uuid::new_v4().to_string();
-    let branch_id_bg = branch_id.clone();
+    let story_id_bg = story_id.clone();
     spawn_narration(
         NarrationJob {
             app,
             pool: pool.inner().clone(),
-            branch_id: branch_id.clone(),
+            story_id: story_id.clone(),
             config,
             history,
             prompt: prompt.to_string(),
@@ -976,7 +932,7 @@ pub async fn continue_scene(
             stream_id: stream_id.clone(),
         },
         move |app, pool, sid, visible, thoughts| {
-            finish_append(app, pool, sid, branch_id_bg, input_mode, visible, thoughts)
+            finish_append(app, pool, sid, story_id_bg, input_mode, visible, thoughts)
         },
     );
 
@@ -1012,13 +968,13 @@ impl VariantMode {
 fn start_variant_generation(
     app: AppHandle,
     pool: State<'_, Pool>,
-    branch_id: String,
+    story_id: String,
     entry_id: String,
     mode: VariantMode,
 ) -> AppResult<String> {
     let target = {
         let conn = pool.get()?;
-        let last = get_last_story_entry(&conn, &branch_id)?
+        let last = get_last_story_entry(&conn, &story_id)?
             .ok_or_else(|| AppError::Invalid(format!("no narration to {}", mode.action())))?;
         if last.id != entry_id {
             return Err(AppError::Invalid(format!(
@@ -1035,12 +991,8 @@ fn start_variant_generation(
         last
     };
 
-    let history = load_history(&pool, &branch_id, Some(target.seq))?;
+    let history = load_history(&pool, &story_id, Some(target.seq))?;
     let config = settings::resolve_text_model(&app, pool.inner())?;
-    let story_id = {
-        let conn = pool.get()?;
-        get_story_id_for_branch(&conn, &branch_id)?
-    };
     let reasoning_effort =
         diceroll_settings::get_story_diceroll_settings(pool.clone(), story_id.clone())?
             .reasoning_effort;
@@ -1065,7 +1017,6 @@ fn start_variant_generation(
     let preamble_plan = story_context_preamble(
         pool.inner(),
         &story_id,
-        &branch_id,
         &history,
         &config,
         prompt,
@@ -1077,7 +1028,7 @@ fn start_variant_generation(
         NarrationJob {
             app,
             pool: pool.inner().clone(),
-            branch_id,
+            story_id,
             config,
             history,
             prompt: prompt.to_string(),
@@ -1132,11 +1083,11 @@ fn start_variant_generation(
 pub async fn retry_narration(
     app: AppHandle,
     pool: State<'_, Pool>,
-    branch_id: String,
+    story_id: String,
     entry_id: String,
 ) -> AppResult<RetryResult> {
     let stream_id =
-        start_variant_generation(app, pool, branch_id, entry_id.clone(), VariantMode::Retry)?;
+        start_variant_generation(app, pool, story_id, entry_id.clone(), VariantMode::Retry)?;
     Ok(RetryResult {
         entry_id,
         stream_id,
@@ -1151,10 +1102,10 @@ pub async fn retry_narration(
 pub async fn generate_narration_variant(
     app: AppHandle,
     pool: State<'_, Pool>,
-    branch_id: String,
+    story_id: String,
     entry_id: String,
 ) -> AppResult<String> {
-    start_variant_generation(app, pool, branch_id, entry_id, VariantMode::Swipe)
+    start_variant_generation(app, pool, story_id, entry_id, VariantMode::Swipe)
 }
 
 #[tauri::command]
@@ -1187,7 +1138,7 @@ pub fn select_narration_variant(
         }
         timeline_repository::append_entry(
             tx,
-            &target.branch_id,
+            &target.story_id,
             timeline_kind::NARRATION_SELECTED,
             "hidden",
             None,
@@ -1230,11 +1181,11 @@ pub fn edit_timeline_entry(
     let (image_paths, entry) = with_transaction(pool.inner(), |tx| {
         let image_paths = image_paths_for_entry(tx, &entry_id)?;
         let target = timeline_repository::get_entry(tx, &entry_id)?;
-        let raw = timeline_repository::list_logical_entries(tx, &target.branch_id)?;
+        let raw = timeline_repository::list_logical_entries(tx, &target.story_id)?;
         let applies_to = reducer::active_variant_id(&raw, &entry_id);
         timeline_repository::append_entry(
             tx,
-            &target.branch_id,
+            &target.story_id,
             timeline_kind::CONTENT_EDITED,
             "hidden",
             Some(content),
@@ -1312,9 +1263,9 @@ fn collect_cascade_effects(
 
 fn erase_last_exchange_in_tx(
     tx: &rusqlite::Transaction<'_>,
-    branch_id: &str,
+    story_id: &str,
 ) -> AppResult<(Vec<String>, Vec<String>)> {
-    let Some(last) = get_last_story_entry(tx, branch_id)? else {
+    let Some(last) = get_last_story_entry(tx, story_id)? else {
         return Ok((vec![], vec![]));
     };
     let mut removed = vec![last.id.clone()];
@@ -1327,7 +1278,7 @@ fn erase_last_exchange_in_tx(
     let paired = last.role == "narrator"
         && matches!(last.input_mode.as_str(), "generated" | "generated_story");
     if paired {
-        if let Some(prev) = get_last_story_entry(tx, branch_id)? {
+        if let Some(prev) = get_last_story_entry(tx, story_id)? {
             if prev.role == "player" || prev.input_mode == "story" {
                 image_paths.extend(image_paths_for_entry(tx, &prev.id)?);
                 collect_cascade_effects(tx, &prev.id, &mut doomed_ids, &mut affected_entities)?;
@@ -1342,11 +1293,11 @@ fn erase_last_exchange_in_tx(
     // story doesn't have to redo all its prior compaction after one Erase.
     {
         let mut stmt = tx.prepare(
-            "SELECT id, payload_json FROM timeline_entries WHERE branch_id = ?1 AND kind = ?2",
+            "SELECT id, payload_json FROM timeline_entries WHERE story_id = ?1 AND kind = ?2",
         )?;
         let summaries: Vec<(String, String)> = stmt
             .query_map(
-                rusqlite::params![branch_id, timeline_kind::CONTEXT_SUMMARY],
+                rusqlite::params![story_id, timeline_kind::CONTEXT_SUMMARY],
                 |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
             )?
             .collect::<Result<_, _>>()?;
@@ -1365,12 +1316,10 @@ fn erase_last_exchange_in_tx(
     }
 
     let now = Utc::now().to_rfc3339();
-    crate::features::timeline::projections::replay_entities(tx, branch_id, &affected_entities)?;
+    crate::features::timeline::projections::replay_entities(tx, story_id, &affected_entities)?;
     tx.execute(
-        "UPDATE stories SET updated_at = ?1 WHERE id = (
-             SELECT story_id FROM branches WHERE id = ?2
-         )",
-        rusqlite::params![now, branch_id],
+        "UPDATE stories SET updated_at = ?1 WHERE id = ?2",
+        rusqlite::params![now, story_id],
     )?;
 
     Ok((removed, image_paths))
@@ -1380,9 +1329,9 @@ fn erase_last_exchange_in_tx(
 /// player message (or story draft) that triggered it. Returns the IDs removed
 /// so the frontend can splice locally.
 #[tauri::command]
-pub fn erase_last_exchange(pool: State<Pool>, branch_id: String) -> AppResult<Vec<String>> {
+pub fn erase_last_exchange(pool: State<Pool>, story_id: String) -> AppResult<Vec<String>> {
     let (removed, image_paths) =
-        with_transaction(pool.inner(), |tx| erase_last_exchange_in_tx(tx, &branch_id))?;
+        with_transaction(pool.inner(), |tx| erase_last_exchange_in_tx(tx, &story_id))?;
 
     for path in image_paths {
         let _ = std::fs::remove_file(path);
@@ -1412,20 +1361,14 @@ mod tests {
         let pool = crate::shared::db::test_pool();
         let conn = pool.get().unwrap();
         conn.execute(
-            "INSERT INTO stories (id, title, created_at, updated_at, settings_json, default_branch_id)
-             VALUES ('s', 'story', 'now', 'now', '{}', 'b')",
-            [],
-        )
-        .unwrap();
-        conn.execute(
-            "INSERT INTO branches (id, story_id, parent_branch_id, forked_at_entry_id, name, created_at)
-             VALUES ('b', 's', NULL, NULL, 'main', 'now')",
+            "INSERT INTO stories (id, title, created_at, updated_at, settings_json)
+             VALUES ('s', 'story', 'now', 'now', '{}')",
             [],
         )
         .unwrap();
         let target = insert_story_entry(
             &conn,
-            "b",
+            "s",
             "narrator",
             "generated",
             "original",
@@ -1433,13 +1376,14 @@ mod tests {
         )
         .unwrap();
         conn.execute(
-            "INSERT INTO image_assets VALUES ('image', ?1, 'C:/tmp/variant.png', 'prompt', NULL, 'test', 'now')",
+            "INSERT INTO image_assets (id, entry_id, path, prompt, created_at)
+             VALUES ('image', ?1, 'C:/tmp/variant.png', 'prompt', 'now')",
             [&target.id],
         )
         .unwrap();
         append_entry(
             &conn,
-            "b",
+            "s",
             timeline_kind::IMAGE_GENERATED,
             "hidden",
             Some("image"),
@@ -1469,7 +1413,7 @@ mod tests {
         assert_eq!(active.content.as_deref(), Some("swipe text"));
 
         let conn = pool.get().unwrap();
-        let raw = timeline_repository::list_logical_entries(&conn, "b").unwrap();
+        let raw = timeline_repository::list_logical_entries(&conn, "s").unwrap();
         let variants = raw
             .iter()
             .filter(|entry| entry.kind == timeline_kind::NARRATION_VARIANT)
@@ -1504,14 +1448,8 @@ mod tests {
         let pool = crate::shared::db::test_pool();
         let conn = pool.get().unwrap();
         conn.execute(
-            "INSERT INTO stories (id, title, created_at, updated_at, settings_json, default_branch_id)
-             VALUES ('s', 'story', 'now', 'now', '{}', 'b')",
-            [],
-        )
-        .unwrap();
-        conn.execute(
-            "INSERT INTO branches (id, story_id, parent_branch_id, forked_at_entry_id, name, created_at)
-             VALUES ('b', 's', NULL, NULL, 'main', 'now')",
+            "INSERT INTO stories (id, title, created_at, updated_at, settings_json)
+             VALUES ('s', 'story', 'now', 'now', '{}')",
             [],
         )
         .unwrap();
@@ -1519,7 +1457,6 @@ mod tests {
             &conn,
             "bob",
             "s",
-            "b",
             "character",
             "Bob",
             Some("a red cloak"),
@@ -1531,7 +1468,6 @@ mod tests {
             &conn,
             "mill",
             "s",
-            "b",
             "location",
             "Old Mill",
             Some("a mossy waterwheel"),
@@ -1548,15 +1484,15 @@ mod tests {
             .unwrap();
         conn.execute(
             "INSERT INTO entity_attributes
-             (branch_id, entity_id, attribute_id, value, source, updated_at, last_event_id)
-             VALUES ('b', 'bob', ?1, 7, 'user', 'now', NULL),
-                    ('b', 'mill', ?1, 3, 'user', 'now', NULL)",
+             (story_id, entity_id, attribute_id, value, source, updated_at, last_event_id)
+             VALUES ('s', 'bob', ?1, 7, 'user', 'now', NULL),
+                    ('s', 'mill', ?1, 3, 'user', 'now', NULL)",
             [&trust_id],
         )
         .unwrap();
         let query = append_entry(
             &conn,
-            "b",
+            "s",
             timeline_kind::ENTITY_QUERIED,
             "hidden",
             Some("Looked up: Bob"),
@@ -1581,8 +1517,7 @@ mod tests {
             api_key: "test".into(),
             context_window: 32_768,
         };
-        let plan =
-            story_context_preamble(&pool, "s", "b", &history, &config, "prompt", "").unwrap();
+        let plan = story_context_preamble(&pool, "s", &history, &config, "prompt", "").unwrap();
 
         assert!(plan
             .model_extra
@@ -1601,18 +1536,13 @@ mod tests {
         let pool = crate::shared::db::test_pool();
         let conn = pool.get().unwrap();
         conn.execute(
-            "INSERT INTO stories (id, title, created_at, updated_at, settings_json, default_branch_id) VALUES ('s', 'story', 'now', 'now', '{}', 'b')",
-            [],
-        )
-        .unwrap();
-        conn.execute(
-            "INSERT INTO branches (id, story_id, parent_branch_id, forked_at_entry_id, name, created_at) VALUES ('b', 's', NULL, NULL, 'main', 'now')",
+            "INSERT INTO stories (id, title, created_at, updated_at, settings_json) VALUES ('s', 'story', 'now', 'now', '{}')",
             [],
         )
         .unwrap();
         let narration = append_entry(
             &conn,
-            "b",
+            "s",
             timeline_kind::NARRATION,
             "visible",
             Some("result"),
@@ -1623,7 +1553,7 @@ mod tests {
         for content in ["First roll succeeded.", "Second roll failed."] {
             append_entry(
                 &conn,
-                "b",
+                "s",
                 timeline_kind::DICEROLL,
                 "hidden",
                 Some(content),
@@ -1643,20 +1573,14 @@ mod tests {
         let pool = crate::shared::db::test_pool();
         let conn = pool.get().unwrap();
         conn.execute(
-            "INSERT INTO stories (id, title, created_at, updated_at, settings_json, default_branch_id)
-             VALUES ('s', 'story', 'now', 'now', '{}', 'b')",
-            [],
-        )
-        .unwrap();
-        conn.execute(
-            "INSERT INTO branches (id, story_id, parent_branch_id, forked_at_entry_id, name, created_at)
-             VALUES ('b', 's', NULL, NULL, 'main', 'now')",
+            "INSERT INTO stories (id, title, created_at, updated_at, settings_json)
+             VALUES ('s', 'story', 'now', 'now', '{}')",
             [],
         )
         .unwrap();
         let baseline = append_entry(
             &conn,
-            "b",
+            "s",
             timeline_kind::NARRATION,
             "visible",
             Some("Earlier scene"),
@@ -1668,7 +1592,6 @@ mod tests {
             &conn,
             "mira",
             "s",
-            "b",
             "character",
             "Mira",
             Some("silver hair"),
@@ -1680,7 +1603,6 @@ mod tests {
             &conn,
             "unrelated",
             "s",
-            "b",
             "character",
             "Tomas",
             None,
@@ -1699,7 +1621,7 @@ mod tests {
             crate::features::entities::attributes::find_attribute_by_id(&conn, &trust_id).unwrap();
         crate::features::entities::attributes::apply_attribute_delta(
             &conn,
-            "b",
+            "s",
             "mira",
             &trust,
             2.0,
@@ -1710,14 +1632,14 @@ mod tests {
         .unwrap();
         let mira_last_event_id: String = conn
             .query_row(
-                "SELECT last_event_id FROM branch_entity_state WHERE branch_id = 'b' AND entity_id = 'mira'",
+                "SELECT last_event_id FROM story_entity_state WHERE story_id = 's' AND entity_id = 'mira'",
                 [],
                 |row| row.get(0),
             )
             .unwrap();
         let attribute_last_event_id: String = conn
             .query_row(
-                "SELECT last_event_id FROM entity_attributes WHERE branch_id = 'b' AND entity_id = 'mira' AND attribute_id = ?1",
+                "SELECT last_event_id FROM entity_attributes WHERE story_id = 's' AND entity_id = 'mira' AND attribute_id = ?1",
                 [&trust_id],
                 |row| row.get(0),
             )
@@ -1725,7 +1647,7 @@ mod tests {
         let unrelated_projection: (String, Option<String>, i64, String, String) = conn
             .query_row(
                 "SELECT name, appearance_anchor, is_present, updated_at, last_event_id
-                 FROM branch_entity_state WHERE branch_id = 'b' AND entity_id = 'unrelated'",
+                 FROM story_entity_state WHERE story_id = 's' AND entity_id = 'unrelated'",
                 [],
                 |row| {
                     Ok((
@@ -1740,7 +1662,7 @@ mod tests {
             .unwrap();
         let older_summary = append_entry(
             &conn,
-            "b",
+            "s",
             timeline_kind::CONTEXT_SUMMARY,
             "hidden",
             Some("older summary"),
@@ -1751,7 +1673,7 @@ mod tests {
 
         let player = append_entry(
             &conn,
-            "b",
+            "s",
             timeline_kind::PLAYER_MESSAGE,
             "visible",
             Some("act"),
@@ -1761,7 +1683,7 @@ mod tests {
         .unwrap();
         let narration = append_entry(
             &conn,
-            "b",
+            "s",
             timeline_kind::NARRATION,
             "visible",
             Some("result"),
@@ -1771,7 +1693,7 @@ mod tests {
         .unwrap();
         crate::features::entities::update_entity_sync(
             &conn,
-            "b",
+            "s",
             "mira",
             "Mira Changed",
             Some("black armor"),
@@ -1781,7 +1703,7 @@ mod tests {
         .unwrap();
         crate::features::entities::attributes::apply_attribute_delta(
             &conn,
-            "b",
+            "s",
             "mira",
             &trust,
             3.0,
@@ -1794,7 +1716,6 @@ mod tests {
             &conn,
             "temporary",
             "s",
-            "b",
             "character",
             "Temporary",
             None,
@@ -1804,7 +1725,7 @@ mod tests {
         .unwrap();
         let query = append_entry(
             &conn,
-            "b",
+            "s",
             timeline_kind::ENTITY_QUERIED,
             "hidden",
             Some("Looked up Mira"),
@@ -1821,7 +1742,7 @@ mod tests {
         ] {
             append_entry(
                 &conn,
-                "b",
+                "s",
                 kind,
                 "hidden",
                 Some("derivative"),
@@ -1832,7 +1753,7 @@ mod tests {
         }
         let doomed_summary = append_entry(
             &conn,
-            "b",
+            "s",
             timeline_kind::CONTEXT_SUMMARY,
             "hidden",
             Some("summary"),
@@ -1840,11 +1761,16 @@ mod tests {
             None,
         )
         .unwrap();
-        conn.execute("INSERT INTO image_assets VALUES ('image',?1,'C:/tmp/image.png','prompt',NULL,'test','now')", [&narration.id]).unwrap();
+        conn.execute(
+            "INSERT INTO image_assets (id, entry_id, path, prompt, created_at)
+             VALUES ('image', ?1, 'C:/tmp/image.png', 'prompt', 'now')",
+            [&narration.id],
+        )
+        .unwrap();
         drop(conn);
 
         let (removed, paths) =
-            with_transaction(&pool, |tx| erase_last_exchange_in_tx(tx, "b")).unwrap();
+            with_transaction(&pool, |tx| erase_last_exchange_in_tx(tx, "s")).unwrap();
         assert_eq!(removed, vec![narration.id, player.id]);
         assert_eq!(paths, vec!["C:/tmp/image.png"]);
         let conn = pool.get().unwrap();
@@ -1868,7 +1794,7 @@ mod tests {
         );
         let mira: (String, Option<String>, String) = conn
             .query_row(
-                "SELECT name, appearance_anchor, last_event_id FROM branch_entity_state WHERE branch_id = 'b' AND entity_id = 'mira'",
+                "SELECT name, appearance_anchor, last_event_id FROM story_entity_state WHERE story_id = 's' AND entity_id = 'mira'",
                 [],
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
@@ -1883,7 +1809,7 @@ mod tests {
         );
         let restored_attribute: (f64, String, String) = conn
             .query_row(
-                "SELECT value, source, last_event_id FROM entity_attributes WHERE branch_id = 'b' AND entity_id = 'mira' AND attribute_id = ?1",
+                "SELECT value, source, last_event_id FROM entity_attributes WHERE story_id = 's' AND entity_id = 'mira' AND attribute_id = ?1",
                 [&trust_id],
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
@@ -1894,7 +1820,7 @@ mod tests {
         );
         assert_eq!(
             conn.query_row(
-                "SELECT COUNT(*) FROM branch_entity_state WHERE branch_id = 'b' AND entity_id = 'temporary'",
+                "SELECT COUNT(*) FROM story_entity_state WHERE story_id = 's' AND entity_id = 'temporary'",
                 [],
                 |row| row.get::<_, i64>(0)
             )
@@ -1904,7 +1830,7 @@ mod tests {
         assert_eq!(
             conn.query_row(
                 "SELECT name, appearance_anchor, is_present, updated_at, last_event_id
-                 FROM branch_entity_state WHERE branch_id = 'b' AND entity_id = 'unrelated'",
+                 FROM story_entity_state WHERE story_id = 's' AND entity_id = 'unrelated'",
                 [],
                 |row| Ok((
                     row.get::<_, String>(0)?,

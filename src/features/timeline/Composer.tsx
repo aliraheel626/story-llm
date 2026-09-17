@@ -1,9 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { useAppStore } from "../../app/store";
-import { DEFAULT_DICEROLL_SETTINGS, useDicerollStore } from "../dicerolls/store";
+import { REASONING_EFFORT_OPTIONS, type ReasoningEffort } from "../../shared/types";
 import { useImageModelStore } from "../settings/imageModelStore";
-import { useStoryStore } from "./store";
-import type { ReasoningEffort } from "../../shared/types";
+import { DEFAULT_DICEROLL_SETTINGS, useStoryStore } from "../story/store";
 
 type Mode = "do" | "say" | "story" | "guide" | "see";
 
@@ -15,50 +13,39 @@ const MODES: { id: Mode; label: string; placeholder: string }[] = [
   { id: "see", label: "See", placeholder: 'Optional: what to show — "the bucket", "the girl you are seeing"...' },
 ];
 
-const EFFORT_OPTIONS: { value: ReasoningEffort | ""; label: string }[] = [
-  { value: "", label: "Model default" },
-  { value: "none", label: "None" },
-  { value: "minimal", label: "Minimal" },
-  { value: "low", label: "Low" },
-  { value: "medium", label: "Medium" },
-  { value: "high", label: "High" },
-  { value: "xhigh", label: "Extra high" },
-  { value: "max", label: "Max" },
-];
-
-/** `branchId` is null while composing a not-yet-persisted draft story; the
- *  first submit creates the story and branch (see `ensureBranch`), so an
+/** `storyId` is null while composing a not-yet-persisted draft story; the
+ *  first submit creates the story (see `ensureStory`), so an
  *  abandoned draft never leaves an empty story behind. */
-export function Composer({ branchId }: { branchId: string | null }) {
+export function Composer({ storyId }: { storyId: string | null }) {
   const [mode, setMode] = useState<Mode>("do");
   const [text, setText] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  const createStory = useAppStore((s) => s.createStory);
+  const createStory = useStoryStore((s) => s.createStory);
   const submitTurn = useStoryStore((s) => s.submitTurn);
   const submitStoryText = useStoryStore((s) => s.submitStoryText);
   const submitGuide = useStoryStore((s) => s.submitGuide);
   const continueScene = useStoryStore((s) => s.continueScene);
-  const streaming = useStoryStore((s) => (branchId ? s.streamingByBranch[branchId] : undefined));
-  const timelineLoading = useStoryStore((s) => s.timelineLoading);
-  const turnError = useStoryStore((s) => s.turnError);
-  const entries = useStoryStore((s) => (branchId ? s.entriesByBranch[branchId] : undefined));
+  const streaming = useStoryStore((s) => storyId ? s.bundles[storyId]?.streaming : undefined);
+  const timelineLoading = useStoryStore((s) => storyId ? (s.bundles[storyId]?.timelineLoading ?? false) : false);
+  const turnError = useStoryStore((s) => storyId ? s.bundles[storyId]?.turnError : null);
+  const entries = useStoryStore((s) => storyId ? s.bundles[storyId]?.entries : undefined);
   const generateImageForEntry = useStoryStore((s) => s.generateImageForEntry);
-  const imagePendingFor = useStoryStore((s) => s.imagePendingFor);
-  const imageError = useStoryStore((s) => s.imageError);
+  const imagePendingFor = useStoryStore((s) => storyId ? s.bundles[storyId]?.imagePendingFor : undefined);
+  const imageError = useStoryStore((s) => storyId ? s.bundles[storyId]?.imageError : null);
   const imageSettings = useImageModelStore((s) => s.settings);
   const loadImageSettings = useImageModelStore((s) => s.load);
-  const activeStoryId = useAppStore((s) => s.activeStoryId);
-  const saveSettings = useDicerollStore((s) => s.saveSettings);
+  const saveSettings = useStoryStore((s) => s.saveDiceSettings);
+  const loadDiceSettings = useStoryStore((s) => s.loadDiceSettings);
   const reasoningEffort =
-    (useDicerollStore((s) => (activeStoryId ? s.settingsByStory[activeStoryId] : s.draftSettings)) ?? DEFAULT_DICEROLL_SETTINGS)
+    (useStoryStore((s) => (storyId ? s.bundles[storyId]?.diceSettings : s.draftDiceSettings)) ?? DEFAULT_DICEROLL_SETTINGS)
       .reasoning_effort;
 
   const changeReasoningEffort = async (value: string) => {
     try {
-      await saveSettings(activeStoryId, branchId, { reasoning_effort: (value || null) as ReasoningEffort | null });
+      await saveSettings(storyId, { reasoning_effort: (value || null) as ReasoningEffort | null });
     } catch (e) {
       console.error("failed to save reasoning effort", e);
     }
@@ -66,12 +53,16 @@ export function Composer({ branchId }: { branchId: string | null }) {
 
   const busy = submitting || !!streaming || timelineLoading;
   const lastEntry = entries && entries.length > 0 ? entries[entries.length - 1] : undefined;
-  const imageBusy = !!lastEntry && imagePendingFor.includes(lastEntry.id);
+  const imageBusy = !!lastEntry && (imagePendingFor?.includes(lastEntry.id) ?? false);
   const imagesDisabled = imageSettings ? !imageSettings.enabled : false;
 
   useEffect(() => {
     loadImageSettings();
   }, [loadImageSettings]);
+
+  useEffect(() => {
+    if (storyId) loadDiceSettings(storyId);
+  }, [storyId, loadDiceSettings]);
 
   useEffect(() => {
     const el = textareaRef.current;
@@ -82,11 +73,10 @@ export function Composer({ branchId }: { branchId: string | null }) {
   }, [text, mode]);
 
   /** Lazily persists the story on first submit. No-op once it exists. */
-  const ensureBranch = async (): Promise<string> => {
-    if (branchId) return branchId;
+  const ensureStory = async (): Promise<string> => {
+    if (storyId) return storyId;
     const story = await createStory();
-    if (!story.default_branch_id) throw new Error("new story has no branch");
-    return story.default_branch_id;
+    return story.id;
   };
 
   const onSubmit = async () => {
@@ -97,7 +87,7 @@ export function Composer({ branchId }: { branchId: string | null }) {
       if (!lastEntry || imageBusy || imagesDisabled) return;
       setSubmitting(true);
       try {
-        await generateImageForEntry(lastEntry.id, text.trim() || undefined);
+        await generateImageForEntry(storyId!, lastEntry.id, text.trim() || undefined);
         setText("");
       } catch (e) {
         setError(String(e));
@@ -111,13 +101,13 @@ export function Composer({ branchId }: { branchId: string | null }) {
     if (!trimmed) return;
     setSubmitting(true);
     try {
-      const branch = await ensureBranch();
+      const persistedStoryId = await ensureStory();
       if (mode === "story") {
-        await submitStoryText(branch, trimmed);
+        await submitStoryText(persistedStoryId, trimmed);
       } else if (mode === "guide") {
-        await submitGuide(branch, trimmed);
+        await submitGuide(persistedStoryId, trimmed);
       } else {
-        await submitTurn(branch, mode, trimmed);
+        await submitTurn(persistedStoryId, mode, trimmed);
       }
       setText("");
     } catch (e) {
@@ -128,11 +118,11 @@ export function Composer({ branchId }: { branchId: string | null }) {
   };
 
   const onContinue = async () => {
-    if (busy || !branchId || !lastEntry) return;
+    if (busy || !storyId || !lastEntry) return;
     setSubmitting(true);
     setError(null);
     try {
-      await continueScene(branchId);
+      await continueScene(storyId);
     } catch (e) {
       setError(String(e));
     } finally {
@@ -216,7 +206,7 @@ export function Composer({ branchId }: { branchId: string | null }) {
                 disabled={busy}
                 className="rounded border border-border bg-bg px-1.5 py-0.5 text-xs text-text focus:border-accent focus:outline-none disabled:opacity-60"
               >
-                {EFFORT_OPTIONS.map((option) => (
+                {REASONING_EFFORT_OPTIONS.map((option) => (
                   <option key={option.value} value={option.value}>
                     {option.label}
                   </option>

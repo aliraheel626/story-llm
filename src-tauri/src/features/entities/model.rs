@@ -4,7 +4,6 @@ use serde::{Deserialize, Serialize};
 pub struct Entity {
     pub id: String,
     pub story_id: String,
-    pub branch_id: String,
     pub kind: String,
     pub name: String,
     pub appearance_anchor: Option<String>,
@@ -27,7 +26,7 @@ pub struct AttributeRegistryEntry {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EntityAttributeValue {
-    pub branch_id: String,
+    pub story_id: String,
     pub entity_id: String,
     pub attribute_id: String,
     pub canonical_name: String,

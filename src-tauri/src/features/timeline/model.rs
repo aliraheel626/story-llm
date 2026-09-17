@@ -4,7 +4,7 @@ use serde_json::Value;
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct TimelineEntry {
     pub id: String,
-    pub branch_id: String,
+    pub story_id: String,
     pub seq: i64,
     pub kind: String,
     pub visibility: String,

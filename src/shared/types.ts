@@ -1,6 +1,6 @@
 export interface Story {
   id: string; title: string; created_at: string; updated_at: string;
-  settings_json: string; default_branch_id: string | null;
+  settings_json: string;
 }
 export const DEFAULT_STORY_TITLE = "New story";
 export interface StoryTitleUpdatedPayload { story_id: string; title: string }
@@ -33,14 +33,14 @@ export interface EntityAttributeEventPayload extends TimelinePayloadBase {
   entity_id: string; attribute_id: string; attribute_name?: string;
   before?: number | null; after?: number | null; source: "user" | "mechanics" | "inferred" | string;
 }
-export interface ImageGeneratedPayload extends TimelinePayloadBase { asset_id: string; prompt: string; provider: string }
+export interface ImageGeneratedPayload extends TimelinePayloadBase { asset_id: string; prompt: string }
 export interface ContextSummaryPayload extends TimelinePayloadBase {
   through_entry_id: string; facts?: string[]; entity_notes?: string[];
   open_threads?: string[]; unresolved_mechanics?: string[];
 }
 
 interface TimelineEntryBase {
-  id: string; branch_id: string; seq: number; visibility: TimelineVisibility;
+  id: string; story_id: string; seq: number; visibility: TimelineVisibility;
   content: string | null; target_entry_id: string | null; created_at: string;
 }
 export type TimelineEntry =
@@ -70,11 +70,11 @@ export interface TextModelSettings { provider: string; model: string; has_api_ke
 export interface ImageModelSettings { model: string; enabled: boolean; style: string; has_api_key: boolean; narrator_images: boolean }
 export type NarratorPreambleMode = "all" | "scoped";
 export interface NarratorMemorySettings { tool_call_persistence: boolean; preamble_mode: NarratorPreambleMode }
-export interface StoryImage { id: string; entry_id: string; path: string; prompt: string; seed: number | null; provider: string; created_at: string }
+export interface StoryImage { id: string; entry_id: string; path: string; prompt: string; created_at: string }
 
 export type EntityKind = "character" | "object" | "location" | "relationship" | "campaign";
 export interface Entity {
-  id: string; story_id: string; branch_id: string; kind: EntityKind; name: string;
+  id: string; story_id: string; kind: EntityKind; name: string;
   appearance_anchor: string | null; created_at: string;
 }
 export type DiceMode = "always" | "classifier" | "never";
@@ -86,13 +86,23 @@ export interface DicerollSettings {
   reasoning_effort: ReasoningEffort | null;
 }
 export type ReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+export const REASONING_EFFORT_OPTIONS: ReadonlyArray<{ value: ReasoningEffort | ""; label: string }> = [
+  { value: "", label: "Default" },
+  { value: "none", label: "None" },
+  { value: "minimal", label: "Minimal" },
+  { value: "low", label: "Low" },
+  { value: "medium", label: "Medium" },
+  { value: "high", label: "High" },
+  { value: "xhigh", label: "Extra high" },
+  { value: "max", label: "Max" },
+];
 export interface AttributeRegistryEntry {
   id: string; canonical_name: string; aliases_json: string; entity_kinds_json: string;
   min: number; max: number; category: string; is_user_created: boolean;
   created_in_story_id: string | null; created_at: string;
 }
 export interface EntityAttributeValue {
-  branch_id: string; entity_id: string; attribute_id: string; canonical_name: string;
+  story_id: string; entity_id: string; attribute_id: string; canonical_name: string;
   value: number; min: number; max: number; updated_at: string; source: string;
 }
 export interface Roll {
