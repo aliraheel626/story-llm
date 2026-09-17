@@ -22,6 +22,7 @@ interface AppState {
   stories: Story[];
   activeStoryId: string | null;
   storiesLoading: boolean;
+  creatingStory: boolean;
   /** True while composing a brand-new story that isn't persisted yet — the
    *  record and branch are only created on the first submit, ChatGPT-style.
    *  This is why an accidental "+ New story" click leaves no empty entry. */
@@ -51,6 +52,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   stories: [],
   activeStoryId: null,
   storiesLoading: false,
+  creatingStory: false,
   draft: false,
   loadStories: async () => {
     set({ storiesLoading: true });
@@ -68,10 +70,15 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
   createStory: async () => {
     const draft = useDicerollStore.getState().draftSettings;
-    const story = await storiesApi.create(undefined, draft);
-    useDicerollStore.getState().promoteDraftSettings(story.id, draft);
-    set((s) => ({ stories: [story, ...s.stories], activeStoryId: story.id, draft: false }));
-    return story;
+    set({ creatingStory: true });
+    try {
+      const story = await storiesApi.create(undefined, draft);
+      useDicerollStore.getState().promoteDraftSettings(story.id, draft);
+      set((s) => ({ stories: [story, ...s.stories], activeStoryId: story.id, draft: false }));
+      return story;
+    } finally {
+      set({ creatingStory: false });
+    }
   },
   renameStory: async (storyId: string, title: string) => {
     await storiesApi.rename(storyId, title);

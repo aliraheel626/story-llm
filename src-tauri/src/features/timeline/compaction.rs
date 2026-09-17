@@ -303,6 +303,8 @@ where
 mod tests {
     use super::*;
     use crate::ai::TextProviderKind;
+    use crate::features::narration::history::load_history;
+    use crate::features::timeline::reducer;
     use std::sync::{Arc, Mutex};
 
     fn summary(prose: &str) -> ContextSummary {
@@ -461,5 +463,205 @@ mod tests {
         assert_eq!(carry_over.lock().unwrap().as_deref(), Some("safe context"));
         assert!(compacted[0].content.contains("new compacted context"));
         assert!(!compacted[0].content.contains("future leaked fact"));
+    }
+
+    #[tokio::test]
+    async fn bounded_retry_compaction_at_tail_does_not_reorder_reconstructed_history() {
+        let pool = crate::shared::db::test_pool();
+        let conn = pool.get().unwrap();
+        conn.execute(
+            "INSERT INTO stories (id, title, created_at, updated_at, settings_json, default_branch_id) VALUES ('s', 'story', 'now', 'now', '{}', 'b')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO branches (id, story_id, parent_branch_id, forked_at_entry_id, name, created_at) VALUES ('b', 's', NULL, NULL, 'main', 'now')",
+            [],
+        )
+        .unwrap();
+
+        for index in 0..18 {
+            repository::append_entry(
+                &conn,
+                "b",
+                if index % 2 == 0 {
+                    kind::PLAYER_MESSAGE
+                } else {
+                    kind::NARRATION
+                },
+                "visible",
+                Some(&format!(
+                    "Long historical turn {index}: {}",
+                    "context ".repeat(40)
+                )),
+                &serde_json::json!({"input_mode": if index % 2 == 0 { "do" } else { "generated" }}),
+                None,
+            )
+            .unwrap();
+        }
+        let player_before_target = repository::append_entry(
+            &conn,
+            "b",
+            kind::PLAYER_MESSAGE,
+            "visible",
+            Some("I open the sealed door."),
+            &serde_json::json!({"input_mode":"do"}),
+            None,
+        )
+        .unwrap();
+        let target = repository::append_entry(
+            &conn,
+            "b",
+            kind::NARRATION,
+            "visible",
+            Some("The original door response."),
+            &serde_json::json!({"input_mode":"generated"}),
+            None,
+        )
+        .unwrap();
+        drop(conn);
+
+        // This is the exact bounded read and compaction path used by
+        // retry_narration before its replacement variant is appended.
+        let history = load_history(&pool, "b", Some(target.seq)).unwrap();
+        assert_eq!(
+            history.last().and_then(|turn| turn.entry_id.as_deref()),
+            Some(player_before_target.id.as_str())
+        );
+        let config = TextModelConfig {
+            provider: TextProviderKind::OpenRouter,
+            model: "test".into(),
+            api_key: "test".into(),
+            context_window: 256,
+        };
+        let compactor = RecordingCompactor {
+            carry_over: Arc::new(Mutex::new(None)),
+        };
+        let compacted = prepare_history_with_compactor(
+            HistoryPreparation {
+                pool: &pool,
+                branch_id: "b",
+                config: &config,
+                preamble: "preamble",
+                prompt: "retry prompt",
+                before_seq: Some(target.seq),
+            },
+            history,
+            &compactor,
+        )
+        .await;
+        assert!(compacted[0].content.contains("new compacted context"));
+
+        let conn = pool.get().unwrap();
+        let (summary_seq, summary_payload): (i64, String) = conn
+            .query_row(
+                "SELECT seq, payload_json FROM timeline_entries WHERE kind = ?1 ORDER BY seq DESC LIMIT 1",
+                [kind::CONTEXT_SUMMARY],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        let summary_payload: serde_json::Value = serde_json::from_str(&summary_payload).unwrap();
+        assert!(summary_seq > target.seq);
+        assert!(summary_payload["through_seq"].as_i64().unwrap() < target.seq);
+
+        let intervening_player = repository::append_entry(
+            &conn,
+            "b",
+            kind::PLAYER_MESSAGE,
+            "visible",
+            Some("I step through."),
+            &serde_json::json!({"input_mode":"do"}),
+            None,
+        )
+        .unwrap();
+        let intervening_narration = repository::append_entry(
+            &conn,
+            "b",
+            kind::NARRATION,
+            "visible",
+            Some("Dust rises beyond the threshold."),
+            &serde_json::json!({"input_mode":"generated"}),
+            None,
+        )
+        .unwrap();
+        let variant = repository::append_entry(
+            &conn,
+            "b",
+            kind::NARRATION_VARIANT,
+            "hidden",
+            Some("The retried door response."),
+            &serde_json::json!({"reason":"retry","input_mode":"generated"}),
+            Some(&target.id),
+        )
+        .unwrap();
+        let selection = repository::append_entry(
+            &conn,
+            "b",
+            kind::NARRATION_SELECTED,
+            "hidden",
+            None,
+            &serde_json::json!({"selected_entry_id":variant.id,"reason":"retry"}),
+            Some(&target.id),
+        )
+        .unwrap();
+        assert!(
+            target.seq < summary_seq
+                && summary_seq < intervening_player.seq
+                && intervening_player.seq < intervening_narration.seq
+                && intervening_narration.seq < variant.seq
+                && variant.seq < selection.seq
+        );
+
+        let raw = repository::list_logical_entries(&conn, "b").unwrap();
+        let visible = reducer::active_visible_entries(&raw);
+        let target_index = visible
+            .iter()
+            .position(|entry| entry.id == target.id)
+            .unwrap();
+        assert_eq!(
+            visible[target_index].content.as_deref(),
+            Some("The retried door response.")
+        );
+        assert_eq!(visible[target_index + 1].id, intervening_player.id);
+        assert_eq!(visible[target_index + 2].id, intervening_narration.id);
+        let variants = reducer::variants_for_entry(&raw, &target.id);
+        assert_eq!(variants.len(), 2);
+        assert!(variants
+            .iter()
+            .any(|item| item.id == variant.id && item.is_selected));
+        drop(conn);
+
+        let rebuilt = load_history(&pool, "b", None).unwrap();
+        let rebuilt_text = rebuilt
+            .iter()
+            .map(|turn| turn.content.as_str())
+            .collect::<Vec<_>>();
+        let retry_index = rebuilt_text
+            .iter()
+            .position(|content| *content == "The retried door response.")
+            .unwrap();
+        let later_index = rebuilt_text
+            .iter()
+            .position(|content| *content == "I step through.")
+            .unwrap();
+        assert!(rebuilt[0].content.contains("new compacted context"));
+        assert!(retry_index < later_index);
+        assert_eq!(
+            rebuilt_text
+                .iter()
+                .filter(|content| **content == "The retried door response.")
+                .count(),
+            1
+        );
+        assert!(!rebuilt_text.contains(&"The original door response."));
+
+        let bounded = load_history(&pool, "b", Some(target.seq)).unwrap();
+        assert!(!bounded
+            .iter()
+            .any(|turn| turn.content.contains("new compacted context")));
+        assert_eq!(
+            bounded.last().and_then(|turn| turn.entry_id.as_deref()),
+            Some(player_before_target.id.as_str())
+        );
     }
 }

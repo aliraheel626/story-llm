@@ -6,7 +6,7 @@ import { EditableStoryTitle } from "../stories/EditableStoryTitle";
 import { TimelineEntryView } from "./TimelineEntryView";
 import { TurnActivity, toolCallsFromEvents, type TurnActivityData } from "./TurnActivity";
 import { Composer } from "./Composer";
-import { useStoryStore } from "./store";
+import { branchEntryKey, useStoryStore } from "./store";
 
 function usePrefersReducedMotion() {
   return typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -133,7 +133,7 @@ export function StoryView() {
                   isLast={isLastEntry}
                   images={imagesByEntry[entry.id]}
                   variants={variantsByEntry[entry.id]}
-                  rollSummaries={rollByEntry[entry.id]}
+                  rollSummaries={rollByEntry[branchEntryKey(branchId!, entry.id)]}
                 />
               </div>
             );

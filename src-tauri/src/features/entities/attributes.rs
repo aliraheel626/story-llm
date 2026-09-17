@@ -44,16 +44,19 @@ pub(crate) fn find_exact_match(
     conn: &rusqlite::Connection,
     proposed_name: &str,
 ) -> AppResult<Option<AttributeRegistryEntry>> {
-    let needle = proposed_name.trim().to_lowercase();
+    let needle = proposed_name.trim();
     let mut stmt = conn.prepare(&format!("SELECT {SELECT_COLUMNS} FROM attribute_registry"))?;
     let rows = stmt.query_map([], row_to_entry)?;
     for r in rows {
         let entry = r?;
-        if entry.canonical_name.to_lowercase() == needle {
+        if entry.canonical_name.eq_ignore_ascii_case(needle) {
             return Ok(Some(entry));
         }
         let aliases: Vec<String> = serde_json::from_str(&entry.aliases_json).unwrap_or_default();
-        if aliases.iter().any(|a| a.to_lowercase() == needle) {
+        if aliases
+            .iter()
+            .any(|alias| alias.eq_ignore_ascii_case(needle))
+        {
             return Ok(Some(entry));
         }
     }

@@ -233,9 +233,25 @@ pub fn list_rolls_for_branch(pool: State<Pool>, branch_id: String) -> AppResult<
 #[tauri::command]
 pub fn list_roll_details_for_entry(
     pool: State<Pool>,
+    branch_id: String,
     entry_id: String,
 ) -> AppResult<Vec<RollDetail>> {
     let conn = pool.get()?;
+    list_roll_details_for_entry_in_conn(&conn, &branch_id, &entry_id)
+}
+
+fn list_roll_details_for_entry_in_conn(
+    conn: &rusqlite::Connection,
+    branch_id: &str,
+    entry_id: &str,
+) -> AppResult<Vec<RollDetail>> {
+    let base = timeline::get_entry(conn, entry_id)?;
+    if !timeline::branch_contains_entry(conn, branch_id, &base)? {
+        return Err(AppError::NotFound(format!(
+            "timeline entry {entry_id} not found in branch {branch_id}"
+        )));
+    }
+    let allowed_branch_ids = timeline::ancestor_branch_ids(conn, branch_id)?;
     let mut stmt = conn.prepare(
         "SELECT id, branch_id, seq, kind, visibility, content, payload_json, target_entry_id, created_at
          FROM timeline_entries WHERE target_entry_id = ?1 AND kind = ?2 ORDER BY seq ASC",
@@ -248,17 +264,76 @@ pub fn list_roll_details_for_entry(
         .collect::<Result<Vec<_>, _>>()?;
     entries
         .into_iter()
+        .filter(|entry| allowed_branch_ids.contains(&entry.branch_id))
         .filter_map(|entry| {
             let branch_id = entry.branch_id.clone();
             parse_roll(&entry).map(|roll| (branch_id, roll))
         })
-        .map(|(branch_id, roll)| detail(&conn, &branch_id, roll, true))
+        .map(|(branch_id, roll)| detail(conn, &branch_id, roll, true))
         .collect()
 }
 
 #[cfg(test)]
 mod tests {
-    use super::normalize_reasoning_effort;
+    use super::{list_roll_details_for_entry_in_conn, normalize_reasoning_effort};
+    use crate::features::timeline::{model::kind, repository as timeline};
+    use crate::shared::error::AppError;
+    use serde_json::json;
+
+    fn insert_branch(
+        conn: &rusqlite::Connection,
+        id: &str,
+        parent: Option<&str>,
+        fork: Option<&str>,
+    ) {
+        conn.execute(
+            "INSERT INTO branches
+             (id, story_id, parent_branch_id, forked_at_entry_id, name, created_at)
+             VALUES (?1, 'story', ?2, ?3, ?1, 'now')",
+            rusqlite::params![id, parent, fork],
+        )
+        .unwrap();
+    }
+
+    fn setup_branches() -> crate::shared::db::Pool {
+        let pool = crate::shared::db::test_pool();
+        let conn = pool.get().unwrap();
+        conn.execute(
+            "INSERT INTO stories
+             (id, title, created_at, updated_at, settings_json, default_branch_id)
+             VALUES ('story', 'Story', 'now', 'now', '{}', 'root')",
+            [],
+        )
+        .unwrap();
+        insert_branch(&conn, "root", None, None);
+        drop(conn);
+        pool
+    }
+
+    fn append_test_roll(
+        conn: &rusqlite::Connection,
+        branch_id: &str,
+        target_entry_id: &str,
+        marker: i64,
+    ) -> crate::features::timeline::model::TimelineEntry {
+        timeline::append_entry(
+            conn,
+            branch_id,
+            kind::DICEROLL,
+            "hidden",
+            Some("test roll"),
+            &json!({
+                "actor_entity_id": "actor",
+                "p_success": 0.5,
+                "seed": marker,
+                "roll": marker,
+                "outcome": "success",
+                "degree": "marginal"
+            }),
+            Some(target_entry_id),
+        )
+        .unwrap()
+    }
 
     #[test]
     fn reasoning_effort_accepts_only_provider_levels() {
@@ -273,5 +348,44 @@ mod tests {
         assert_eq!(normalize_reasoning_effort("off"), None);
         assert_eq!(normalize_reasoning_effort("medium "), Some("medium"));
         assert_eq!(normalize_reasoning_effort("turbo"), None);
+    }
+
+    #[test]
+    fn roll_details_reject_unknown_entry_id() {
+        let pool = setup_branches();
+        let conn = pool.get().unwrap();
+        let error = list_roll_details_for_entry_in_conn(&conn, "root", "missing").unwrap_err();
+        assert!(matches!(
+            error,
+            AppError::NotFound(message) if message == "timeline entry missing not found"
+        ));
+    }
+
+    #[test]
+    fn roll_details_exclude_sibling_branch_rolls() {
+        let pool = setup_branches();
+        let conn = pool.get().unwrap();
+        let anchor = timeline::append_entry(
+            &conn,
+            "root",
+            kind::NARRATION,
+            "visible",
+            Some("anchor"),
+            &json!({"input_mode":"generated"}),
+            None,
+        )
+        .unwrap();
+        insert_branch(&conn, "left", Some("root"), Some(&anchor.id));
+        insert_branch(&conn, "right", Some("root"), Some(&anchor.id));
+        let kept = append_test_roll(&conn, "left", &anchor.id, 60);
+        let sibling = append_test_roll(&conn, "right", &anchor.id, 70);
+
+        let details = list_roll_details_for_entry_in_conn(&conn, "left", &anchor.id).unwrap();
+        let ids = details
+            .iter()
+            .map(|detail| detail.roll.id.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(ids, vec![kept.id.as_str()]);
+        assert!(!ids.contains(&sibling.id.as_str()));
     }
 }

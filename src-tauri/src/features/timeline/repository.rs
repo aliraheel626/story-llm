@@ -103,6 +103,69 @@ pub fn get_story_id_for_branch(conn: &rusqlite::Connection, branch_id: &str) -> 
     .map_err(|_| AppError::NotFound(format!("branch {branch_id} not found")))
 }
 
+pub fn ancestor_branch_ids(
+    conn: &rusqlite::Connection,
+    branch_id: &str,
+) -> AppResult<HashSet<String>> {
+    let mut ids = HashSet::new();
+    let mut current = Some(branch_id.to_string());
+    while let Some(id) = current {
+        if !ids.insert(id.clone()) {
+            return Err(AppError::Invalid("branch parent cycle detected".into()));
+        }
+        current = conn
+            .query_row(
+                "SELECT parent_branch_id FROM branches
+                 WHERE id = ?1 AND parent_branch_id IS NOT NULL",
+                [&id],
+                |row| row.get(0),
+            )
+            .optional()?;
+    }
+    Ok(ids)
+}
+
+pub fn branch_contains_entry(
+    conn: &rusqlite::Connection,
+    branch_id: &str,
+    entry: &TimelineEntry,
+) -> AppResult<bool> {
+    let mut visited = HashSet::new();
+    let mut current = branch_id.to_string();
+    let mut through_entry_id: Option<String> = None;
+    loop {
+        if !visited.insert(current.clone()) {
+            return Err(AppError::Invalid("branch parent cycle detected".into()));
+        }
+        if current == entry.branch_id {
+            let through_seq = through_entry_id
+                .as_deref()
+                .map(|id| {
+                    conn.query_row(
+                        "SELECT seq FROM timeline_entries WHERE id = ?1 AND branch_id = ?2",
+                        rusqlite::params![id, current],
+                        |row| row.get::<_, i64>(0),
+                    )
+                })
+                .transpose()?;
+            return Ok(through_seq.is_none_or(|seq| entry.seq <= seq));
+        }
+        let parent = conn
+            .query_row(
+                "SELECT parent_branch_id, forked_at_entry_id FROM branches
+                 WHERE id = ?1 AND parent_branch_id IS NOT NULL",
+                [&current],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)),
+            )
+            .optional()?;
+        let Some((parent_id, fork_id)) = parent else {
+            return Ok(false);
+        };
+        current = parent_id;
+        through_entry_id = fork_id;
+    }
+}
+
 fn local_entries(
     conn: &rusqlite::Connection,
     branch_id: &str,

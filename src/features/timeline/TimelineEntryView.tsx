@@ -179,7 +179,7 @@ export function TimelineEntryView({ entry, branchId, isLast, images, variants, r
       )}
 
       {rollSummaries?.map((summary) => (
-        <RollDisclosure key={summary.roll.id} entryId={entry.id} summary={summary} />
+        <RollDisclosure key={summary.roll.id} branchId={branchId} entryId={entry.id} summary={summary} />
       ))}
 
       {images?.map((image) => (

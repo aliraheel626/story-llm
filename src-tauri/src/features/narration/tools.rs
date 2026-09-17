@@ -335,10 +335,10 @@ impl TurnStaging {
                     cause,
                     dramatic,
                 } => {
-                    let mut attribute = attribute.clone();
-                    if let Some(canonical_id) = attribute_id_remap.get(&attribute.id) {
-                        attribute.id = canonical_id.clone();
-                    }
+                    let attribute = match attribute_id_remap.get(&attribute.id) {
+                        Some(canonical_id) => attributes::find_attribute_by_id(tx, canonical_id)?,
+                        None => attribute.clone(),
+                    };
                     attributes::apply_attribute_delta(
                         tx,
                         &self.branch_id,
@@ -601,18 +601,22 @@ fn roll_check_tool(
                             .await
                             .effective_attribute_value(&target.id, &target_attribute)
                             .map_err(to_tool_error)?;
-                        (value, Some(target_attribute))
+                        (Some(value), Some(target_attribute))
                     }
-                    _ => (actor_attribute.min + (actor_attribute.max - actor_attribute.min) / 2.0, None),
+                    _ => (None, None),
                 };
 
                 let output = resolve::resolve(ResolveInput {
                     actor_value,
-                    target_value,
                     actor_min: actor_attribute.min,
                     actor_max: actor_attribute.max,
-                    target_min: target_attribute.as_ref().map(|attribute| attribute.min),
-                    target_max: target_attribute.as_ref().map(|attribute| attribute.max),
+                    target: target_attribute.as_ref().zip(target_value).map(
+                        |(attribute, value)| resolve::TargetAttribute {
+                            value,
+                            min: attribute.min,
+                            max: attribute.max,
+                        },
+                    ),
                     modifier,
                 });
 
@@ -1398,7 +1402,7 @@ mod tests {
         assert_eq!(roll.actor_entity_id, player.id);
         assert_eq!(roll.target_entity_id.as_deref(), Some(ghoul.id.as_str()));
         assert_eq!(roll.actor_value, 5.0);
-        assert_eq!(roll.target_value, 5.0);
+        assert_eq!(roll.target_value, Some(5.0));
         assert_eq!(roll.modifier, 0.1);
 
         let out = out.as_json().unwrap();
@@ -1419,6 +1423,48 @@ mod tests {
             .unwrap();
         let payload: serde_json::Value = serde_json::from_str(&payload_json).unwrap();
         assert_eq!(payload["modifiers"]["situational"], json!(0.1));
+    }
+
+    #[tokio::test]
+    async fn roll_check_without_target_attribute_persists_no_target_value() {
+        let (pool, story_id, branch_id) = setup();
+        let staging = Arc::new(Mutex::new(TurnStaging::new(
+            pool.clone(),
+            story_id,
+            branch_id.clone(),
+        )));
+        let tools = portable_tools(staging.clone());
+
+        let out = tool_named(&tools, "roll_check")
+            .execute(json!({"attribute": "Stealth"}))
+            .await
+            .unwrap();
+        assert_eq!(out.as_json().unwrap()["target_value"], json!(null));
+
+        let staging = staging.lock().await;
+        let roll = staging
+            .pending
+            .iter()
+            .find_map(|op| match op {
+                PendingOp::Roll(pending) => Some(pending),
+                _ => None,
+            })
+            .expect("roll staged");
+        assert_eq!(roll.target_value, None);
+        persist_staging(&pool, &branch_id, &staging);
+        drop(staging);
+
+        let payload_json: String = pool
+            .get()
+            .unwrap()
+            .query_row(
+                "SELECT payload_json FROM timeline_entries WHERE kind = ?1 ORDER BY seq DESC LIMIT 1",
+                [crate::features::timeline::model::kind::DICEROLL],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let payload: serde_json::Value = serde_json::from_str(&payload_json).unwrap();
+        assert_eq!(payload["target_value"], json!(null));
     }
 
     #[tokio::test]
@@ -1465,11 +1511,9 @@ mod tests {
         ] {
             let output = resolve::resolve(ResolveInput {
                 actor_value: 5.0,
-                target_value: 5.0,
                 actor_min: 0.0,
                 actor_max: 10.0,
-                target_min: None,
-                target_max: None,
+                target: None,
                 modifier,
             });
             let mut staging = staging.lock().await;
@@ -1486,7 +1530,7 @@ mod tests {
                 actor_attribute_id: Some(attribute.id.clone()),
                 target_attribute_id: Some(attribute.id.clone()),
                 actor_value: 5.0,
-                target_value: 5.0,
+                target_value: Some(5.0),
                 modifier,
                 output,
             }));
@@ -1537,6 +1581,95 @@ mod tests {
             assert_eq!(payload["actor_attribute_id"], json!(canonical_id));
             assert_eq!(payload["target_attribute_id"], json!(canonical_id));
         }
+
+        let mut stmt = conn
+            .prepare(
+                "SELECT content, payload_json FROM timeline_entries
+                 WHERE kind = ?1 AND json_extract(payload_json, '$.source') = 'inferred'
+                 ORDER BY seq ASC",
+            )
+            .unwrap();
+        let changes = stmt
+            .query_map(
+                [crate::features::timeline::model::kind::ENTITY_ATTRIBUTE_CHANGED],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            )
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(changes.len(), 2);
+        for (content, payload) in changes {
+            assert!(content.starts_with("Resonance changed"), "{content}");
+            let payload: serde_json::Value = serde_json::from_str(&payload).unwrap();
+            assert_eq!(payload["attribute_name"], json!("Resonance"));
+            assert_eq!(payload["attribute_id"], json!(canonical_id));
+        }
+    }
+
+    #[test]
+    fn mint_remap_uses_full_canonical_attribute_for_activity_and_range() {
+        let (pool, story_id, branch_id) = setup();
+        let trust = find_attribute(&pool.get().unwrap(), "Trust");
+        let proposed = AttributeRegistryEntry {
+            id: Uuid::new_v4().to_string(),
+            canonical_name: "Resonance".into(),
+            aliases_json: "[]".into(),
+            entity_kinds_json: r#"["artifact"]"#.into(),
+            min: 0.0,
+            max: 10.0,
+            category: "user".into(),
+            is_user_created: true,
+            created_in_story_id: Some(story_id.clone()),
+            created_at: Utc::now().to_rfc3339(),
+        };
+        let mut staging = TurnStaging::new(pool.clone(), story_id, branch_id.clone());
+        let (entity, _) = staging
+            .resolve_or_stage_entity("artifact", "Resonant Prism", None)
+            .unwrap();
+        staging
+            .pending
+            .push(PendingOp::MintAttribute(proposed.clone()));
+        staging.pending.push(PendingOp::AdjustAttribute {
+            entity_id: entity.id.clone(),
+            attribute: proposed,
+            delta: 1.0,
+            cause: "test resonance".into(),
+            dramatic: false,
+        });
+
+        // Simulate another transaction resolving the proposed name as an
+        // alias before this staged turn commits.
+        attributes::add_alias(&pool.get().unwrap(), &trust.id, "Resonance").unwrap();
+        persist_staging(&pool, &branch_id, &staging);
+
+        let conn = pool.get().unwrap();
+        let (attribute_id, value): (String, f64) = conn
+            .query_row(
+                "SELECT attribute_id, value FROM entity_attributes
+                 WHERE branch_id = ?1 AND entity_id = ?2",
+                rusqlite::params![branch_id, entity.id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(attribute_id, trust.id);
+        assert_eq!(value, 1.0);
+
+        let (content, payload_json): (String, String) = conn
+            .query_row(
+                "SELECT content, payload_json FROM timeline_entries
+                 WHERE kind = ?1 AND json_extract(payload_json, '$.source') = 'inferred'
+                 ORDER BY seq DESC LIMIT 1",
+                [crate::features::timeline::model::kind::ENTITY_ATTRIBUTE_CHANGED],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert!(
+            content.starts_with("Trust changed from 0 to 1"),
+            "{content}"
+        );
+        let payload: serde_json::Value = serde_json::from_str(&payload_json).unwrap();
+        assert_eq!(payload["attribute_id"], json!(trust.id));
+        assert_eq!(payload["attribute_name"], json!("Trust"));
     }
 
     #[tokio::test]

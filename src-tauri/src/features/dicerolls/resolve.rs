@@ -19,15 +19,19 @@ use crate::shared::error::AppResult;
 pub const P_FLOOR: f64 = 0.05;
 pub const P_CEIL: f64 = 0.95;
 
+pub struct TargetAttribute {
+    pub value: f64,
+    pub min: f64,
+    pub max: f64,
+}
+
 pub struct ResolveInput {
     pub actor_value: f64,
-    pub target_value: f64,
     pub actor_min: f64,
     pub actor_max: f64,
     /// `None` means there is no opposing attribute, which resolves against a
     /// neutral normalized target of 0.5.
-    pub target_min: Option<f64>,
-    pub target_max: Option<f64>,
+    pub target: Option<TargetAttribute>,
     /// Combined campaign difficulty + scene override + situational
     /// modifiers, expressed directly as probability points (e.g. 0.05 = +5%).
     pub modifier: f64,
@@ -55,7 +59,7 @@ pub struct PendingRoll {
     pub actor_attribute_id: Option<String>,
     pub target_attribute_id: Option<String>,
     pub actor_value: f64,
-    pub target_value: f64,
+    pub target_value: Option<f64>,
     pub modifier: f64,
     pub output: ResolveOutput,
 }
@@ -109,10 +113,9 @@ fn normalize(value: f64, min: f64, max: f64) -> f64 {
 /// and floor/ceiling clamp it.
 pub fn resolve(input: ResolveInput) -> ResolveOutput {
     let actor_normalized = normalize(input.actor_value, input.actor_min, input.actor_max);
-    let target_normalized = match (input.target_min, input.target_max) {
-        (Some(min), Some(max)) => normalize(input.target_value, min, max),
-        _ => 0.5,
-    };
+    let target_normalized = input.target.as_ref().map_or(0.5, |target| {
+        normalize(target.value, target.min, target.max)
+    });
     let gap_normalized = actor_normalized - target_normalized;
     let p_success = (0.5 + gap_normalized * 0.5 + input.modifier).clamp(P_FLOOR, P_CEIL);
 
@@ -161,11 +164,13 @@ mod tests {
     fn even_match_is_fifty_fifty() {
         let out = resolve(ResolveInput {
             actor_value: 5.0,
-            target_value: 5.0,
             actor_min: 0.0,
             actor_max: 10.0,
-            target_min: Some(0.0),
-            target_max: Some(10.0),
+            target: Some(TargetAttribute {
+                value: 5.0,
+                min: 0.0,
+                max: 10.0,
+            }),
             modifier: 0.0,
         });
         assert!((out.p_success - 0.5).abs() < 1e-9);
@@ -176,11 +181,13 @@ mod tests {
     fn max_gap_clamps_to_ceiling_not_certainty() {
         let out = resolve(ResolveInput {
             actor_value: 10.0,
-            target_value: 0.0,
             actor_min: 0.0,
             actor_max: 10.0,
-            target_min: Some(0.0),
-            target_max: Some(10.0),
+            target: Some(TargetAttribute {
+                value: 0.0,
+                min: 0.0,
+                max: 10.0,
+            }),
             modifier: 0.0,
         });
         assert!((out.p_success - P_CEIL).abs() < 1e-9);
@@ -190,11 +197,13 @@ mod tests {
     fn max_gap_reversed_clamps_to_floor_not_impossibility() {
         let out = resolve(ResolveInput {
             actor_value: 0.0,
-            target_value: 10.0,
             actor_min: 0.0,
             actor_max: 10.0,
-            target_min: Some(0.0),
-            target_max: Some(10.0),
+            target: Some(TargetAttribute {
+                value: 10.0,
+                min: 0.0,
+                max: 10.0,
+            }),
             modifier: 0.0,
         });
         assert!((out.p_success - P_FLOOR).abs() < 1e-9);
@@ -206,11 +215,13 @@ mod tests {
         // the same as a 0..10 full-range gap.
         let out = resolve(ResolveInput {
             actor_value: 10.0,
-            target_value: -10.0,
             actor_min: -10.0,
             actor_max: 10.0,
-            target_min: Some(-10.0),
-            target_max: Some(10.0),
+            target: Some(TargetAttribute {
+                value: -10.0,
+                min: -10.0,
+                max: 10.0,
+            }),
             modifier: 0.0,
         });
         assert!((out.p_success - P_CEIL).abs() < 1e-9);
@@ -220,11 +231,13 @@ mod tests {
     fn seed_reproduces_the_same_roll() {
         let out = resolve(ResolveInput {
             actor_value: 7.0,
-            target_value: 3.0,
             actor_min: 0.0,
             actor_max: 10.0,
-            target_min: Some(0.0),
-            target_max: Some(10.0),
+            target: Some(TargetAttribute {
+                value: 3.0,
+                min: 0.0,
+                max: 10.0,
+            }),
             modifier: 0.0,
         });
         let mut rng = StdRng::seed_from_u64(out.seed as u64);
@@ -236,11 +249,13 @@ mod tests {
     fn roll_at_or_above_needed_succeeds() {
         let out = resolve(ResolveInput {
             actor_value: 5.0,
-            target_value: 5.0,
             actor_min: 0.0,
             actor_max: 10.0,
-            target_min: Some(0.0),
-            target_max: Some(10.0),
+            target: Some(TargetAttribute {
+                value: 5.0,
+                min: 0.0,
+                max: 10.0,
+            }),
             modifier: 0.0,
         });
         assert_eq!(out.outcome == "success", out.roll >= out.needed);
@@ -250,11 +265,13 @@ mod tests {
     fn cross_scale_midpoints_are_even() {
         let out = resolve(ResolveInput {
             actor_value: 5.0,
-            target_value: 50.0,
             actor_min: 0.0,
             actor_max: 10.0,
-            target_min: Some(0.0),
-            target_max: Some(100.0),
+            target: Some(TargetAttribute {
+                value: 50.0,
+                min: 0.0,
+                max: 100.0,
+            }),
             modifier: 0.0,
         });
         assert!((out.p_success - 0.5).abs() < 1e-9);
@@ -264,11 +281,13 @@ mod tests {
     fn cross_scale_advantage_uses_each_attributes_range() {
         let out = resolve(ResolveInput {
             actor_value: 8.0,
-            target_value: 60.0,
             actor_min: 0.0,
             actor_max: 10.0,
-            target_min: Some(0.0),
-            target_max: Some(100.0),
+            target: Some(TargetAttribute {
+                value: 60.0,
+                min: 0.0,
+                max: 100.0,
+            }),
             modifier: 0.0,
         });
         assert!((out.p_success - 0.6).abs() < 1e-9);
@@ -278,11 +297,9 @@ mod tests {
     fn missing_target_attribute_uses_neutral_normalized_value() {
         let out = resolve(ResolveInput {
             actor_value: 7.0,
-            target_value: -1_000.0,
             actor_min: 0.0,
             actor_max: 10.0,
-            target_min: None,
-            target_max: None,
+            target: None,
             modifier: 0.0,
         });
         assert!((out.p_success - 0.6).abs() < 1e-9);

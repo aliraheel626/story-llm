@@ -82,17 +82,14 @@ pub enum NarratorChunk {
 /// "started" indicator.
 struct ActivityHook {
     buffer: Arc<Mutex<Vec<NarratorChunk>>>,
-    stop_after_tool_result: bool,
+    stop_reason: Option<String>,
 }
-
-const DECISION_CAPTURED: &str = "decision captured";
 
 impl ActivityHook {
     fn tool_result_action(&self) -> rig_agent::agent::ToolResultAction {
-        if self.stop_after_tool_result {
-            rig_agent::agent::ToolResultAction::stop(DECISION_CAPTURED)
-        } else {
-            rig_agent::agent::ToolResultAction::Keep
+        match &self.stop_reason {
+            Some(reason) => rig_agent::agent::ToolResultAction::stop(reason.clone()),
+            None => rig_agent::agent::ToolResultAction::Keep,
         }
     }
 }
@@ -154,18 +151,19 @@ where
 }
 
 fn is_expected_tool_stop(
-    stop_after_tool_result: bool,
+    stop_reason: Option<&str>,
     error: &rig_agent::agent::StreamingError,
 ) -> bool {
-    stop_after_tool_result
-        && matches!(
+    stop_reason.is_some_and(|stop_reason| {
+        matches!(
             error,
             rig_agent::agent::StreamingError::Prompt(error)
                 if matches!(
                     error.as_ref(),
-                    PromptError::PromptCancelled { reason, .. } if reason == DECISION_CAPTURED
+                    PromptError::PromptCancelled { reason, .. } if reason == stop_reason
                 )
         )
+    })
 }
 
 /// Streams a narration turn, invoking `on_chunk` for every visible-text or
@@ -176,7 +174,9 @@ where
     F: FnMut(NarratorChunk),
 {
     let has_tools = !req.tools.is_empty();
-    let stop_after_tool_result = req.stop_after_tool_result;
+    let stop_reason = req
+        .stop_after_tool_result
+        .then(|| format!("decision captured/{}", uuid::Uuid::new_v4()));
     let agent = build_agent(
         &req.config,
         &req.preamble,
@@ -201,14 +201,14 @@ where
     if has_tools {
         runner = runner.add_hook(ActivityHook {
             buffer: activity_buffer.clone(),
-            stop_after_tool_result,
+            stop_reason: stop_reason.clone(),
         });
     }
     let stream = runner.stream().await;
     consume_narration_stream(
         stream,
         has_tools,
-        stop_after_tool_result,
+        stop_reason.as_deref(),
         &activity_buffer,
         on_chunk,
     )
@@ -218,7 +218,7 @@ where
 async fn consume_narration_stream<F>(
     mut stream: rig_agent::agent::StreamingResult,
     has_tools: bool,
-    stop_after_tool_result: bool,
+    stop_reason: Option<&str>,
     activity_buffer: &Mutex<Vec<NarratorChunk>>,
     mut on_chunk: F,
 ) -> AppResult<(String, String)>
@@ -248,7 +248,7 @@ where
                 on_chunk(NarratorChunk::Reasoning(reasoning));
             }
             Ok(_) => {}
-            Err(e) if is_expected_tool_stop(stop_after_tool_result, &e) => break,
+            Err(e) if is_expected_tool_stop(stop_reason, &e) => break,
             Err(e) => {
                 return Err(AppError::Other(format!("narrator stream error: {e}")));
             }
@@ -335,22 +335,27 @@ mod tests {
 
     #[tokio::test]
     async fn decision_tool_result_stops_and_ends_the_stream_cleanly() {
+        let stop_reason = "decision captured/test-call";
         let hook = ActivityHook {
             buffer: Arc::new(Mutex::new(Vec::new())),
-            stop_after_tool_result: true,
+            stop_reason: Some(stop_reason.to_string()),
         };
         assert_eq!(
             hook.tool_result_action(),
-            rig_agent::agent::ToolResultAction::stop(DECISION_CAPTURED)
+            rig_agent::agent::ToolResultAction::stop(stop_reason)
         );
 
         let error =
             rig_agent::agent::StreamingError::Prompt(Box::new(PromptError::PromptCancelled {
                 chat_history: Vec::new(),
-                reason: DECISION_CAPTURED.to_string(),
+                reason: stop_reason.to_string(),
             }));
-        assert!(is_expected_tool_stop(true, &error));
-        assert!(!is_expected_tool_stop(false, &error));
+        assert!(is_expected_tool_stop(Some(stop_reason), &error));
+        assert!(!is_expected_tool_stop(None, &error));
+        assert!(!is_expected_tool_stop(
+            Some("decision captured/other-call"),
+            &error
+        ));
 
         let stream: rig_agent::agent::StreamingResult =
             Box::pin(futures::stream::iter(vec![Err(error)]));
@@ -361,11 +366,12 @@ mod tests {
             phase: ToolActivityPhase::Finished { ok: true },
         }]);
         let mut chunks = Vec::new();
-        let output = consume_narration_stream(stream, true, true, &activity_buffer, |chunk| {
-            chunks.push(chunk)
-        })
-        .await
-        .unwrap();
+        let output =
+            consume_narration_stream(stream, true, Some(stop_reason), &activity_buffer, |chunk| {
+                chunks.push(chunk)
+            })
+            .await
+            .unwrap();
 
         assert_eq!(output, (String::new(), String::new()));
         assert!(matches!(

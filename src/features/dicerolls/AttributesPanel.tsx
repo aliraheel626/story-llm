@@ -11,6 +11,7 @@ const DICE_MODES: { id: DiceMode; label: string; hint: string }[] = [
 
 export function AttributesPanel() {
   const activeStoryId = useAppStore((s) => s.activeStoryId);
+  const creatingStory = useAppStore((s) => s.creatingStory);
   const activeBranchId = useAppStore((s) => s.stories.find((story) => story.id === s.activeStoryId)?.default_branch_id ?? null);
   const settingsByStory = useDicerollStore((s) => s.settingsByStory);
   const draftSettings = useDicerollStore((s) => s.draftSettings);
@@ -48,7 +49,7 @@ export function AttributesPanel() {
           type="checkbox"
           checked={settings.attributes_enabled}
           onChange={(e) => update({ attributes_enabled: e.target.checked })}
-          disabled={saving}
+          disabled={saving || creatingStory}
           className="mt-0.5 accent-accent"
         />
         <span>
@@ -70,7 +71,7 @@ export function AttributesPanel() {
                 name="dice-mode"
                 checked={settings.dice_mode === m.id}
                 onChange={() => update({ dice_mode: m.id })}
-                disabled={saving}
+                disabled={saving || creatingStory}
                 className="mt-0.5 accent-accent"
               />
               <span>

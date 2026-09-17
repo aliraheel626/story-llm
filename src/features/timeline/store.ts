@@ -30,7 +30,7 @@ interface StoryState {
   eraseLastExchange: (branchId: string) => Promise<void>; editEntry: (branchId: string, entryId: string, content: string) => Promise<void>;
   selectVariant: (branchId: string, entryId: string, variantEntryId: string) => Promise<void>; loadVariantsForEntry: (entryId: string) => Promise<void>;
   loadImagesForBranch: (branchId: string) => Promise<void>; generateImageForEntry: (entryId: string, hint?: string) => Promise<void>;
-  loadRollsForBranch: (branchId: string) => Promise<void>; loadRollDetail: (entryId: string) => Promise<void>;
+  loadRollsForBranch: (branchId: string) => Promise<void>; loadRollDetail: (branchId: string, entryId: string) => Promise<void>;
   _appendDelta: (streamId: string, text: string) => void; _appendThoughts: (streamId: string, text: string) => void;
   _toolActivity: (payload: NarrationToolActivityPayload) => void;
   _finalize: (payload: NarrationDonePayload) => void; _swipeDone: (payload: SwipeDonePayload) => void; _fail: (streamId: string, message: string) => void;
@@ -41,6 +41,7 @@ const replaceEntry = (entries: TimelineEntry[], id: string, next: TimelineEntry)
 const findStream = (streams: Record<string, StreamingState>, id: string) => Object.entries(streams).find(([, stream]) => stream.streamId === id);
 const withoutStream = (streams: Record<string, StreamingState>, branchId: string) => { const next = { ...streams }; delete next[branchId]; return next; };
 const removeOne = (items: string[], value: string) => { const i = items.indexOf(value); return i < 0 ? items : items.slice(0, i).concat(items.slice(i + 1)); };
+export const branchEntryKey = (branchId: string, entryId: string) => `${branchId}:${entryId}`;
 const newStream = (streamId: string, branchId: string, mode: "append" | "replace", targetEntryId?: string): StreamingState =>
   ({ streamId, branchId, text: "", thoughts: "", mode, targetEntryId, toolLog: [] });
 const rememberActivity = (byBranch: Record<string, TurnActivity>, branchId: string, stream: StreamingState) =>
@@ -52,6 +53,7 @@ const closeTool = (log: ToolActivity[], callId: string, ok: boolean | null): Too
 
 const timelineGenerations = new Map<string, number>();
 const variantGenerations = new Map<string, number>();
+const rollDetailGenerations = new Map<string, number>();
 const advanceGeneration = (generations: Map<string, number>, key: string) => {
   const generation = (generations.get(key) ?? 0) + 1;
   generations.set(key, generation);
@@ -61,6 +63,7 @@ const isCurrentGeneration = (generations: Map<string, number>, key: string, gene
   generations.get(key) === generation;
 const invalidateTimeline = (branchId: string) => advanceGeneration(timelineGenerations, branchId);
 const invalidateVariants = (entryId: string) => advanceGeneration(variantGenerations, entryId);
+const invalidateRollDetails = (branchId: string, entryId: string) => advanceGeneration(rollDetailGenerations, branchEntryKey(branchId, entryId));
 
 export const useStoryStore = create<StoryState>((set, get) => ({
   entriesByBranch: {}, timelineLoading: false, streamingByBranch: {}, turnError: null, hiddenByBranch: {},
@@ -113,13 +116,14 @@ export const useStoryStore = create<StoryState>((set, get) => ({
     if (!ids.length) return;
     invalidateTimeline(branchId);
     ids.forEach(invalidateVariants);
+    ids.forEach((id) => invalidateRollDetails(branchId, id));
     set((s) => {
       const images = { ...s.imagesByEntry };
       const variants = { ...s.variantsByEntry };
       const rolls = { ...s.rollByEntry };
       const rollDetails = { ...s.rollDetailByEntry };
       ids.forEach((id) => {
-        delete images[id]; delete variants[id]; delete rolls[id]; delete rollDetails[id];
+        delete images[id]; delete variants[id]; delete rolls[branchEntryKey(branchId, id)]; delete rollDetails[branchEntryKey(branchId, id)];
       });
       return {
         entriesByBranch: { ...s.entriesByBranch, [branchId]: (s.entriesByBranch[branchId] ?? []).filter((entry) => !ids.includes(entry.id)) },
@@ -146,8 +150,16 @@ export const useStoryStore = create<StoryState>((set, get) => ({
   },
   loadImagesForBranch: async (branchId) => { try { const list = await timelineApi.listImages(branchId); const grouped: Record<string, StoryImage[]> = {}; list.forEach((image) => (grouped[image.entry_id] ??= []).push(image)); set((s) => ({ imagesByEntry: { ...s.imagesByEntry, ...grouped } })); } catch (e) { console.error("failed to load images", e); } },
   generateImageForEntry: async (entryId, hint) => { set({ imageError: null }); get()._imagePending(entryId); try { get()._imageGenerated(await timelineApi.generateImage(entryId, hint)); } catch (e) { get()._imageFailed(entryId); set({ imageError: String(e) }); } },
-  loadRollsForBranch: async (branchId) => { try { const list = await timelineApi.listRolls(branchId); const byEntry: Record<string, RollDetail[]> = {}; list.forEach((detail) => (byEntry[detail.roll.entry_id] ??= []).push(detail)); set((s) => ({ rollByEntry: { ...s.rollByEntry, ...byEntry } })); } catch (e) { console.error("failed to load rolls", e); } },
-  loadRollDetail: async (entryId) => { try { const details = await dicerollApi.listRollDetailsForEntry(entryId); set((s) => ({ rollDetailByEntry: { ...s.rollDetailByEntry, [entryId]: details } })); } catch (e) { console.error("failed to load roll detail", e); } },
+  loadRollsForBranch: async (branchId) => { try { const list = await timelineApi.listRolls(branchId); const byEntry: Record<string, RollDetail[]> = {}; list.forEach((detail) => (byEntry[branchEntryKey(branchId, detail.roll.entry_id)] ??= []).push(detail)); set((s) => ({ rollByEntry: { ...s.rollByEntry, ...byEntry } })); } catch (e) { console.error("failed to load rolls", e); } },
+  loadRollDetail: async (branchId, entryId) => {
+    const key = branchEntryKey(branchId, entryId);
+    const generation = advanceGeneration(rollDetailGenerations, key);
+    try {
+      const details = await dicerollApi.listRollDetailsForEntry(branchId, entryId);
+      if (!isCurrentGeneration(rollDetailGenerations, key, generation)) return;
+      set((s) => ({ rollDetailByEntry: { ...s.rollDetailByEntry, [key]: details } }));
+    } catch (e) { console.error("failed to load roll detail", e); }
+  },
   _appendDelta: (id, text) => { const found = findStream(get().streamingByBranch, id); if (!found) return; const [branchId, current] = found; set((s) => ({ streamingByBranch: { ...s.streamingByBranch, [branchId]: { ...current, text: current.text + text } } })); },
   _appendThoughts: (id, text) => { const found = findStream(get().streamingByBranch, id); if (!found) return; const [branchId, current] = found; set((s) => ({ streamingByBranch: { ...s.streamingByBranch, [branchId]: { ...current, thoughts: current.thoughts + text } } })); },
   _toolActivity: (payload) => {
