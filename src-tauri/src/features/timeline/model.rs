@@ -34,6 +34,7 @@ pub mod kind {
     pub const CONTENT_EDITED: &str = "content_edited";
     pub const DICEROLL: &str = "diceroll";
     pub const ENTITY_CREATED: &str = "entity_created";
+    pub const ENTITY_QUERIED: &str = "entity_queried";
     pub const ENTITY_UPDATED: &str = "entity_updated";
     pub const ENTITY_DELETED: &str = "entity_deleted";
     pub const ENTITY_ATTRIBUTE_CHANGED: &str = "entity_attribute_changed";

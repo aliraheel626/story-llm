@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{collections::HashSet, sync::Arc};
 
 use chrono::Utc;
 use rig_agent::tool::DynamicTool;
@@ -70,16 +70,32 @@ pub fn submit_story(
     let reasoning_effort =
         diceroll_settings::get_story_diceroll_settings(pool.clone(), story_id.clone())?
             .reasoning_effort;
-    let extra_preamble = story_context_preamble(pool.inner(), &story_id, &branch_id)?;
+
+    // Build the prompt history before writing the draft so any context or
+    // settings failure leaves the timeline untouched. The draft is guaranteed
+    // to remain in the raw-tail floor, so it does not need a durable entry id
+    // for compaction-boundary persistence here.
+    let mut history = load_history(pool.inner(), &branch_id, None)?;
+    history.push(HistoryTurn {
+        entry_id: None,
+        is_player: false,
+        content: content.to_string(),
+    });
+    let preamble_plan = story_context_preamble(
+        pool.inner(),
+        &story_id,
+        &branch_id,
+        &history,
+        &config,
+        STORY_CONTINUE_PROMPT,
+        "",
+    )?;
 
     let authored = {
         let conn = pool.get()?;
         insert_story_entry(&conn, &branch_id, "narrator", "story", content, None)?
     };
     kick_auto_title(&app, pool.inner(), &branch_id);
-
-    // After the insert, so the draft is the newest turn the model completes.
-    let history = load_history(pool.inner(), &branch_id, None)?;
 
     let stream_id = Uuid::new_v4().to_string();
     let branch_id_bg = branch_id.clone();
@@ -91,7 +107,7 @@ pub fn submit_story(
             config,
             history,
             prompt: STORY_CONTINUE_PROMPT.to_string(),
-            extra_preamble,
+            preamble_plan,
             tools: Vec::new(),
             reasoning_effort,
             before_seq: None,
@@ -184,11 +200,22 @@ fn author_note_preamble(pool: &Pool, story_id: &str) -> AppResult<String> {
     }
 }
 
-fn story_context_preamble(pool: &Pool, story_id: &str, branch_id: &str) -> AppResult<String> {
+fn entity_context_preamble(
+    pool: &Pool,
+    story_id: &str,
+    branch_id: &str,
+    detailed_entity_ids: Option<&HashSet<String>>,
+) -> AppResult<String> {
     let author_note = author_note_preamble(pool, story_id)?;
     let conn = pool.get()?;
     let entities = crate::features::entities::list_entities_sync(&conn, story_id, branch_id, None)?;
-    let entity_ids: Vec<&str> = entities.iter().map(|entity| entity.id.as_str()).collect();
+    let entity_ids = entities
+        .iter()
+        .filter(|entity| {
+            detailed_entity_ids.is_none_or(|entity_ids| entity_ids.contains(&entity.id))
+        })
+        .map(|entity| entity.id.as_str())
+        .collect::<Vec<_>>();
     let attrs_by_entity =
         crate::features::entities::attributes::list_entity_attributes_for_entities_sync(
             &conn,
@@ -198,6 +225,10 @@ fn story_context_preamble(pool: &Pool, story_id: &str, branch_id: &str) -> AppRe
 
     let mut lines = vec!["Current entity state is authoritative. User overrides take precedence over inferred updates. Dice-roll outcomes must not be contradicted.".to_string()];
     for entity in entities {
+        if detailed_entity_ids.is_some_and(|entity_ids| !entity_ids.contains(&entity.id)) {
+            lines.push(format!("- {} ({})", entity.name, entity.kind));
+            continue;
+        }
         let appearance = entity
             .appearance_anchor
             .as_deref()
@@ -222,6 +253,112 @@ fn story_context_preamble(pool: &Pool, story_id: &str, branch_id: &str) -> AppRe
         ));
     }
     Ok(combine_preambles(&[author_note, lines.join("\n")]))
+}
+
+fn touched_entity_ids(pool: &Pool, raw_tail: &[HistoryTurn]) -> AppResult<HashSet<String>> {
+    let conn = pool.get()?;
+    let mut touched = HashSet::new();
+    let entry_ids = raw_tail
+        .iter()
+        .filter_map(|turn| turn.entry_id.as_deref())
+        .collect::<Vec<_>>();
+    if entry_ids.is_empty() {
+        return Ok(touched);
+    }
+    let entry_ids_json = serde_json::to_string(&entry_ids).map_err(|error| {
+        AppError::Other(format!("failed to serialize timeline entry ids: {error}"))
+    })?;
+    let mut stmt = conn.prepare(
+        "SELECT kind, payload_json FROM timeline_entries
+         WHERE id IN (SELECT value FROM json_each(?1))
+           AND kind IN (?2, ?3, ?4, ?5)",
+    )?;
+    let rows = stmt.query_map(
+        rusqlite::params![
+            entry_ids_json,
+            timeline_kind::ENTITY_CREATED,
+            timeline_kind::ENTITY_UPDATED,
+            timeline_kind::ENTITY_ATTRIBUTE_CHANGED,
+            timeline_kind::ENTITY_QUERIED,
+        ],
+        |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+    )?;
+    for row in rows {
+        let (entry_kind, payload_json) = row?;
+        let payload = serde_json::from_str::<serde_json::Value>(&payload_json)
+            .map_err(|error| AppError::Other(format!("invalid timeline payload JSON: {error}")))?;
+        match entry_kind.as_str() {
+            timeline_kind::ENTITY_CREATED
+            | timeline_kind::ENTITY_UPDATED
+            | timeline_kind::ENTITY_ATTRIBUTE_CHANGED => {
+                if let Some(entity_id) = payload.get("entity_id").and_then(|id| id.as_str()) {
+                    touched.insert(entity_id.to_string());
+                }
+            }
+            timeline_kind::ENTITY_QUERIED => {
+                if let Some(entity_ids) = payload.get("entity_ids").and_then(|ids| ids.as_array()) {
+                    touched.extend(
+                        entity_ids
+                            .iter()
+                            .filter_map(|id| id.as_str().map(str::to_string)),
+                    );
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(touched)
+}
+
+#[derive(Debug, Clone)]
+struct PreamblePlan {
+    model_extra: String,
+    compaction_extra: String,
+}
+
+fn narrator_preamble(extra_preamble: &str) -> String {
+    if extra_preamble.is_empty() {
+        NARRATOR_PREAMBLE.to_string()
+    } else {
+        format!("{NARRATOR_PREAMBLE}\n\n{extra_preamble}")
+    }
+}
+
+fn story_context_preamble(
+    pool: &Pool,
+    story_id: &str,
+    branch_id: &str,
+    history: &[HistoryTurn],
+    config: &TextModelConfig,
+    prompt: &str,
+    additional_preamble: &str,
+) -> AppResult<PreamblePlan> {
+    let full_context = entity_context_preamble(pool, story_id, branch_id, None)?;
+    let full_extra = combine_preambles(&[full_context, additional_preamble.to_string()]);
+    let memory = settings::read_narrator_memory_settings(pool)?;
+    if memory.preamble_mode == "all" {
+        return Ok(PreamblePlan {
+            model_extra: full_extra.clone(),
+            compaction_extra: full_extra,
+        });
+    }
+
+    // Size compaction against the full snapshot. That is today's budget and
+    // avoids a circular dependency where the scoped preamble changes the
+    // boundary used to decide which entities belong in that same preamble.
+    let compaction_preamble = narrator_preamble(&full_extra);
+    let split = crate::features::timeline::compaction::raw_tail_boundary(
+        history,
+        config,
+        &compaction_preamble,
+        prompt,
+    );
+    let touched = touched_entity_ids(pool, &history[split..])?;
+    let scoped_context = entity_context_preamble(pool, story_id, branch_id, Some(&touched))?;
+    Ok(PreamblePlan {
+        model_extra: combine_preambles(&[scoped_context, additional_preamble.to_string()]),
+        compaction_extra: full_extra,
+    })
 }
 
 fn combine_preambles(parts: &[String]) -> String {
@@ -363,7 +500,7 @@ struct NarrationJob {
     config: TextModelConfig,
     history: Vec<HistoryTurn>,
     prompt: String,
-    extra_preamble: String,
+    preamble_plan: PreamblePlan,
     /// Non-empty only for `submit_turn`'s tool-calling path (see `tools`
     /// module) — every other narration-triggering command passes `Vec::new()`.
     tools: Vec<DynamicTool>,
@@ -395,20 +532,23 @@ where
         config,
         history,
         prompt,
-        extra_preamble,
+        preamble_plan,
         tools,
         reasoning_effort,
         before_seq,
         stream_id,
     } = job;
     tauri::async_runtime::spawn(async move {
-        let preamble = if extra_preamble.is_empty() {
-            NARRATOR_PREAMBLE.to_string()
-        } else {
-            format!("{NARRATOR_PREAMBLE}\n\n{extra_preamble}")
-        };
+        let preamble = narrator_preamble(&preamble_plan.model_extra);
+        let compaction_preamble = narrator_preamble(&preamble_plan.compaction_extra);
         let history = crate::features::timeline::compaction::prepare_history(
-            &pool, &branch_id, &config, &preamble, &prompt, history, before_seq,
+            &pool,
+            &branch_id,
+            &config,
+            &compaction_preamble,
+            &prompt,
+            history,
+            before_seq,
         )
         .await;
         let req = NarrateRequest {
@@ -632,10 +772,16 @@ pub async fn submit_turn(
             "You can illustrate a striking moment with the illustrate_scene tool.".to_string(),
         );
     }
-    let extra_preamble = combine_preambles(&[
-        story_context_preamble(pool.inner(), &story_id, &branch_id)?,
-        tools_preamble.join(" "),
-    ]);
+    let tools_preamble = tools_preamble.join(" ");
+    let preamble_plan = story_context_preamble(
+        pool.inner(),
+        &story_id,
+        &branch_id,
+        &history,
+        &config,
+        &prompt,
+        &tools_preamble,
+    )?;
 
     let stream_id = Uuid::new_v4().to_string();
     let branch_id_bg = branch_id.clone();
@@ -648,7 +794,7 @@ pub async fn submit_turn(
             config,
             history,
             prompt,
-            extra_preamble,
+            preamble_plan,
             tools: tool_set,
             reasoning_effort,
             before_seq: None,
@@ -722,13 +868,21 @@ pub async fn submit_guide(
     let reasoning_effort =
         diceroll_settings::get_story_diceroll_settings(pool.clone(), story_id.clone())?
             .reasoning_effort;
-    let extra_preamble = story_context_preamble(pool.inner(), &story_id, &branch_id)?;
-
-    let stream_id = Uuid::new_v4().to_string();
     let prompt = format!(
         "[Director's note — out of character, steer the story but do not narrate it directly: {note}] \
          Continue the scene, letting that note shape what happens next."
     );
+    let preamble_plan = story_context_preamble(
+        pool.inner(),
+        &story_id,
+        &branch_id,
+        &history,
+        &config,
+        &prompt,
+        "",
+    )?;
+
+    let stream_id = Uuid::new_v4().to_string();
     let branch_id_bg = branch_id.clone();
     spawn_narration(
         NarrationJob {
@@ -738,7 +892,7 @@ pub async fn submit_guide(
             config,
             history,
             prompt,
-            extra_preamble,
+            preamble_plan,
             tools: Vec::new(),
             reasoning_effort,
             before_seq: None,
@@ -776,8 +930,6 @@ pub async fn continue_scene(
     let reasoning_effort =
         diceroll_settings::get_story_diceroll_settings(pool.clone(), story_id.clone())?
             .reasoning_effort;
-    let extra_preamble = story_context_preamble(pool.inner(), &story_id, &branch_id)?;
-
     // A trailing story draft was never rendered (its generation failed), so
     // Continue completes it into prose instead of writing past the note.
     let (prompt, input_mode) = {
@@ -789,6 +941,15 @@ pub async fn continue_scene(
             _ => (CONTINUE_PROMPT, "generated_continue".to_string()),
         }
     };
+    let preamble_plan = story_context_preamble(
+        pool.inner(),
+        &story_id,
+        &branch_id,
+        &history,
+        &config,
+        prompt,
+        "",
+    )?;
 
     let stream_id = Uuid::new_v4().to_string();
     let branch_id_bg = branch_id.clone();
@@ -800,7 +961,7 @@ pub async fn continue_scene(
             config,
             history,
             prompt: prompt.to_string(),
-            extra_preamble,
+            preamble_plan,
             tools: Vec::new(),
             reasoning_effort,
             before_seq: None,
@@ -858,10 +1019,16 @@ pub async fn retry_narration(
     let reasoning_effort =
         diceroll_settings::get_story_diceroll_settings(pool.clone(), story_id.clone())?
             .reasoning_effort;
-    let extra_preamble = combine_preambles(&[
-        story_context_preamble(pool.inner(), &story_id, &branch_id)?,
-        roll_context_preamble(pool.inner(), &target.id)?,
-    ]);
+    let roll_preamble = roll_context_preamble(pool.inner(), &target.id)?;
+    let preamble_plan = story_context_preamble(
+        pool.inner(),
+        &story_id,
+        &branch_id,
+        &history,
+        &config,
+        prompt,
+        &roll_preamble,
+    )?;
 
     let stream_id = Uuid::new_v4().to_string();
     spawn_narration(
@@ -872,7 +1039,7 @@ pub async fn retry_narration(
             config,
             history,
             prompt: prompt.to_string(),
-            extra_preamble,
+            preamble_plan,
             tools: Vec::new(),
             reasoning_effort,
             before_seq: Some(target.seq),
@@ -939,17 +1106,23 @@ pub async fn generate_narration_variant(
     let reasoning_effort =
         diceroll_settings::get_story_diceroll_settings(pool.clone(), story_id.clone())?
             .reasoning_effort;
-    let extra_preamble = combine_preambles(&[
-        story_context_preamble(pool.inner(), &story_id, &branch_id)?,
-        roll_context_preamble(pool.inner(), &target.id)?,
-    ]);
-
-    let stream_id = Uuid::new_v4().to_string();
     let prompt = if target.input_mode == "generated_story" {
         STORY_CONTINUE_PROMPT
     } else {
         CONTINUE_PROMPT
     };
+    let roll_preamble = roll_context_preamble(pool.inner(), &target.id)?;
+    let preamble_plan = story_context_preamble(
+        pool.inner(),
+        &story_id,
+        &branch_id,
+        &history,
+        &config,
+        prompt,
+        &roll_preamble,
+    )?;
+
+    let stream_id = Uuid::new_v4().to_string();
     spawn_narration(
         NarrationJob {
             app,
@@ -958,7 +1131,7 @@ pub async fn generate_narration_variant(
             config,
             history,
             prompt: prompt.to_string(),
-            extra_preamble,
+            preamble_plan,
             tools: Vec::new(),
             reasoning_effort,
             before_seq: Some(target.seq),
@@ -1195,6 +1368,104 @@ mod tests {
     use super::*;
     use crate::features::timeline::repository::append_entry;
     use serde_json::json;
+
+    #[test]
+    fn scoped_preamble_details_touched_entities_and_lists_the_rest() {
+        let pool = crate::shared::db::test_pool();
+        let conn = pool.get().unwrap();
+        conn.execute(
+            "INSERT INTO stories (id, title, created_at, updated_at, settings_json, default_branch_id)
+             VALUES ('s', 'story', 'now', 'now', '{}', 'b')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO branches (id, story_id, parent_branch_id, forked_at_entry_id, name, created_at)
+             VALUES ('b', 's', NULL, NULL, 'main', 'now')",
+            [],
+        )
+        .unwrap();
+        crate::features::entities::create_entity_with_id_sync(
+            &conn,
+            "bob",
+            "s",
+            "b",
+            "character",
+            "Bob",
+            Some("a red cloak"),
+            "test",
+            None,
+        )
+        .unwrap();
+        crate::features::entities::create_entity_with_id_sync(
+            &conn,
+            "mill",
+            "s",
+            "b",
+            "location",
+            "Old Mill",
+            Some("a mossy waterwheel"),
+            "test",
+            None,
+        )
+        .unwrap();
+        let trust_id: String = conn
+            .query_row(
+                "SELECT id FROM attribute_registry WHERE canonical_name = 'Trust'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        conn.execute(
+            "INSERT INTO entity_attributes
+             (branch_id, entity_id, attribute_id, value, source, updated_at, last_event_id)
+             VALUES ('b', 'bob', ?1, 7, 'user', 'now', NULL),
+                    ('b', 'mill', ?1, 3, 'user', 'now', NULL)",
+            [&trust_id],
+        )
+        .unwrap();
+        let query = append_entry(
+            &conn,
+            "b",
+            timeline_kind::ENTITY_QUERIED,
+            "hidden",
+            Some("Looked up: Bob"),
+            &json!({"entity_ids":["bob"]}),
+            None,
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES ('narrator_memory', ?1)",
+            [json!({"tool_call_persistence":true,"preamble_mode":"scoped"}).to_string()],
+        )
+        .unwrap();
+        drop(conn);
+
+        let history = vec![HistoryTurn {
+            entry_id: Some(query.id),
+            is_player: false,
+            content: "[Authoritative story event: entity_queried]\nLooked up: Bob".into(),
+        }];
+        let config = TextModelConfig {
+            provider: crate::ai::TextProviderKind::OpenRouter,
+            model: "test".into(),
+            api_key: "test".into(),
+            context_window: 32_768,
+        };
+        let plan =
+            story_context_preamble(&pool, "s", "b", &history, &config, "prompt", "").unwrap();
+
+        assert!(plan
+            .model_extra
+            .contains("- Bob (character); appearance: a red cloak; attributes: Trust=7"));
+        assert!(plan.model_extra.contains("- Old Mill (location)"));
+        assert!(!plan
+            .model_extra
+            .contains("Old Mill (location); appearance:"));
+        assert!(plan
+            .compaction_extra
+            .contains("Old Mill (location); appearance: a mossy waterwheel; attributes: Trust=3"));
+    }
 
     #[test]
     fn roll_context_includes_every_roll_in_chronological_order() {

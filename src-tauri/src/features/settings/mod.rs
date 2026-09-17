@@ -10,6 +10,7 @@ use crate::shared::error::{AppError, AppResult};
 const SECRETS_STORE: &str = "secrets.json";
 const SETTINGS_KEY_TEXT_MODEL: &str = "text_model_default";
 const SETTINGS_KEY_IMAGE_MODEL: &str = "image_model_default";
+const SETTINGS_KEY_NARRATOR_MEMORY: &str = "narrator_memory";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TextModelSettings {
@@ -241,6 +242,73 @@ pub fn save_image_model_settings(
         "INSERT INTO settings (key, value) VALUES (?1, ?2)
          ON CONFLICT(key) DO UPDATE SET value = excluded.value",
         rusqlite::params![SETTINGS_KEY_IMAGE_MODEL, value],
+    )?;
+    Ok(())
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NarratorMemorySettings {
+    pub tool_call_persistence: bool,
+    pub preamble_mode: String,
+}
+
+impl Default for NarratorMemorySettings {
+    fn default() -> Self {
+        Self {
+            tool_call_persistence: true,
+            preamble_mode: "all".to_string(),
+        }
+    }
+}
+
+#[tauri::command]
+pub fn get_narrator_memory_settings(pool: State<Pool>) -> AppResult<NarratorMemorySettings> {
+    read_narrator_memory_settings(pool.inner())
+}
+
+pub fn read_narrator_memory_settings(pool: &Pool) -> AppResult<NarratorMemorySettings> {
+    let conn = pool.get()?;
+    let stored: Option<String> = conn
+        .query_row(
+            "SELECT value FROM settings WHERE key = ?1",
+            [SETTINGS_KEY_NARRATOR_MEMORY],
+            |row| row.get(0),
+        )
+        .ok();
+    let mut settings = stored
+        .and_then(|value| serde_json::from_str::<NarratorMemorySettings>(&value).ok())
+        .unwrap_or_default();
+    if !matches!(settings.preamble_mode.as_str(), "all" | "scoped") {
+        settings.preamble_mode = "all".to_string();
+    }
+    Ok(settings)
+}
+
+#[tauri::command]
+pub fn save_narrator_memory_settings(
+    pool: State<Pool>,
+    tool_call_persistence: bool,
+    preamble_mode: String,
+) -> AppResult<()> {
+    if !matches!(preamble_mode.as_str(), "all" | "scoped") {
+        return Err(AppError::Invalid(format!(
+            "invalid narrator preamble mode: {preamble_mode}"
+        )));
+    }
+    let conn = pool.get()?;
+    let value = serde_json::to_string(&NarratorMemorySettings {
+        tool_call_persistence,
+        preamble_mode,
+    })
+    .map_err(|error| {
+        AppError::Other(format!(
+            "failed to serialize narrator memory settings: {error}"
+        ))
+    })?;
+    conn.execute(
+        "INSERT INTO settings (key, value) VALUES (?1, ?2)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        rusqlite::params![SETTINGS_KEY_NARRATOR_MEMORY, value],
     )?;
     Ok(())
 }

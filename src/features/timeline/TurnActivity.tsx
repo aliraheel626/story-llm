@@ -10,6 +10,7 @@ export interface TurnActivityData { thoughts?: string | null; tools: ToolCall[] 
 const TOOL_EVENT_KINDS = new Set([
   "diceroll",
   "entity_created",
+  "entity_queried",
   "entity_updated",
   "entity_deleted",
   "entity_attribute_changed",

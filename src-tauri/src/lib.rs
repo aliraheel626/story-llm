@@ -44,6 +44,8 @@ pub fn run() {
             features::settings::save_text_model_settings,
             features::settings::get_image_model_settings,
             features::settings::save_image_model_settings,
+            features::settings::get_narrator_memory_settings,
+            features::settings::save_narrator_memory_settings,
             features::images::generate_scene_image,
             features::images::list_images_for_entry,
             features::images::list_images_for_branch,

@@ -5,6 +5,7 @@ import { AttributesPanel } from "../dicerolls/AttributesPanel";
 import { WorldPanel } from "../world/WorldPanel";
 import { TextModelPanel } from "../settings/TextModelPanel";
 import { ImageModelPanel } from "../settings/ImageModelPanel";
+import { NarratorMemoryPanel } from "../settings/NarratorMemoryPanel";
 import { PlaceholderPanel } from "./PlaceholderPanel";
 import { useAppStore } from "../../app/store";
 
@@ -15,6 +16,7 @@ const PANEL_LABELS: Record<string, string> = {
   attributes: "Attributes",
   textModel: "Text Model",
   imageModel: "Image Model",
+  narratorMemory: "Narrator Memory",
   features: "Features",
 };
 
@@ -50,6 +52,10 @@ export function Sidebar() {
 
       <AccordionPanel title={PANEL_LABELS.imageModel} open={openPanels.imageModel} onToggle={() => togglePanel("imageModel")}>
         <ImageModelPanel />
+      </AccordionPanel>
+
+      <AccordionPanel title={PANEL_LABELS.narratorMemory} open={openPanels.narratorMemory} onToggle={() => togglePanel("narratorMemory")}>
+        <NarratorMemoryPanel />
       </AccordionPanel>
 
       <AccordionPanel title={PANEL_LABELS.features} open={openPanels.features} onToggle={() => togglePanel("features")}>

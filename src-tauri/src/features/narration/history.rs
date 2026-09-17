@@ -21,12 +21,23 @@ fn latest_summary_through_seq(
     })?;
     for row in rows {
         let (summary_seq, payload_json) = row?;
-        let through_seq = serde_json::from_str::<serde_json::Value>(&payload_json)
+        let boundary = serde_json::from_str::<serde_json::Value>(&payload_json)
             .ok()
-            .and_then(|value| value.get("through_seq").and_then(|seq| seq.as_i64()));
-        if let Some(through_seq) = through_seq {
+            .and_then(|value| {
+                Some((
+                    value.get("through_seq")?.as_i64()?,
+                    value.get("through_entry_id")?.as_str()?.to_string(),
+                ))
+            });
+        if let Some((through_seq, through_entry_id)) = boundary {
+            let boundary_exists: bool = conn.query_row(
+                "SELECT EXISTS(SELECT 1 FROM timeline_entries WHERE id = ?1)",
+                [through_entry_id],
+                |row| row.get(0),
+            )?;
             if before_seq
                 .is_none_or(|before_seq| summary_seq < before_seq && through_seq < before_seq)
+                && boundary_exists
             {
                 return Ok(Some(through_seq));
             }
@@ -126,6 +137,7 @@ fn history_from_entries(
             entry.kind.as_str(),
             kind::DICEROLL
                 | kind::ENTITY_CREATED
+                | kind::ENTITY_QUERIED
                 | kind::ENTITY_UPDATED
                 | kind::ENTITY_DELETED
                 | kind::ENTITY_ATTRIBUTE_CHANGED
@@ -285,6 +297,102 @@ mod tests {
         let history = history_from_entries(&rows);
         assert_eq!(history.len(), 1);
         assert_eq!(history[0].content, "keep me");
+    }
+
+    #[test]
+    fn entity_queries_replay_as_authoritative_story_events() {
+        let rows = vec![entry(
+            "query",
+            0,
+            kind::ENTITY_QUERIED,
+            Some("Looked up: Bob"),
+            json!({"entity_ids":["bob"]}),
+        )];
+
+        let history = history_from_entries(&rows);
+        assert_eq!(history.len(), 1);
+        assert_eq!(
+            history[0].content,
+            "[Authoritative story event: entity_queried]\nLooked up: Bob"
+        );
+    }
+
+    #[test]
+    fn summary_with_a_cascade_deleted_boundary_does_not_hide_older_history() {
+        let pool = crate::shared::db::test_pool();
+        let conn = pool.get().unwrap();
+        conn.execute(
+            "INSERT INTO stories (id, title, created_at, updated_at, settings_json, default_branch_id)
+             VALUES ('s', 'story', 'now', 'now', '{}', 'b')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO branches (id, story_id, parent_branch_id, forked_at_entry_id, name, created_at)
+             VALUES ('b', 's', NULL, NULL, 'main', 'now')",
+            [],
+        )
+        .unwrap();
+        let old = repository::append_entry(
+            &conn,
+            "b",
+            kind::PLAYER_MESSAGE,
+            "visible",
+            Some("Keep this older turn."),
+            &json!({"input_mode":"do"}),
+            None,
+        )
+        .unwrap();
+        let narration = repository::append_entry(
+            &conn,
+            "b",
+            kind::NARRATION,
+            "visible",
+            Some("Temporary narration."),
+            &json!({"input_mode":"generated"}),
+            None,
+        )
+        .unwrap();
+        let query = repository::append_entry(
+            &conn,
+            "b",
+            kind::ENTITY_QUERIED,
+            "hidden",
+            Some("Looked up: Bob"),
+            &json!({"entity_ids":["bob"]}),
+            Some(&narration.id),
+        )
+        .unwrap();
+        repository::append_entry(
+            &conn,
+            "b",
+            kind::CONTEXT_SUMMARY,
+            "hidden",
+            Some("Invalid after the query is deleted."),
+            &json!({"through_entry_id":query.id,"through_seq":query.seq}),
+            None,
+        )
+        .unwrap();
+
+        conn.execute(
+            "DELETE FROM timeline_entries WHERE id = ?1",
+            [&narration.id],
+        )
+        .unwrap();
+        let query_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM timeline_entries WHERE id = ?1",
+                [&query.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(query_count, 0);
+        drop(conn);
+
+        let history = load_history(&pool, "b", None).unwrap();
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].entry_id.as_deref(), Some(old.id.as_str()));
+        assert_eq!(history[0].content, "Keep this older turn.");
     }
 
     #[test]

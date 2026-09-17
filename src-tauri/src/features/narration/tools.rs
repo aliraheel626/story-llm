@@ -9,7 +9,10 @@
 //! the whole turn succeeds — matching how every other generation path in
 //! this app (retry, swipe, image generation) already fails clean.
 
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 use rig_agent::tool::{DynamicTool, PortableDynamicTool, ToolExecutionError, ToolOutput};
 use serde_json::json;
@@ -27,6 +30,7 @@ use crate::features::entities::{
     model::{AttributeRegistryEntry, Entity},
 };
 use crate::features::images::model::ImageRequest;
+use crate::features::{settings, timeline};
 use crate::shared::db::Pool;
 use crate::shared::error::{AppError, AppResult};
 
@@ -60,6 +64,11 @@ enum PendingOp {
         alias: String,
     },
     Roll(PendingRoll),
+    QueryEntities {
+        entity_ids: Vec<String>,
+        kind_filter: Option<String>,
+        name_filter: Option<String>,
+    },
 }
 
 fn fold_pending_delta(
@@ -380,6 +389,37 @@ impl TurnStaging {
                     });
                     resolve::persist_roll(tx, passage_id, pending)?;
                 }
+                PendingOp::QueryEntities {
+                    entity_ids,
+                    kind_filter,
+                    name_filter,
+                } => {
+                    let wanted = entity_ids.iter().cloned().collect::<HashSet<_>>();
+                    let names =
+                        entities::list_entities_sync(tx, &self.story_id, &self.branch_id, None)?
+                            .into_iter()
+                            .filter(|entity| wanted.contains(&entity.id))
+                            .map(|entity| entity.name)
+                            .collect::<Vec<_>>();
+                    let content = if names.is_empty() {
+                        "Looked up: no matching entities".to_string()
+                    } else {
+                        format!("Looked up: {}", names.join(", "))
+                    };
+                    timeline::repository::append_entry(
+                        tx,
+                        &self.branch_id,
+                        timeline::model::kind::ENTITY_QUERIED,
+                        "hidden",
+                        Some(&content),
+                        &json!({
+                            "entity_ids": entity_ids,
+                            "kind_filter": kind_filter,
+                            "name_filter": name_filter,
+                        }),
+                        Some(passage_id),
+                    )?;
+                }
             }
         }
         Ok(())
@@ -661,14 +701,17 @@ fn get_entities_tool(staging: Arc<Mutex<TurnStaging>>) -> PortableDynamicTool {
             Box::pin(async move {
                 let kind = args.get("kind").and_then(|v| v.as_str());
                 let name = args.get("name").and_then(|v| v.as_str());
-                let staging = staging.lock().await;
+                let mut staging = staging.lock().await;
                 let entities = staging
                     .effective_entities(kind, name)
                     .map_err(to_tool_error)?;
-                let entity_ids: Vec<&str> =
-                    entities.iter().map(|entity| entity.id.as_str()).collect();
+                let entity_ids = entities
+                    .iter()
+                    .map(|entity| entity.id.clone())
+                    .collect::<Vec<_>>();
+                let entity_id_refs = entity_ids.iter().map(String::as_str).collect::<Vec<_>>();
                 let mut attributes_by_entity = staging
-                    .attribute_snapshot_for_entities(&entity_ids)
+                    .attribute_snapshot_for_entities(&entity_id_refs)
                     .map_err(to_tool_error)?;
                 let mut out = Vec::new();
                 for entity in entities {
@@ -677,6 +720,15 @@ fn get_entities_tool(staging: Arc<Mutex<TurnStaging>>) -> PortableDynamicTool {
                         "id": entity.id, "kind": entity.kind, "name": entity.name,
                         "appearance_anchor": entity.appearance_anchor, "attributes": attributes,
                     }));
+                }
+                let memory = settings::read_narrator_memory_settings(&staging.pool)
+                    .map_err(to_tool_error)?;
+                if memory.tool_call_persistence {
+                    staging.pending.push(PendingOp::QueryEntities {
+                        entity_ids,
+                        kind_filter: kind.map(str::to_string),
+                        name_filter: name.map(str::to_string),
+                    });
                 }
                 Ok(ToolOutput::json(json!({"entities": out})))
             })
@@ -1160,6 +1212,50 @@ mod tests {
             )
             .unwrap();
         assert_eq!(value, (attribute.min + attribute.max) / 2.0 + 3.0);
+    }
+
+    #[test]
+    fn query_entities_commit_writes_entity_ids_to_the_timeline() {
+        let (pool, story_id, branch_id) = setup();
+        let mut staging = TurnStaging::new(pool.clone(), story_id, branch_id.clone());
+        let (bob, _) = staging
+            .resolve_or_stage_entity("character", "Bob", Some("a weathered coat"))
+            .unwrap();
+        staging.pending.push(PendingOp::QueryEntities {
+            entity_ids: vec![bob.id.clone()],
+            kind_filter: Some("character".into()),
+            name_filter: Some("Bob".into()),
+        });
+
+        let mut conn = pool.get().unwrap();
+        let passage = append_entry(
+            &conn,
+            &branch_id,
+            "narration",
+            "visible",
+            Some("scene"),
+            &json!({}),
+            None,
+        )
+        .unwrap();
+        let tx = conn.transaction().unwrap();
+        staging.commit(&tx, &passage.id).unwrap();
+        tx.commit().unwrap();
+
+        let (content, payload_json, target_entry_id): (String, String, String) = conn
+            .query_row(
+                "SELECT content, payload_json, target_entry_id FROM timeline_entries
+                 WHERE kind = ?1",
+                [timeline::model::kind::ENTITY_QUERIED],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        let payload: serde_json::Value = serde_json::from_str(&payload_json).unwrap();
+        assert_eq!(content, "Looked up: Bob");
+        assert_eq!(payload["entity_ids"], json!([bob.id]));
+        assert_eq!(payload["kind_filter"], json!("character"));
+        assert_eq!(payload["name_filter"], json!("Bob"));
+        assert_eq!(target_entry_id, passage.id);
     }
 
     #[test]
@@ -1692,6 +1788,41 @@ mod tests {
         assert_eq!(entities[0]["name"], json!("The Drowned Keep"));
         assert_eq!(entities[0]["kind"], json!("location"));
         assert_eq!(entities[0]["attributes"], json!([]));
+        let staging = staging.lock().await;
+        assert!(staging.pending.iter().any(|op| matches!(
+            op,
+            PendingOp::QueryEntities {
+                entity_ids,
+                kind_filter: Some(kind),
+                name_filter: None,
+            } if entity_ids.len() == 1 && kind == "location"
+        )));
+    }
+
+    #[tokio::test]
+    async fn get_entities_stays_ephemeral_when_persistence_is_disabled() {
+        let (pool, story_id, branch_id) = setup();
+        pool.get()
+            .unwrap()
+            .execute(
+                "INSERT INTO settings (key, value) VALUES ('narrator_memory', ?1)",
+                [json!({"tool_call_persistence":false,"preamble_mode":"all"}).to_string()],
+            )
+            .unwrap();
+        let staging = Arc::new(Mutex::new(TurnStaging::new(pool, story_id, branch_id)));
+        let tools = portable_tools(staging.clone());
+
+        tool_named(&tools, "get_entities")
+            .execute(json!({}))
+            .await
+            .unwrap();
+
+        assert!(!staging
+            .lock()
+            .await
+            .pending
+            .iter()
+            .any(|op| matches!(op, PendingOp::QueryEntities { .. })));
     }
 
     #[tokio::test]

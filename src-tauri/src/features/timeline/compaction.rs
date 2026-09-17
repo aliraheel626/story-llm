@@ -127,6 +127,42 @@ fn messages(history: &[HistoryTurn]) -> Vec<Message> {
         .collect()
 }
 
+pub(crate) fn raw_tail_boundary(
+    history: &[HistoryTurn],
+    config: &TextModelConfig,
+    preamble: &str,
+    prompt: &str,
+) -> usize {
+    let counter = HeuristicTokenCounter::openai();
+    let context_window = if config.context_window == 0 {
+        FALLBACK_CONTEXT_WINDOW
+    } else {
+        config.context_window
+    };
+    let response_reserve = 8_192usize.min(context_window / 5);
+    let trigger = ((context_window as f64) * 0.90) as usize;
+    let fixed = counter.count(&Message::system(preamble.to_string()))
+        + counter.count(&Message::user(prompt.to_string()))
+        + response_reserve;
+    let history_messages = messages(history);
+    let total = fixed
+        + history_messages
+            .iter()
+            .map(|message| counter.count(message))
+            .sum::<usize>();
+    if total < trigger {
+        return 0;
+    }
+
+    let target_history_budget = (((context_window as f64) * 0.75) as usize).saturating_sub(fixed);
+    let policy = TokenWindowMemory::new(target_history_budget, counter);
+    let kept = policy
+        .apply(history_messages.clone())
+        .unwrap_or(history_messages);
+    let keep_count = kept.len().max(RAW_TAIL_MESSAGES.min(history.len()));
+    history.len().saturating_sub(keep_count)
+}
+
 pub async fn prepare_history(
     pool: &Pool,
     branch_id: &str,
@@ -177,37 +213,23 @@ where
         prompt,
         before_seq,
     } = input;
-    let counter = HeuristicTokenCounter::openai();
     let context_window = if config.context_window == 0 {
         FALLBACK_CONTEXT_WINDOW
     } else {
         config.context_window
     };
     let response_reserve = 8_192usize.min(context_window / 5);
-    let trigger = ((context_window as f64) * 0.90) as usize;
+    let counter = HeuristicTokenCounter::openai();
     let fixed = counter.count(&Message::system(preamble.to_string()))
         + counter.count(&Message::user(prompt.to_string()))
         + response_reserve;
     let history_messages = messages(&history);
-    let total = fixed
-        + history_messages
-            .iter()
-            .map(|m| counter.count(m))
-            .sum::<usize>();
-    if total < trigger {
-        return history;
-    }
-
     let target_history_budget = (((context_window as f64) * 0.75) as usize).saturating_sub(fixed);
-    let policy = TokenWindowMemory::new(target_history_budget, counter);
-    let kept = policy
-        .apply(history_messages.clone())
-        .unwrap_or_else(|_| history_messages.clone());
-    let keep_count = kept.len().max(RAW_TAIL_MESSAGES.min(history.len()));
-    let split = history.len().saturating_sub(keep_count);
+    let split = raw_tail_boundary(&history, config, preamble, prompt);
     if split == 0 {
         return history;
     }
+    let keep_count = history.len() - split;
     let through_entry_id = history[..split]
         .iter()
         .rev()
@@ -331,6 +353,7 @@ mod tests {
     #[derive(Clone)]
     struct RecordingCompactor {
         carry_over: Arc<Mutex<Option<String>>>,
+        evicted_count: Arc<Mutex<Option<usize>>>,
     }
 
     impl Compactor for RecordingCompactor {
@@ -345,9 +368,52 @@ mod tests {
             Box::pin(async move {
                 *self.carry_over.lock().unwrap() =
                     carry_over.map(|artifact| artifact.0.prose.clone());
+                *self.evicted_count.lock().unwrap() = Some(_evicted.len());
                 Ok(SummaryArtifact(summary("new compacted context")))
             })
         }
+    }
+
+    #[tokio::test]
+    async fn raw_tail_boundary_matches_the_prepare_history_split() {
+        let history = (0..30)
+            .map(|index| HistoryTurn {
+                entry_id: Some(format!("entry-{index}")),
+                is_player: index % 2 == 0,
+                content: format!("Long historical turn {index}: {}", "context ".repeat(40)),
+            })
+            .collect::<Vec<_>>();
+        let config = TextModelConfig {
+            provider: TextProviderKind::OpenRouter,
+            model: "test".into(),
+            api_key: "test".into(),
+            context_window: 256,
+        };
+        let expected = raw_tail_boundary(&history, &config, "preamble", "prompt");
+        assert!(expected > 0);
+        let evicted_count = Arc::new(Mutex::new(None));
+        let compactor = RecordingCompactor {
+            carry_over: Arc::new(Mutex::new(None)),
+            evicted_count: evicted_count.clone(),
+        };
+        let pool = crate::shared::db::test_pool();
+
+        let compacted = prepare_history_with_compactor(
+            HistoryPreparation {
+                pool: &pool,
+                branch_id: "branch",
+                config: &config,
+                preamble: "preamble",
+                prompt: "prompt",
+                before_seq: None,
+            },
+            history.clone(),
+            &compactor,
+        )
+        .await;
+
+        assert_eq!(*evicted_count.lock().unwrap(), Some(expected));
+        assert_eq!(compacted.len(), 1 + history.len() - expected);
     }
 
     #[tokio::test]
@@ -427,6 +493,7 @@ mod tests {
         let carry_over = Arc::new(Mutex::new(None));
         let compactor = RecordingCompactor {
             carry_over: carry_over.clone(),
+            evicted_count: Arc::new(Mutex::new(None)),
         };
         let mut history = vec![HistoryTurn {
             entry_id: None,
@@ -536,6 +603,7 @@ mod tests {
         };
         let compactor = RecordingCompactor {
             carry_over: Arc::new(Mutex::new(None)),
+            evicted_count: Arc::new(Mutex::new(None)),
         };
         let compacted = prepare_history_with_compactor(
             HistoryPreparation {

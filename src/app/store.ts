@@ -10,6 +10,7 @@ export const SIDEBAR_PANELS = [
   "attributes",
   "textModel",
   "imageModel",
+  "narratorMemory",
   "features",
 ] as const;
 
@@ -44,6 +45,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     attributes: false,
     textModel: false,
     imageModel: false,
+    narratorMemory: false,
     features: false,
   },
   togglePanel: (id) =>

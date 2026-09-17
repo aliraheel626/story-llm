@@ -9,7 +9,7 @@ export type InputMode = "do" | "say" | "story" | "generated" | "generated_guide"
 export type TimelineVisibility = "visible" | "hidden";
 export type TimelineEntryKind =
   | "player_message" | "narration" | "narration_variant" | "narration_selected" | "content_edited"
-  | "diceroll" | "entity_created" | "entity_updated" | "entity_deleted"
+  | "diceroll" | "entity_created" | "entity_queried" | "entity_updated" | "entity_deleted"
   | "entity_attribute_changed" | "entity_attribute_removed" | "image_generated"
   | "context_note_updated" | "diceroll_settings_changed" | "world_event" | "context_summary";
 
@@ -52,7 +52,7 @@ export type TimelineEntry =
   | (TimelineEntryBase & { kind: "entity_attribute_changed" | "entity_attribute_removed"; payload: EntityAttributeEventPayload })
   | (TimelineEntryBase & { kind: "image_generated"; payload: ImageGeneratedPayload })
   | (TimelineEntryBase & { kind: "context_summary"; payload: ContextSummaryPayload })
-  | (TimelineEntryBase & { kind: "diceroll" | "context_note_updated" | "diceroll_settings_changed" | "world_event"; payload: TimelinePayloadBase });
+  | (TimelineEntryBase & { kind: "diceroll" | "entity_queried" | "context_note_updated" | "diceroll_settings_changed" | "world_event"; payload: TimelinePayloadBase });
 
 export interface NarrationVariant {
   id: string; entry_id: string; content: string; is_selected: boolean; created_at: string; thoughts?: string | null;
@@ -67,6 +67,8 @@ export interface SwipeDonePayload { stream_id: string; entry: TimelineEntry; var
 
 export interface TextModelSettings { provider: string; model: string; has_api_key: boolean; context_window: number }
 export interface ImageModelSettings { model: string; enabled: boolean; style: string; has_api_key: boolean; narrator_images: boolean }
+export type NarratorPreambleMode = "all" | "scoped";
+export interface NarratorMemorySettings { tool_call_persistence: boolean; preamble_mode: NarratorPreambleMode }
 export interface StoryImage { id: string; entry_id: string; path: string; prompt: string; seed: number | null; provider: string; created_at: string }
 
 export type EntityKind = "character" | "object" | "location" | "relationship" | "campaign";
