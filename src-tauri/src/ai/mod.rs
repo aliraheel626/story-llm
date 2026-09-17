@@ -16,15 +16,8 @@ use rig_core::streaming::StreamedAssistantContent;
 use crate::shared::error::{AppError, AppResult};
 use reasoning_strip::ReasoningStripper;
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum TextProviderKind {
-    OpenRouter,
-}
-
 #[derive(Debug, Clone)]
 pub struct TextModelConfig {
-    pub provider: TextProviderKind,
     pub model: String,
     pub api_key: String,
     pub context_window: usize,
@@ -299,34 +292,30 @@ fn build_agent(
     tools: Vec<DynamicTool>,
     reasoning_effort: Option<&str>,
 ) -> AppResult<rig_agent::Agent> {
-    match config.provider {
-        TextProviderKind::OpenRouter => {
-            let client = openrouter::Client::builder()
-                .api_key(config.api_key.clone())
-                .with_app_identity("Dungeon", "https://github.com/dungeon-app/dungeon")
-                .build()
-                .map_err(|e| AppError::Other(format!("failed to build OpenRouter client: {e}")))?;
-            let builder = client.agent(config.model.clone()).preamble(preamble);
-            // OpenRouter accepts provider-specific request fields it doesn't
-            // model natively; `reasoning.effort` is how the effort selector
-            // reaches the upstream model.
-            let builder = match reasoning_effort {
-                Some(effort) => builder.additional_params(serde_json::json!({
-                    "reasoning": { "effort": effort },
-                })),
-                None => builder,
-            };
-            let agent = if tools.is_empty() {
-                builder.build()
-            } else {
-                builder
-                    .dynamic_tools(tools)
-                    .default_max_turns(MAX_TOOL_TURNS)
-                    .build()
-            };
-            Ok(agent)
-        }
-    }
+    let client = openrouter::Client::builder()
+        .api_key(config.api_key.clone())
+        .with_app_identity("Dungeon", "https://github.com/dungeon-app/dungeon")
+        .build()
+        .map_err(|e| AppError::Other(format!("failed to build OpenRouter client: {e}")))?;
+    let builder = client.agent(config.model.clone()).preamble(preamble);
+    // OpenRouter accepts provider-specific request fields it doesn't model
+    // natively; `reasoning.effort` is how the effort selector reaches the
+    // upstream model.
+    let builder = match reasoning_effort {
+        Some(effort) => builder.additional_params(serde_json::json!({
+            "reasoning": { "effort": effort },
+        })),
+        None => builder,
+    };
+    let agent = if tools.is_empty() {
+        builder.build()
+    } else {
+        builder
+            .dynamic_tools(tools)
+            .default_max_turns(MAX_TOOL_TURNS)
+            .build()
+    };
+    Ok(agent)
 }
 
 #[cfg(test)]

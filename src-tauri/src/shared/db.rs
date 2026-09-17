@@ -7,6 +7,17 @@ use crate::shared::error::{AppError, AppResult};
 pub type Pool = r2d2::Pool<SqliteConnectionManager>;
 pub type PooledConn = r2d2::PooledConnection<SqliteConnectionManager>;
 
+pub fn with_transaction<T>(
+    pool: &Pool,
+    f: impl FnOnce(&rusqlite::Transaction<'_>) -> AppResult<T>,
+) -> AppResult<T> {
+    let mut conn = pool.get()?;
+    let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+    let result = f(&tx)?;
+    tx.commit()?;
+    Ok(result)
+}
+
 pub fn init_pool(app_data_dir: &Path) -> AppResult<Pool> {
     std::fs::create_dir_all(app_data_dir)?;
     let db_path = app_data_dir.join("dungeon.sqlite3");
@@ -76,6 +87,8 @@ fn run_migrations(conn: &mut PooledConn) -> AppResult<()> {
             PRIMARY KEY (branch_id, entity_id)
         );
         CREATE INDEX IF NOT EXISTS idx_branch_entities_name ON branch_entity_state(branch_id, name);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_branch_entities_name_ci
+            ON branch_entity_state(branch_id, name COLLATE NOCASE);
 
         CREATE TABLE IF NOT EXISTS attribute_registry (
             id TEXT PRIMARY KEY,
@@ -247,4 +260,77 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn entity_names_are_unique_case_insensitively_per_branch() {
+        let pool = test_pool();
+        let conn = pool.get().unwrap();
+        conn.execute_batch(
+            "INSERT INTO stories (id, title, created_at, updated_at, settings_json, default_branch_id)
+                 VALUES ('story', 'Story', 'now', 'now', '{}', 'first');
+             INSERT INTO branches (id, story_id, parent_branch_id, forked_at_entry_id, name, created_at)
+                 VALUES ('first', 'story', NULL, NULL, 'first', 'now'),
+                        ('second', 'story', NULL, NULL, 'second', 'now');
+             INSERT INTO entities (id, story_id, kind, created_at)
+                 VALUES ('one', 'story', 'character', 'now'),
+                        ('two', 'story', 'character', 'now');
+             INSERT INTO branch_entity_state
+                 (branch_id, entity_id, name, appearance_anchor, is_present, updated_at, last_event_id)
+                 VALUES ('first', 'one', 'Mira', NULL, 1, 'now', NULL);",
+        )
+        .unwrap();
+
+        let error = conn
+            .execute(
+                "INSERT INTO branch_entity_state
+                 (branch_id, entity_id, name, appearance_anchor, is_present, updated_at, last_event_id)
+                 VALUES ('first', 'two', 'mira', NULL, 1, 'now', NULL)",
+                [],
+            )
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            rusqlite::Error::SqliteFailure(
+                rusqlite::ffi::Error {
+                    code: rusqlite::ErrorCode::ConstraintViolation,
+                    ..
+                },
+                _
+            )
+        ));
+        conn.execute(
+            "INSERT INTO branch_entity_state
+             (branch_id, entity_id, name, appearance_anchor, is_present, updated_at, last_event_id)
+             VALUES ('second', 'two', 'mira', NULL, 1, 'now', NULL)",
+            [],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn with_transaction_commits_success_and_rolls_back_errors() {
+        let pool = test_pool();
+        with_transaction(&pool, |tx| {
+            tx.execute(
+                "INSERT INTO settings (key, value) VALUES ('kept', 'yes')",
+                [],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+
+        let result: AppResult<()> = with_transaction(&pool, |tx| {
+            tx.execute(
+                "INSERT INTO settings (key, value) VALUES ('rolled_back', 'yes')",
+                [],
+            )?;
+            Err(AppError::Other("stop".into()))
+        });
+        assert!(result.is_err());
+
+        let conn = pool.get().unwrap();
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM settings", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(count, 1);
+    }
 }

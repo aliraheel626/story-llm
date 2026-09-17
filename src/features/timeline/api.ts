@@ -1,8 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { NarrationVariant, RetryResult, RollDetail, StoryImage, SubmitTurnResult, TimelineEntry } from "../../shared/types";
+import type { NarrationVariant, RetryResult, RollDetail, StoryImage, SubmitTurnResult, TimelineEntry, TimelineSnapshot } from "../../shared/types";
 
 export const timelineApi = {
-  list: (branchId: string) => invoke<TimelineEntry[]>("list_timeline_entries", { branchId }),
+  list: (branchId: string) => invoke<TimelineSnapshot>("list_timeline_entries", { branchId }),
   submitStory: (branchId: string, content: string) => invoke<SubmitTurnResult>("submit_story", { branchId, content }),
   submitTurn: (branchId: string, inputMode: "do" | "say", content: string) => invoke<SubmitTurnResult>("submit_turn", { branchId, inputMode, content }),
   submitGuide: (branchId: string, note: string) => invoke<string>("submit_guide", { branchId, note }),

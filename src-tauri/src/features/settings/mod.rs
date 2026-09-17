@@ -3,7 +3,7 @@ use serde_json::json;
 use tauri::{AppHandle, State};
 use tauri_plugin_store::StoreExt;
 
-use crate::ai::{TextModelConfig, TextProviderKind};
+use crate::ai::TextModelConfig;
 use crate::shared::db::Pool;
 use crate::shared::error::{AppError, AppResult};
 
@@ -154,9 +154,8 @@ pub struct ImageModelSettings {
     /// Images reuse the OpenRouter key set in the Text Model panel — there is
     /// only one provider (OpenRouter) for both text and images.
     pub has_api_key: bool,
-    /// Whether narrator-driven images are enabled. This gates the
-    /// `illustrate_scene` tool in `submit_turn` and the legacy
-    /// `maybe_auto_image` classifier used by other narration paths.
+    /// Whether narrator-driven images are enabled. This gates the live
+    /// `illustrate_scene` tool on narration paths that support it.
     pub narrator_images: bool,
 }
 
@@ -333,12 +332,7 @@ pub fn resolve_text_model(app: &AppHandle, pool: &Pool) -> AppResult<TextModelCo
         ));
     }
     let api_key = read_api_key(app, &settings.provider)?;
-    let provider = match settings.provider.as_str() {
-        "openrouter" => TextProviderKind::OpenRouter,
-        other => return Err(AppError::Invalid(format!("unsupported provider: {other}"))),
-    };
     Ok(TextModelConfig {
-        provider,
         model: settings.model,
         api_key,
         context_window: settings.context_window,

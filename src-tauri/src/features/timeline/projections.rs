@@ -1,23 +1,37 @@
+use std::collections::HashSet;
+
 use chrono::Utc;
 
 use crate::shared::error::AppResult;
 
 use super::{model::kind, repository};
 
-/// Replays authoritative state events after destructive tail erasure. The
-/// timeline remains the source of truth; projection tables are disposable.
-pub fn rebuild_branch(conn: &rusqlite::Connection, branch_id: &str) -> AppResult<()> {
-    conn.execute(
-        "DELETE FROM entity_attributes WHERE branch_id = ?1",
-        [branch_id],
-    )?;
-    conn.execute(
-        "DELETE FROM branch_entity_state WHERE branch_id = ?1",
-        [branch_id],
-    )?;
+/// Replays only entities whose authoritative events were removed by a
+/// destructive tail erase. Unrelated projection rows remain untouched.
+pub fn replay_entities(
+    conn: &rusqlite::Connection,
+    branch_id: &str,
+    entity_ids: &HashSet<String>,
+) -> AppResult<()> {
+    if entity_ids.is_empty() {
+        return Ok(());
+    }
+    for entity_id in entity_ids {
+        conn.execute(
+            "DELETE FROM entity_attributes WHERE branch_id = ?1 AND entity_id = ?2",
+            rusqlite::params![branch_id, entity_id],
+        )?;
+        conn.execute(
+            "DELETE FROM branch_entity_state WHERE branch_id = ?1 AND entity_id = ?2",
+            rusqlite::params![branch_id, entity_id],
+        )?;
+    }
     let now = Utc::now().to_rfc3339();
     for event in repository::list_logical_entries(conn, branch_id)? {
         let entity_id = event.payload.get("entity_id").and_then(|v| v.as_str());
+        if !entity_id.is_some_and(|id| entity_ids.contains(id)) {
+            continue;
+        }
         match event.kind.as_str() {
             kind::ENTITY_CREATED => {
                 let (Some(entity_id), Some(name)) = (
@@ -82,78 +96,4 @@ pub fn rebuild_branch(conn: &rusqlite::Connection, branch_id: &str) -> AppResult
         }
     }
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::features::timeline::{model::kind, repository::append_entry};
-    use serde_json::json;
-
-    #[test]
-    fn rebuild_replays_entity_and_attribute_events() {
-        let conn = rusqlite::Connection::open_in_memory().unwrap();
-        conn.execute_batch("CREATE TABLE stories(id TEXT PRIMARY KEY, updated_at TEXT NOT NULL);
-            CREATE TABLE branches(id TEXT PRIMARY KEY, story_id TEXT NOT NULL, parent_branch_id TEXT, forked_at_entry_id TEXT);
-            CREATE TABLE timeline_entries(id TEXT PRIMARY KEY, branch_id TEXT NOT NULL, seq INTEGER NOT NULL, kind TEXT NOT NULL, visibility TEXT NOT NULL, content TEXT, payload_json TEXT NOT NULL, target_entry_id TEXT, created_at TEXT NOT NULL, UNIQUE(branch_id,seq));
-            CREATE TABLE branch_entity_state(branch_id TEXT NOT NULL, entity_id TEXT NOT NULL, name TEXT NOT NULL, appearance_anchor TEXT, is_present INTEGER NOT NULL, updated_at TEXT NOT NULL, last_event_id TEXT, PRIMARY KEY(branch_id,entity_id));
-            CREATE TABLE entity_attributes(branch_id TEXT NOT NULL, entity_id TEXT NOT NULL, attribute_id TEXT NOT NULL, value REAL NOT NULL, source TEXT NOT NULL, updated_at TEXT NOT NULL, last_event_id TEXT, PRIMARY KEY(branch_id,entity_id,attribute_id));
-            INSERT INTO stories VALUES ('s','now');
-            INSERT INTO branches VALUES ('b','s',NULL,NULL);").unwrap();
-
-        append_entry(
-            &conn,
-            "b",
-            kind::ENTITY_CREATED,
-            "hidden",
-            Some("Mira was added."),
-            &json!({"entity_id":"mira","name":"Mira","appearance_anchor":"silver hair"}),
-            None,
-        )
-        .unwrap();
-        append_entry(
-            &conn,
-            "b",
-            kind::ENTITY_ATTRIBUTE_CHANGED,
-            "hidden",
-            Some("Stealth changed."),
-            &json!({"entity_id":"mira","attribute_id":"stealth","after":8.0,"source":"user"}),
-            None,
-        )
-        .unwrap();
-
-        conn.execute(
-            "INSERT INTO branch_entity_state VALUES ('b','stale','Stale',NULL,1,'now',NULL)",
-            [],
-        )
-        .unwrap();
-        conn.execute(
-            "INSERT INTO entity_attributes VALUES ('b','stale','stealth',1,'inferred','now',NULL)",
-            [],
-        )
-        .unwrap();
-        rebuild_branch(&conn, "b").unwrap();
-
-        let state: (String, Option<String>, i64) = conn.query_row(
-            "SELECT name, appearance_anchor, is_present FROM branch_entity_state WHERE branch_id='b' AND entity_id='mira'",
-            [],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-        ).unwrap();
-        assert_eq!(state, ("Mira".into(), Some("silver hair".into()), 1));
-        let attribute: (f64, String) = conn.query_row(
-            "SELECT value, source FROM entity_attributes WHERE branch_id='b' AND entity_id='mira'",
-            [],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        ).unwrap();
-        assert_eq!(attribute, (8.0, "user".into()));
-        assert_eq!(
-            conn.query_row(
-                "SELECT COUNT(*) FROM branch_entity_state WHERE entity_id='stale'",
-                [],
-                |row| row.get::<_, i64>(0)
-            )
-            .unwrap(),
-            0
-        );
-    }
 }

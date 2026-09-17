@@ -4,10 +4,9 @@
 //! now discovers and records world state itself instead of being handed
 //! pre-computed context.
 //!
-//! Writes are staged in `TurnStaging` during generation and only committed
-//! (via `TurnStaging::commit`) atomically alongside the narration insert once
-//! the whole turn succeeds — matching how every other generation path in
-//! this app (retry, swipe, image generation) already fails clean.
+//! Story-state writes are staged in `TurnStaging` during generation and only
+//! committed atomically alongside the narration. Attribute registry entries
+//! and aliases resolve eagerly so every staged operation holds a canonical id.
 
 use std::{
     collections::{HashMap, HashSet},
@@ -57,11 +56,6 @@ enum PendingOp {
         delta: f64,
         cause: String,
         dramatic: bool,
-    },
-    MintAttribute(AttributeRegistryEntry),
-    AddAlias {
-        attribute_id: String,
-        alias: String,
     },
     Roll(PendingRoll),
     QueryEntities {
@@ -164,37 +158,6 @@ impl TurnStaging {
             .effective_entities(None, None)?
             .into_iter()
             .find(|e| e.id == entity_id))
-    }
-
-    fn staged_attribute_match(
-        &self,
-        proposed_name: &str,
-    ) -> AppResult<Option<AttributeRegistryEntry>> {
-        let proposed_name = proposed_name.trim();
-        for op in &self.pending {
-            match op {
-                PendingOp::MintAttribute(attribute) => {
-                    let aliases: Vec<String> =
-                        serde_json::from_str(&attribute.aliases_json).unwrap_or_default();
-                    if attribute.canonical_name.eq_ignore_ascii_case(proposed_name)
-                        || aliases
-                            .iter()
-                            .any(|alias| alias.eq_ignore_ascii_case(proposed_name))
-                    {
-                        return Ok(Some(attribute.clone()));
-                    }
-                }
-                PendingOp::AddAlias {
-                    attribute_id,
-                    alias,
-                } if alias.eq_ignore_ascii_case(proposed_name) => {
-                    let conn = self.pool.get()?;
-                    return attributes::find_attribute_by_id(&conn, attribute_id).map(Some);
-                }
-                _ => {}
-            }
-        }
-        Ok(None)
     }
 
     /// Case-insensitive lookup against the effective view; stages a create if
@@ -301,7 +264,6 @@ impl TurnStaging {
     /// next is read means chained ops (e.g. two deltas on the same
     /// attribute) compose correctly with no special-casing.
     pub fn commit(&self, tx: &rusqlite::Transaction, passage_id: &str) -> AppResult<()> {
-        let mut attribute_id_remap = HashMap::<String, String>::new();
         for op in &self.pending {
             match op {
                 PendingOp::CreateEntity {
@@ -344,50 +306,19 @@ impl TurnStaging {
                     cause,
                     dramatic,
                 } => {
-                    let attribute = match attribute_id_remap.get(&attribute.id) {
-                        Some(canonical_id) => attributes::find_attribute_by_id(tx, canonical_id)?,
-                        None => attribute.clone(),
-                    };
                     attributes::apply_attribute_delta(
                         tx,
                         &self.branch_id,
                         entity_id,
-                        &attribute,
+                        attribute,
                         *delta,
                         cause,
                         passage_id,
                         *dramatic,
                     )?;
                 }
-                PendingOp::MintAttribute(attribute) => {
-                    let canonical_id = attributes::insert_minted_attribute(tx, attribute)?;
-                    attribute_id_remap.insert(attribute.id.clone(), canonical_id);
-                }
-                PendingOp::AddAlias {
-                    attribute_id,
-                    alias,
-                } => {
-                    let attribute_id = attribute_id_remap
-                        .get(attribute_id)
-                        .map(String::as_str)
-                        .unwrap_or(attribute_id);
-                    attributes::add_alias(tx, attribute_id, alias)?;
-                }
                 PendingOp::Roll(pending) => {
-                    let mut pending = pending.clone();
-                    pending.actor_attribute_id = pending.actor_attribute_id.as_ref().map(|id| {
-                        attribute_id_remap
-                            .get(id)
-                            .cloned()
-                            .unwrap_or_else(|| id.clone())
-                    });
-                    pending.target_attribute_id = pending.target_attribute_id.as_ref().map(|id| {
-                        attribute_id_remap
-                            .get(id)
-                            .cloned()
-                            .unwrap_or_else(|| id.clone())
-                    });
-                    resolve::persist_roll(tx, passage_id, pending)?;
+                    resolve::persist_roll(tx, passage_id, pending.clone())?;
                 }
                 PendingOp::QueryEntities {
                     entity_ids,
@@ -438,12 +369,6 @@ async fn resolve_or_stage_attribute(
 ) -> Result<AttributeRegistryEntry, ToolExecutionError> {
     let (pool, story_id) = {
         let staging = staging.lock().await;
-        if let Some(attribute) = staging
-            .staged_attribute_match(proposed_name)
-            .map_err(to_tool_error)?
-        {
-            return Ok(attribute);
-        }
         (staging.pool.clone(), staging.story_id.clone())
     };
 
@@ -459,29 +384,19 @@ async fn resolve_or_stage_attribute(
     .await
     .map_err(to_tool_error)?;
 
-    let mut staging = staging.lock().await;
-    if let Some(attribute) = staging
-        .staged_attribute_match(proposed_name)
-        .map_err(to_tool_error)?
-    {
-        return Ok(attribute);
-    }
-    let attribute = resolution.attribute().clone();
+    let conn = pool.get().map_err(AppError::Pool).map_err(to_tool_error)?;
     match resolution {
-        attributes::AttributeResolution::Existing(_) => {}
-        attributes::AttributeResolution::AddAlias { alias, .. } => {
-            staging.pending.push(PendingOp::AddAlias {
-                attribute_id: attribute.id.clone(),
-                alias,
-            });
+        attributes::AttributeResolution::Existing(attribute) => Ok(attribute),
+        attributes::AttributeResolution::AddAlias { attribute, alias } => {
+            attributes::add_alias(&conn, &attribute.id, &alias).map_err(to_tool_error)?;
+            Ok(attribute)
         }
-        attributes::AttributeResolution::Mint(_) => {
-            staging
-                .pending
-                .push(PendingOp::MintAttribute(attribute.clone()));
+        attributes::AttributeResolution::Mint(attribute) => {
+            let canonical_id =
+                attributes::insert_minted_attribute(&conn, &attribute).map_err(to_tool_error)?;
+            attributes::find_attribute_by_id(&conn, &canonical_id).map_err(to_tool_error)
         }
     }
-    Ok(attribute)
 }
 
 /// `roll_check` + args → a friendly, generic activity label for the frontend
@@ -993,7 +908,6 @@ mod tests {
 
     fn test_config() -> TextModelConfig {
         TextModelConfig {
-            provider: crate::ai::TextProviderKind::OpenRouter,
             model: "test/model".into(),
             // Tool tests use seeded attribute names unless they deliberately
             // exercise the no-candidate mint path, so no embedding call needs
@@ -1110,7 +1024,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn newly_minted_attributes_are_staged_and_reused_before_commit() {
+    async fn newly_minted_attributes_are_resolved_and_reused_immediately() {
         let (pool, story_id, branch_id) = setup();
         let staging = Arc::new(Mutex::new(TurnStaging::new(
             pool.clone(),
@@ -1119,8 +1033,8 @@ mod tests {
         )));
         let config = test_config();
 
-        // This kind has no committed candidates, so resolution builds a mint
-        // locally without making an embedding request.
+        // This kind has no committed candidates, so resolution mints locally
+        // without making an embedding request.
         let first = resolve_or_stage_attribute(&staging, &config, "Resonance", "artifact")
             .await
             .unwrap();
@@ -1129,7 +1043,7 @@ mod tests {
             .unwrap();
         assert_eq!(first.id, second.id);
 
-        let before_commit: i64 = pool
+        let registry_count: i64 = pool
             .get()
             .unwrap()
             .query_row(
@@ -1138,30 +1052,8 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(before_commit, 0);
-
-        let staging = staging.lock().await;
-        assert_eq!(
-            staging
-                .pending
-                .iter()
-                .filter(|op| matches!(op, PendingOp::MintAttribute(_)))
-                .count(),
-            1
-        );
-        persist_staging(&pool, &branch_id, &staging);
-        drop(staging);
-
-        let after_commit: i64 = pool
-            .get()
-            .unwrap()
-            .query_row(
-                "SELECT COUNT(*) FROM attribute_registry WHERE id = ?1",
-                [&first.id],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(after_commit, 1);
+        assert_eq!(registry_count, 1);
+        assert!(staging.lock().await.pending.is_empty());
     }
 
     #[test]
@@ -1589,8 +1481,8 @@ mod tests {
             .resolve_or_stage_entity("artifact", "Second Prism", None)
             .unwrap()
             .0;
-        // Both resolutions happen before either staging commits, reproducing
-        // the race where each turn independently chooses a fresh local id.
+        // The registry resolves eagerly, so both otherwise-independent turns
+        // receive the same canonical id before either passage commits.
         let first_attribute =
             resolve_or_stage_attribute(&first, &test_config(), "Resonance", "artifact")
                 .await
@@ -1599,7 +1491,7 @@ mod tests {
             resolve_or_stage_attribute(&second, &test_config(), "resonance", "artifact")
                 .await
                 .unwrap();
-        assert_ne!(first_attribute.id, second_attribute.id);
+        assert_eq!(first_attribute.id, second_attribute.id);
 
         for (staging, entity, attribute, modifier) in [
             (&first, &first_entity, &first_attribute, 0.1),
@@ -1700,72 +1592,6 @@ mod tests {
             assert_eq!(payload["attribute_name"], json!("Resonance"));
             assert_eq!(payload["attribute_id"], json!(canonical_id));
         }
-    }
-
-    #[test]
-    fn mint_remap_uses_full_canonical_attribute_for_activity_and_range() {
-        let (pool, story_id, branch_id) = setup();
-        let trust = find_attribute(&pool.get().unwrap(), "Trust");
-        let proposed = AttributeRegistryEntry {
-            id: Uuid::new_v4().to_string(),
-            canonical_name: "Resonance".into(),
-            aliases_json: "[]".into(),
-            entity_kinds_json: r#"["artifact"]"#.into(),
-            min: 0.0,
-            max: 10.0,
-            category: "user".into(),
-            is_user_created: true,
-            created_in_story_id: Some(story_id.clone()),
-            created_at: Utc::now().to_rfc3339(),
-        };
-        let mut staging = TurnStaging::new(pool.clone(), story_id, branch_id.clone());
-        let (entity, _) = staging
-            .resolve_or_stage_entity("artifact", "Resonant Prism", None)
-            .unwrap();
-        staging
-            .pending
-            .push(PendingOp::MintAttribute(proposed.clone()));
-        staging.pending.push(PendingOp::AdjustAttribute {
-            entity_id: entity.id.clone(),
-            attribute: proposed,
-            delta: 1.0,
-            cause: "test resonance".into(),
-            dramatic: false,
-        });
-
-        // Simulate another transaction resolving the proposed name as an
-        // alias before this staged turn commits.
-        attributes::add_alias(&pool.get().unwrap(), &trust.id, "Resonance").unwrap();
-        persist_staging(&pool, &branch_id, &staging);
-
-        let conn = pool.get().unwrap();
-        let (attribute_id, value): (String, f64) = conn
-            .query_row(
-                "SELECT attribute_id, value FROM entity_attributes
-                 WHERE branch_id = ?1 AND entity_id = ?2",
-                rusqlite::params![branch_id, entity.id],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .unwrap();
-        assert_eq!(attribute_id, trust.id);
-        assert_eq!(value, 1.0);
-
-        let (content, payload_json): (String, String) = conn
-            .query_row(
-                "SELECT content, payload_json FROM timeline_entries
-                 WHERE kind = ?1 AND json_extract(payload_json, '$.source') = 'inferred'
-                 ORDER BY seq DESC LIMIT 1",
-                [crate::features::timeline::model::kind::ENTITY_ATTRIBUTE_CHANGED],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .unwrap();
-        assert!(
-            content.starts_with("Trust changed from 0 to 1"),
-            "{content}"
-        );
-        let payload: serde_json::Value = serde_json::from_str(&payload_json).unwrap();
-        assert_eq!(payload["attribute_id"], json!(trust.id));
-        assert_eq!(payload["attribute_name"], json!("Trust"));
     }
 
     #[tokio::test]

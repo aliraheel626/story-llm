@@ -8,13 +8,17 @@ use tauri::State;
 
 use crate::shared::db::Pool;
 use crate::shared::error::AppResult;
-use model::TimelineEntry;
+use model::TimelineSnapshot;
 
 #[tauri::command]
-pub fn list_timeline_entries(
-    pool: State<Pool>,
-    branch_id: String,
-) -> AppResult<Vec<TimelineEntry>> {
+pub fn list_timeline_entries(pool: State<Pool>, branch_id: String) -> AppResult<TimelineSnapshot> {
     let conn = pool.get()?;
-    repository::list_logical_entries(&conn, &branch_id)
+    let entries = repository::list_logical_entries(&conn, &branch_id)?;
+    Ok(TimelineSnapshot {
+        visible: reducer::active_visible_entries(&entries),
+        hidden: entries
+            .into_iter()
+            .filter(|entry| entry.visibility == "hidden")
+            .collect(),
+    })
 }

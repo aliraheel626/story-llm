@@ -14,7 +14,7 @@ use tauri::State;
 use uuid::Uuid;
 
 use crate::features::timeline::{model::kind as timeline_kind, repository::append_entry};
-use crate::shared::db::Pool;
+use crate::shared::db::{with_transaction, Pool};
 use crate::shared::error::{AppError, AppResult};
 
 use super::model::{AttributeRegistryEntry, EntityAttributeValue};
@@ -179,19 +179,8 @@ pub(crate) enum AttributeResolution {
     Mint(AttributeRegistryEntry),
 }
 
-impl AttributeResolution {
-    pub(crate) fn attribute(&self) -> &AttributeRegistryEntry {
-        match self {
-            Self::Existing(attribute)
-            | Self::AddAlias { attribute, .. }
-            | Self::Mint(attribute) => attribute,
-        }
-    }
-}
-
-/// Decides how a proposed attribute should resolve without writing anything.
-/// Callers can apply the returned registry operation immediately or stage it
-/// alongside a larger transaction.
+/// Decides how a proposed attribute should resolve. The caller applies the
+/// returned registry operation immediately before staging dependent writes.
 pub(crate) async fn resolve_attribute(
     pool: &Pool,
     api_key: &str,
@@ -505,53 +494,52 @@ pub fn set_entity_attribute(
     attribute_id: String,
     value: f64,
 ) -> AppResult<EntityAttributeValue> {
-    let mut conn = pool.get()?;
-    let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-    let (name, min, max): (String, f64, f64) = tx
-        .query_row(
-            "SELECT canonical_name, min, max FROM attribute_registry WHERE id = ?1",
-            [&attribute_id],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
-        )
-        .map_err(|_| AppError::NotFound(format!("attribute {attribute_id} not found")))?;
-    if !value.is_finite() || value < min || value > max {
-        return Err(AppError::Invalid(format!(
-            "{name} must be between {min} and {max}"
-        )));
-    }
-    tx.query_row("SELECT 1 FROM branch_entity_state WHERE branch_id = ?1 AND entity_id = ?2 AND is_present = 1", rusqlite::params![branch_id, entity_id], |_| Ok(()))
-        .map_err(|_| AppError::NotFound(format!("entity {entity_id} not found")))?;
-    let before: Option<f64> = tx.query_row("SELECT value FROM entity_attributes WHERE branch_id = ?1 AND entity_id = ?2 AND attribute_id = ?3", rusqlite::params![branch_id, entity_id, attribute_id], |r| r.get(0)).optional()?;
-    let event = append_entry(
-        &tx,
-        &branch_id,
-        timeline_kind::ENTITY_ATTRIBUTE_CHANGED,
-        "hidden",
-        Some(&format!(
-            "User changed {name} from {} to {value}.",
-            before
-                .map(|v| v.to_string())
-                .unwrap_or_else(|| "unset".into())
-        )),
-        &json!({"entity_id": entity_id, "attribute_id": attribute_id, "attribute_name": name, "before": before, "after": value, "source": "user"}),
-        None,
-    )?;
-    let now = Utc::now().to_rfc3339();
-    tx.execute("INSERT INTO entity_attributes (branch_id, entity_id, attribute_id, value, source, updated_at, last_event_id)
-                VALUES (?1, ?2, ?3, ?4, 'user', ?5, ?6)
-                ON CONFLICT(branch_id, entity_id, attribute_id) DO UPDATE SET value=excluded.value, source='user', updated_at=excluded.updated_at, last_event_id=excluded.last_event_id",
-        rusqlite::params![branch_id, entity_id, attribute_id, value, now, event.id])?;
-    tx.commit()?;
-    Ok(EntityAttributeValue {
-        branch_id,
-        entity_id,
-        attribute_id,
-        canonical_name: name,
-        value,
-        min,
-        max,
-        updated_at: now,
-        source: "user".into(),
+    with_transaction(pool.inner(), |tx| {
+        let (name, min, max): (String, f64, f64) = tx
+            .query_row(
+                "SELECT canonical_name, min, max FROM attribute_registry WHERE id = ?1",
+                [&attribute_id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .map_err(|_| AppError::NotFound(format!("attribute {attribute_id} not found")))?;
+        if !value.is_finite() || value < min || value > max {
+            return Err(AppError::Invalid(format!(
+                "{name} must be between {min} and {max}"
+            )));
+        }
+        tx.query_row("SELECT 1 FROM branch_entity_state WHERE branch_id = ?1 AND entity_id = ?2 AND is_present = 1", rusqlite::params![branch_id, entity_id], |_| Ok(()))
+            .map_err(|_| AppError::NotFound(format!("entity {entity_id} not found")))?;
+        let before: Option<f64> = tx.query_row("SELECT value FROM entity_attributes WHERE branch_id = ?1 AND entity_id = ?2 AND attribute_id = ?3", rusqlite::params![branch_id, entity_id, attribute_id], |r| r.get(0)).optional()?;
+        let event = append_entry(
+            tx,
+            &branch_id,
+            timeline_kind::ENTITY_ATTRIBUTE_CHANGED,
+            "hidden",
+            Some(&format!(
+                "User changed {name} from {} to {value}.",
+                before
+                    .map(|v| v.to_string())
+                    .unwrap_or_else(|| "unset".into())
+            )),
+            &json!({"entity_id": entity_id, "attribute_id": attribute_id, "attribute_name": name, "before": before, "after": value, "source": "user"}),
+            None,
+        )?;
+        let now = Utc::now().to_rfc3339();
+        tx.execute("INSERT INTO entity_attributes (branch_id, entity_id, attribute_id, value, source, updated_at, last_event_id)
+                    VALUES (?1, ?2, ?3, ?4, 'user', ?5, ?6)
+                    ON CONFLICT(branch_id, entity_id, attribute_id) DO UPDATE SET value=excluded.value, source='user', updated_at=excluded.updated_at, last_event_id=excluded.last_event_id",
+            rusqlite::params![branch_id, entity_id, attribute_id, value, now, event.id])?;
+        Ok(EntityAttributeValue {
+            branch_id: branch_id.clone(),
+            entity_id: entity_id.clone(),
+            attribute_id: attribute_id.clone(),
+            canonical_name: name,
+            value,
+            min,
+            max,
+            updated_at: now,
+            source: "user".into(),
+        })
     })
 }
 
@@ -562,26 +550,25 @@ pub fn remove_entity_attribute(
     entity_id: String,
     attribute_id: String,
 ) -> AppResult<()> {
-    let mut conn = pool.get()?;
-    let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-    let prior: Option<(f64, String)> = tx.query_row(
-        "SELECT entity_attributes.value, attribute_registry.canonical_name FROM entity_attributes JOIN attribute_registry ON attribute_registry.id = entity_attributes.attribute_id WHERE entity_attributes.branch_id = ?1 AND entity_attributes.entity_id = ?2 AND entity_attributes.attribute_id = ?3",
-        rusqlite::params![branch_id, entity_id, attribute_id], |r| Ok((r.get(0)?, r.get(1)?))).optional()?;
-    let Some((before, name)) = prior else {
-        return Ok(());
-    };
-    append_entry(
-        &tx,
-        &branch_id,
-        timeline_kind::ENTITY_ATTRIBUTE_REMOVED,
-        "hidden",
-        Some(&format!("User removed {name} (previously {before}).")),
-        &json!({"entity_id": entity_id, "attribute_id": attribute_id, "attribute_name": name, "before": before, "source": "user"}),
-        None,
-    )?;
-    tx.execute("DELETE FROM entity_attributes WHERE branch_id = ?1 AND entity_id = ?2 AND attribute_id = ?3", rusqlite::params![branch_id, entity_id, attribute_id])?;
-    tx.commit()?;
-    Ok(())
+    with_transaction(pool.inner(), |tx| {
+        let prior: Option<(f64, String)> = tx.query_row(
+            "SELECT entity_attributes.value, attribute_registry.canonical_name FROM entity_attributes JOIN attribute_registry ON attribute_registry.id = entity_attributes.attribute_id WHERE entity_attributes.branch_id = ?1 AND entity_attributes.entity_id = ?2 AND entity_attributes.attribute_id = ?3",
+            rusqlite::params![branch_id, entity_id, attribute_id], |r| Ok((r.get(0)?, r.get(1)?))).optional()?;
+        let Some((before, name)) = prior else {
+            return Ok(());
+        };
+        append_entry(
+            tx,
+            &branch_id,
+            timeline_kind::ENTITY_ATTRIBUTE_REMOVED,
+            "hidden",
+            Some(&format!("User removed {name} (previously {before}).")),
+            &json!({"entity_id": entity_id, "attribute_id": attribute_id, "attribute_name": name, "before": before, "source": "user"}),
+            None,
+        )?;
+        tx.execute("DELETE FROM entity_attributes WHERE branch_id = ?1 AND entity_id = ?2 AND attribute_id = ?3", rusqlite::params![branch_id, entity_id, attribute_id])?;
+        Ok(())
+    })
 }
 
 #[cfg(test)]

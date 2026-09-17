@@ -53,6 +53,7 @@ export type TimelineEntry =
   | (TimelineEntryBase & { kind: "image_generated"; payload: ImageGeneratedPayload })
   | (TimelineEntryBase & { kind: "context_summary"; payload: ContextSummaryPayload })
   | (TimelineEntryBase & { kind: "diceroll" | "entity_queried" | "context_note_updated" | "diceroll_settings_changed" | "world_event"; payload: TimelinePayloadBase });
+export interface TimelineSnapshot { visible: TimelineEntry[]; hidden: TimelineEntry[] }
 
 export interface NarrationVariant {
   id: string; entry_id: string; content: string; is_selected: boolean; created_at: string; thoughts?: string | null;
@@ -109,34 +110,3 @@ export function timelineInputMode(entry: TimelineEntry): InputMode {
   return (entry.payload.input_mode as InputMode | undefined) ?? "generated";
 }
 export function isPlayerEntry(entry: TimelineEntry): boolean { return entry.kind === "player_message" }
-
-// Mirrors src-tauri/src/features/timeline/reducer.rs::active_visible_entries.
-// An edit is recorded against whichever variant was active when it was made
-// (`applies_to`), so it stays attached to that variant across reselection
-// instead of being wiped out by an unrelated later selection.
-export function foldVisibleTimeline(entries: TimelineEntry[]): TimelineEntry[] {
-  const byId = new Map(entries.map((entry) => [entry.id, entry]));
-  const selectedVariant = new Map<string, string>();
-  const edits = new Map<string, string>(); // key: `${target}|${appliesTo}`
-  for (const entry of entries) {
-    if (entry.kind === "narration_selected" && entry.target_entry_id) {
-      const selectedId = entry.payload.selected_entry_id;
-      if (typeof selectedId === "string") selectedVariant.set(entry.target_entry_id, selectedId);
-    }
-    if (entry.kind === "content_edited" && entry.target_entry_id && entry.content != null) {
-      const appliesTo = entry.payload.applies_to ?? entry.target_entry_id;
-      edits.set(`${entry.target_entry_id}|${appliesTo}`, entry.content);
-    }
-  }
-  return entries.filter((entry) => entry.kind === "player_message" || entry.kind === "narration")
-    .map((entry) => {
-      const variantId = selectedVariant.get(entry.id) ?? entry.id;
-      const edited = edits.get(`${entry.id}|${variantId}`);
-      if (edited != null) return { ...entry, content: edited };
-      if (variantId !== entry.id) {
-        const variantContent = byId.get(variantId)?.content;
-        if (variantContent != null) return { ...entry, content: variantContent };
-      }
-      return entry;
-    });
-}

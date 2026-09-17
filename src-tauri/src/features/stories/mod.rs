@@ -15,7 +15,7 @@ use crate::features::{
         repository as timeline_repository,
     },
 };
-use crate::shared::db::Pool;
+use crate::shared::db::{with_transaction, Pool};
 use crate::shared::error::{AppError, AppResult};
 use model::Story;
 
@@ -133,27 +133,27 @@ pub fn rename_story(pool: State<Pool>, story_id: String, title: String) -> AppRe
 /// (SQLite FK cascade cleans up every table, but can't touch files on disk).
 #[tauri::command]
 pub fn delete_story(pool: State<Pool>, story_id: String) -> AppResult<()> {
-    let mut conn = pool.get()?;
-    let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-    let paths: Vec<String> = {
-        let mut stmt = tx.prepare(
-            "SELECT image_assets.path FROM image_assets
-             JOIN timeline_entries ON timeline_entries.id = image_assets.entry_id
-             JOIN branches ON branches.id = timeline_entries.branch_id
-             WHERE branches.story_id = ?1",
-        )?;
-        let paths = stmt
-            .query_map([&story_id], |row| row.get(0))?
-            .filter_map(Result::ok)
-            .collect();
-        paths
-    };
+    let paths = with_transaction(pool.inner(), |tx| {
+        let paths: Vec<String> = {
+            let mut stmt = tx.prepare(
+                "SELECT image_assets.path FROM image_assets
+                 JOIN timeline_entries ON timeline_entries.id = image_assets.entry_id
+                 JOIN branches ON branches.id = timeline_entries.branch_id
+                 WHERE branches.story_id = ?1",
+            )?;
+            let paths = stmt
+                .query_map([&story_id], |row| row.get(0))?
+                .filter_map(Result::ok)
+                .collect();
+            paths
+        };
 
-    let deleted = tx.execute("DELETE FROM stories WHERE id = ?1", [&story_id])?;
-    if deleted == 0 {
-        return Err(AppError::NotFound(format!("story {story_id} not found")));
-    }
-    tx.commit()?;
+        let deleted = tx.execute("DELETE FROM stories WHERE id = ?1", [&story_id])?;
+        if deleted == 0 {
+            return Err(AppError::NotFound(format!("story {story_id} not found")));
+        }
+        Ok(paths)
+    })?;
 
     for path in paths {
         let _ = std::fs::remove_file(path); // best-effort; a missing file shouldn't fail the delete
@@ -312,24 +312,23 @@ pub fn save_author_note(
 ) -> AppResult<()> {
     let mut settings = read_settings_json(&pool, &story_id)?;
     settings["author_note"] = json!(note.trim());
-    let mut conn = pool.get()?;
     let now = Utc::now().to_rfc3339();
-    let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-    tx.execute(
-        "UPDATE stories SET settings_json = ?1, updated_at = ?2 WHERE id = ?3",
-        rusqlite::params![settings.to_string(), now, story_id],
-    )?;
-    timeline_repository::append_entry(
-        &tx,
-        &branch_id,
-        timeline_kind::CONTEXT_NOTE_UPDATED,
-        "hidden",
-        Some(&format!("Author's note was updated: {}", note.trim())),
-        &json!({"author_note": note.trim()}),
-        None,
-    )?;
-    tx.commit()?;
-    Ok(())
+    with_transaction(pool.inner(), |tx| {
+        tx.execute(
+            "UPDATE stories SET settings_json = ?1, updated_at = ?2 WHERE id = ?3",
+            rusqlite::params![settings.to_string(), now, story_id],
+        )?;
+        timeline_repository::append_entry(
+            tx,
+            &branch_id,
+            timeline_kind::CONTEXT_NOTE_UPDATED,
+            "hidden",
+            Some(&format!("Author's note was updated: {}", note.trim())),
+            &json!({"author_note": note.trim()}),
+            None,
+        )?;
+        Ok(())
+    })
 }
 
 pub fn read_author_note(pool: &Pool, story_id: &str) -> AppResult<Option<String>> {

@@ -18,14 +18,13 @@ use crate::features::{
         reducer, repository as timeline_repository,
     },
 };
-use crate::shared::db::Pool;
+use crate::shared::db::{with_transaction, Pool};
 use crate::shared::error::{AppError, AppResult};
 
 use super::history::load_history;
 use super::model::ActiveStoryEntry;
 use super::repository::{
-    get_active_story_entry, get_last_story_entry, get_story_id_for_branch, image_paths_for_entry,
-    insert_story_entry,
+    get_last_story_entry, get_story_id_for_branch, image_paths_for_entry, insert_story_entry,
 };
 use super::tools::{self, TurnStaging};
 
@@ -43,7 +42,27 @@ const STORY_CONTINUE_PROMPT: &str =
     "The latest turn is the player's draft of the next passage — it may read like a terse note or a \
      directive. Complete it into the passage itself: open with the draft rendered as prose, then keep \
      writing seamlessly to a natural ending. Do not reply to it as an instruction, and do not \
-     summarize it away.";
+      summarize it away.";
+
+const NARRATOR_IMAGE_INSTRUCTION: &str =
+    "You can illustrate a striking moment with the illustrate_scene tool.";
+
+fn narrator_image_tools(
+    enabled: bool,
+) -> (
+    Vec<DynamicTool>,
+    Arc<Mutex<Vec<images::model::ImageRequest>>>,
+) {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let tools = if enabled {
+        vec![DynamicTool::from_portable(tools::illustrate_scene_tool(
+            requests.clone(),
+        ))]
+    } else {
+        Vec::new()
+    };
+    (tools, requests)
+}
 
 /// "Story" input mode: narration typed directly by the player. The authored
 /// text is inserted verbatim as a narrator passage, then the model continues
@@ -428,47 +447,42 @@ async fn append_narration_entry(
     Ok(passage)
 }
 
-/// Appends and selects a retry variant only after generation has succeeded.
+/// Appends a generated variant only after generation has succeeded.
 /// The base narration remains immutable and keeps its chronological position.
-fn append_retry_variant(
+fn append_variant(
     pool: &Pool,
     target: &ActiveStoryEntry,
     visible: &str,
     thoughts: Option<&str>,
-) -> AppResult<ActiveStoryEntry> {
-    let mut conn = pool.get()?;
-    let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-    let image_paths = image_paths_for_entry(&tx, &target.id)?;
-    tx.execute("DELETE FROM image_assets WHERE entry_id = ?1", [&target.id])?;
-    tx.execute(
-        "DELETE FROM timeline_entries WHERE kind = ?1 AND target_entry_id = ?2",
-        rusqlite::params![timeline_kind::IMAGE_GENERATED, target.id],
-    )?;
-    let variant = timeline_repository::append_entry(
-        &tx,
-        &target.branch_id,
-        timeline_kind::NARRATION_VARIANT,
-        "hidden",
-        Some(visible),
-        &variant_payload("retry", &target.input_mode, thoughts),
-        Some(&target.id),
-    )?;
-    timeline_repository::append_entry(
-        &tx,
-        &target.branch_id,
-        timeline_kind::NARRATION_SELECTED,
-        "hidden",
-        None,
-        &serde_json::json!({"selected_entry_id": variant.id, "reason":"retry"}),
-        Some(&target.id),
-    )?;
-    tx.commit()?;
+    reason: &str,
+) -> AppResult<TimelineEntry> {
+    let (image_paths, entry) = with_transaction(pool, |tx| {
+        let image_paths = image_paths_for_entry(tx, &target.id)?;
+        tx.execute("DELETE FROM image_assets WHERE entry_id = ?1", [&target.id])?;
+        tx.execute(
+            "DELETE FROM timeline_entries WHERE kind = ?1 AND target_entry_id = ?2",
+            rusqlite::params![timeline_kind::IMAGE_GENERATED, target.id],
+        )?;
+        timeline_repository::append_entry(
+            tx,
+            &target.branch_id,
+            timeline_kind::NARRATION_VARIANT,
+            "hidden",
+            Some(visible),
+            &variant_payload(reason, &target.input_mode, thoughts),
+            Some(&target.id),
+        )?;
+        Ok((
+            image_paths,
+            timeline_repository::active_entry(tx, &target.id)?,
+        ))
+    })?;
 
     for path in image_paths {
         let _ = std::fs::remove_file(path);
     }
 
-    get_active_story_entry(&conn, &target.id)
+    Ok(entry)
 }
 
 /// Best-effort kick-off of the ChatGPT/Gemini-style auto-title: once a story
@@ -501,8 +515,8 @@ struct NarrationJob {
     history: Vec<HistoryTurn>,
     prompt: String,
     preamble_plan: PreamblePlan,
-    /// Non-empty only for `submit_turn`'s tool-calling path (see `tools`
-    /// module) — every other narration-triggering command passes `Vec::new()`.
+    /// Live tools available to this narration path. Revision jobs receive only
+    /// the image tool, never state-changing entity or dice tools.
     tools: Vec<DynamicTool>,
     reasoning_effort: Option<String>,
     before_seq: Option<i64>,
@@ -678,7 +692,6 @@ async fn finish_append(
     };
     let _ = app.emit("narration-done", NarrationDonePayload { stream_id, entry });
     kick_auto_title(&app, &pool, &branch_id);
-    images::maybe_auto_image(&app, &pool, &entry_id, &visible);
     Ok(())
 }
 
@@ -734,8 +747,7 @@ pub async fn submit_turn(
     let image_settings = settings::read_image_model_settings(&app, pool.inner())?;
     let image_enabled =
         image_settings.enabled && image_settings.narrator_images && image_settings.has_api_key;
-    let image_requests: Arc<Mutex<Vec<images::model::ImageRequest>>> =
-        Arc::new(Mutex::new(Vec::new()));
+    let (image_tools, image_requests) = narrator_image_tools(image_enabled);
 
     let player_passage = {
         let conn = pool.get()?;
@@ -765,12 +777,8 @@ pub async fn submit_turn(
         ));
     }
     if image_enabled {
-        tool_set.push(DynamicTool::from_portable(tools::illustrate_scene_tool(
-            image_requests.clone(),
-        )));
-        tools_preamble.push(
-            "You can illustrate a striking moment with the illustrate_scene tool.".to_string(),
-        );
+        tool_set.extend(image_tools);
+        tools_preamble.push(NARRATOR_IMAGE_INSTRUCTION.to_string());
     }
     let tools_preamble = tools_preamble.join(" ");
     let preamble_plan = story_context_preamble(
@@ -979,39 +987,56 @@ pub async fn continue_scene(
 /// passage remains intact while the model is running and is only replaced
 /// after a successful generation, so configuration or stream failures cannot
 /// destroy the version the user was trying to retry.
-#[tauri::command]
-pub async fn retry_narration(
+#[derive(Clone, Copy)]
+enum VariantMode {
+    Retry,
+    Swipe,
+}
+
+impl VariantMode {
+    fn action(self) -> &'static str {
+        match self {
+            Self::Retry => "retry",
+            Self::Swipe => "swipe",
+        }
+    }
+
+    fn past_tense(self) -> &'static str {
+        match self {
+            Self::Retry => "retried",
+            Self::Swipe => "swiped",
+        }
+    }
+}
+
+fn start_variant_generation(
     app: AppHandle,
     pool: State<'_, Pool>,
     branch_id: String,
     entry_id: String,
-) -> AppResult<RetryResult> {
+    mode: VariantMode,
+) -> AppResult<String> {
     let target = {
         let conn = pool.get()?;
         let last = get_last_story_entry(&conn, &branch_id)?
-            .ok_or_else(|| AppError::Invalid("no narration to retry".into()))?;
+            .ok_or_else(|| AppError::Invalid(format!("no narration to {}", mode.action())))?;
         if last.id != entry_id {
-            return Err(AppError::Invalid(
-                "only the latest narration can be retried".into(),
-            ));
+            return Err(AppError::Invalid(format!(
+                "only the latest narration can be {}",
+                mode.past_tense()
+            )));
         }
         if last.role != "narrator" {
-            return Err(AppError::Invalid(
-                "only a narration entry can be retried".into(),
-            ));
+            return Err(AppError::Invalid(format!(
+                "only a narration entry can be {}",
+                mode.past_tense()
+            )));
         }
         last
     };
 
     let history = load_history(&pool, &branch_id, Some(target.seq))?;
     let config = settings::resolve_text_model(&app, pool.inner())?;
-
-    let prompt = if target.input_mode == "generated_story" {
-        STORY_CONTINUE_PROMPT
-    } else {
-        CONTINUE_PROMPT
-    };
-
     let story_id = {
         let conn = pool.get()?;
         get_story_id_for_branch(&conn, &branch_id)?
@@ -1019,7 +1044,24 @@ pub async fn retry_narration(
     let reasoning_effort =
         diceroll_settings::get_story_diceroll_settings(pool.clone(), story_id.clone())?
             .reasoning_effort;
+    let prompt = if target.input_mode == "generated_story" {
+        STORY_CONTINUE_PROMPT
+    } else {
+        CONTINUE_PROMPT
+    };
     let roll_preamble = roll_context_preamble(pool.inner(), &target.id)?;
+    let image_settings = settings::read_image_model_settings(&app, pool.inner())?;
+    let image_enabled =
+        image_settings.enabled && image_settings.narrator_images && image_settings.has_api_key;
+    let (tool_set, image_requests) = narrator_image_tools(image_enabled);
+    let tools_preamble = [
+        (!roll_preamble.is_empty()).then_some(roll_preamble.as_str()),
+        image_enabled.then_some(NARRATOR_IMAGE_INSTRUCTION),
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>()
+    .join(" ");
     let preamble_plan = story_context_preamble(
         pool.inner(),
         &story_id,
@@ -1027,7 +1069,7 @@ pub async fn retry_narration(
         &history,
         &config,
         prompt,
-        &roll_preamble,
+        &tools_preamble,
     )?;
 
     let stream_id = Uuid::new_v4().to_string();
@@ -1035,34 +1077,66 @@ pub async fn retry_narration(
         NarrationJob {
             app,
             pool: pool.inner().clone(),
-            branch_id: branch_id.clone(),
+            branch_id,
             config,
             history,
             prompt: prompt.to_string(),
             preamble_plan,
-            tools: Vec::new(),
+            tools: tool_set,
             reasoning_effort,
             before_seq: Some(target.seq),
             stream_id: stream_id.clone(),
         },
         move |app, pool, sid, visible, thoughts| async move {
-            let passage = append_retry_variant(&pool, &target, &visible, thoughts.as_deref())?;
-            let entry = {
-                let conn = pool.get()?;
-                timeline_repository::active_entry(&conn, &passage.id)?
-            };
-            let _ = app.emit(
-                "narration-done",
-                NarrationDonePayload {
-                    stream_id: sid,
-                    entry,
-                },
-            );
-            images::maybe_auto_image(&app, &pool, &target.id, &visible);
+            let entry =
+                append_variant(&pool, &target, &visible, thoughts.as_deref(), mode.action())?;
+            match mode {
+                VariantMode::Retry => {
+                    let _ = app.emit(
+                        "narration-done",
+                        NarrationDonePayload {
+                            stream_id: sid,
+                            entry,
+                        },
+                    );
+                }
+                VariantMode::Swipe => {
+                    let variants = {
+                        let conn = pool.get()?;
+                        super::repository::list_variants(&conn, &target.id)?
+                    };
+                    let _ = app.emit(
+                        "swipe-done",
+                        SwipeDonePayload {
+                            stream_id: sid,
+                            entry,
+                            variants,
+                        },
+                    );
+                }
+            }
+            let requests = std::mem::take(&mut *image_requests.lock().await);
+            if !requests.is_empty() {
+                images::generate_from_narrator_requests(
+                    &app, &pool, &target.id, &visible, requests,
+                );
+            }
             Ok(())
         },
     );
 
+    Ok(stream_id)
+}
+
+#[tauri::command]
+pub async fn retry_narration(
+    app: AppHandle,
+    pool: State<'_, Pool>,
+    branch_id: String,
+    entry_id: String,
+) -> AppResult<RetryResult> {
+    let stream_id =
+        start_variant_generation(app, pool, branch_id, entry_id.clone(), VariantMode::Retry)?;
     Ok(RetryResult {
         entry_id,
         stream_id,
@@ -1080,113 +1154,7 @@ pub async fn generate_narration_variant(
     branch_id: String,
     entry_id: String,
 ) -> AppResult<String> {
-    let target = {
-        let conn = pool.get()?;
-        let last = get_last_story_entry(&conn, &branch_id)?
-            .ok_or_else(|| AppError::Invalid("no narration to swipe".into()))?;
-        if last.id != entry_id {
-            return Err(AppError::Invalid(
-                "only the latest narration can be swiped".into(),
-            ));
-        }
-        if last.role != "narrator" {
-            return Err(AppError::Invalid(
-                "only a narration entry can be swiped".into(),
-            ));
-        }
-        last
-    };
-
-    let history = load_history(&pool, &branch_id, Some(target.seq))?;
-    let config = settings::resolve_text_model(&app, pool.inner())?;
-    let story_id = {
-        let conn = pool.get()?;
-        get_story_id_for_branch(&conn, &branch_id)?
-    };
-    let reasoning_effort =
-        diceroll_settings::get_story_diceroll_settings(pool.clone(), story_id.clone())?
-            .reasoning_effort;
-    let prompt = if target.input_mode == "generated_story" {
-        STORY_CONTINUE_PROMPT
-    } else {
-        CONTINUE_PROMPT
-    };
-    let roll_preamble = roll_context_preamble(pool.inner(), &target.id)?;
-    let preamble_plan = story_context_preamble(
-        pool.inner(),
-        &story_id,
-        &branch_id,
-        &history,
-        &config,
-        prompt,
-        &roll_preamble,
-    )?;
-
-    let stream_id = Uuid::new_v4().to_string();
-    spawn_narration(
-        NarrationJob {
-            app,
-            pool: pool.inner().clone(),
-            branch_id: branch_id.clone(),
-            config,
-            history,
-            prompt: prompt.to_string(),
-            preamble_plan,
-            tools: Vec::new(),
-            reasoning_effort,
-            before_seq: Some(target.seq),
-            stream_id: stream_id.clone(),
-        },
-        move |app, pool, sid, visible, thoughts| async move {
-            let mut conn = pool.get()?;
-            let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-            let image_paths = image_paths_for_entry(&tx, &target.id)?;
-            tx.execute("DELETE FROM image_assets WHERE entry_id = ?1", [&target.id])?;
-            tx.execute(
-                "DELETE FROM timeline_entries WHERE kind = ?1 AND target_entry_id = ?2",
-                rusqlite::params![timeline_kind::IMAGE_GENERATED, target.id],
-            )?;
-            let variant = timeline_repository::append_entry(
-                &tx,
-                &target.branch_id,
-                timeline_kind::NARRATION_VARIANT,
-                "hidden",
-                Some(&visible),
-                &variant_payload("swipe", &target.input_mode, thoughts.as_deref()),
-                Some(&target.id),
-            )?;
-            timeline_repository::append_entry(
-                &tx,
-                &target.branch_id,
-                timeline_kind::NARRATION_SELECTED,
-                "hidden",
-                None,
-                &serde_json::json!({"selected_entry_id": variant.id, "reason":"swipe"}),
-                Some(&target.id),
-            )?;
-            tx.commit()?;
-
-            for path in image_paths {
-                let _ = std::fs::remove_file(path);
-            }
-
-            let entry = timeline_repository::active_entry(&conn, &target.id)?;
-            let variants = super::repository::list_variants(&conn, &target.id)?;
-
-            let _ = app.emit(
-                "swipe-done",
-                SwipeDonePayload {
-                    stream_id: sid,
-                    entry,
-                    variants,
-                },
-            );
-            images::maybe_auto_image(&app, &pool, &target.id, &visible);
-            Ok(())
-        },
-    );
-
-    Ok(stream_id)
+    start_variant_generation(app, pool, branch_id, entry_id, VariantMode::Swipe)
 }
 
 #[tauri::command]
@@ -1204,41 +1172,44 @@ pub fn select_narration_variant(
     entry_id: String,
     variant_entry_id: String,
 ) -> AppResult<TimelineEntry> {
-    let mut conn = pool.get()?;
-    let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-    let image_paths = image_paths_for_entry(&tx, &entry_id)?;
-    let target = timeline_repository::get_entry(&tx, &entry_id)?;
-    if variant_entry_id != entry_id {
-        let variant = timeline_repository::get_entry(&tx, &variant_entry_id)?;
-        if variant.kind != timeline_kind::NARRATION_VARIANT
-            || variant.target_entry_id.as_deref() != Some(&entry_id)
-        {
-            return Err(AppError::NotFound(format!(
-                "variant {variant_entry_id} not found"
-            )));
+    let (image_paths, entry) = with_transaction(pool.inner(), |tx| {
+        let image_paths = image_paths_for_entry(tx, &entry_id)?;
+        let target = timeline_repository::get_entry(tx, &entry_id)?;
+        if variant_entry_id != entry_id {
+            let variant = timeline_repository::get_entry(tx, &variant_entry_id)?;
+            if variant.kind != timeline_kind::NARRATION_VARIANT
+                || variant.target_entry_id.as_deref() != Some(&entry_id)
+            {
+                return Err(AppError::NotFound(format!(
+                    "variant {variant_entry_id} not found"
+                )));
+            }
         }
-    }
-    timeline_repository::append_entry(
-        &tx,
-        &target.branch_id,
-        timeline_kind::NARRATION_SELECTED,
-        "hidden",
-        None,
-        &serde_json::json!({"selected_entry_id": variant_entry_id, "reason":"user_selection"}),
-        Some(&entry_id),
-    )?;
-    tx.execute("DELETE FROM image_assets WHERE entry_id = ?1", [&entry_id])?;
-    tx.execute(
-        "DELETE FROM timeline_entries WHERE kind = ?1 AND target_entry_id = ?2",
-        rusqlite::params![timeline_kind::IMAGE_GENERATED, entry_id],
-    )?;
-    tx.commit()?;
+        timeline_repository::append_entry(
+            tx,
+            &target.branch_id,
+            timeline_kind::NARRATION_SELECTED,
+            "hidden",
+            None,
+            &serde_json::json!({"selected_entry_id": variant_entry_id, "reason":"user_selection"}),
+            Some(&entry_id),
+        )?;
+        tx.execute("DELETE FROM image_assets WHERE entry_id = ?1", [&entry_id])?;
+        tx.execute(
+            "DELETE FROM timeline_entries WHERE kind = ?1 AND target_entry_id = ?2",
+            rusqlite::params![timeline_kind::IMAGE_GENERATED, entry_id],
+        )?;
+        Ok((
+            image_paths,
+            timeline_repository::active_entry(tx, &entry_id)?,
+        ))
+    })?;
 
     for path in image_paths {
         let _ = std::fs::remove_file(path);
     }
 
-    timeline_repository::active_entry(&conn, &entry_id)
+    Ok(entry)
 }
 
 /// "Edit": append a content override for any visible timeline entry. The
@@ -1256,52 +1227,110 @@ pub fn edit_timeline_entry(
     if content.is_empty() {
         return Err(AppError::Invalid("content must not be empty".into()));
     }
-    let mut conn = pool.get()?;
-    let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-    let image_paths = image_paths_for_entry(&tx, &entry_id)?;
-    let target = timeline_repository::get_entry(&tx, &entry_id)?;
-    let raw = timeline_repository::list_logical_entries(&tx, &target.branch_id)?;
-    let applies_to = reducer::active_variant_id(&raw, &entry_id);
-    timeline_repository::append_entry(
-        &tx,
-        &target.branch_id,
-        timeline_kind::CONTENT_EDITED,
-        "hidden",
-        Some(content),
-        &serde_json::json!({"reason":"user_edit", "applies_to": applies_to}),
-        Some(&entry_id),
-    )?;
-    tx.execute("DELETE FROM image_assets WHERE entry_id = ?1", [&entry_id])?;
-    tx.execute(
-        "DELETE FROM timeline_entries WHERE kind = ?1 AND target_entry_id = ?2",
-        rusqlite::params![timeline_kind::IMAGE_GENERATED, entry_id],
-    )?;
-    tx.commit()?;
+    let (image_paths, entry) = with_transaction(pool.inner(), |tx| {
+        let image_paths = image_paths_for_entry(tx, &entry_id)?;
+        let target = timeline_repository::get_entry(tx, &entry_id)?;
+        let raw = timeline_repository::list_logical_entries(tx, &target.branch_id)?;
+        let applies_to = reducer::active_variant_id(&raw, &entry_id);
+        timeline_repository::append_entry(
+            tx,
+            &target.branch_id,
+            timeline_kind::CONTENT_EDITED,
+            "hidden",
+            Some(content),
+            &serde_json::json!({"reason":"user_edit", "applies_to": applies_to}),
+            Some(&entry_id),
+        )?;
+        tx.execute("DELETE FROM image_assets WHERE entry_id = ?1", [&entry_id])?;
+        tx.execute(
+            "DELETE FROM timeline_entries WHERE kind = ?1 AND target_entry_id = ?2",
+            rusqlite::params![timeline_kind::IMAGE_GENERATED, entry_id],
+        )?;
+        Ok((
+            image_paths,
+            timeline_repository::active_entry(tx, &entry_id)?,
+        ))
+    })?;
 
     for path in image_paths {
         let _ = std::fs::remove_file(path);
     }
-    timeline_repository::active_entry(&conn, &entry_id)
+    Ok(entry)
 }
 
-fn erase_last_exchange_in_conn(
-    conn: &mut rusqlite::Connection,
+fn cascade_entries(
+    conn: &rusqlite::Connection,
+    root_id: &str,
+) -> AppResult<Vec<(String, String, String)>> {
+    let mut stmt = conn.prepare(
+        "WITH RECURSIVE doomed(id) AS (
+             SELECT ?1
+             UNION
+             SELECT timeline_entries.id FROM timeline_entries
+             JOIN doomed ON timeline_entries.target_entry_id = doomed.id
+         )
+         SELECT timeline_entries.id, timeline_entries.kind, timeline_entries.payload_json
+         FROM timeline_entries JOIN doomed ON doomed.id = timeline_entries.id",
+    )?;
+    let entries = stmt
+        .query_map([root_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
+        .collect::<Result<_, _>>()?;
+    Ok(entries)
+}
+
+fn collect_cascade_effects(
+    conn: &rusqlite::Connection,
+    root_id: &str,
+    doomed_ids: &mut HashSet<String>,
+    affected_entities: &mut HashSet<String>,
+) -> AppResult<()> {
+    for (id, kind, payload_json) in cascade_entries(conn, root_id)? {
+        doomed_ids.insert(id);
+        if matches!(
+            kind.as_str(),
+            timeline_kind::ENTITY_CREATED
+                | timeline_kind::ENTITY_UPDATED
+                | timeline_kind::ENTITY_DELETED
+                | timeline_kind::ENTITY_ATTRIBUTE_CHANGED
+                | timeline_kind::ENTITY_ATTRIBUTE_REMOVED
+        ) {
+            if let Some(entity_id) = serde_json::from_str::<serde_json::Value>(&payload_json)
+                .ok()
+                .and_then(|payload| {
+                    payload
+                        .get("entity_id")
+                        .and_then(|value| value.as_str())
+                        .map(str::to_string)
+                })
+            {
+                affected_entities.insert(entity_id);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn erase_last_exchange_in_tx(
+    tx: &rusqlite::Transaction<'_>,
     branch_id: &str,
 ) -> AppResult<(Vec<String>, Vec<String>)> {
-    let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-    let Some(last) = get_last_story_entry(&tx, branch_id)? else {
+    let Some(last) = get_last_story_entry(tx, branch_id)? else {
         return Ok((vec![], vec![]));
     };
     let mut removed = vec![last.id.clone()];
-    let mut image_paths = image_paths_for_entry(&tx, &last.id)?;
+    let mut image_paths = image_paths_for_entry(tx, &last.id)?;
+    let mut doomed_ids = HashSet::new();
+    let mut affected_entities = HashSet::new();
+    collect_cascade_effects(tx, &last.id, &mut doomed_ids, &mut affected_entities)?;
     tx.execute("DELETE FROM timeline_entries WHERE id = ?1", [&last.id])?;
 
     let paired = last.role == "narrator"
         && matches!(last.input_mode.as_str(), "generated" | "generated_story");
     if paired {
-        if let Some(prev) = get_last_story_entry(&tx, branch_id)? {
+        if let Some(prev) = get_last_story_entry(tx, branch_id)? {
             if prev.role == "player" || prev.input_mode == "story" {
-                image_paths.extend(image_paths_for_entry(&tx, &prev.id)?);
+                image_paths.extend(image_paths_for_entry(tx, &prev.id)?);
+                collect_cascade_effects(tx, &prev.id, &mut doomed_ids, &mut affected_entities)?;
                 removed.push(prev.id.clone());
                 tx.execute("DELETE FROM timeline_entries WHERE id = ?1", [&prev.id])?;
             }
@@ -1329,21 +1358,20 @@ fn erase_last_exchange_in_conn(
                         .and_then(|t| t.as_str())
                         .map(str::to_string)
                 });
-            if through_entry_id.is_some_and(|through| removed.contains(&through)) {
+            if through_entry_id.is_some_and(|through| doomed_ids.contains(&through)) {
                 tx.execute("DELETE FROM timeline_entries WHERE id = ?1", [&summary_id])?;
             }
         }
     }
 
     let now = Utc::now().to_rfc3339();
-    crate::features::timeline::projections::rebuild_branch(&tx, branch_id)?;
+    crate::features::timeline::projections::replay_entities(tx, branch_id, &affected_entities)?;
     tx.execute(
         "UPDATE stories SET updated_at = ?1 WHERE id = (
              SELECT story_id FROM branches WHERE id = ?2
          )",
         rusqlite::params![now, branch_id],
     )?;
-    tx.commit()?;
 
     Ok((removed, image_paths))
 }
@@ -1353,8 +1381,8 @@ fn erase_last_exchange_in_conn(
 /// so the frontend can splice locally.
 #[tauri::command]
 pub fn erase_last_exchange(pool: State<Pool>, branch_id: String) -> AppResult<Vec<String>> {
-    let mut conn = pool.get()?;
-    let (removed, image_paths) = erase_last_exchange_in_conn(&mut conn, &branch_id)?;
+    let (removed, image_paths) =
+        with_transaction(pool.inner(), |tx| erase_last_exchange_in_tx(tx, &branch_id))?;
 
     for path in image_paths {
         let _ = std::fs::remove_file(path);
@@ -1368,6 +1396,108 @@ mod tests {
     use super::*;
     use crate::features::timeline::repository::append_entry;
     use serde_json::json;
+
+    #[test]
+    fn revision_image_tools_include_only_illustration_when_enabled() {
+        let (enabled, _) = narrator_image_tools(true);
+        let (disabled, _) = narrator_image_tools(false);
+
+        assert_eq!(enabled.len(), 1);
+        assert_eq!(enabled[0].name(), "illustrate_scene");
+        assert!(disabled.is_empty());
+    }
+
+    #[test]
+    fn append_variant_records_mode_and_selects_the_newest_revision() {
+        let pool = crate::shared::db::test_pool();
+        let conn = pool.get().unwrap();
+        conn.execute(
+            "INSERT INTO stories (id, title, created_at, updated_at, settings_json, default_branch_id)
+             VALUES ('s', 'story', 'now', 'now', '{}', 'b')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO branches (id, story_id, parent_branch_id, forked_at_entry_id, name, created_at)
+             VALUES ('b', 's', NULL, NULL, 'main', 'now')",
+            [],
+        )
+        .unwrap();
+        let target = insert_story_entry(
+            &conn,
+            "b",
+            "narrator",
+            "generated",
+            "original",
+            Some("original thoughts"),
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO image_assets VALUES ('image', ?1, 'C:/tmp/variant.png', 'prompt', NULL, 'test', 'now')",
+            [&target.id],
+        )
+        .unwrap();
+        append_entry(
+            &conn,
+            "b",
+            timeline_kind::IMAGE_GENERATED,
+            "hidden",
+            Some("image"),
+            &json!({}),
+            Some(&target.id),
+        )
+        .unwrap();
+        drop(conn);
+
+        append_variant(
+            &pool,
+            &target,
+            "retry text",
+            Some("retry thoughts"),
+            "retry",
+        )
+        .unwrap();
+        let active = append_variant(
+            &pool,
+            &target,
+            "swipe text",
+            Some("swipe thoughts"),
+            "swipe",
+        )
+        .unwrap();
+        assert_eq!(active.id, target.id);
+        assert_eq!(active.content.as_deref(), Some("swipe text"));
+
+        let conn = pool.get().unwrap();
+        let raw = timeline_repository::list_logical_entries(&conn, "b").unwrap();
+        let variants = raw
+            .iter()
+            .filter(|entry| entry.kind == timeline_kind::NARRATION_VARIANT)
+            .collect::<Vec<_>>();
+        assert_eq!(variants.len(), 2);
+        assert_eq!(variants[0].payload["reason"], json!("retry"));
+        assert_eq!(variants[1].payload["reason"], json!("swipe"));
+        assert_eq!(variants[1].payload["thoughts"], json!("swipe thoughts"));
+        assert!(!raw
+            .iter()
+            .any(|entry| entry.kind == timeline_kind::NARRATION_SELECTED));
+        assert_eq!(
+            reducer::variants_for_entry(&raw, &target.id)
+                .into_iter()
+                .find(|variant| variant.is_selected)
+                .unwrap()
+                .id,
+            variants[1].id
+        );
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM image_assets", [], |row| row
+                .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+        assert_eq!(VariantMode::Retry.past_tense(), "retried");
+        assert_eq!(VariantMode::Swipe.past_tense(), "swiped");
+    }
 
     #[test]
     fn scoped_preamble_details_touched_entities_and_lists_the_rest() {
@@ -1447,7 +1577,6 @@ mod tests {
             content: "[Authoritative story event: entity_queried]\nLooked up: Bob".into(),
         }];
         let config = TextModelConfig {
-            provider: crate::ai::TextProviderKind::OpenRouter,
             model: "test".into(),
             api_key: "test".into(),
             context_window: 32_768,
@@ -1511,16 +1640,114 @@ mod tests {
 
     #[test]
     fn hard_erase_removes_exchange_derivatives_summaries_and_projections() {
-        let mut conn = rusqlite::Connection::open_in_memory().unwrap();
-        conn.execute_batch("PRAGMA foreign_keys=ON;
-            CREATE TABLE stories(id TEXT PRIMARY KEY, updated_at TEXT NOT NULL);
-            CREATE TABLE branches(id TEXT PRIMARY KEY, story_id TEXT NOT NULL, parent_branch_id TEXT, forked_at_entry_id TEXT);
-            CREATE TABLE timeline_entries(id TEXT PRIMARY KEY, branch_id TEXT NOT NULL, seq INTEGER NOT NULL, kind TEXT NOT NULL, visibility TEXT NOT NULL, content TEXT, payload_json TEXT NOT NULL, target_entry_id TEXT REFERENCES timeline_entries(id) ON DELETE CASCADE, created_at TEXT NOT NULL, UNIQUE(branch_id,seq));
-            CREATE TABLE image_assets(id TEXT PRIMARY KEY, entry_id TEXT NOT NULL REFERENCES timeline_entries(id) ON DELETE CASCADE, path TEXT NOT NULL, prompt TEXT NOT NULL, seed INTEGER, provider TEXT NOT NULL, created_at TEXT NOT NULL);
-            CREATE TABLE branch_entity_state(branch_id TEXT NOT NULL, entity_id TEXT NOT NULL, name TEXT NOT NULL, appearance_anchor TEXT, is_present INTEGER NOT NULL, updated_at TEXT NOT NULL, last_event_id TEXT, PRIMARY KEY(branch_id,entity_id));
-            CREATE TABLE entity_attributes(branch_id TEXT NOT NULL, entity_id TEXT NOT NULL, attribute_id TEXT NOT NULL, value REAL NOT NULL, source TEXT NOT NULL, updated_at TEXT NOT NULL, last_event_id TEXT, PRIMARY KEY(branch_id,entity_id,attribute_id));
-            INSERT INTO stories VALUES ('s','now');
-            INSERT INTO branches VALUES ('b','s',NULL,NULL);").unwrap();
+        let pool = crate::shared::db::test_pool();
+        let conn = pool.get().unwrap();
+        conn.execute(
+            "INSERT INTO stories (id, title, created_at, updated_at, settings_json, default_branch_id)
+             VALUES ('s', 'story', 'now', 'now', '{}', 'b')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO branches (id, story_id, parent_branch_id, forked_at_entry_id, name, created_at)
+             VALUES ('b', 's', NULL, NULL, 'main', 'now')",
+            [],
+        )
+        .unwrap();
+        let baseline = append_entry(
+            &conn,
+            "b",
+            timeline_kind::NARRATION,
+            "visible",
+            Some("Earlier scene"),
+            &json!({"input_mode":"generated_continue"}),
+            None,
+        )
+        .unwrap();
+        crate::features::entities::create_entity_with_id_sync(
+            &conn,
+            "mira",
+            "s",
+            "b",
+            "character",
+            "Mira",
+            Some("silver hair"),
+            "test",
+            None,
+        )
+        .unwrap();
+        crate::features::entities::create_entity_with_id_sync(
+            &conn,
+            "unrelated",
+            "s",
+            "b",
+            "character",
+            "Tomas",
+            None,
+            "test",
+            None,
+        )
+        .unwrap();
+        let trust_id: String = conn
+            .query_row(
+                "SELECT id FROM attribute_registry WHERE canonical_name = 'Trust'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let trust =
+            crate::features::entities::attributes::find_attribute_by_id(&conn, &trust_id).unwrap();
+        crate::features::entities::attributes::apply_attribute_delta(
+            &conn,
+            "b",
+            "mira",
+            &trust,
+            2.0,
+            "earlier event",
+            &baseline.id,
+            false,
+        )
+        .unwrap();
+        let mira_last_event_id: String = conn
+            .query_row(
+                "SELECT last_event_id FROM branch_entity_state WHERE branch_id = 'b' AND entity_id = 'mira'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let attribute_last_event_id: String = conn
+            .query_row(
+                "SELECT last_event_id FROM entity_attributes WHERE branch_id = 'b' AND entity_id = 'mira' AND attribute_id = ?1",
+                [&trust_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let unrelated_projection: (String, Option<String>, i64, String, String) = conn
+            .query_row(
+                "SELECT name, appearance_anchor, is_present, updated_at, last_event_id
+                 FROM branch_entity_state WHERE branch_id = 'b' AND entity_id = 'unrelated'",
+                [],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                    ))
+                },
+            )
+            .unwrap();
+        let older_summary = append_entry(
+            &conn,
+            "b",
+            timeline_kind::CONTEXT_SUMMARY,
+            "hidden",
+            Some("older summary"),
+            &json!({"through_entry_id":baseline.id}),
+            None,
+        )
+        .unwrap();
 
         let player = append_entry(
             &conn,
@@ -1530,16 +1757,6 @@ mod tests {
             Some("act"),
             &json!({"input_mode":"do"}),
             None,
-        )
-        .unwrap();
-        append_entry(
-            &conn,
-            "b",
-            timeline_kind::ENTITY_CREATED,
-            "hidden",
-            Some("Actor created"),
-            &json!({"entity_id":"actor","name":"Actor"}),
-            Some(&player.id),
         )
         .unwrap();
         let narration = append_entry(
@@ -1552,40 +1769,165 @@ mod tests {
             None,
         )
         .unwrap();
-        append_entry(
+        crate::features::entities::update_entity_sync(
+            &conn,
+            "b",
+            "mira",
+            "Mira Changed",
+            Some("black armor"),
+            "narrator_tool",
+            Some(&narration.id),
+        )
+        .unwrap();
+        crate::features::entities::attributes::apply_attribute_delta(
+            &conn,
+            "b",
+            "mira",
+            &trust,
+            3.0,
+            "latest event",
+            &narration.id,
+            false,
+        )
+        .unwrap();
+        crate::features::entities::create_entity_with_id_sync(
+            &conn,
+            "temporary",
+            "s",
+            "b",
+            "character",
+            "Temporary",
+            None,
+            "narrator_tool",
+            Some(&narration.id),
+        )
+        .unwrap();
+        let query = append_entry(
+            &conn,
+            "b",
+            timeline_kind::ENTITY_QUERIED,
+            "hidden",
+            Some("Looked up Mira"),
+            &json!({"entity_ids":["mira"]}),
+            Some(&narration.id),
+        )
+        .unwrap();
+        for kind in [
+            timeline_kind::DICEROLL,
+            timeline_kind::NARRATION_VARIANT,
+            timeline_kind::NARRATION_SELECTED,
+            timeline_kind::CONTENT_EDITED,
+            timeline_kind::IMAGE_GENERATED,
+        ] {
+            append_entry(
+                &conn,
+                "b",
+                kind,
+                "hidden",
+                Some("derivative"),
+                &json!({}),
+                Some(&narration.id),
+            )
+            .unwrap();
+        }
+        let doomed_summary = append_entry(
             &conn,
             "b",
             timeline_kind::CONTEXT_SUMMARY,
             "hidden",
             Some("summary"),
-            &json!({"through_entry_id":narration.id.clone()}),
+            &json!({"through_entry_id":query.id}),
             None,
         )
         .unwrap();
         conn.execute("INSERT INTO image_assets VALUES ('image',?1,'C:/tmp/image.png','prompt',NULL,'test','now')", [&narration.id]).unwrap();
-        conn.execute(
-            "INSERT INTO branch_entity_state VALUES ('b','stale','Stale',NULL,1,'now',NULL)",
-            [],
-        )
-        .unwrap();
+        drop(conn);
 
-        let (removed, paths) = erase_last_exchange_in_conn(&mut conn, "b").unwrap();
+        let (removed, paths) =
+            with_transaction(&pool, |tx| erase_last_exchange_in_tx(tx, "b")).unwrap();
         assert_eq!(removed, vec![narration.id, player.id]);
         assert_eq!(paths, vec!["C:/tmp/image.png"]);
+        let conn = pool.get().unwrap();
         assert_eq!(
-            conn.query_row("SELECT COUNT(*) FROM timeline_entries", [], |row| row
-                .get::<_, i64>(0))
+            conn.query_row(
+                "SELECT COUNT(*) FROM timeline_entries WHERE id = ?1",
+                [&doomed_summary.id],
+                |row| row.get::<_, i64>(0)
+            )
+            .unwrap(),
+            0
+        );
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM timeline_entries WHERE id = ?1",
+                [&older_summary.id],
+                |row| row.get::<_, i64>(0)
+            )
+            .unwrap(),
+            1
+        );
+        let mira: (String, Option<String>, String) = conn
+            .query_row(
+                "SELECT name, appearance_anchor, last_event_id FROM branch_entity_state WHERE branch_id = 'b' AND entity_id = 'mira'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            mira,
+            (
+                "Mira".into(),
+                Some("silver hair".into()),
+                mira_last_event_id
+            )
+        );
+        let restored_attribute: (f64, String, String) = conn
+            .query_row(
+                "SELECT value, source, last_event_id FROM entity_attributes WHERE branch_id = 'b' AND entity_id = 'mira' AND attribute_id = ?1",
+                [&trust_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            restored_attribute,
+            (2.0, "inferred".into(), attribute_last_event_id)
+        );
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM branch_entity_state WHERE branch_id = 'b' AND entity_id = 'temporary'",
+                [],
+                |row| row.get::<_, i64>(0)
+            )
                 .unwrap(),
             0
+        );
+        assert_eq!(
+            conn.query_row(
+                "SELECT name, appearance_anchor, is_present, updated_at, last_event_id
+                 FROM branch_entity_state WHERE branch_id = 'b' AND entity_id = 'unrelated'",
+                [],
+                |row| Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?
+                ))
+            )
+            .unwrap(),
+            unrelated_projection
+        );
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM entities WHERE id = 'temporary'",
+                [],
+                |row| row.get::<_, i64>(0)
+            )
+            .unwrap(),
+            1
         );
         assert_eq!(
             conn.query_row("SELECT COUNT(*) FROM image_assets", [], |row| row
-                .get::<_, i64>(0))
-                .unwrap(),
-            0
-        );
-        assert_eq!(
-            conn.query_row("SELECT COUNT(*) FROM branch_entity_state", [], |row| row
                 .get::<_, i64>(0))
                 .unwrap(),
             0

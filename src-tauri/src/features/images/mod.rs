@@ -15,15 +15,9 @@ use crate::features::timeline::{
     repository as timeline_repository,
 };
 use crate::features::{narration, settings};
-use crate::shared::db::Pool;
+use crate::shared::db::{with_transaction, Pool};
 use crate::shared::error::{AppError, AppResult};
 use model::{ImageRequest, StoryImage};
-
-const SELECTIVE_IMAGE_PREAMBLE: &str = "You are deciding whether a passage from an interactive \
-story is worth illustrating with a single scene image. Be selective: most beats do not need one. \
-Reserve it for a genuinely striking visual moment — the reveal of a new place, a character \
-appearing for the first time, or a dramatic turn worth seeing. If you do draw, call the \
-illustrate_scene tool with a vivid, concrete visual description. If not, do not call any tool.";
 
 const MANDATORY_IMAGE_PREAMBLE: &str = "The player explicitly asked to visualize this moment. \
 Call the illustrate_scene tool with a vivid, concrete description — do not skip it.";
@@ -46,24 +40,17 @@ fn illustration_decision_prompt(
     prompt
 }
 
-fn finish_illustration_decision(
-    requests: Vec<ImageRequest>,
-    mandatory: bool,
-) -> AppResult<Option<ImageRequest>> {
-    let request = requests.into_iter().next();
-    if mandatory && request.is_none() {
-        return Err(AppError::Other(
-            "the model did not produce an image description".into(),
-        ));
-    }
-    Ok(request)
+fn finish_illustration_decision(requests: Vec<ImageRequest>) -> AppResult<ImageRequest> {
+    requests
+        .into_iter()
+        .next()
+        .ok_or_else(|| AppError::Other("the model did not produce an image description".into()))
 }
 
 struct IllustrationDecision<'a> {
     passage_content: &'a str,
     hint: Option<&'a str>,
     known_characters: &'a [(String, String)],
-    mandatory: bool,
 }
 
 async fn decide_illustration(
@@ -72,13 +59,8 @@ async fn decide_illustration(
     before_seq: Option<i64>,
     config: &ai::TextModelConfig,
     decision: IllustrationDecision<'_>,
-) -> AppResult<Option<ImageRequest>> {
-    let preamble = if decision.mandatory {
-        MANDATORY_IMAGE_PREAMBLE
-    } else {
-        SELECTIVE_IMAGE_PREAMBLE
-    }
-    .to_string();
+) -> AppResult<ImageRequest> {
+    let preamble = MANDATORY_IMAGE_PREAMBLE.to_string();
     let prompt = illustration_decision_prompt(
         decision.passage_content,
         decision.hint,
@@ -107,7 +89,7 @@ async fn decide_illustration(
     )
     .await?;
     let requests = std::mem::take(&mut *image_requests.lock().await);
-    finish_illustration_decision(requests, decision.mandatory)
+    finish_illustration_decision(requests)
 }
 
 fn known_characters(
@@ -191,11 +173,9 @@ pub(crate) async fn generate_for_entry(
             passage_content: &passage_content,
             hint,
             known_characters: &known,
-            mandatory: true,
         },
     )
-    .await?
-    .ok_or_else(|| AppError::Other("the model did not produce an image description".into()))?;
+    .await?;
     generate_from_description(
         app,
         pool,
@@ -310,10 +290,8 @@ async fn persist_and_store_image(
     let id = Uuid::new_v4().to_string();
     let now = Utc::now().to_rfc3339();
 
-    let persist_result = (|| -> AppResult<()> {
-        let mut conn = pool.get()?;
-        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-        let current_content = timeline_repository::active_entry(&tx, entry_id)?
+    let persist_result = with_transaction(pool, |tx| {
+        let current_content = timeline_repository::active_entry(tx, entry_id)?
             .content
             .unwrap_or_default();
         if current_content != expected_content {
@@ -326,9 +304,9 @@ async fn persist_and_store_image(
              VALUES (?1, ?2, ?3, ?4, NULL, ?5, ?6)",
             rusqlite::params![id, entry_id, path_str, prompt, "openrouter", now],
         )?;
-        let base = timeline_repository::get_entry(&tx, entry_id)?;
+        let base = timeline_repository::get_entry(tx, entry_id)?;
         timeline_repository::append_entry(
-            &tx,
+            tx,
             &base.branch_id,
             timeline_kind::IMAGE_GENERATED,
             "hidden",
@@ -338,9 +316,8 @@ async fn persist_and_store_image(
             &serde_json::json!({"asset_id": id, "prompt": prompt, "provider": "openrouter"}),
             Some(entry_id),
         )?;
-        tx.commit()?;
         Ok(())
-    })();
+    });
     if let Err(error) = persist_result {
         let _ = std::fs::remove_file(&file_path);
         return Err(error);
@@ -368,70 +345,6 @@ pub async fn generate_scene_image(
     prompt_hint: Option<String>,
 ) -> AppResult<StoryImage> {
     generate_for_entry(&app, pool.inner(), &entry_id, prompt_hint.as_deref()).await
-}
-
-/// Runs one selective `illustrate_scene` agent turn for narration paths that do
-/// not expose live tools. Fire-and-forget and best-effort throughout (mirroring
-/// `stories::maybe_auto_title`): it never blocks or fails the passage write and
-/// keeps the existing pending/generated/failed event contract.
-pub(crate) fn maybe_auto_image(app: &AppHandle, pool: &Pool, entry_id: &str, narrated_text: &str) {
-    let Ok(settings) = settings::read_image_model_settings(app, pool) else {
-        return;
-    };
-    if !settings.enabled || !settings.narrator_images {
-        return;
-    }
-    let Ok(config) = settings::resolve_text_model(app, pool) else {
-        // No text model configured yet: nothing to decide with.
-        return;
-    };
-
-    let app = app.clone();
-    let pool = pool.clone();
-    let entry_id = entry_id.to_string();
-    let narrated_text = narrated_text.to_string();
-    tauri::async_runtime::spawn(async move {
-        let Ok((active, known)) = illustration_context(&pool, &entry_id) else {
-            return;
-        };
-        let Ok(Some(request)) = decide_illustration(
-            &pool,
-            &active.branch_id,
-            Some(active.seq),
-            &config,
-            IllustrationDecision {
-                passage_content: &narrated_text,
-                hint: None,
-                known_characters: &known,
-                mandatory: false,
-            },
-        )
-        .await
-        else {
-            return;
-        };
-        // Announce the decision before the slow part, so the passage can show a
-        // placeholder for the minute-plus the image model takes.
-        let _ = app.emit("scene-image-pending", &entry_id);
-        match generate_from_description(
-            &app,
-            &pool,
-            &entry_id,
-            &narrated_text,
-            &request.description,
-            &request.character_ids,
-        )
-        .await
-        {
-            Ok(image) => {
-                let _ = app.emit("scene-image-generated", image);
-            }
-            // Still best-effort — but the placeholder has to be cleared.
-            Err(_) => {
-                let _ = app.emit("scene-image-failed", &entry_id);
-            }
-        }
-    });
 }
 
 /// Starts the slow image work requested by `submit_turn`'s narrator after the
@@ -529,17 +442,8 @@ mod tests {
     }
 
     #[test]
-    fn selective_decision_without_a_tool_call_returns_none() {
-        assert!(finish_illustration_decision(Vec::new(), false)
-            .unwrap()
-            .is_none());
-    }
-
-    #[test]
-    fn selective_decision_returns_the_first_queued_request() {
-        let selected = finish_illustration_decision(vec![request()], false)
-            .unwrap()
-            .expect("request selected");
+    fn decision_returns_the_first_queued_request() {
+        let selected = finish_illustration_decision(vec![request()]).unwrap();
         assert_eq!(
             selected.description,
             "Mira stands beneath a lightning-split sky."
@@ -549,7 +453,7 @@ mod tests {
 
     #[test]
     fn mandatory_decision_without_a_tool_call_returns_an_error() {
-        let error = finish_illustration_decision(Vec::new(), true).unwrap_err();
+        let error = finish_illustration_decision(Vec::new()).unwrap_err();
         assert_eq!(
             error.to_string(),
             "the model did not produce an image description"

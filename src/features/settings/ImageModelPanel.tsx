@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useImageModelStore } from "./imageModelStore";
 import { useTextModelStore } from "./textModelStore";
+import { useSettingsForm } from "./useSettingsForm";
 
 const STYLE_PRESETS: { label: string; value: string }[] = [
   { label: "Painterly", value: "Digital painting, atmospheric scene illustration." },
@@ -19,11 +20,6 @@ const IMAGE_MODELS: { slug: string; label: string }[] = [
 ];
 
 export function ImageModelPanel() {
-  const settings = useImageModelStore((s) => s.settings);
-  const loading = useImageModelStore((s) => s.loading);
-  const saving = useImageModelStore((s) => s.saving);
-  const load = useImageModelStore((s) => s.load);
-  const save = useImageModelStore((s) => s.save);
   const textSettings = useTextModelStore((s) => s.settings);
 
   const [model, setModel] = useState("");
@@ -31,21 +27,13 @@ export function ImageModelPanel() {
   const [narratorImages, setNarratorImages] = useState(true);
   const [style, setStyle] = useState("");
   const [customMode, setCustomMode] = useState(false);
-  const [savedNotice, setSavedNotice] = useState(false);
-
-  useEffect(() => {
-    load();
-  }, [load]);
-
-  useEffect(() => {
-    if (settings) {
-      setModel(settings.model);
-      setEnabled(settings.enabled);
-      setNarratorImages(settings.narrator_images);
-      setStyle(settings.style);
-      setCustomMode(!IMAGE_MODELS.some((m) => m.slug === settings.model));
-    }
-  }, [settings]);
+  const { settings, loading, saving, savedNotice, save } = useSettingsForm(useImageModelStore, (next) => {
+    setModel(next.model);
+    setEnabled(next.enabled);
+    setNarratorImages(next.narrator_images);
+    setStyle(next.style);
+    setCustomMode(!IMAGE_MODELS.some((candidate) => candidate.slug === next.model));
+  });
 
   const onModelSelect = (value: string) => {
     if (value === "__custom__") {
@@ -57,13 +45,7 @@ export function ImageModelPanel() {
   };
 
   const onSave = async () => {
-    try {
-      await save(model.trim(), enabled, style.trim(), narratorImages);
-      setSavedNotice(true);
-      setTimeout(() => setSavedNotice(false), 2000);
-    } catch (e) {
-      console.error(e);
-    }
+    await save(model.trim(), enabled, style.trim(), narratorImages);
   };
 
   if (loading && !settings) {

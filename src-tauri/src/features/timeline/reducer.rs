@@ -10,13 +10,17 @@ pub fn active_variant_id(entries: &[TimelineEntry], target: &str) -> String {
     entries
         .iter()
         .rev()
-        .find(|e| {
-            e.kind == kind::NARRATION_SELECTED && e.target_entry_id.as_deref() == Some(target)
+        .filter(|entry| entry.target_entry_id.as_deref() == Some(target))
+        .find_map(|entry| match entry.kind.as_str() {
+            kind::NARRATION_VARIANT => Some(entry.id.clone()),
+            kind::NARRATION_SELECTED => entry
+                .payload
+                .get("selected_entry_id")
+                .and_then(|value| value.as_str())
+                .map(str::to_string),
+            _ => None,
         })
-        .and_then(|e| e.payload.get("selected_entry_id"))
-        .and_then(|v| v.as_str())
-        .unwrap_or(target)
-        .to_string()
+        .unwrap_or_else(|| target.to_string())
 }
 
 /// Latest edited text per (target entry, the variant it was edited against).
@@ -77,14 +81,7 @@ fn thoughts_of(payload: &serde_json::Value) -> Option<String> {
 }
 
 pub fn variants_for_entry(entries: &[TimelineEntry], entry_id: &str) -> Vec<NarrationVariant> {
-    let selected = entries
-        .iter()
-        .rev()
-        .find(|e| {
-            e.kind == kind::NARRATION_SELECTED && e.target_entry_id.as_deref() == Some(entry_id)
-        })
-        .and_then(|e| e.payload.get("selected_entry_id"))
-        .and_then(|v| v.as_str());
+    let selected = active_variant_id(entries, entry_id);
     let edits = edits_by_target_and_variant(entries);
 
     let mut out = Vec::new();
@@ -98,7 +95,7 @@ pub fn variants_for_entry(entries: &[TimelineEntry], entry_id: &str) -> Vec<Narr
                 id: base.id.clone(),
                 entry_id: entry_id.to_string(),
                 content,
-                is_selected: selected.is_none() || selected == Some(base.id.as_str()),
+                is_selected: selected == base.id,
                 created_at: base.created_at.clone(),
                 thoughts: thoughts_of(&base.payload),
             });
@@ -119,7 +116,7 @@ pub fn variants_for_entry(entries: &[TimelineEntry], entry_id: &str) -> Vec<Narr
                     id: e.id.clone(),
                     entry_id: entry_id.to_string(),
                     content,
-                    is_selected: selected == Some(e.id.as_str()),
+                    is_selected: selected == e.id,
                     created_at: e.created_at.clone(),
                     thoughts: thoughts_of(&e.payload),
                 })
@@ -322,6 +319,86 @@ mod tests {
                 .unwrap()
                 .id,
             "v2"
+        );
+    }
+
+    #[test]
+    fn newest_variant_is_active_without_an_explicit_selection() {
+        let rows = vec![
+            entry("n", kind::NARRATION, Some("original"), None, json!({})),
+            entry(
+                "v1",
+                kind::NARRATION_VARIANT,
+                Some("first"),
+                Some("n"),
+                json!({}),
+            ),
+            entry(
+                "v2",
+                kind::NARRATION_VARIANT,
+                Some("second"),
+                Some("n"),
+                json!({}),
+            ),
+        ];
+
+        assert_eq!(active_variant_id(&rows, "n"), "v2");
+        assert_eq!(
+            active_visible_entries(&rows)[0].content.as_deref(),
+            Some("second")
+        );
+        let selected = variants_for_entry(&rows, "n")
+            .into_iter()
+            .find(|variant| variant.is_selected)
+            .unwrap();
+        assert_eq!(selected.id, "v2");
+    }
+
+    #[test]
+    fn base_is_active_when_no_variants_exist() {
+        let rows = vec![entry(
+            "n",
+            kind::NARRATION,
+            Some("original"),
+            None,
+            json!({}),
+        )];
+
+        assert_eq!(active_variant_id(&rows, "n"), "n");
+        assert!(variants_for_entry(&rows, "n")[0].is_selected);
+    }
+
+    #[test]
+    fn a_new_variant_supersedes_an_older_explicit_selection() {
+        let rows = vec![
+            entry("n", kind::NARRATION, Some("original"), None, json!({})),
+            entry(
+                "v1",
+                kind::NARRATION_VARIANT,
+                Some("first"),
+                Some("n"),
+                json!({}),
+            ),
+            entry(
+                "s",
+                kind::NARRATION_SELECTED,
+                None,
+                Some("n"),
+                json!({"selected_entry_id":"n"}),
+            ),
+            entry(
+                "v2",
+                kind::NARRATION_VARIANT,
+                Some("second"),
+                Some("n"),
+                json!({}),
+            ),
+        ];
+
+        assert_eq!(active_variant_id(&rows, "n"), "v2");
+        assert_eq!(
+            active_visible_entries(&rows)[0].content.as_deref(),
+            Some("second")
         );
     }
 }

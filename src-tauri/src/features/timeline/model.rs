@@ -15,6 +15,12 @@ pub struct TimelineEntry {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TimelineSnapshot {
+    pub visible: Vec<TimelineEntry>,
+    pub hidden: Vec<TimelineEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NarrationVariant {
     pub id: String,
     pub entry_id: String,

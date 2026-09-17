@@ -5,7 +5,7 @@ use serde_json::{json, Value};
 use tauri::State;
 
 use crate::features::timeline::{model::kind, repository as timeline};
-use crate::shared::db::Pool;
+use crate::shared::db::{with_transaction, Pool};
 use crate::shared::error::{AppError, AppResult};
 
 use crate::features::entities::attributes::list_entity_attributes_sync;
@@ -102,18 +102,17 @@ pub fn save_story_diceroll_settings(
             }
         }
     }
-    let mut conn = pool.get()?;
-    let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-    tx.execute(
-        "UPDATE stories SET settings_json = ?1, updated_at = ?2 WHERE id = ?3",
-        rusqlite::params![settings.to_string(), Utc::now().to_rfc3339(), story_id],
-    )?;
-    timeline::append_entry(&tx, &branch_id, kind::DICEROLL_SETTINGS_CHANGED, "hidden",
-        Some(&format!("Dice-roll settings changed: dice mode {dice_mode}, attributes enabled {attributes_enabled}, reasoning effort {}.",
-            reasoning_effort.as_deref().unwrap_or("model default"))),
-        &json!({"dice_mode": dice_mode, "attributes_enabled": attributes_enabled, "reasoning_effort": reasoning_effort}), None)?;
-    tx.commit()?;
-    Ok(())
+    with_transaction(pool.inner(), |tx| {
+        tx.execute(
+            "UPDATE stories SET settings_json = ?1, updated_at = ?2 WHERE id = ?3",
+            rusqlite::params![settings.to_string(), Utc::now().to_rfc3339(), story_id],
+        )?;
+        timeline::append_entry(tx, &branch_id, kind::DICEROLL_SETTINGS_CHANGED, "hidden",
+            Some(&format!("Dice-roll settings changed: dice mode {dice_mode}, attributes enabled {attributes_enabled}, reasoning effort {}.",
+                reasoning_effort.as_deref().unwrap_or("model default"))),
+            &json!({"dice_mode": dice_mode, "attributes_enabled": attributes_enabled, "reasoning_effort": reasoning_effort}), None)?;
+        Ok(())
+    })
 }
 
 fn parse_roll(entry: &crate::features::timeline::model::TimelineEntry) -> Option<Roll> {

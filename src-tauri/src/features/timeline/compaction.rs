@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     ai::{self, HistoryTurn, TextModelConfig},
-    shared::db::Pool,
+    shared::db::{with_transaction, Pool},
 };
 
 use super::{model::kind, repository};
@@ -255,29 +255,25 @@ where
     {
         Ok(artifact) => {
             let summary_text = format_summary(&artifact.0);
-            if let Ok(mut conn) = pool.get() {
-                if let Ok(tx) =
-                    conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
-                {
-                    let boundary = through_entry_id
-                        .as_deref()
-                        .and_then(|id| repository::get_entry(&tx, id).ok());
-                    if let Some(boundary) = boundary {
-                        let _ = repository::append_entry(
-                            &tx,
-                            branch_id,
-                            kind::CONTEXT_SUMMARY,
-                            "hidden",
-                            Some(&summary_text),
-                            &serde_json::json!({"through_seq": boundary.seq, "through_entry_id": boundary.id, "prose": artifact.0.prose, "facts": artifact.0.facts,
-                                "entity_notes": artifact.0.entity_notes, "open_threads": artifact.0.open_threads,
-                                "unresolved_mechanics": artifact.0.unresolved_mechanics}),
-                            None,
-                        );
-                    }
-                    let _ = tx.commit();
+            let _ = with_transaction(pool, |tx| {
+                let boundary = through_entry_id
+                    .as_deref()
+                    .and_then(|id| repository::get_entry(tx, id).ok());
+                if let Some(boundary) = boundary {
+                    repository::append_entry(
+                        tx,
+                        branch_id,
+                        kind::CONTEXT_SUMMARY,
+                        "hidden",
+                        Some(&summary_text),
+                        &serde_json::json!({"through_seq": boundary.seq, "through_entry_id": boundary.id, "prose": artifact.0.prose, "facts": artifact.0.facts,
+                            "entity_notes": artifact.0.entity_notes, "open_threads": artifact.0.open_threads,
+                            "unresolved_mechanics": artifact.0.unresolved_mechanics}),
+                        None,
+                    )?;
                 }
-            }
+                Ok(())
+            });
             let mut compacted = vec![HistoryTurn {
                 entry_id: None,
                 is_player: false,
@@ -324,7 +320,6 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ai::TextProviderKind;
     use crate::features::narration::history::load_history;
     use crate::features::timeline::reducer;
     use std::sync::{Arc, Mutex};
@@ -384,7 +379,6 @@ mod tests {
             })
             .collect::<Vec<_>>();
         let config = TextModelConfig {
-            provider: TextProviderKind::OpenRouter,
             model: "test".into(),
             api_key: "test".into(),
             context_window: 256,
@@ -508,7 +502,6 @@ mod tests {
             });
         }
         let config = TextModelConfig {
-            provider: TextProviderKind::OpenRouter,
             model: "test".into(),
             api_key: "test".into(),
             context_window: 256,
@@ -596,7 +589,6 @@ mod tests {
             Some(player_before_target.id.as_str())
         );
         let config = TextModelConfig {
-            provider: TextProviderKind::OpenRouter,
             model: "test".into(),
             api_key: "test".into(),
             context_window: 256,
@@ -662,22 +654,11 @@ mod tests {
             Some(&target.id),
         )
         .unwrap();
-        let selection = repository::append_entry(
-            &conn,
-            "b",
-            kind::NARRATION_SELECTED,
-            "hidden",
-            None,
-            &serde_json::json!({"selected_entry_id":variant.id,"reason":"retry"}),
-            Some(&target.id),
-        )
-        .unwrap();
         assert!(
             target.seq < summary_seq
                 && summary_seq < intervening_player.seq
                 && intervening_player.seq < intervening_narration.seq
                 && intervening_narration.seq < variant.seq
-                && variant.seq < selection.seq
         );
 
         let raw = repository::list_logical_entries(&conn, "b").unwrap();

@@ -2,7 +2,7 @@ use crate::features::timeline::{
     model::{kind, TimelineEntry},
     reducer, repository as timeline,
 };
-use crate::shared::error::{AppError, AppResult};
+use crate::shared::error::AppResult;
 
 use super::model::ActiveStoryEntry;
 use crate::features::timeline::model::NarrationVariant;
@@ -29,19 +29,6 @@ fn to_story_entry(entry: TimelineEntry) -> ActiveStoryEntry {
         created_at: entry.created_at,
         edited_at: None,
     }
-}
-
-pub(super) fn get_active_story_entry(
-    conn: &rusqlite::Connection,
-    entry_id: &str,
-) -> AppResult<ActiveStoryEntry> {
-    let raw =
-        timeline::list_logical_entries(conn, &timeline::get_entry(conn, entry_id)?.branch_id)?;
-    reducer::active_visible_entries(&raw)
-        .into_iter()
-        .find(|entry| entry.id == entry_id)
-        .map(to_story_entry)
-        .ok_or_else(|| AppError::NotFound(format!("timeline entry {entry_id} not found")))
 }
 
 pub(super) fn get_story_id_for_branch(

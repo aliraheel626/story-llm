@@ -1,33 +1,18 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useTextModelStore } from "./textModelStore";
+import { useSettingsForm } from "./useSettingsForm";
 
 export function TextModelPanel() {
-  const settings = useTextModelStore((s) => s.settings);
-  const loading = useTextModelStore((s) => s.loading);
-  const saving = useTextModelStore((s) => s.saving);
-  const load = useTextModelStore((s) => s.load);
-  const save = useTextModelStore((s) => s.save);
-
   const [model, setModel] = useState("");
   const [apiKey, setApiKey] = useState("");
-  const [savedNotice, setSavedNotice] = useState(false);
-
-  useEffect(() => {
-    load();
-  }, [load]);
-
-  useEffect(() => {
-    if (settings) setModel(settings.model);
-  }, [settings]);
+  const { settings, loading, saving, savedNotice, save } = useSettingsForm(
+    useTextModelStore,
+    (next) => setModel(next.model),
+  );
 
   const onSave = async () => {
-    try {
-      await save("openrouter", model.trim(), apiKey.trim() || undefined);
+    if (await save("openrouter", model.trim(), apiKey.trim() || undefined)) {
       setApiKey("");
-      setSavedNotice(true);
-      setTimeout(() => setSavedNotice(false), 2000);
-    } catch (e) {
-      console.error(e);
     }
   };
 

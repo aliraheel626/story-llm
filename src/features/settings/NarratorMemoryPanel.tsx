@@ -1,37 +1,18 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import type { NarratorPreambleMode } from "../../shared/types";
 import { useNarratorMemoryStore } from "./narratorMemoryStore";
+import { useSettingsForm } from "./useSettingsForm";
 
 export function NarratorMemoryPanel() {
-  const settings = useNarratorMemoryStore((s) => s.settings);
-  const loading = useNarratorMemoryStore((s) => s.loading);
-  const saving = useNarratorMemoryStore((s) => s.saving);
-  const load = useNarratorMemoryStore((s) => s.load);
-  const save = useNarratorMemoryStore((s) => s.save);
-
   const [toolCallPersistence, setToolCallPersistence] = useState(true);
   const [preambleMode, setPreambleMode] = useState<NarratorPreambleMode>("all");
-  const [savedNotice, setSavedNotice] = useState(false);
-
-  useEffect(() => {
-    load();
-  }, [load]);
-
-  useEffect(() => {
-    if (settings) {
-      setToolCallPersistence(settings.tool_call_persistence);
-      setPreambleMode(settings.preamble_mode);
-    }
-  }, [settings]);
+  const { settings, loading, saving, savedNotice, save } = useSettingsForm(useNarratorMemoryStore, (next) => {
+    setToolCallPersistence(next.tool_call_persistence);
+    setPreambleMode(next.preamble_mode);
+  });
 
   const onSave = async () => {
-    try {
-      await save(toolCallPersistence, preambleMode);
-      setSavedNotice(true);
-      setTimeout(() => setSavedNotice(false), 2000);
-    } catch (e) {
-      console.error(e);
-    }
+    await save(toolCallPersistence, preambleMode);
   };
 
   if (loading && !settings) {

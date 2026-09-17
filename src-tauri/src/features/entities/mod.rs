@@ -8,7 +8,7 @@ use tauri::State;
 use uuid::Uuid;
 
 use crate::features::timeline::{model::kind, repository::append_entry};
-use crate::shared::db::Pool;
+use crate::shared::db::{with_transaction, Pool};
 use crate::shared::error::{AppError, AppResult};
 use model::Entity;
 
@@ -164,20 +164,18 @@ pub fn create_entity(
     name: String,
     appearance_anchor: Option<String>,
 ) -> AppResult<Entity> {
-    let mut conn = pool.get()?;
-    let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-    let entity = create_entity_sync(
-        &tx,
-        &story_id,
-        &branch_id,
-        &kind,
-        &name,
-        appearance_anchor.as_deref(),
-        "user",
-        None,
-    )?;
-    tx.commit()?;
-    Ok(entity)
+    with_transaction(pool.inner(), |tx| {
+        create_entity_sync(
+            tx,
+            &story_id,
+            &branch_id,
+            &kind,
+            &name,
+            appearance_anchor.as_deref(),
+            "user",
+            None,
+        )
+    })
 }
 
 /// Renames/updates an entity's appearance, mirroring `create_entity_sync`'s
@@ -237,39 +235,36 @@ pub fn update_entity(
     name: String,
     appearance_anchor: Option<String>,
 ) -> AppResult<Entity> {
-    let mut conn = pool.get()?;
-    let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-    let entity = update_entity_sync(
-        &tx,
-        &branch_id,
-        &entity_id,
-        &name,
-        appearance_anchor.as_deref(),
-        "user",
-        None,
-    )?;
-    tx.commit()?;
-    Ok(entity)
+    with_transaction(pool.inner(), |tx| {
+        update_entity_sync(
+            tx,
+            &branch_id,
+            &entity_id,
+            &name,
+            appearance_anchor.as_deref(),
+            "user",
+            None,
+        )
+    })
 }
 
 #[tauri::command]
 pub fn delete_entity(pool: State<Pool>, branch_id: String, entity_id: String) -> AppResult<()> {
-    let mut conn = pool.get()?;
-    let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-    let name: String = tx.query_row("SELECT name FROM branch_entity_state WHERE branch_id = ?1 AND entity_id = ?2 AND is_present = 1", rusqlite::params![branch_id, entity_id], |r| r.get(0))
-        .map_err(|_| AppError::NotFound(format!("entity {entity_id} not found")))?;
-    let event = append_entry(
-        &tx,
-        &branch_id,
-        kind::ENTITY_DELETED,
-        "hidden",
-        Some(&format!(
-            "{name} was removed from the authoritative entity state."
-        )),
-        &json!({"entity_id": entity_id, "name": name, "source": "user"}),
-        None,
-    )?;
-    tx.execute("UPDATE branch_entity_state SET is_present = 0, updated_at = ?1, last_event_id = ?2 WHERE branch_id = ?3 AND entity_id = ?4", rusqlite::params![Utc::now().to_rfc3339(), event.id, branch_id, entity_id])?;
-    tx.commit()?;
-    Ok(())
+    with_transaction(pool.inner(), |tx| {
+        let name: String = tx.query_row("SELECT name FROM branch_entity_state WHERE branch_id = ?1 AND entity_id = ?2 AND is_present = 1", rusqlite::params![branch_id, entity_id], |r| r.get(0))
+            .map_err(|_| AppError::NotFound(format!("entity {entity_id} not found")))?;
+        let event = append_entry(
+            tx,
+            &branch_id,
+            kind::ENTITY_DELETED,
+            "hidden",
+            Some(&format!(
+                "{name} was removed from the authoritative entity state."
+            )),
+            &json!({"entity_id": entity_id, "name": name, "source": "user"}),
+            None,
+        )?;
+        tx.execute("UPDATE branch_entity_state SET is_present = 0, updated_at = ?1, last_event_id = ?2 WHERE branch_id = ?3 AND entity_id = ?4", rusqlite::params![Utc::now().to_rfc3339(), event.id, branch_id, entity_id])?;
+        Ok(())
+    })
 }

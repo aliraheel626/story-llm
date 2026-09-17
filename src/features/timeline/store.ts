@@ -1,6 +1,5 @@
 import { create } from "zustand";
 import type { NarrationDonePayload, NarrationToolActivityPayload, NarrationVariant, RollDetail, StoryImage, SwipeDonePayload, TimelineEntry } from "../../shared/types";
-import { foldVisibleTimeline } from "../../shared/types";
 import { useAppStore } from "../../app/store";
 import { useCharacterStore } from "../characters/store";
 import { dicerollApi } from "../dicerolls/api";
@@ -53,7 +52,6 @@ const closeTool = (log: ToolActivity[], callId: string, ok: boolean | null): Too
 
 const timelineGenerations = new Map<string, number>();
 const variantGenerations = new Map<string, number>();
-const rollDetailGenerations = new Map<string, number>();
 const advanceGeneration = (generations: Map<string, number>, key: string) => {
   const generation = (generations.get(key) ?? 0) + 1;
   generations.set(key, generation);
@@ -63,7 +61,6 @@ const isCurrentGeneration = (generations: Map<string, number>, key: string, gene
   generations.get(key) === generation;
 const invalidateTimeline = (branchId: string) => advanceGeneration(timelineGenerations, branchId);
 const invalidateVariants = (entryId: string) => advanceGeneration(variantGenerations, entryId);
-const invalidateRollDetails = (branchId: string, entryId: string) => advanceGeneration(rollDetailGenerations, branchEntryKey(branchId, entryId));
 
 export const useStoryStore = create<StoryState>((set, get) => ({
   entriesByBranch: {}, timelineLoading: false, streamingByBranch: {}, turnError: null, hiddenByBranch: {},
@@ -73,11 +70,17 @@ export const useStoryStore = create<StoryState>((set, get) => ({
     const generation = advanceGeneration(timelineGenerations, branchId);
     set({ timelineLoading: true });
     try {
-      const raw = await timelineApi.list(branchId);
+      const snapshot = await timelineApi.list(branchId);
       if (!isCurrentGeneration(timelineGenerations, branchId, generation)) return;
-      const selectedEntryIds = [...new Set(raw.flatMap((entry) => entry.kind === "narration_selected" && entry.target_entry_id ? [entry.target_entry_id] : []))];
-      set((s) => ({ entriesByBranch: { ...s.entriesByBranch, [branchId]: foldVisibleTimeline(raw) }, hiddenByBranch: { ...s.hiddenByBranch, [branchId]: raw.filter((entry) => entry.visibility === "hidden") } }));
-      await Promise.all(selectedEntryIds.map((entryId) => get().loadVariantsForEntry(entryId)));
+      const revisedEntryIds = [...new Set(snapshot.hidden.flatMap((entry) =>
+        (entry.kind === "narration_variant" || entry.kind === "narration_selected") && entry.target_entry_id
+          ? [entry.target_entry_id]
+          : []))];
+      set((s) => ({
+        entriesByBranch: { ...s.entriesByBranch, [branchId]: snapshot.visible },
+        hiddenByBranch: { ...s.hiddenByBranch, [branchId]: snapshot.hidden },
+      }));
+      await Promise.all(revisedEntryIds.map((entryId) => get().loadVariantsForEntry(entryId)));
       if (isCurrentGeneration(timelineGenerations, branchId, generation)) set({ timelineLoading: false });
     }
     catch (e) {
@@ -116,7 +119,6 @@ export const useStoryStore = create<StoryState>((set, get) => ({
     if (!ids.length) return;
     invalidateTimeline(branchId);
     ids.forEach(invalidateVariants);
-    ids.forEach((id) => invalidateRollDetails(branchId, id));
     set((s) => {
       const images = { ...s.imagesByEntry };
       const variants = { ...s.variantsByEntry };
@@ -153,10 +155,8 @@ export const useStoryStore = create<StoryState>((set, get) => ({
   loadRollsForBranch: async (branchId) => { try { const list = await timelineApi.listRolls(branchId); const byEntry: Record<string, RollDetail[]> = {}; list.forEach((detail) => (byEntry[branchEntryKey(branchId, detail.roll.entry_id)] ??= []).push(detail)); set((s) => ({ rollByEntry: { ...s.rollByEntry, ...byEntry } })); } catch (e) { console.error("failed to load rolls", e); } },
   loadRollDetail: async (branchId, entryId) => {
     const key = branchEntryKey(branchId, entryId);
-    const generation = advanceGeneration(rollDetailGenerations, key);
     try {
       const details = await dicerollApi.listRollDetailsForEntry(branchId, entryId);
-      if (!isCurrentGeneration(rollDetailGenerations, key, generation)) return;
       set((s) => ({ rollDetailByEntry: { ...s.rollDetailByEntry, [key]: details } }));
     } catch (e) { console.error("failed to load roll detail", e); }
   },
