@@ -2,7 +2,7 @@ import { AccordionPanel } from "../../shared/ui/AccordionPanel";
 import { StoriesPanel } from "../stories/StoriesPanel";
 import { CharactersPanel } from "../characters/CharactersPanel";
 import { AttributesPanel } from "../dicerolls/AttributesPanel";
-import { WorldPanel } from "../world/WorldPanel";
+import { WritingStylePanel } from "../writingStyle/WritingStylePanel";
 import { TextModelPanel } from "../settings/TextModelPanel";
 import { ImageModelPanel } from "../settings/ImageModelPanel";
 import { NarratorMemoryPanel } from "../settings/NarratorMemoryPanel";
@@ -12,7 +12,7 @@ import { useAppShellStore } from "../../app/store";
 const PANEL_LABELS: Record<string, string> = {
   stories: "Stories",
   characters: "Characters",
-  world: "World",
+  writingStyle: "Writing Style",
   attributes: "Attributes",
   textModel: "Text Model",
   imageModel: "Image Model",
@@ -38,8 +38,8 @@ export function Sidebar() {
         <CharactersPanel />
       </AccordionPanel>
 
-      <AccordionPanel title={PANEL_LABELS.world} open={openPanels.world} onToggle={() => togglePanel("world")}>
-        <WorldPanel />
+      <AccordionPanel title={PANEL_LABELS.writingStyle} open={openPanels.writingStyle} onToggle={() => togglePanel("writingStyle")}>
+        <WritingStylePanel />
       </AccordionPanel>
 
       <AccordionPanel title={PANEL_LABELS.attributes} open={openPanels.attributes} onToggle={() => togglePanel("attributes")}>

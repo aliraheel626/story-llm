@@ -1,7 +1,7 @@
 # Dungeon
 
 Dungeon is a local-first AI storytelling desktop app built with Tauri, React,
-TypeScript, and Rust. Stories, passages, characters, world notes, dice rolls,
+TypeScript, and Rust. Stories, passages, characters, writing-style notes, dice rolls,
 model settings, and generated-image metadata are persisted in a local SQLite
 database. Text and image generation use OpenRouter when configured.
 
@@ -40,7 +40,7 @@ src/
     passages/
     settings/
     stories/
-    world/
+    writingStyle/
   shared/              genuinely cross-feature types and UI
 
 src-tauri/src/

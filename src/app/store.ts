@@ -3,7 +3,7 @@ import { create } from "zustand";
 export const SIDEBAR_PANELS = [
   "stories",
   "characters",
-  "world",
+  "writingStyle",
   "attributes",
   "textModel",
   "imageModel",
@@ -22,7 +22,7 @@ export const useAppShellStore = create<AppShellState>((set) => ({
   openPanels: {
     stories: true,
     characters: false,
-    world: false,
+    writingStyle: false,
     attributes: false,
     textModel: false,
     imageModel: false,

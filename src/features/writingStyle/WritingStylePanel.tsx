@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useStoryStore } from "../story/store";
 
-export function WorldPanel() {
+export function WritingStylePanel() {
   const activeStoryId = useStoryStore((s) => s.activeStoryId);
   const note = useStoryStore((s) => activeStoryId ? s.bundles[activeStoryId]?.authorNote : undefined);
   const loading = useStoryStore((s) => activeStoryId ? (s.bundles[activeStoryId]?.authorNoteLoading ?? false) : false);

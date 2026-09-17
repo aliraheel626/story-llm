@@ -11,7 +11,7 @@ export type TimelineEntryKind =
   | "player_message" | "narration" | "narration_variant" | "narration_selected" | "content_edited"
   | "diceroll" | "entity_created" | "entity_queried" | "entity_updated" | "entity_deleted"
   | "entity_attribute_changed" | "entity_attribute_removed" | "image_generated"
-  | "context_note_updated" | "diceroll_settings_changed" | "world_event" | "context_summary";
+  | "context_note_updated" | "diceroll_settings_changed" | "context_summary";
 
 interface TimelinePayloadBase extends Record<string, unknown> {
   input_mode?: InputMode;
@@ -52,7 +52,7 @@ export type TimelineEntry =
   | (TimelineEntryBase & { kind: "entity_attribute_changed" | "entity_attribute_removed"; payload: EntityAttributeEventPayload })
   | (TimelineEntryBase & { kind: "image_generated"; payload: ImageGeneratedPayload })
   | (TimelineEntryBase & { kind: "context_summary"; payload: ContextSummaryPayload })
-  | (TimelineEntryBase & { kind: "diceroll" | "entity_queried" | "context_note_updated" | "diceroll_settings_changed" | "world_event"; payload: TimelinePayloadBase });
+  | (TimelineEntryBase & { kind: "diceroll" | "entity_queried" | "context_note_updated" | "diceroll_settings_changed"; payload: TimelinePayloadBase });
 export interface TimelineSnapshot { visible: TimelineEntry[]; hidden: TimelineEntry[] }
 
 export interface NarrationVariant {

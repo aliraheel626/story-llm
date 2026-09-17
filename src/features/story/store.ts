@@ -15,7 +15,7 @@ import { charactersApi } from "../characters/api";
 import { dicerollApi } from "../dicerolls/api";
 import { storiesApi } from "../stories/api";
 import { timelineApi } from "../timeline/api";
-import { worldApi } from "../world/api";
+import { writingStyleApi } from "../writingStyle/api";
 
 export const DEFAULT_DICEROLL_SETTINGS: DicerollSettings = {
   dice_mode: "classifier",
@@ -703,7 +703,7 @@ export const useStoryStore = create<StoryStoreState>((set, get) => ({
   loadAuthorNote: async (storyId) => {
     set((state) => ({ bundles: patchBundle(state.bundles, storyId, { authorNoteLoading: true }) }));
     try {
-      const authorNote = await worldApi.getAuthorNote(storyId);
+      const authorNote = await writingStyleApi.getAuthorNote(storyId);
       set((state) => ({ bundles: patchBundle(state.bundles, storyId, { authorNote, authorNoteLoading: false }) }));
     } catch (error) {
       console.error("failed to load author's note", error);
@@ -713,7 +713,7 @@ export const useStoryStore = create<StoryStoreState>((set, get) => ({
   saveAuthorNote: async (storyId, note) => {
     set((state) => ({ bundles: patchBundle(state.bundles, storyId, { authorNoteSaving: true }) }));
     try {
-      await worldApi.saveAuthorNote(storyId, note);
+      await writingStyleApi.saveAuthorNote(storyId, note);
       set((state) => ({
         bundles: patchBundle(state.bundles, storyId, { authorNote: note.trim(), authorNoteSaving: false }),
       }));

@@ -145,7 +145,6 @@ fn history_from_entries(
                 | kind::IMAGE_GENERATED
                 | kind::CONTEXT_NOTE_UPDATED
                 | kind::DICEROLL_SETTINGS_CHANGED
-                | kind::WORLD_EVENT
         );
         if !contextual {
             continue;

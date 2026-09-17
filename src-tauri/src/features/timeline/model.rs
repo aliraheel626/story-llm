@@ -48,6 +48,5 @@ pub mod kind {
     pub const IMAGE_GENERATED: &str = "image_generated";
     pub const CONTEXT_NOTE_UPDATED: &str = "context_note_updated";
     pub const DICEROLL_SETTINGS_CHANGED: &str = "diceroll_settings_changed";
-    pub const WORLD_EVENT: &str = "world_event";
     pub const CONTEXT_SUMMARY: &str = "context_summary";
 }
