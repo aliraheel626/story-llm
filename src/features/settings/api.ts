@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { ImageModelSettings, NarratorMemorySettings, NarratorPreambleMode, TextModelSettings } from "../../shared/types";
+import type { EntityContextMode, ImageModelSettings, NarratorMemorySettings, TextModelSettings } from "../../shared/types";
 
 export const textModelApi = {
   get: () => invoke<TextModelSettings>("get_text_model_settings"),
@@ -15,6 +15,6 @@ export const imageModelApi = {
 
 export const narratorMemoryApi = {
   get: () => invoke<NarratorMemorySettings>("get_narrator_memory_settings"),
-  save: (toolCallPersistence: boolean, preambleMode: NarratorPreambleMode) =>
-    invoke<void>("save_narrator_memory_settings", { toolCallPersistence, preambleMode }),
+  save: (toolCallPersistence: boolean, entityContextMode: EntityContextMode) =>
+    invoke<void>("save_narrator_memory_settings", { toolCallPersistence, entityContextMode }),
 };

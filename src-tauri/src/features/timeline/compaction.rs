@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     ai::{self, HistoryTurn, TextModelConfig},
+    prompts,
     shared::db::{with_transaction, Pool},
 };
 
@@ -62,11 +63,14 @@ impl Compactor for NarratorCompactor {
             let prompt = format!(
                 "Previous summary:\n{prior}\n\nOlder timeline messages to compact:\n{transcript}"
             );
-            let preamble = "Summarize an interactive story's older context. Preserve concrete facts, promises, relationships, unresolved plot threads, dice-roll outcomes, and entity-relevant details. Do not invent events. Return structured output only.";
-            ai::prompt_typed::<ContextSummary>(&self.config, preamble, prompt)
-                .await
-                .map(SummaryArtifact)
-                .map_err(|e| MemoryError::Policy(e.to_string()))
+            ai::prompt_typed::<ContextSummary>(
+                &self.config,
+                prompts::COMPACTION_SUMMARY_SYSTEM_PROMPT,
+                prompt,
+            )
+            .await
+            .map(SummaryArtifact)
+            .map_err(|e| MemoryError::Policy(e.to_string()))
         })
     }
 }
@@ -379,6 +383,7 @@ mod tests {
             })
             .collect::<Vec<_>>();
         let config = TextModelConfig {
+            provider: "openrouter".into(),
             model: "test".into(),
             api_key: "test".into(),
             context_window: 256,
@@ -497,6 +502,7 @@ mod tests {
             });
         }
         let config = TextModelConfig {
+            provider: "openrouter".into(),
             model: "test".into(),
             api_key: "test".into(),
             context_window: 256,
@@ -579,6 +585,7 @@ mod tests {
             Some(player_before_target.id.as_str())
         );
         let config = TextModelConfig {
+            provider: "openrouter".into(),
             model: "test".into(),
             api_key: "test".into(),
             context_window: 256,

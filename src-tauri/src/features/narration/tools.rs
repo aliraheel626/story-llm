@@ -18,7 +18,6 @@ use serde_json::json;
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
-use crate::ai::TextModelConfig;
 use crate::features::dicerolls::{
     model::DiceMode,
     resolve::{self, PendingRoll, ResolveInput},
@@ -30,6 +29,7 @@ use crate::features::entities::{
 };
 use crate::features::images::model::ImageRequest;
 use crate::features::{settings, timeline};
+use crate::prompts;
 use crate::shared::db::Pool;
 use crate::shared::error::{AppError, AppResult};
 
@@ -357,7 +357,7 @@ fn to_tool_error(e: AppError) -> ToolExecutionError {
 
 async fn resolve_or_stage_attribute(
     staging: &Arc<Mutex<TurnStaging>>,
-    config: &TextModelConfig,
+    embedding_api_key: &str,
     proposed_name: &str,
     entity_kind: &str,
 ) -> Result<AttributeRegistryEntry, ToolExecutionError> {
@@ -368,9 +368,12 @@ async fn resolve_or_stage_attribute(
 
     // Attribute similarity may require a network request. Never retain the
     // staging mutex while awaiting it, or unrelated tool reads would block.
+    // This always calls OpenRouter's embedding endpoint regardless of the
+    // active text-model provider (e.g. Nous Portal) — `embedding_api_key` is
+    // resolved separately by the caller, never the narrator's own API key.
     let resolution = attributes::resolve_attribute(
         &pool,
-        &config.api_key,
+        embedding_api_key,
         proposed_name,
         entity_kind,
         &story_id,
@@ -424,20 +427,9 @@ pub fn friendly_tool_label(tool_name: &str, args_json: &str) -> String {
 
 pub fn illustrate_scene_tool(image_requests: Arc<Mutex<Vec<ImageRequest>>>) -> PortableDynamicTool {
     PortableDynamicTool::new(
-        "illustrate_scene",
-        "Illustrate this moment with a generated scene image. Use sparingly — reserve for a \
-         genuinely striking visual moment (a new place revealed, a character's first appearance, \
-         a dramatic turn worth seeing); most beats don't need one. Write a vivid, concrete visual \
-         description: subject, setting, composition, lighting. Do not mention art style or medium; \
-         that's applied separately.",
-        json!({
-            "type": "object",
-            "properties": {
-                "description": {"type": "string", "description": "A vivid, concrete visual description of the scene's subject, setting, composition, and lighting."},
-                "character_ids": {"type": "array", "items": {"type": "string"}, "description": "Ids of characters visible in the scene, from get_entities."}
-            },
-            "required": ["description"]
-        }),
+        prompts::ILLUSTRATE_SCENE_TOOL_NAME,
+        prompts::ILLUSTRATE_SCENE_DESCRIPTION,
+        prompts::illustrate_scene_schema(),
         move |args: serde_json::Value| {
             let image_requests = image_requests.clone();
             Box::pin(async move {
@@ -478,26 +470,15 @@ pub fn illustrate_scene_tool(image_requests: Arc<Mutex<Vec<ImageRequest>>>) -> P
 
 fn roll_check_tool(
     staging: Arc<Mutex<TurnStaging>>,
-    config: TextModelConfig,
+    embedding_api_key: String,
 ) -> PortableDynamicTool {
     PortableDynamicTool::new(
-        "roll_check",
-        "Roll the dice for an uncertain action. Resolves the player's relevant attribute against an \
-         optional opposing entity/attribute and returns the outcome. Call this before narrating the \
-         result of any action whose success is genuinely in doubt.",
-        json!({
-            "type": "object",
-            "properties": {
-                "attribute": {"type": "string", "description": "The player's attribute this action draws on, e.g. \"Stealth\"."},
-                "target_entity_id": {"type": "string", "description": "Id of the opposing entity, from get_entities, if any."},
-                "target_attribute": {"type": "string", "description": "The opposing entity's attribute, if target_entity_id is given."},
-                "modifier": {"type": "number", "description": "Situational adjustment to success probability, e.g. 0.1 for +10%."}
-            },
-            "required": ["attribute"]
-        }),
+        prompts::ROLL_CHECK_TOOL_NAME,
+        prompts::ROLL_CHECK_DESCRIPTION,
+        prompts::roll_check_schema(),
         move |args: serde_json::Value| {
             let staging = staging.clone();
-            let config = config.clone();
+            let embedding_api_key = embedding_api_key.clone();
             Box::pin(async move {
                 let attribute_name = args
                     .get("attribute")
@@ -519,7 +500,7 @@ fn roll_check_tool(
 
                 let actor_attribute = resolve_or_stage_attribute(
                     &staging,
-                    &config,
+                    &embedding_api_key,
                     &attribute_name,
                     "character",
                 )
@@ -540,7 +521,7 @@ fn roll_check_tool(
                     (Some(target), Some(target_attr_name)) => {
                         let target_attribute = resolve_or_stage_attribute(
                             &staging,
-                            &config,
+                            &embedding_api_key,
                             target_attr_name,
                             &target.kind,
                         )
@@ -595,16 +576,9 @@ fn roll_check_tool(
 
 fn get_entities_tool(staging: Arc<Mutex<TurnStaging>>) -> PortableDynamicTool {
     PortableDynamicTool::new(
-        "get_entities",
-        "List known entities (characters, objects, locations) and their current attribute values. \
-         Use this to check who or what is present before narrating, rolling, or adjusting state.",
-        json!({
-            "type": "object",
-            "properties": {
-                "kind": {"type": "string", "description": "Filter by kind: character, object, location, relationship, or campaign."},
-                "name": {"type": "string", "description": "Filter to an exact (case-insensitive) name match."}
-            }
-        }),
+        prompts::GET_ENTITIES_TOOL_NAME,
+        prompts::GET_ENTITIES_DESCRIPTION,
+        prompts::get_entities_schema(),
         move |args: serde_json::Value| {
             let staging = staging.clone();
             Box::pin(async move {
@@ -647,18 +621,9 @@ fn get_entities_tool(staging: Arc<Mutex<TurnStaging>>) -> PortableDynamicTool {
 
 fn create_entity_tool(staging: Arc<Mutex<TurnStaging>>) -> PortableDynamicTool {
     PortableDynamicTool::new(
-        "create_entity",
-        "Introduce a new entity (character, object, or location) the story just established. \
-         Idempotent by name — calling this for an entity that already exists just returns it.",
-        json!({
-            "type": "object",
-            "properties": {
-                "kind": {"type": "string", "description": "character, object, location, relationship, or campaign."},
-                "name": {"type": "string", "description": "The entity's name, exactly as it should appear in the story."},
-                "appearance_anchor": {"type": "string", "description": "A short, stable visual description to keep the entity consistent."}
-            },
-            "required": ["kind", "name"]
-        }),
+        prompts::CREATE_ENTITY_TOOL_NAME,
+        prompts::CREATE_ENTITY_DESCRIPTION,
+        prompts::create_entity_schema(),
         move |args: serde_json::Value| {
             let staging = staging.clone();
             Box::pin(async move {
@@ -688,17 +653,9 @@ fn create_entity_tool(staging: Arc<Mutex<TurnStaging>>) -> PortableDynamicTool {
 
 fn update_entity_tool(staging: Arc<Mutex<TurnStaging>>) -> PortableDynamicTool {
     PortableDynamicTool::new(
-        "update_entity",
-        "Rename an entity or update its appearance description. Look it up with get_entities first.",
-        json!({
-            "type": "object",
-            "properties": {
-                "id": {"type": "string", "description": "Entity id from get_entities/create_entity."},
-                "name": {"type": "string", "description": "The entity's (possibly unchanged) name."},
-                "appearance_anchor": {"type": "string", "description": "The entity's (possibly unchanged) appearance description."}
-            },
-            "required": ["id", "name"]
-        }),
+        prompts::UPDATE_ENTITY_TOOL_NAME,
+        prompts::UPDATE_ENTITY_DESCRIPTION,
+        prompts::update_entity_schema(),
         move |args: serde_json::Value| {
             let staging = staging.clone();
             Box::pin(async move {
@@ -732,27 +689,15 @@ fn update_entity_tool(staging: Arc<Mutex<TurnStaging>>) -> PortableDynamicTool {
 
 fn adjust_entity_attribute_tool(
     staging: Arc<Mutex<TurnStaging>>,
-    config: TextModelConfig,
+    embedding_api_key: String,
 ) -> PortableDynamicTool {
     PortableDynamicTool::new(
-        "adjust_entity_attribute",
-        "Change an entity's attribute by a delta implied by what just happened (an injury, growing \
-         trust, a depleted resource). Most changes are minor; only set dramatic for a genuinely \
-         major, story-changing swing.",
-        json!({
-            "type": "object",
-            "properties": {
-                "entity_id": {"type": "string", "description": "Entity id from get_entities/create_entity. Use \"You\" for the player via get_entities first."},
-                "attribute": {"type": "string", "description": "Attribute name, e.g. \"Trust\"."},
-                "delta": {"type": "number", "description": "Positive or negative change, on the attribute's own scale."},
-                "dramatic": {"type": "boolean", "description": "True only for a major, story-changing swing."},
-                "reason": {"type": "string", "description": "Why this changed, for the audit log."}
-            },
-            "required": ["entity_id", "attribute", "delta", "reason"]
-        }),
+        prompts::ADJUST_ENTITY_ATTRIBUTE_TOOL_NAME,
+        prompts::ADJUST_ENTITY_ATTRIBUTE_DESCRIPTION,
+        prompts::adjust_entity_attribute_schema(),
         move |args: serde_json::Value| {
             let staging = staging.clone();
-            let config = config.clone();
+            let embedding_api_key = embedding_api_key.clone();
             Box::pin(async move {
                 let entity_id = args
                     .get("entity_id")
@@ -783,7 +728,7 @@ fn adjust_entity_attribute_tool(
 
                 let attribute = resolve_or_stage_attribute(
                     &staging,
-                    &config,
+                    &embedding_api_key,
                     &attribute_name,
                     &entity.kind,
                 )
@@ -821,16 +766,16 @@ fn adjust_entity_attribute_tool(
 /// be invoked from here); `narrator_tools` adapts these for the agent runner.
 pub fn narrator_portable_tools(
     staging: Arc<Mutex<TurnStaging>>,
-    config: TextModelConfig,
+    embedding_api_key: String,
     dice_mode: DiceMode,
 ) -> Vec<PortableDynamicTool> {
-    let roll_tool =
-        (dice_mode != DiceMode::Never).then(|| roll_check_tool(staging.clone(), config.clone()));
+    let roll_tool = (dice_mode != DiceMode::Never)
+        .then(|| roll_check_tool(staging.clone(), embedding_api_key.clone()));
     let mut tools = vec![
         get_entities_tool(staging.clone()),
         create_entity_tool(staging.clone()),
         update_entity_tool(staging.clone()),
-        adjust_entity_attribute_tool(staging, config),
+        adjust_entity_attribute_tool(staging, embedding_api_key),
     ];
     if let Some(roll_tool) = roll_tool {
         tools.insert(0, roll_tool);
@@ -843,10 +788,10 @@ pub fn narrator_portable_tools(
 /// entry points execute identical logic.
 pub fn narrator_tools(
     staging: Arc<Mutex<TurnStaging>>,
-    config: TextModelConfig,
+    embedding_api_key: String,
     dice_mode: DiceMode,
 ) -> Vec<DynamicTool> {
-    narrator_portable_tools(staging, config, dice_mode)
+    narrator_portable_tools(staging, embedding_api_key, dice_mode)
         .into_iter()
         .map(DynamicTool::from_portable)
         .collect()
@@ -894,21 +839,17 @@ mod tests {
         .unwrap()
     }
 
-    fn test_config() -> TextModelConfig {
-        TextModelConfig {
-            model: "test/model".into(),
-            // Tool tests use seeded attribute names unless they deliberately
-            // exercise the no-candidate mint path, so no embedding call needs
-            // this key.
-            api_key: String::new(),
-            context_window: 0,
-        }
+    /// Tool tests use seeded attribute names unless they deliberately
+    /// exercise the no-candidate mint path, so no embedding call needs a
+    /// real key.
+    fn test_embedding_api_key() -> String {
+        String::new()
     }
 
     /// The portable tool set, so each tool's real body (arg parsing, error
     /// mapping, staging) can be executed without Rig's private dispatch.
     fn portable_tools(staging: Arc<Mutex<TurnStaging>>) -> Vec<PortableDynamicTool> {
-        narrator_portable_tools(staging, test_config(), DiceMode::Classifier)
+        narrator_portable_tools(staging, test_embedding_api_key(), DiceMode::Classifier)
     }
 
     fn tool_named<'a>(tools: &'a [PortableDynamicTool], name: &str) -> &'a PortableDynamicTool {
@@ -941,7 +882,7 @@ mod tests {
     fn never_dice_mode_omits_only_the_roll_tool() {
         let (pool, story_id) = setup();
         let staging = Arc::new(Mutex::new(TurnStaging::new(pool, story_id)));
-        let tools = narrator_portable_tools(staging, test_config(), DiceMode::Never);
+        let tools = narrator_portable_tools(staging, test_embedding_api_key(), DiceMode::Never);
         let names: Vec<&str> = tools.iter().map(|tool| tool.name()).collect();
 
         assert_eq!(
@@ -1015,14 +956,14 @@ mod tests {
     async fn newly_minted_attributes_are_resolved_and_reused_immediately() {
         let (pool, story_id) = setup();
         let staging = Arc::new(Mutex::new(TurnStaging::new(pool.clone(), story_id)));
-        let config = test_config();
+        let embedding_api_key = test_embedding_api_key();
 
         // This kind has no committed candidates, so resolution mints locally
         // without making an embedding request.
-        let first = resolve_or_stage_attribute(&staging, &config, "Resonance", "artifact")
+        let first = resolve_or_stage_attribute(&staging, &embedding_api_key, "Resonance", "artifact")
             .await
             .unwrap();
-        let second = resolve_or_stage_attribute(&staging, &config, "resonance", "artifact")
+        let second = resolve_or_stage_attribute(&staging, &embedding_api_key, "resonance", "artifact")
             .await
             .unwrap();
         assert_eq!(first.id, second.id);
@@ -1456,11 +1397,11 @@ mod tests {
         // The registry resolves eagerly, so both otherwise-independent turns
         // receive the same canonical id before either passage commits.
         let first_attribute =
-            resolve_or_stage_attribute(&first, &test_config(), "Resonance", "artifact")
+            resolve_or_stage_attribute(&first, &test_embedding_api_key(), "Resonance", "artifact")
                 .await
                 .unwrap();
         let second_attribute =
-            resolve_or_stage_attribute(&second, &test_config(), "resonance", "artifact")
+            resolve_or_stage_attribute(&second, &test_embedding_api_key(), "resonance", "artifact")
                 .await
                 .unwrap();
         assert_eq!(first_attribute.id, second_attribute.id);
@@ -1604,7 +1545,7 @@ mod tests {
             .unwrap()
             .execute(
                 "INSERT INTO settings (key, value) VALUES ('narrator_memory', ?1)",
-                [json!({"tool_call_persistence":false,"preamble_mode":"all"}).to_string()],
+                [json!({"tool_call_persistence":false,"entity_context_mode":"all"}).to_string()],
             )
             .unwrap();
         let staging = Arc::new(Mutex::new(TurnStaging::new(pool, story_id)));
@@ -1688,7 +1629,7 @@ mod tests {
             .any(|op| matches!(op, PendingOp::AdjustAttribute { .. })));
         persist_staging(&pool, &story_id, &staged);
 
-        // The preamble promises the model that user overrides win; an
+        // The narrator context promises the model that user overrides win; an
         // inferred tool delta must not quietly overwrite this.
         let (value, source): (f64, String) = conn
             .query_row(

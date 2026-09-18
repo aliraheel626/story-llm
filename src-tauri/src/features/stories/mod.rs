@@ -15,6 +15,7 @@ use crate::features::{
         repository as timeline_repository,
     },
 };
+use crate::prompts;
 use crate::shared::db::{with_transaction, Pool};
 use crate::shared::error::{AppError, AppResult};
 use model::Story;
@@ -157,10 +158,6 @@ struct GeneratedTitle {
     title: String,
 }
 
-const TITLE_PREAMBLE: &str = "You name interactive stories. Given the opening of a story, give it \
-a short, evocative title of 2 to 5 words that fits its tone and language. Respond with the \
-structured output only.";
-
 /// Characters of opening text folded into the title prompt — enough for the
 /// model to name the story, capped so a long opening entry doesn't balloon
 /// the request.
@@ -233,7 +230,7 @@ pub fn maybe_auto_title(app: &AppHandle, pool: &Pool, story_id: &str) {
     tauri::async_runtime::spawn(async move {
         let prompt = format!("The story opens:\n\n{opening_text}\n\nGive it a title.");
         let Ok(generated) =
-            ai::prompt_typed::<GeneratedTitle>(&config, TITLE_PREAMBLE, prompt).await
+            ai::prompt_typed::<GeneratedTitle>(&config, prompts::TITLE_SYSTEM_PROMPT, prompt).await
         else {
             return;
         };
@@ -270,7 +267,7 @@ fn sanitize_title(raw: &str) -> Option<String> {
 }
 
 /// Author's Note (spec §6.6): a persistent instruction folded into every
-/// narration call's preamble for this story — tone, style, ongoing
+/// narration call's per-turn prompt for this story — tone, style, ongoing
 /// constraints, whatever the player wants the narrator to keep in mind.
 #[tauri::command]
 pub fn get_author_note(pool: State<Pool>, story_id: String) -> AppResult<String> {

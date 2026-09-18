@@ -18,6 +18,7 @@ use crate::features::{
         reducer, repository as timeline_repository,
     },
 };
+use crate::prompts;
 use crate::shared::db::{with_transaction, Pool};
 use crate::shared::error::{AppError, AppResult};
 
@@ -25,25 +26,6 @@ use super::history::load_history;
 use super::model::ActiveStoryEntry;
 use super::repository::{get_last_story_entry, image_paths_for_entry, insert_story_entry};
 use super::tools::{self, TurnStaging};
-
-const NARRATOR_PREAMBLE: &str = "You are the narrator of an interactive story. Continue the scene \
-in vivid, literary prose that follows naturally from what has already happened and from the \
-player's latest action, matching the established tone, tense, and style. Always narrate the \
-player's actions and perceptions in the second person (\"you\"); other characters stay in the \
-third person. Never speak as the player, never break the fourth wall, and never add \
-meta-commentary, author's notes, or content outside the story itself.";
-
-const CONTINUE_PROMPT: &str =
-    "Continue the scene naturally from where it left off, in the established voice and pacing.";
-
-const STORY_CONTINUE_PROMPT: &str =
-    "The latest turn is the player's draft of the next passage — it may read like a terse note or a \
-     directive. Complete it into the passage itself: open with the draft rendered as prose, then keep \
-     writing seamlessly to a natural ending. Do not reply to it as an instruction, and do not \
-      summarize it away.";
-
-const NARRATOR_IMAGE_INSTRUCTION: &str =
-    "You can illustrate a striking moment with the illustrate_scene tool.";
 
 fn narrator_image_tools(
     enabled: bool,
@@ -94,12 +76,12 @@ pub fn submit_story(
         is_player: false,
         content: content.to_string(),
     });
-    let preamble_plan = story_context_preamble(
+    let turn_context_plan = build_turn_context(
         pool.inner(),
         &story_id,
         &history,
         &config,
-        STORY_CONTINUE_PROMPT,
+        prompts::FINISH_STORY_DRAFT_PROMPT,
         "",
     )?;
 
@@ -118,8 +100,8 @@ pub fn submit_story(
             story_id: story_id.clone(),
             config,
             history,
-            prompt: STORY_CONTINUE_PROMPT.to_string(),
-            preamble_plan,
+            prompt: prompts::FINISH_STORY_DRAFT_PROMPT.to_string(),
+            turn_context_plan,
             tools: Vec::new(),
             reasoning_effort,
             before_seq: None,
@@ -200,24 +182,22 @@ fn variant_payload(reason: &str, input_mode: &str, thoughts: Option<&str>) -> se
     }
 }
 
-/// Author's Note (spec §6.6), formatted for the preamble, if the story has
+/// Author's Note (spec §6.6), formatted as a context block, if the story has
 /// one set. Empty string when there isn't one, so callers can always append
-/// it unconditionally via `combine_preambles`.
-fn author_note_preamble(pool: &Pool, story_id: &str) -> AppResult<String> {
+/// it unconditionally via `combine_context_blocks`.
+fn author_note_block(pool: &Pool, story_id: &str) -> AppResult<String> {
     match stories::read_author_note(pool, story_id)? {
-        Some(note) => Ok(format!(
-            "Author's note — keep this in mind throughout: {note}"
-        )),
+        Some(note) => Ok(format!("{}{note}", prompts::AUTHOR_NOTE_PREFIX)),
         None => Ok(String::new()),
     }
 }
 
-fn entity_context_preamble(
+fn entity_context_block(
     pool: &Pool,
     story_id: &str,
     detailed_entity_ids: Option<&HashSet<String>>,
 ) -> AppResult<String> {
-    let author_note = author_note_preamble(pool, story_id)?;
+    let author_note = author_note_block(pool, story_id)?;
     let conn = pool.get()?;
     let entities = crate::features::entities::list_entities_sync(&conn, story_id, None)?;
     let entity_ids = entities
@@ -234,7 +214,7 @@ fn entity_context_preamble(
             &entity_ids,
         )?;
 
-    let mut lines = vec!["Current entity state is authoritative. User overrides take precedence over inferred updates. Dice-roll outcomes must not be contradicted.".to_string()];
+    let mut lines = vec![prompts::ENTITY_CONTEXT_HEADER.to_string()];
     for entity in entities {
         if detailed_entity_ids.is_some_and(|entity_ids| !entity_ids.contains(&entity.id)) {
             lines.push(format!("- {} ({})", entity.name, entity.kind));
@@ -263,7 +243,7 @@ fn entity_context_preamble(
             entity.name, entity.kind
         ));
     }
-    Ok(combine_preambles(&[author_note, lines.join("\n")]))
+    Ok(combine_context_blocks(&[author_note, lines.join("\n")]))
 }
 
 fn touched_entity_ids(pool: &Pool, raw_tail: &[HistoryTurn]) -> AppResult<HashSet<String>> {
@@ -322,56 +302,61 @@ fn touched_entity_ids(pool: &Pool, raw_tail: &[HistoryTurn]) -> AppResult<HashSe
 }
 
 #[derive(Debug, Clone)]
-struct PreamblePlan {
-    model_extra: String,
-    compaction_extra: String,
+struct TurnContextPlan {
+    live_context: String,
+    full_context: String,
 }
 
-fn narrator_preamble(extra_preamble: &str) -> String {
-    if extra_preamble.is_empty() {
-        NARRATOR_PREAMBLE.to_string()
-    } else {
-        format!("{NARRATOR_PREAMBLE}\n\n{extra_preamble}")
-    }
-}
-
-fn story_context_preamble(
+fn build_turn_context(
     pool: &Pool,
     story_id: &str,
     history: &[HistoryTurn],
     config: &TextModelConfig,
     prompt: &str,
-    additional_preamble: &str,
-) -> AppResult<PreamblePlan> {
-    let full_context = entity_context_preamble(pool, story_id, None)?;
-    let full_extra = combine_preambles(&[full_context, additional_preamble.to_string()]);
+    extra_instructions: &str,
+) -> AppResult<TurnContextPlan> {
     let memory = settings::read_narrator_memory_settings(pool)?;
-    if memory.preamble_mode == "all" {
-        return Ok(PreamblePlan {
-            model_extra: full_extra.clone(),
-            compaction_extra: full_extra,
+    if memory.entity_context_mode == "none" {
+        // No entity dump at all — cheaper than "all", skips the entity/attribute
+        // queries entirely. The author's note is a distinct, deliberate
+        // instruction (not part of the entity context this mode turns off), so
+        // it's still included here.
+        let author_note = author_note_block(pool, story_id)?;
+        let context = combine_context_blocks(&[author_note, extra_instructions.to_string()]);
+        return Ok(TurnContextPlan {
+            live_context: context.clone(),
+            full_context: context,
+        });
+    }
+
+    let full_context = entity_context_block(pool, story_id, None)?;
+    let full_context = combine_context_blocks(&[full_context, extra_instructions.to_string()]);
+    if memory.entity_context_mode == "all" {
+        return Ok(TurnContextPlan {
+            live_context: full_context.clone(),
+            full_context,
         });
     }
 
     // Size compaction against the full snapshot. That is today's budget and
-    // avoids a circular dependency where the scoped preamble changes the
-    // boundary used to decide which entities belong in that same preamble.
-    let compaction_preamble = narrator_preamble(&full_extra);
+    // avoids a circular dependency where the scoped context changes the
+    // boundary used to decide which entities belong in that same context.
+    let budget_prompt = combine_context_blocks(&[full_context.clone(), prompt.to_string()]);
     let split = crate::features::timeline::compaction::raw_tail_boundary(
         history,
         config,
-        &compaction_preamble,
-        prompt,
+        prompts::NARRATOR_SYSTEM_PROMPT,
+        &budget_prompt,
     );
     let touched = touched_entity_ids(pool, &history[split..])?;
-    let scoped_context = entity_context_preamble(pool, story_id, Some(&touched))?;
-    Ok(PreamblePlan {
-        model_extra: combine_preambles(&[scoped_context, additional_preamble.to_string()]),
-        compaction_extra: full_extra,
+    let scoped_context = entity_context_block(pool, story_id, Some(&touched))?;
+    Ok(TurnContextPlan {
+        live_context: combine_context_blocks(&[scoped_context, extra_instructions.to_string()]),
+        full_context,
     })
 }
 
-fn combine_preambles(parts: &[String]) -> String {
+fn combine_context_blocks(parts: &[String]) -> String {
     parts
         .iter()
         .filter(|p| !p.is_empty())
@@ -381,12 +366,12 @@ fn combine_preambles(parts: &[String]) -> String {
 }
 
 /// The dice roll that produced `entry_id`'s narration, if any — folded
-/// into retry/swipe's preamble so regenerating a roll-driven turn stays
+/// into retry/swipe's turn context so regenerating a roll-driven turn stays
 /// consistent with the outcome that already happened. The roll's timeline
 /// seq is assigned after the narration it explains, so it falls outside the
 /// history window a retry/swipe deliberately cuts off at the target's seq;
 /// this is the only channel that outcome reaches the regenerated call by.
-fn roll_context_preamble(pool: &Pool, entry_id: &str) -> AppResult<String> {
+fn roll_context_block(pool: &Pool, entry_id: &str) -> AppResult<String> {
     let conn = pool.get()?;
     let mut stmt = conn.prepare(
         "SELECT content FROM timeline_entries WHERE target_entry_id = ?1 AND kind = ?2 ORDER BY seq ASC",
@@ -401,10 +386,7 @@ fn roll_context_preamble(pool: &Pool, entry_id: &str) -> AppResult<String> {
     Ok(if contents.is_empty() {
         String::new()
     } else {
-        format!(
-            "The rolls that determined this outcome must not be contradicted:\n- {}",
-            contents.join("\n- ")
-        )
+        format!("{}{}", prompts::ROLL_CONTEXT_HEADER, contents.join("\n- "))
     })
 }
 
@@ -489,8 +471,8 @@ fn kick_auto_title(app: &AppHandle, pool: &Pool, story_id: &str) {
 /// `narration-delta` / `narration-thoughts` fire as text arrives, then
 /// `on_success` runs with the final text (and should emit its own terminal
 /// event), or `narration-error` fires if the stream or `on_success` fails.
-/// `extra_preamble` folds in Stage 1/2 context (attribute snapshot, roll
-/// outcome constraint) ahead of the narrator's own system preamble.
+/// `turn_context_plan` folds Stage 1/2 context (attribute snapshot, roll
+/// outcome constraint) into the per-turn prompt.
 struct NarrationJob {
     app: AppHandle,
     pool: Pool,
@@ -498,7 +480,7 @@ struct NarrationJob {
     config: TextModelConfig,
     history: Vec<HistoryTurn>,
     prompt: String,
-    preamble_plan: PreamblePlan,
+    turn_context_plan: TurnContextPlan,
     /// Live tools available to this narration path. Revision jobs receive only
     /// the image tool, never state-changing entity or dice tools.
     tools: Vec<DynamicTool>,
@@ -530,28 +512,33 @@ where
         config,
         history,
         prompt,
-        preamble_plan,
+        turn_context_plan,
         tools,
         reasoning_effort,
         before_seq,
         stream_id,
     } = job;
     tauri::async_runtime::spawn(async move {
-        let preamble = narrator_preamble(&preamble_plan.model_extra);
-        let compaction_preamble = narrator_preamble(&preamble_plan.compaction_extra);
+        let budget_prompt =
+            combine_context_blocks(&[turn_context_plan.full_context, prompt.clone()]);
         let history = crate::features::timeline::compaction::prepare_history(
             &pool,
             &story_id,
             &config,
-            &compaction_preamble,
-            &prompt,
+            prompts::NARRATOR_SYSTEM_PROMPT,
+            &budget_prompt,
             history,
             before_seq,
         )
         .await;
+        // The system prompt is the static rulebook only — never reformatted,
+        // byte-identical on every call. Per-turn facts (entity state, roll
+        // outcome, author's note) go on the message itself instead, since
+        // that's what actually changes turn to turn, not the rules.
+        let prompt = combine_context_blocks(&[turn_context_plan.live_context, prompt]);
         let req = NarrateRequest {
             config,
-            preamble,
+            preamble: prompts::NARRATOR_SYSTEM_PROMPT.to_string(),
             history,
             prompt,
             stop_after_tool_result: false,
@@ -679,22 +666,6 @@ async fn finish_append(
     Ok(())
 }
 
-/// Instructs the narrator on when to use `roll_check`, phrased from the
-/// story's dice-mode setting — replaces the old classifier's deterministic
-/// gate with guidance the narrator applies itself.
-fn dice_mode_instruction(dice_mode: DiceMode) -> &'static str {
-    match dice_mode {
-        DiceMode::Always => {
-            "Call the roll_check tool for every meaningful action before narrating its outcome."
-        }
-        DiceMode::Classifier => {
-            "Call the roll_check tool only when the outcome is genuinely uncertain — routine or \
-             clearly one-sided actions don't need it."
-        }
-        DiceMode::Never => "Do not call the roll_check tool; narrate outcomes purely from context.",
-    }
-}
-
 /// "Do"/"Say" input modes: persists the player's passage immediately, then
 /// streams a narrator continuation in the background (see `spawn_narration`).
 /// When Attributes are enabled for the story, the narrator gets a tool set
@@ -741,32 +712,38 @@ pub async fn submit_turn(
             pool.inner().clone(),
             story_id.clone(),
         )));
-        let tool_set = tools::narrator_tools(staging.clone(), config.clone(), dice_mode);
+        // Attribute-similarity embeddings always go to OpenRouter, regardless
+        // of the active narration provider (e.g. Nous Portal) — most turns
+        // never reach this call at all (exact name matches skip it), so a
+        // missing OpenRouter key degrades gracefully to a per-call error
+        // rather than blocking the whole turn.
+        let embedding_api_key = settings::read_api_key(&app, "openrouter").unwrap_or_default();
+        let tool_set = tools::narrator_tools(staging.clone(), embedding_api_key, dice_mode);
         (tool_set, Some(staging))
     } else {
         (Vec::new(), None)
     };
 
-    let mut tools_preamble = Vec::new();
+    let mut tool_instructions = Vec::new();
     if dicerolls.attributes_enabled {
-        tools_preamble.push(format!(
-            "You have tools to check, create, and update entities and their attributes as the story \
-             unfolds — use them to keep the world consistent. {}",
-            dice_mode_instruction(dice_mode)
+        tool_instructions.push(format!(
+            "{} {}",
+            prompts::ENTITY_TOOLS_AVAILABLE_PREFIX,
+            prompts::dice_mode_instruction(dice_mode)
         ));
     }
     if image_enabled {
         tool_set.extend(image_tools);
-        tools_preamble.push(NARRATOR_IMAGE_INSTRUCTION.to_string());
+        tool_instructions.push(prompts::IMAGE_TOOL_AVAILABLE_INSTRUCTION.to_string());
     }
-    let tools_preamble = tools_preamble.join(" ");
-    let preamble_plan = story_context_preamble(
+    let tool_instructions = tool_instructions.join(" ");
+    let turn_context_plan = build_turn_context(
         pool.inner(),
         &story_id,
         &history,
         &config,
         &prompt,
-        &tools_preamble,
+        &tool_instructions,
     )?;
 
     let stream_id = Uuid::new_v4().to_string();
@@ -780,7 +757,7 @@ pub async fn submit_turn(
             config,
             history,
             prompt,
-            preamble_plan,
+            turn_context_plan,
             tools: tool_set,
             reasoning_effort,
             before_seq: None,
@@ -854,8 +831,8 @@ pub async fn submit_guide(
         "[Director's note — out of character, steer the story but do not narrate it directly: {note}] \
          Continue the scene, letting that note shape what happens next."
     );
-    let preamble_plan =
-        story_context_preamble(pool.inner(), &story_id, &history, &config, &prompt, "")?;
+    let turn_context_plan =
+        build_turn_context(pool.inner(), &story_id, &history, &config, &prompt, "")?;
 
     let stream_id = Uuid::new_v4().to_string();
     let story_id_bg = story_id.clone();
@@ -867,7 +844,7 @@ pub async fn submit_guide(
             config,
             history,
             prompt,
-            preamble_plan,
+            turn_context_plan,
             tools: Vec::new(),
             reasoning_effort,
             before_seq: None,
@@ -906,14 +883,18 @@ pub async fn continue_scene(
     let (prompt, input_mode) = {
         let conn = pool.get()?;
         match get_last_story_entry(&conn, &story_id)? {
-            Some(p) if p.input_mode == "story" => {
-                (STORY_CONTINUE_PROMPT, "generated_story".to_string())
-            }
-            _ => (CONTINUE_PROMPT, "generated_continue".to_string()),
+            Some(p) if p.input_mode == "story" => (
+                prompts::FINISH_STORY_DRAFT_PROMPT,
+                "generated_story".to_string(),
+            ),
+            _ => (
+                prompts::CONTINUE_SCENE_PROMPT,
+                "generated_continue".to_string(),
+            ),
         }
     };
-    let preamble_plan =
-        story_context_preamble(pool.inner(), &story_id, &history, &config, prompt, "")?;
+    let turn_context_plan =
+        build_turn_context(pool.inner(), &story_id, &history, &config, prompt, "")?;
 
     let stream_id = Uuid::new_v4().to_string();
     let story_id_bg = story_id.clone();
@@ -925,7 +906,7 @@ pub async fn continue_scene(
             config,
             history,
             prompt: prompt.to_string(),
-            preamble_plan,
+            turn_context_plan,
             tools: Vec::new(),
             reasoning_effort,
             before_seq: None,
@@ -997,30 +978,30 @@ fn start_variant_generation(
         diceroll_settings::get_story_diceroll_settings(pool.clone(), story_id.clone())?
             .reasoning_effort;
     let prompt = if target.input_mode == "generated_story" {
-        STORY_CONTINUE_PROMPT
+        prompts::FINISH_STORY_DRAFT_PROMPT
     } else {
-        CONTINUE_PROMPT
+        prompts::CONTINUE_SCENE_PROMPT
     };
-    let roll_preamble = roll_context_preamble(pool.inner(), &target.id)?;
+    let roll_context = roll_context_block(pool.inner(), &target.id)?;
     let image_settings = settings::read_image_model_settings(&app, pool.inner())?;
     let image_enabled =
         image_settings.enabled && image_settings.narrator_images && image_settings.has_api_key;
     let (tool_set, image_requests) = narrator_image_tools(image_enabled);
-    let tools_preamble = [
-        (!roll_preamble.is_empty()).then_some(roll_preamble.as_str()),
-        image_enabled.then_some(NARRATOR_IMAGE_INSTRUCTION),
+    let extra_instructions = [
+        (!roll_context.is_empty()).then_some(roll_context.as_str()),
+        image_enabled.then_some(prompts::IMAGE_TOOL_AVAILABLE_INSTRUCTION),
     ]
     .into_iter()
     .flatten()
     .collect::<Vec<_>>()
     .join(" ");
-    let preamble_plan = story_context_preamble(
+    let turn_context_plan = build_turn_context(
         pool.inner(),
         &story_id,
         &history,
         &config,
         prompt,
-        &tools_preamble,
+        &extra_instructions,
     )?;
 
     let stream_id = Uuid::new_v4().to_string();
@@ -1032,7 +1013,7 @@ fn start_variant_generation(
             config,
             history,
             prompt: prompt.to_string(),
-            preamble_plan,
+            turn_context_plan,
             tools: tool_set,
             reasoning_effort,
             before_seq: Some(target.seq),
@@ -1444,7 +1425,7 @@ mod tests {
     }
 
     #[test]
-    fn scoped_preamble_details_touched_entities_and_lists_the_rest() {
+    fn scoped_context_details_touched_entities_and_lists_the_rest() {
         let pool = crate::shared::db::test_pool();
         let conn = pool.get().unwrap();
         conn.execute(
@@ -1502,7 +1483,7 @@ mod tests {
         .unwrap();
         conn.execute(
             "INSERT INTO settings (key, value) VALUES ('narrator_memory', ?1)",
-            [json!({"tool_call_persistence":true,"preamble_mode":"scoped"}).to_string()],
+            [json!({"tool_call_persistence":true,"entity_context_mode":"scoped"}).to_string()],
         )
         .unwrap();
         drop(conn);
@@ -1513,21 +1494,22 @@ mod tests {
             content: "[Authoritative story event: entity_queried]\nLooked up: Bob".into(),
         }];
         let config = TextModelConfig {
+            provider: "openrouter".into(),
             model: "test".into(),
             api_key: "test".into(),
             context_window: 32_768,
         };
-        let plan = story_context_preamble(&pool, "s", &history, &config, "prompt", "").unwrap();
+        let plan = build_turn_context(&pool, "s", &history, &config, "prompt", "").unwrap();
 
         assert!(plan
-            .model_extra
+            .live_context
             .contains("- Bob (character); appearance: a red cloak; attributes: Trust=7"));
-        assert!(plan.model_extra.contains("- Old Mill (location)"));
+        assert!(plan.live_context.contains("- Old Mill (location)"));
         assert!(!plan
-            .model_extra
+            .live_context
             .contains("Old Mill (location); appearance:"));
         assert!(plan
-            .compaction_extra
+            .full_context
             .contains("Old Mill (location); appearance: a mossy waterwheel; attributes: Trust=3"));
     }
 
@@ -1564,7 +1546,7 @@ mod tests {
         }
         drop(conn);
 
-        let context = roll_context_preamble(&pool, &narration.id).unwrap();
+        let context = roll_context_block(&pool, &narration.id).unwrap();
         assert!(context.contains("First roll succeeded.\n- Second roll failed."));
     }
 

@@ -47,6 +47,7 @@ pub fn read_text_model_settings(app: &AppHandle, pool: &Pool) -> AppResult<TextM
             let provider = v
                 .get("provider")
                 .and_then(|p| p.as_str())
+                .filter(|p| matches!(*p, "openrouter" | "nous_portal"))
                 .unwrap_or("openrouter")
                 .to_string();
             let model = v
@@ -83,9 +84,19 @@ pub async fn save_text_model_settings(
     model: String,
     api_key: Option<String>,
 ) -> AppResult<()> {
-    let context_window = fetch_openrouter_context_window(&model)
-        .await
-        .unwrap_or(32_768);
+    if !matches!(provider.as_str(), "openrouter" | "nous_portal") {
+        return Err(AppError::Invalid(format!(
+            "unsupported text model provider: {provider}"
+        )));
+    }
+    let context_window = match provider.as_str() {
+        "nous_portal" => fetch_nous_portal_context_window(&model)
+            .await
+            .unwrap_or(NOUS_PORTAL_DEFAULT_CONTEXT_WINDOW),
+        _ => fetch_openrouter_context_window(&model)
+            .await
+            .unwrap_or(32_768),
+    };
     let conn = pool.get()?;
     let value = json!({ "provider": provider, "model": model, "context_window": context_window })
         .to_string();
@@ -120,6 +131,46 @@ pub async fn save_text_model_settings(
 async fn fetch_openrouter_context_window(model: &str) -> AppResult<usize> {
     let response: serde_json::Value = reqwest::Client::new()
         .get("https://openrouter.ai/api/v1/models")
+        .send()
+        .await
+        .map_err(|e| AppError::Other(format!("model metadata request failed: {e}")))?
+        .error_for_status()
+        .map_err(|e| AppError::Other(format!("model metadata request failed: {e}")))?
+        .json()
+        .await
+        .map_err(|e| AppError::Other(format!("invalid model metadata: {e}")))?;
+    response
+        .get("data")
+        .and_then(|v| v.as_array())
+        .and_then(|models| {
+            models
+                .iter()
+                .find(|item| item.get("id").and_then(|v| v.as_str()) == Some(model))
+        })
+        .and_then(|item| item.get("context_length"))
+        .and_then(|v| v.as_u64())
+        .map(|n| n as usize)
+        .ok_or_else(|| AppError::NotFound(format!("context metadata for model {model} not found")))
+}
+
+/// Hermes 4 (70B and 405B) both document a 131,072-token context window;
+/// used when Nous Portal's own listing doesn't carry a `context_length`
+/// field for the model (unlike OpenRouter, Nous Portal's `/v1/models` is not
+/// guaranteed to include one — it's plain OpenAI-compatible, and real
+/// OpenAI's own listing omits this field too).
+const NOUS_PORTAL_DEFAULT_CONTEXT_WINDOW: usize = 131_072;
+
+/// Mirrors `fetch_openrouter_context_window`'s best-effort/no-live-cache
+/// shape, against Nous Portal's own model listing instead.
+async fn fetch_nous_portal_context_window(model: &str) -> AppResult<usize> {
+    // Cloudflare (fronting Nous Portal) blocks headerless requests as bot
+    // traffic — same fix as the narration client in `ai::build_agent`.
+    let response: serde_json::Value = reqwest::Client::new()
+        .get(format!("{}/models", crate::ai::NOUS_PORTAL_BASE_URL))
+        .header(
+            reqwest::header::USER_AGENT,
+            "Dungeon/0.1 (+https://github.com/dungeon-app/dungeon)",
+        )
         .send()
         .await
         .map_err(|e| AppError::Other(format!("model metadata request failed: {e}")))?
@@ -248,14 +299,14 @@ pub fn save_image_model_settings(
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NarratorMemorySettings {
     pub tool_call_persistence: bool,
-    pub preamble_mode: String,
+    pub entity_context_mode: String,
 }
 
 impl Default for NarratorMemorySettings {
     fn default() -> Self {
         Self {
             tool_call_persistence: true,
-            preamble_mode: "all".to_string(),
+            entity_context_mode: "all".to_string(),
         }
     }
 }
@@ -277,8 +328,11 @@ pub fn read_narrator_memory_settings(pool: &Pool) -> AppResult<NarratorMemorySet
     let mut settings = stored
         .and_then(|value| serde_json::from_str::<NarratorMemorySettings>(&value).ok())
         .unwrap_or_default();
-    if !matches!(settings.preamble_mode.as_str(), "all" | "scoped") {
-        settings.preamble_mode = "all".to_string();
+    if !matches!(
+        settings.entity_context_mode.as_str(),
+        "all" | "scoped" | "none"
+    ) {
+        settings.entity_context_mode = "all".to_string();
     }
     Ok(settings)
 }
@@ -287,17 +341,20 @@ pub fn read_narrator_memory_settings(pool: &Pool) -> AppResult<NarratorMemorySet
 pub fn save_narrator_memory_settings(
     pool: State<Pool>,
     tool_call_persistence: bool,
-    preamble_mode: String,
+    entity_context_mode: String,
 ) -> AppResult<()> {
-    if !matches!(preamble_mode.as_str(), "all" | "scoped") {
+    if !matches!(
+        entity_context_mode.as_str(),
+        "all" | "scoped" | "none"
+    ) {
         return Err(AppError::Invalid(format!(
-            "invalid narrator preamble mode: {preamble_mode}"
+            "invalid narrator entity context mode: {entity_context_mode}"
         )));
     }
     let conn = pool.get()?;
     let value = serde_json::to_string(&NarratorMemorySettings {
         tool_call_persistence,
-        preamble_mode,
+        entity_context_mode,
     })
     .map_err(|error| {
         AppError::Other(format!(
@@ -333,6 +390,7 @@ pub fn resolve_text_model(app: &AppHandle, pool: &Pool) -> AppResult<TextModelCo
     }
     let api_key = read_api_key(app, &settings.provider)?;
     Ok(TextModelConfig {
+        provider: settings.provider,
         model: settings.model,
         api_key,
         context_window: settings.context_window,

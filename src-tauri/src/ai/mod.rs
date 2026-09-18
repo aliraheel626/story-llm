@@ -10,14 +10,22 @@ use futures::StreamExt;
 use rig_agent::agent::{ToolCall, ToolResultEvent};
 use rig_agent::prelude::*;
 use rig_agent::tool::DynamicTool;
-use rig_core::providers::openrouter;
+use rig_core::providers::{openai, openrouter};
 use rig_core::streaming::StreamedAssistantContent;
 
 use crate::shared::error::{AppError, AppResult};
 use reasoning_strip::ReasoningStripper;
 
+/// Nous Portal's OpenAI-compatible inference gateway. Standard Chat
+/// Completions shape (confirmed against live docs), not OpenRouter's — no
+/// OpenRouter-specific request extensions are sent to this host.
+pub const NOUS_PORTAL_BASE_URL: &str = "https://inference-api.nousresearch.com/v1";
+
 #[derive(Debug, Clone)]
 pub struct TextModelConfig {
+    /// `"openrouter"` or `"nous_portal"` — see `build_agent`. Anything else
+    /// falls back to OpenRouter, matching `settings::read_text_model_settings`.
+    pub provider: String,
     pub model: String,
     pub api_key: String,
     pub context_window: usize,
@@ -93,6 +101,12 @@ impl AgentHook for ActivityHook {
         _ctx: &HookContext,
         event: ToolCall<'_>,
     ) -> rig_agent::agent::ToolCallAction {
+        log::info!(
+            "tool call started: {} call_id={} args={}",
+            event.tool_name,
+            event.internal_call_id,
+            event.args
+        );
         if let Ok(mut buf) = self.buffer.lock() {
             buf.push(NarratorChunk::ToolActivity {
                 call_id: event.internal_call_id.to_string(),
@@ -109,6 +123,20 @@ impl AgentHook for ActivityHook {
         _ctx: &HookContext,
         event: ToolResultEvent<'_>,
     ) -> rig_agent::agent::ToolResultAction {
+        if event.raw_result.is_success() {
+            log::info!(
+                "tool call finished: {} call_id={} ok",
+                event.tool_name,
+                event.internal_call_id
+            );
+        } else {
+            log::warn!(
+                "tool call finished: {} call_id={} result={:?}",
+                event.tool_name,
+                event.internal_call_id,
+                event.raw_result
+            );
+        }
         if let Ok(mut buf) = self.buffer.lock() {
             buf.push(NarratorChunk::ToolActivity {
                 call_id: event.internal_call_id.to_string(),
@@ -292,6 +320,42 @@ fn build_agent(
     tools: Vec<DynamicTool>,
     reasoning_effort: Option<&str>,
 ) -> AppResult<rig_agent::Agent> {
+    if config.provider == "nous_portal" {
+        // Nous Portal is plain OpenAI Chat Completions — no OpenRouter wire
+        // extensions (e.g. `reasoning.effort`) are sent here; that field is
+        // an OpenRouter-specific extension with no confirmed Nous Portal
+        // contract, so `reasoning_effort` is silently ignored for this
+        // provider rather than risk an unrecognized-field rejection.
+        // rig's HTTP client sends no User-Agent by default, which Cloudflare
+        // (fronting Nous Portal) treats as bot traffic and blocks with a 403
+        // before the request ever reaches the API — confirmed live. A
+        // normal-looking app UA is enough to pass that check.
+        let mut headers = http::HeaderMap::new();
+        headers.insert(
+            http::header::USER_AGENT,
+            http::HeaderValue::from_static(
+                "Dungeon/0.1 (+https://github.com/dungeon-app/dungeon)",
+            ),
+        );
+        let client = openai::Client::builder()
+            .api_key(config.api_key.clone())
+            .base_url(NOUS_PORTAL_BASE_URL)
+            .http_headers(headers)
+            .build()
+            .map_err(|e| AppError::Other(format!("failed to build Nous Portal client: {e}")))?
+            .completions_api();
+        let builder = client.agent(config.model.clone()).preamble(preamble);
+        let agent = if tools.is_empty() {
+            builder.build()
+        } else {
+            builder
+                .dynamic_tools(tools)
+                .default_max_turns(MAX_TOOL_TURNS)
+                .build()
+        };
+        return Ok(agent);
+    }
+
     let client = openrouter::Client::builder()
         .api_key(config.api_key.clone())
         .with_app_identity("Dungeon", "https://github.com/dungeon-app/dungeon")

@@ -1,18 +1,18 @@
 import { useState } from "react";
-import type { NarratorPreambleMode } from "../../shared/types";
+import type { EntityContextMode } from "../../shared/types";
 import { useNarratorMemoryStore } from "./narratorMemoryStore";
 import { useSettingsForm } from "./useSettingsForm";
 
 export function NarratorMemoryPanel() {
   const [toolCallPersistence, setToolCallPersistence] = useState(true);
-  const [preambleMode, setPreambleMode] = useState<NarratorPreambleMode>("all");
+  const [entityContextMode, setEntityContextMode] = useState<EntityContextMode>("all");
   const { settings, loading, saving, savedNotice, save } = useSettingsForm(useNarratorMemoryStore, (next) => {
     setToolCallPersistence(next.tool_call_persistence);
-    setPreambleMode(next.preamble_mode);
+    setEntityContextMode(next.entity_context_mode);
   });
 
   const onSave = async () => {
-    await save(toolCallPersistence, preambleMode);
+    await save(toolCallPersistence, entityContextMode);
   };
 
   if (loading && !settings) {
@@ -37,12 +37,13 @@ export function NarratorMemoryPanel() {
       <div>
         <label className="block text-xs text-muted mb-1">Entity context</label>
         <select
-          value={preambleMode}
-          onChange={(e) => setPreambleMode(e.target.value as NarratorPreambleMode)}
+          value={entityContextMode}
+          onChange={(e) => setEntityContextMode(e.target.value as EntityContextMode)}
           className="w-full rounded bg-bg border border-border px-2 py-1.5 text-xs text-text focus:outline-none focus:border-accent"
         >
           <option value="all">Full entity dump every turn</option>
           <option value="scoped">Scoped to recently active entities</option>
+          <option value="none">Off — no entity context sent</option>
         </select>
       </div>
 

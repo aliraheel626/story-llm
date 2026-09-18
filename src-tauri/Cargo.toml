@@ -21,6 +21,8 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = ["protocol-asset"] }
 tauri-plugin-opener = "2"
 tauri-plugin-store = "2"
+tauri-plugin-log = "2"
+log = "0.4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 rusqlite = { version = "0.32", features = ["bundled", "chrono"] }
@@ -38,6 +40,12 @@ futures = "0.3"
 # per the working agreement ("if Rig can't do it, wrap rather than replace").
 reqwest = { version = "0.13", features = ["json"] }
 base64 = "0.22"
+# Same major as the `http` rig-core already resolves transitively (verified
+# in Cargo.lock: 1.5.0) — needed directly to set a custom User-Agent via
+# `ClientBuilder::http_headers`, since rig's HTTP client sends none by
+# default and some providers' Cloudflare-fronted APIs block headerless
+# requests as bot traffic.
+http = "1"
 rand = "0.8"
 # Pinned to the same major as rig-core's own workspace dependency so
 # `#[derive(JsonSchema)]` on our classify/update structs satisfies the trait

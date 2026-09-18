@@ -15,30 +15,10 @@ use crate::features::timeline::{
     repository as timeline_repository,
 };
 use crate::features::{narration, settings};
+use crate::prompts;
 use crate::shared::db::{with_transaction, Pool};
 use crate::shared::error::{AppError, AppResult};
 use model::{ImageRequest, StoryImage};
-
-const MANDATORY_IMAGE_PREAMBLE: &str = "The player explicitly asked to visualize this moment. \
-Call the illustrate_scene tool with a vivid, concrete description — do not skip it.";
-
-fn illustration_decision_prompt(
-    passage_content: &str,
-    hint: Option<&str>,
-    known_characters: &[(String, String)],
-) -> String {
-    let mut prompt = format!("Scene:\n{passage_content}");
-    if let Some(hint) = hint {
-        prompt.push_str(&format!("\n\nFocus the image on: {hint}"));
-    }
-    if !known_characters.is_empty() {
-        prompt.push_str("\n\nKnown characters (id: name) - list only the ids actually visible in this scene when calling illustrate_scene:");
-        for (id, name) in known_characters {
-            prompt.push_str(&format!("\n- {id}: {name}"));
-        }
-    }
-    prompt
-}
 
 fn finish_illustration_decision(requests: Vec<ImageRequest>) -> AppResult<ImageRequest> {
     requests
@@ -60,8 +40,8 @@ async fn decide_illustration(
     config: &ai::TextModelConfig,
     decision: IllustrationDecision<'_>,
 ) -> AppResult<ImageRequest> {
-    let preamble = MANDATORY_IMAGE_PREAMBLE.to_string();
-    let prompt = illustration_decision_prompt(
+    let preamble = prompts::MANDATORY_ILLUSTRATION_INSTRUCTION.to_string();
+    let prompt = prompts::illustration_decision_prompt(
         decision.passage_content,
         decision.hint,
         decision.known_characters,
@@ -362,7 +342,8 @@ pub(crate) fn generate_from_narrator_requests(
                 Ok(image) => {
                     let _ = app.emit("scene-image-generated", image);
                 }
-                Err(_) => {
+                Err(error) => {
+                    log::error!("scene image generation failed for entry {entry_id}: {error}");
                     let _ = app.emit("scene-image-failed", &entry_id);
                 }
             }
@@ -430,7 +411,7 @@ mod tests {
 
     #[test]
     fn decision_prompt_includes_hint_and_known_character_ids() {
-        let prompt = illustration_decision_prompt(
+        let prompt = prompts::illustration_decision_prompt(
             "The observatory doors open.",
             Some("the brass orrery"),
             &[("mira-id".into(), "Mira".into())],

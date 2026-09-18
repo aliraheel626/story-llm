@@ -370,7 +370,7 @@ pub fn apply_attribute_delta(
         |r| r.get(0),
     )?;
     if current_source == "user" {
-        // The narrator preamble tells the model user overrides take
+        // The narrator context tells the model user overrides take
         // precedence over inferred updates; honor that here rather than
         // silently overwriting a value the player explicitly set.
         return Ok((before, before));
