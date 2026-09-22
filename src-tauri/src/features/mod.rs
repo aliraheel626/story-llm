@@ -1,3 +1,4 @@
+pub mod compaction;
 pub mod dicerolls;
 pub mod entities;
 pub mod images;

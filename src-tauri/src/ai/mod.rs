@@ -21,6 +21,11 @@ use reasoning_strip::ReasoningStripper;
 /// OpenRouter-specific request extensions are sent to this host.
 pub const NOUS_PORTAL_BASE_URL: &str = "https://inference-api.nousresearch.com/v1";
 
+/// Cloudflare (fronting Nous Portal) blocks headerless requests as bot
+/// traffic — sent on every request to Nous Portal, including the narration
+/// client below and the model-metadata fetch in `features::settings`.
+pub const NOUS_PORTAL_USER_AGENT: &str = "Dungeon/0.1 (+https://github.com/dungeon-app/dungeon)";
+
 #[derive(Debug, Clone)]
 pub struct TextModelConfig {
     /// `"openrouter"` or `"nous_portal"` — see `build_agent`. Anything else
@@ -37,6 +42,13 @@ pub struct HistoryTurn {
     pub entry_id: Option<String>,
     pub is_player: bool,
     pub content: String,
+    pub marker: HistoryTurnMarker,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HistoryTurnMarker {
+    Timeline,
+    Summary,
 }
 
 pub struct NarrateRequest {
@@ -87,11 +99,13 @@ struct ActivityHook {
 }
 
 impl ActivityHook {
-    fn tool_result_action(&self) -> rig_agent::agent::ToolResultAction {
-        match &self.stop_reason {
-            Some(reason) => rig_agent::agent::ToolResultAction::stop(reason.clone()),
-            None => rig_agent::agent::ToolResultAction::Keep,
+    fn tool_result_action(&self, tool_name: &str) -> rig_agent::agent::ToolResultAction {
+        if tool_name == crate::prompts::ILLUSTRATE_SCENE_TOOL_NAME {
+            if let Some(reason) = &self.stop_reason {
+                return rig_agent::agent::ToolResultAction::stop(reason.clone());
+            }
         }
+        rig_agent::agent::ToolResultAction::Keep
     }
 }
 
@@ -101,7 +115,7 @@ impl AgentHook for ActivityHook {
         _ctx: &HookContext,
         event: ToolCall<'_>,
     ) -> rig_agent::agent::ToolCallAction {
-        log::info!(
+        log::debug!(
             "tool call started: {} call_id={} args={}",
             event.tool_name,
             event.internal_call_id,
@@ -124,7 +138,7 @@ impl AgentHook for ActivityHook {
         event: ToolResultEvent<'_>,
     ) -> rig_agent::agent::ToolResultAction {
         if event.raw_result.is_success() {
-            log::info!(
+            log::debug!(
                 "tool call finished: {} call_id={} ok",
                 event.tool_name,
                 event.internal_call_id
@@ -147,7 +161,7 @@ impl AgentHook for ActivityHook {
                 },
             });
         }
-        self.tool_result_action()
+        self.tool_result_action(event.tool_name)
     }
 
     fn observes(&self, kind: rig_agent::agent::StepEventKind) -> bool {
@@ -333,9 +347,7 @@ fn build_agent(
         let mut headers = http::HeaderMap::new();
         headers.insert(
             http::header::USER_AGENT,
-            http::HeaderValue::from_static(
-                "Dungeon/0.1 (+https://github.com/dungeon-app/dungeon)",
-            ),
+            http::HeaderValue::from_static(NOUS_PORTAL_USER_AGENT),
         );
         let client = openai::Client::builder()
             .api_key(config.api_key.clone())
@@ -394,8 +406,12 @@ mod tests {
             stop_reason: Some(stop_reason.to_string()),
         };
         assert_eq!(
-            hook.tool_result_action(),
+            hook.tool_result_action(crate::prompts::ILLUSTRATE_SCENE_TOOL_NAME),
             rig_agent::agent::ToolResultAction::stop(stop_reason)
+        );
+        assert_eq!(
+            hook.tool_result_action("get_entities"),
+            rig_agent::agent::ToolResultAction::Keep
         );
 
         let error =

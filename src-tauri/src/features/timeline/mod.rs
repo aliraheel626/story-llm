@@ -1,4 +1,3 @@
-pub mod compaction;
 pub mod model;
 pub mod projections;
 pub mod reducer;

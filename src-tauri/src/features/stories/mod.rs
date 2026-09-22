@@ -24,17 +24,6 @@ use model::Story;
 /// mirrors `DEFAULT_STORY_TITLE` in `src/lib/types.ts`.
 pub const DEFAULT_STORY_TITLE: &str = "New story";
 
-fn read_settings_json(conn: &rusqlite::Connection, story_id: &str) -> AppResult<serde_json::Value> {
-    let raw: String = conn
-        .query_row(
-            "SELECT settings_json FROM stories WHERE id = ?1",
-            [story_id],
-            |r| r.get(0),
-        )
-        .map_err(|_| AppError::NotFound(format!("story {story_id} not found")))?;
-    Ok(serde_json::from_str(&raw).unwrap_or_else(|_| json!({})))
-}
-
 #[tauri::command]
 pub fn list_stories(pool: State<Pool>) -> AppResult<Vec<Story>> {
     let conn = pool.get()?;
@@ -264,62 +253,6 @@ fn sanitize_title(raw: &str) -> Option<String> {
         return None;
     }
     Some(cleaned.chars().take(TITLE_MAX_CHARS).collect())
-}
-
-/// Author's Note (spec §6.6): a persistent instruction folded into every
-/// narration call's per-turn prompt for this story — tone, style, ongoing
-/// constraints, whatever the player wants the narrator to keep in mind.
-#[tauri::command]
-pub fn get_author_note(pool: State<Pool>, story_id: String) -> AppResult<String> {
-    let conn = pool.get()?;
-    let settings = read_settings_json(&conn, &story_id)?;
-    Ok(settings
-        .get("author_note")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string())
-}
-
-#[tauri::command]
-pub fn save_author_note(pool: State<Pool>, story_id: String, note: String) -> AppResult<()> {
-    let now = Utc::now().to_rfc3339();
-    with_transaction(pool.inner(), |tx| {
-        let mut settings = read_settings_json(tx, &story_id)?;
-        settings["author_note"] = json!(note.trim());
-        tx.execute(
-            "UPDATE stories SET settings_json = ?1, updated_at = ?2 WHERE id = ?3",
-            rusqlite::params![settings.to_string(), now, story_id],
-        )?;
-        timeline_repository::append_entry(
-            tx,
-            &story_id,
-            timeline_kind::CONTEXT_NOTE_UPDATED,
-            "hidden",
-            Some(&format!("Author's note was updated: {}", note.trim())),
-            &json!({"author_note": note.trim()}),
-            None,
-        )?;
-        Ok(())
-    })
-}
-
-pub fn read_author_note(pool: &Pool, story_id: &str) -> AppResult<Option<String>> {
-    let conn = pool.get()?;
-    let raw: String = conn
-        .query_row(
-            "SELECT settings_json FROM stories WHERE id = ?1",
-            [story_id],
-            |r| r.get(0),
-        )
-        .map_err(|_| AppError::NotFound(format!("story {story_id} not found")))?;
-    let settings: serde_json::Value = serde_json::from_str(&raw).unwrap_or_else(|_| json!({}));
-    let note = settings
-        .get("author_note")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .trim()
-        .to_string();
-    Ok(if note.is_empty() { None } else { Some(note) })
 }
 
 #[cfg(test)]

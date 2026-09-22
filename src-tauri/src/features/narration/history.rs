@@ -1,50 +1,12 @@
 use std::collections::HashMap;
 
-use crate::ai::HistoryTurn;
+use crate::ai::{HistoryTurn, HistoryTurnMarker};
+use crate::features::compaction;
 use crate::features::timeline::{model::kind, reducer, repository};
 use crate::shared::db::Pool;
 use crate::shared::error::AppResult;
 
-/// The most recent durable summary's `through_seq` for a story, if one
-/// exists — everything at or before it is superseded and doesn't need to be
-/// refetched/redecoded on every turn.
-fn latest_summary_through_seq(
-    conn: &rusqlite::Connection,
-    story_id: &str,
-    before_seq: Option<i64>,
-) -> AppResult<Option<i64>> {
-    let mut stmt = conn.prepare(
-        "SELECT seq, payload_json FROM timeline_entries WHERE story_id = ?1 AND kind = ?2 ORDER BY seq DESC",
-    )?;
-    let rows = stmt.query_map(rusqlite::params![story_id, kind::CONTEXT_SUMMARY], |row| {
-        Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
-    })?;
-    for row in rows {
-        let (summary_seq, payload_json) = row?;
-        let boundary = serde_json::from_str::<serde_json::Value>(&payload_json)
-            .ok()
-            .and_then(|value| {
-                Some((
-                    value.get("through_seq")?.as_i64()?,
-                    value.get("through_entry_id")?.as_str()?.to_string(),
-                ))
-            });
-        if let Some((through_seq, through_entry_id)) = boundary {
-            let boundary_exists: bool = conn.query_row(
-                "SELECT EXISTS(SELECT 1 FROM timeline_entries WHERE id = ?1)",
-                [through_entry_id],
-                |row| row.get(0),
-            )?;
-            if before_seq
-                .is_none_or(|before_seq| summary_seq < before_seq && through_seq < before_seq)
-                && boundary_exists
-            {
-                return Ok(Some(through_seq));
-            }
-        }
-    }
-    Ok(None)
-}
+use super::author_note;
 
 /// Reconstructs model history from the story timeline. The latest
 /// durable summary replaces its covered prefix; later revisions and hidden
@@ -58,7 +20,8 @@ pub(crate) fn load_history(
     before_seq: Option<i64>,
 ) -> AppResult<Vec<HistoryTurn>> {
     let conn = pool.get()?;
-    let since_seq = latest_summary_through_seq(&conn, story_id, before_seq)?;
+    let since_seq =
+        compaction::boundary_for(&conn, story_id, before_seq)?.map(|boundary| boundary.through_seq);
     let mut raw = match since_seq {
         Some(seq) => repository::list_logical_entries_since(&conn, story_id, seq)?,
         None => repository::list_logical_entries(&conn, story_id)?,
@@ -101,6 +64,7 @@ fn history_from_entries(
                 "[Authoritative context summary]\n{}",
                 raw[index].content.as_deref().unwrap_or_default()
             ),
+            marker: HistoryTurnMarker::Summary,
         });
     }
 
@@ -114,18 +78,18 @@ fn history_from_entries(
                 .get("input_mode")
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
-            if mode == "story"
-                && raw.iter().skip(index + 1).any(|later| {
-                    later.payload.get("input_mode").and_then(|v| v.as_str())
-                        == Some("generated_story")
-                })
-            {
-                continue;
-            }
+            let is_player = visible.kind == kind::PLAYER_MESSAGE;
+            let content = if is_player {
+                crate::prompts::render_turn(mode, visible.content.as_deref().unwrap_or_default())
+                    .unwrap_or_else(|| visible.content.clone().unwrap_or_default())
+            } else {
+                visible.content.clone().unwrap_or_default()
+            };
             history.push(HistoryTurn {
                 entry_id: Some(entry.id.clone()),
-                is_player: visible.kind == kind::PLAYER_MESSAGE,
-                content: visible.content.clone().unwrap_or_default(),
+                is_player,
+                content,
+                marker: HistoryTurnMarker::Timeline,
             });
             continue;
         }
@@ -149,14 +113,23 @@ fn history_from_entries(
         if !contextual {
             continue;
         }
-        let content = entry
-            .content
-            .clone()
-            .unwrap_or_else(|| entry.payload.to_string());
+        let content = if entry.kind == kind::CONTEXT_NOTE_UPDATED {
+            format!(
+                "<author_note>{}</author_note>",
+                author_note::event_note(&entry.payload)
+            )
+        } else {
+            let content = entry
+                .content
+                .clone()
+                .unwrap_or_else(|| entry.payload.to_string());
+            format!("[Authoritative story event: {}]\n{content}", entry.kind)
+        };
         history.push(HistoryTurn {
             entry_id: Some(entry.id.clone()),
             is_player: false,
-            content: format!("[Authoritative story event: {}]\n{content}", entry.kind),
+            content,
+            marker: HistoryTurnMarker::Timeline,
         });
     }
     history
@@ -166,6 +139,7 @@ fn history_from_entries(
 mod tests {
     use super::*;
     use crate::features::timeline::model::TimelineEntry;
+    use crate::prompts;
     use serde_json::json;
 
     fn entry(
@@ -269,7 +243,7 @@ mod tests {
         assert_eq!(history.len(), 3);
         assert!(history[0].content.contains("The archive was entered."));
         assert!(history[1].content.contains("Stealth succeeded."));
-        assert_eq!(history[2].content, "I take the key.");
+        assert_eq!(history[2].content, "<do>I take the key.</do>");
         assert!(!history
             .iter()
             .any(|turn| turn.content.contains("old narration")));
@@ -295,7 +269,7 @@ mod tests {
         ];
         let history = history_from_entries(&rows);
         assert_eq!(history.len(), 1);
-        assert_eq!(history[0].content, "keep me");
+        assert_eq!(history[0].content, "<do>keep me</do>");
     }
 
     #[test]
@@ -313,6 +287,68 @@ mod tests {
         assert_eq!(
             history[0].content,
             "[Authoritative story event: entity_queried]\nLooked up: Bob"
+        );
+    }
+
+    #[test]
+    fn history_uses_the_canonical_renderer_for_every_action_mode() {
+        for mode in prompts::TURN_MODES {
+            let content = if matches!(*mode, "see" | "continue") {
+                ""
+            } else {
+                "content"
+            };
+            let row = entry(
+                "action",
+                0,
+                kind::PLAYER_MESSAGE,
+                Some(content),
+                json!({"input_mode": mode}),
+            );
+            let history = history_from_entries(&[row]);
+            assert_eq!(
+                history[0].content,
+                prompts::render_turn(mode, content).unwrap()
+            );
+        }
+    }
+
+    #[test]
+    fn retry_cut_ends_with_the_tagged_action() {
+        let pool = crate::shared::db::test_pool();
+        let conn = pool.get().unwrap();
+        conn.execute(
+            "INSERT INTO stories (id, title, created_at, updated_at, settings_json)
+             VALUES ('s', 'story', 'now', 'now', '{}')",
+            [],
+        )
+        .unwrap();
+        repository::append_entry(
+            &conn,
+            "s",
+            kind::PLAYER_MESSAGE,
+            "visible",
+            Some("Keep the rain relentless."),
+            &json!({"input_mode":"guide"}),
+            None,
+        )
+        .unwrap();
+        let response = repository::append_entry(
+            &conn,
+            "s",
+            kind::NARRATION,
+            "visible",
+            Some("Rain lashes the roof."),
+            &json!({"input_mode":"generated"}),
+            None,
+        )
+        .unwrap();
+        drop(conn);
+
+        let history = load_history(&pool, "s", Some(response.seq)).unwrap();
+        assert_eq!(
+            history.last().map(|turn| turn.content.as_str()),
+            Some("<guide>Keep the rain relentless.</guide>")
         );
     }
 
@@ -385,7 +421,7 @@ mod tests {
         let history = load_history(&pool, "s", None).unwrap();
         assert_eq!(history.len(), 1);
         assert_eq!(history[0].entry_id.as_deref(), Some(old.id.as_str()));
-        assert_eq!(history[0].content, "Keep this older turn.");
+        assert_eq!(history[0].content, "<do>Keep this older turn.</do>");
     }
 
     #[test]
@@ -472,6 +508,6 @@ mod tests {
         assert!(history[0]
             .content
             .contains("The party entered the archive."));
-        assert_eq!(history[1].content, "I inspect the sealed door.");
+        assert_eq!(history[1].content, "<do>I inspect the sealed door.</do>");
     }
 }

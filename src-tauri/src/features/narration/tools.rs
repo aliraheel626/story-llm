@@ -486,8 +486,14 @@ fn roll_check_tool(
                     .filter(|s| !s.trim().is_empty())
                     .ok_or_else(|| ToolExecutionError::invalid_args("attribute is required"))?
                     .to_string();
-                let target_entity_id = args.get("target_entity_id").and_then(|v| v.as_str()).map(str::to_string);
-                let target_attribute_name = args.get("target_attribute").and_then(|v| v.as_str()).map(str::to_string);
+                let target_entity_id = args
+                    .get("target_entity_id")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string);
+                let target_attribute_name = args
+                    .get("target_attribute")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string);
                 let modifier = args.get("modifier").and_then(|v| v.as_f64()).unwrap_or(0.0);
 
                 let actor = {
@@ -513,7 +519,11 @@ fn roll_check_tool(
                     .map_err(to_tool_error)?;
 
                 let target = match &target_entity_id {
-                    Some(id) => staging.lock().await.find_effective_entity(id).map_err(to_tool_error)?,
+                    Some(id) => staging
+                        .lock()
+                        .await
+                        .find_effective_entity(id)
+                        .map_err(to_tool_error)?,
                     None => None,
                 };
 
@@ -670,18 +680,29 @@ fn update_entity_tool(staging: Arc<Mutex<TurnStaging>>) -> PortableDynamicTool {
                     .filter(|s| !s.trim().is_empty())
                     .ok_or_else(|| ToolExecutionError::invalid_args("name is required"))?
                     .to_string();
-                let appearance_anchor = args.get("appearance_anchor").and_then(|v| v.as_str()).map(str::to_string);
+                let appearance_anchor = args
+                    .get("appearance_anchor")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string);
 
                 let mut staging = staging.lock().await;
-                if staging.find_effective_entity(&id).map_err(to_tool_error)?.is_none() {
-                    return Err(ToolExecutionError::invalid_args(format!("no such entity: {id}")));
+                if staging
+                    .find_effective_entity(&id)
+                    .map_err(to_tool_error)?
+                    .is_none()
+                {
+                    return Err(ToolExecutionError::invalid_args(format!(
+                        "no such entity: {id}"
+                    )));
                 }
                 staging.pending.push(PendingOp::UpdateEntity {
                     id: id.clone(),
                     name: name.clone(),
                     appearance_anchor: appearance_anchor.clone(),
                 });
-                Ok(ToolOutput::json(json!({"id": id, "name": name, "appearance_anchor": appearance_anchor})))
+                Ok(ToolOutput::json(
+                    json!({"id": id, "name": name, "appearance_anchor": appearance_anchor}),
+                ))
             })
         },
     )
@@ -714,15 +735,24 @@ fn adjust_entity_attribute_tool(
                     .get("delta")
                     .and_then(|v| v.as_f64())
                     .ok_or_else(|| ToolExecutionError::invalid_args("delta is required"))?;
-                let dramatic = args.get("dramatic").and_then(|v| v.as_bool()).unwrap_or(false);
-                let reason = args.get("reason").and_then(|v| v.as_str()).unwrap_or("narration").to_string();
+                let dramatic = args
+                    .get("dramatic")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                let reason = args
+                    .get("reason")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("narration")
+                    .to_string();
 
                 let entity = {
                     let staging = staging.lock().await;
                     let entity = staging
                         .find_effective_entity(&entity_id)
                         .map_err(to_tool_error)?
-                        .ok_or_else(|| ToolExecutionError::invalid_args(format!("no such entity: {entity_id}")))?;
+                        .ok_or_else(|| {
+                            ToolExecutionError::invalid_args(format!("no such entity: {entity_id}"))
+                        })?;
                     entity
                 };
 
@@ -754,7 +784,9 @@ fn adjust_entity_attribute_tool(
                     cause: reason,
                     dramatic,
                 });
-                Ok(ToolOutput::json(json!({"before": before, "after": after, "applied": true})))
+                Ok(ToolOutput::json(
+                    json!({"before": before, "after": after, "applied": true}),
+                ))
             })
         },
     )
@@ -960,12 +992,14 @@ mod tests {
 
         // This kind has no committed candidates, so resolution mints locally
         // without making an embedding request.
-        let first = resolve_or_stage_attribute(&staging, &embedding_api_key, "Resonance", "artifact")
-            .await
-            .unwrap();
-        let second = resolve_or_stage_attribute(&staging, &embedding_api_key, "resonance", "artifact")
-            .await
-            .unwrap();
+        let first =
+            resolve_or_stage_attribute(&staging, &embedding_api_key, "Resonance", "artifact")
+                .await
+                .unwrap();
+        let second =
+            resolve_or_stage_attribute(&staging, &embedding_api_key, "resonance", "artifact")
+                .await
+                .unwrap();
         assert_eq!(first.id, second.id);
 
         let registry_count: i64 = pool

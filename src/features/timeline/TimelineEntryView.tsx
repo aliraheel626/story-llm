@@ -1,19 +1,22 @@
 import { useEffect, useRef, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { isPlayerEntry, timelineInputMode, type NarrationVariant, type RollDetail, type StoryImage, type TimelineEntry } from "../../shared/types";
+import { isPlayerEntry, timelineInputMode, type ActionMode, type NarrationVariant, type RollDetail, type StoryImage, type TimelineEntry } from "../../shared/types";
 import { useStoryStore } from "../story/store";
 import { RollDisclosure } from "./RollDisclosure";
+import { modeDefinition } from "./Composer";
 
 interface TimelineEntryViewProps {
   entry: TimelineEntry;
   storyId: string;
   isLast: boolean;
+  retryEntryId: string;
+  canSwipe: boolean;
   images?: StoryImage[];
   variants?: NarrationVariant[];
   rollSummaries?: RollDetail[];
 }
 
-export function TimelineEntryView({ entry, storyId, isLast, images, variants, rollSummaries }: TimelineEntryViewProps) {
+export function TimelineEntryView({ entry, storyId, isLast, retryEntryId, canSwipe, images, variants, rollSummaries }: TimelineEntryViewProps) {
   const streaming = useStoryStore((s) => s.bundles[storyId]?.streaming);
   const retryNarration = useStoryStore((s) => s.retryNarration);
   const eraseLastExchange = useStoryStore((s) => s.eraseLastExchange);
@@ -82,7 +85,7 @@ export function TimelineEntryView({ entry, storyId, isLast, images, variants, ro
   };
 
   const selectedIndex = variants?.findIndex((v) => v.is_selected) ?? -1;
-  const showVariantPager = isLast && isNarrator && !!variants && variants.length > 1;
+  const showVariantPager = isLast && canSwipe && isNarrator && !!variants && variants.length > 1;
 
   const onPrevVariant = () => {
     if (!variants || selectedIndex <= 0) return;
@@ -105,7 +108,26 @@ export function TimelineEntryView({ entry, storyId, isLast, images, variants, ro
   );
 
   if (isPlayerEntry(entry)) {
+    const definition = modeDefinition(inputMode as ActionMode);
+    if (definition.display === "hidden") return null;
     const isSay = inputMode === "say";
+    const content = isSay ? `"${entry.content ?? ""}"` : entry.content;
+    if (definition.display === "chip") {
+      return (
+        <div className="group flex items-center justify-between gap-3 rounded border border-border bg-surface px-3 py-2 text-xs text-muted">
+          <span><strong className="mr-2 uppercase tracking-wider">{definition.label}</strong>{content}</span>
+          <div className="flex gap-1.5">
+            {editControls}
+            {isLast && !anyStreamBusy && (
+              <>
+                <button onClick={() => runAction(() => retryNarration(storyId, retryEntryId))} disabled={actionBusy} className="rounded border border-border bg-bg px-2 py-0.5 text-[11px] text-muted hover:text-text disabled:opacity-40">Retry</button>
+                <button onClick={() => runAction(() => eraseLastExchange(storyId))} disabled={actionBusy} className="rounded border border-border bg-bg px-2 py-0.5 text-[11px] text-danger hover:opacity-80 disabled:opacity-40">Erase</button>
+              </>
+            )}
+          </div>
+        </div>
+      );
+    }
     return (
       <div className="group relative">
         {editing ? (
@@ -120,45 +142,17 @@ export function TimelineEntryView({ entry, storyId, isLast, images, variants, ro
           />
         ) : (
           <p className="border-l-2 border-accent pl-4 font-prose text-base italic leading-8 text-muted">
-            {isSay ? `"${entry.content ?? ""}"` : entry.content}
-          </p>
-        )}
-        <div className="mt-1 flex justify-end">{editControls}</div>
-      </div>
-    );
-  }
-
-  // A Story-mode draft is player input, not story prose: the model turns it
-  // into the following passage, so it reads like a note rather than narration.
-  if (inputMode === "story") {
-    return (
-      <div className="group relative">
-        {editing ? (
-          <EditBox
-            textareaRef={textareaRef}
-            draft={draft}
-            setDraft={setDraft}
-            onSave={saveEdit}
-            onCancel={cancelEdit}
-            busy={actionBusy}
-            className="border-l-2 border-dashed border-border pl-4 italic"
-          />
-        ) : (
-          <p className="border-l-2 border-dashed border-border pl-4 font-prose text-sm italic leading-7 text-muted">
-            <span className="select-none pr-2 text-[10px] uppercase tracking-wider">draft</span>
-            {entry.content}
+            {inputMode === "story" && <span className="select-none pr-2 text-[10px] uppercase tracking-wider">Story</span>}
+            {content}
           </p>
         )}
         <div className="mt-1 flex justify-end gap-1.5">
           {editControls}
           {isLast && !anyStreamBusy && (
-            <button
-              onClick={() => runAction(() => eraseLastExchange(storyId))}
-              disabled={actionBusy}
-              className="rounded border border-border bg-bg px-2 py-0.5 text-[11px] text-danger hover:opacity-80 disabled:opacity-40"
-            >
-              Erase
-            </button>
+            <>
+              <button onClick={() => runAction(() => retryNarration(storyId, retryEntryId))} disabled={actionBusy} className="rounded border border-border bg-bg px-2 py-0.5 text-[11px] text-muted hover:text-text disabled:opacity-40">Retry</button>
+              <button onClick={() => runAction(() => eraseLastExchange(storyId))} disabled={actionBusy} className="rounded border border-border bg-bg px-2 py-0.5 text-[11px] text-danger hover:opacity-80 disabled:opacity-40">Erase</button>
+            </>
           )}
         </div>
       </div>
@@ -222,15 +216,15 @@ export function TimelineEntryView({ entry, storyId, isLast, images, variants, ro
             {editControls}
             {isLast && !anyStreamBusy && (
               <>
-                <button
+                {canSwipe && <button
                   onClick={() => runAction(() => generateVariant(storyId, entry.id))}
                   disabled={actionBusy}
                   className="rounded border border-border bg-bg px-2 py-0.5 text-[11px] text-muted hover:text-text disabled:opacity-40"
                 >
                   Swipe
-                </button>
+                </button>}
                 <button
-                  onClick={() => runAction(() => retryNarration(storyId, entry.id))}
+                  onClick={() => runAction(() => retryNarration(storyId, retryEntryId))}
                   disabled={actionBusy}
                   className="rounded border border-border bg-bg px-2 py-0.5 text-[11px] text-muted hover:text-text disabled:opacity-40"
                 >

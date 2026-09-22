@@ -1,104 +1,15 @@
 pub mod model;
 pub(crate) mod openrouter;
 
-use std::sync::Arc;
-
 use chrono::Utc;
-use rig_agent::tool::DynamicTool;
 use tauri::{AppHandle, Emitter, Manager, State};
-use tokio::sync::Mutex;
 use uuid::Uuid;
 
-use crate::ai;
-use crate::features::timeline::{
-    model::{kind as timeline_kind, TimelineEntry},
-    repository as timeline_repository,
-};
-use crate::features::{narration, settings};
-use crate::prompts;
+use crate::features::settings;
+use crate::features::timeline::{model::kind as timeline_kind, repository as timeline_repository};
 use crate::shared::db::{with_transaction, Pool};
 use crate::shared::error::{AppError, AppResult};
 use model::{ImageRequest, StoryImage};
-
-fn finish_illustration_decision(requests: Vec<ImageRequest>) -> AppResult<ImageRequest> {
-    requests
-        .into_iter()
-        .next()
-        .ok_or_else(|| AppError::Other("the model did not produce an image description".into()))
-}
-
-struct IllustrationDecision<'a> {
-    passage_content: &'a str,
-    hint: Option<&'a str>,
-    known_characters: &'a [(String, String)],
-}
-
-async fn decide_illustration(
-    pool: &Pool,
-    story_id: &str,
-    before_seq: Option<i64>,
-    config: &ai::TextModelConfig,
-    decision: IllustrationDecision<'_>,
-) -> AppResult<ImageRequest> {
-    let preamble = prompts::MANDATORY_ILLUSTRATION_INSTRUCTION.to_string();
-    let prompt = prompts::illustration_decision_prompt(
-        decision.passage_content,
-        decision.hint,
-        decision.known_characters,
-    );
-    let history = narration::history::load_history(pool, story_id, before_seq)?;
-    let history = crate::features::timeline::compaction::prepare_history(
-        pool, story_id, config, &preamble, &prompt, history, before_seq,
-    )
-    .await;
-    let image_requests = Arc::new(Mutex::new(Vec::new()));
-    let tools = vec![DynamicTool::from_portable(
-        narration::tools::illustrate_scene_tool(image_requests.clone()),
-    )];
-    ai::stream_narration(
-        ai::NarrateRequest {
-            config: config.clone(),
-            preamble,
-            history,
-            prompt,
-            stop_after_tool_result: true,
-            reasoning_effort: None,
-            tools,
-        },
-        |_| {},
-    )
-    .await?;
-    let requests = std::mem::take(&mut *image_requests.lock().await);
-    finish_illustration_decision(requests)
-}
-
-fn known_characters(
-    conn: &rusqlite::Connection,
-    story_id: &str,
-) -> AppResult<Vec<(String, String)>> {
-    let mut stmt = conn.prepare(
-        "SELECT entities.id, story_entity_state.name
-         FROM entities JOIN story_entity_state ON story_entity_state.entity_id = entities.id
-         WHERE entities.story_id = ?1 AND story_entity_state.story_id = ?1
-           AND entities.kind = 'character' AND story_entity_state.is_present = 1",
-    )?;
-    let characters = stmt
-        .query_map([story_id], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-        })?
-        .collect::<Result<_, _>>()?;
-    Ok(characters)
-}
-
-fn illustration_context(
-    pool: &Pool,
-    entry_id: &str,
-) -> AppResult<(TimelineEntry, Vec<(String, String)>)> {
-    let conn = pool.get()?;
-    let active = timeline_repository::active_entry(&conn, entry_id)?;
-    let characters = known_characters(&conn, &active.story_id)?;
-    Ok((active, characters))
-}
 
 /// Composes the final image prompt: style prefix + the scene description, plus
 /// a literal character-appearance block so the image model can't drift on a
@@ -112,49 +23,6 @@ fn compose_image_prompt(style: &str, description: &str, matched: &[&(String, Str
         }
     }
     prompt
-}
-
-/// Turns a finalized passage plus an optional guiding `hint` into a generated,
-/// stored scene image for the player's manual "See" trigger. A mandatory,
-/// single-tool agent turn writes the description with story history and
-/// known-character ids as context.
-pub(crate) async fn generate_for_entry(
-    app: &AppHandle,
-    pool: &Pool,
-    entry_id: &str,
-    hint: Option<&str>,
-) -> AppResult<StoryImage> {
-    let image_settings = settings::read_image_model_settings(app, pool)?;
-    if !image_settings.enabled {
-        return Err(AppError::Invalid(
-            "image generation is disabled in the Image Model panel".into(),
-        ));
-    }
-    let (active, known) = illustration_context(pool, entry_id)?;
-    let passage_content = active.content.unwrap_or_default();
-    let hint = hint.map(str::trim).filter(|s| !s.is_empty());
-    let text_config = settings::resolve_text_model(app, pool)?;
-    let request = decide_illustration(
-        pool,
-        &active.story_id,
-        Some(active.seq),
-        &text_config,
-        IllustrationDecision {
-            passage_content: &passage_content,
-            hint,
-            known_characters: &known,
-        },
-    )
-    .await?;
-    generate_from_description(
-        app,
-        pool,
-        entry_id,
-        &passage_content,
-        &request.description,
-        &request.character_ids,
-    )
-    .await
 }
 
 fn characters_by_ids(
@@ -195,6 +63,7 @@ async fn generate_from_description(
     expected_content: &str,
     description: &str,
     character_ids: &[String],
+    source_action_id: Option<&str>,
 ) -> AppResult<StoryImage> {
     let settings = settings::read_image_model_settings(app, pool)?;
     if !settings.enabled {
@@ -226,6 +95,7 @@ async fn generate_from_description(
         description,
         prompt,
         generated,
+        source_action_id,
     )
     .await
 }
@@ -238,6 +108,7 @@ async fn persist_and_store_image(
     description: &str,
     prompt: String,
     generated: openrouter::GeneratedImage,
+    source_action_id: Option<&str>,
 ) -> AppResult<StoryImage> {
     let app_data_dir = app
         .path()
@@ -281,7 +152,7 @@ async fn persist_and_store_image(
                 "A scene image was generated depicting: {description}"
             )),
             &serde_json::json!({"asset_id": id, "prompt": prompt}),
-            Some(entry_id),
+            Some(source_action_id.unwrap_or(entry_id)),
         )?;
         Ok(())
     });
@@ -299,19 +170,6 @@ async fn persist_and_store_image(
     })
 }
 
-/// Manual scene-image trigger ("See" composer mode). `prompt_hint`, the target
-/// passage, prior story history, and known-character ids are handed to a
-/// mandatory `illustrate_scene` agent turn before image generation.
-#[tauri::command]
-pub async fn generate_scene_image(
-    app: AppHandle,
-    pool: State<'_, Pool>,
-    entry_id: String,
-    prompt_hint: Option<String>,
-) -> AppResult<StoryImage> {
-    generate_for_entry(&app, pool.inner(), &entry_id, prompt_hint.as_deref()).await
-}
-
 /// Starts the slow image work requested by `submit_turn`'s narrator after the
 /// passage and its staged entity changes have committed. Each request keeps
 /// the existing pending/generated/failed event contract used by the frontend.
@@ -321,6 +179,7 @@ pub(crate) fn generate_from_narrator_requests(
     entry_id: &str,
     narrated_text: &str,
     requests: Vec<ImageRequest>,
+    source_action_id: Option<String>,
 ) {
     let app = app.clone();
     let pool = pool.clone();
@@ -336,6 +195,7 @@ pub(crate) fn generate_from_narrator_requests(
                 &narrated_text,
                 &request.description,
                 &request.character_ids,
+                source_action_id.as_deref(),
             )
             .await
             {
@@ -377,48 +237,4 @@ pub fn list_images_for_story(pool: State<Pool>, story_id: String) -> AppResult<V
         out.push(r?);
     }
     Ok(out)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn request() -> ImageRequest {
-        ImageRequest {
-            description: "Mira stands beneath a lightning-split sky.".into(),
-            character_ids: vec!["mira".into()],
-        }
-    }
-
-    #[test]
-    fn decision_returns_the_first_queued_request() {
-        let selected = finish_illustration_decision(vec![request()]).unwrap();
-        assert_eq!(
-            selected.description,
-            "Mira stands beneath a lightning-split sky."
-        );
-        assert_eq!(selected.character_ids, ["mira"]);
-    }
-
-    #[test]
-    fn mandatory_decision_without_a_tool_call_returns_an_error() {
-        let error = finish_illustration_decision(Vec::new()).unwrap_err();
-        assert_eq!(
-            error.to_string(),
-            "the model did not produce an image description"
-        );
-    }
-
-    #[test]
-    fn decision_prompt_includes_hint_and_known_character_ids() {
-        let prompt = prompts::illustration_decision_prompt(
-            "The observatory doors open.",
-            Some("the brass orrery"),
-            &[("mira-id".into(), "Mira".into())],
-        );
-        assert_eq!(
-            prompt,
-            "Scene:\nThe observatory doors open.\n\nFocus the image on: the brass orrery\n\nKnown characters (id: name) - list only the ids actually visible in this scene when calling illustrate_scene:\n- mira-id: Mira"
-        );
-    }
 }

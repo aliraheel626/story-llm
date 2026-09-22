@@ -1,11 +1,11 @@
 import { useEffect, useRef } from "react";
-import { DEFAULT_STORY_TITLE, timelineInputMode } from "../../shared/types";
+import { DEFAULT_STORY_TITLE, timelineInputMode, type ActionMode } from "../../shared/types";
 import type { NarrativePayload, TimelineEntry } from "../../shared/types";
 import { useStoryStore } from "../story/store";
 import { EditableStoryTitle } from "../stories/EditableStoryTitle";
 import { TimelineEntryView } from "./TimelineEntryView";
 import { TurnActivity, toolCallsFromEvents, type TurnActivityData } from "./TurnActivity";
-import { Composer } from "./Composer";
+import { Composer, modeDefinition } from "./Composer";
 
 const EMPTY_ENTRIES: TimelineEntry[] = [];
 
@@ -66,12 +66,17 @@ export function StoryView() {
 
   const isStreamingAppend = streaming?.mode === "append";
   const isStreamingReplace = streaming?.mode === "replace";
+  const displayedEntries = entries.filter((entry) => {
+    const inputMode = timelineInputMode(entry);
+    return inputMode === "generated" || modeDefinition(inputMode as ActionMode).display !== "hidden";
+  });
+  const actualLastEntry = entries[entries.length - 1];
 
   const pinKey = isStreamingAppend
     ? `streaming:${streaming!.streamId}`
     : isStreamingReplace
       ? `replace:${streaming!.targetEntryId}`
-      : (entries[entries.length - 1]?.id ?? null);
+      : (displayedEntries[displayedEntries.length - 1]?.id ?? null);
 
   useEffect(() => {
     pinRef.current?.scrollIntoView({ block: "start", behavior: reducedMotion ? "auto" : "smooth" });
@@ -100,27 +105,21 @@ export function StoryView() {
             <EditableStoryTitle storyId={activeStory!.id} />
           )}
 
-          {entries.length === 0 && !isStreamingAppend && (
+          {displayedEntries.length === 0 && !isStreamingAppend && (
             <p className="font-prose text-base italic leading-8 text-muted">
               The page is blank. Use Do, Say, or Story below to begin.
             </p>
           )}
 
-          {entries.map((entry, i) => {
-            // A completed Story-mode draft is hidden: its generated_story
-            // narration restates the same beat as prose, so rendering both would
-            // read it twice. Stranded drafts (a failed generation left them
-            // last) stay visible so they can still be edited or erased. Checked
-            // against any later entry, not just the next one, to match the
-            // backend's own history-folding rule (narration/history.rs) — an
-            // intervening hidden event must not make a completed draft look
-            // stranded here while the model already treats it as superseded.
-            if (timelineInputMode(entry) === "story" && entries.slice(i + 1).some((e) => timelineInputMode(e) === "generated_story")) {
-              return null;
-            }
-            const isLastEntry = i === entries.length - 1;
+          {displayedEntries.map((entry, i) => {
+            const isLastEntry = i === displayedEntries.length - 1;
             const pinHere = isStreamingReplace ? entry.id === streaming!.targetEntryId : isLastEntry && !isStreamingAppend;
             const activity = activityFor(entry, isLastEntry);
+            const hiddenTrailingAction = isLastEntry
+              && actualLastEntry?.kind === "player_message"
+              && modeDefinition(timelineInputMode(actualLastEntry) as ActionMode).display === "hidden"
+              ? actualLastEntry
+              : undefined;
             return (
               <div key={entry.id} ref={pinHere ? pinRef : undefined}>
                 {activity && <TurnActivity activity={activity} />}
@@ -128,6 +127,8 @@ export function StoryView() {
                   entry={entry}
                   storyId={activeStoryId!}
                   isLast={isLastEntry}
+                  retryEntryId={hiddenTrailingAction?.id ?? entry.id}
+                  canSwipe={actualLastEntry?.id === entry.id}
                   images={imagesByEntry?.[entry.id]}
                   variants={variantsByEntry?.[entry.id]}
                   rollSummaries={rollsByEntry?.[entry.id]}

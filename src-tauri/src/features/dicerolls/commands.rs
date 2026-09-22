@@ -52,8 +52,15 @@ pub fn get_story_diceroll_settings(
     pool: State<Pool>,
     story_id: String,
 ) -> AppResult<DicerollSettings> {
+    read_story_diceroll_settings(pool.inner(), &story_id)
+}
+
+pub(crate) fn read_story_diceroll_settings(
+    pool: &Pool,
+    story_id: &str,
+) -> AppResult<DicerollSettings> {
     let conn = pool.get()?;
-    let settings = story_settings(&conn, &story_id)?;
+    let settings = story_settings(&conn, story_id)?;
     Ok(DicerollSettings {
         dice_mode: DiceMode::from_str_or_default(
             settings

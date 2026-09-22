@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import type {
+  ActionMode,
   DicerollSettings,
   Entity,
   NarrationDonePayload,
@@ -89,10 +90,7 @@ interface StoryStoreState {
   setActiveStory: (storyId: string) => void;
 
   loadTimeline: (storyId: string) => Promise<void>;
-  submitStoryText: (storyId: string, content: string) => Promise<void>;
-  submitTurn: (storyId: string, mode: "do" | "say", content: string) => Promise<void>;
-  submitGuide: (storyId: string, note: string) => Promise<void>;
-  continueScene: (storyId: string) => Promise<void>;
+  submitTurn: (storyId: string, mode: ActionMode, content: string) => Promise<void>;
   retryNarration: (storyId: string, entryId: string) => Promise<void>;
   generateVariant: (storyId: string, entryId: string) => Promise<void>;
   eraseLastExchange: (storyId: string) => Promise<void>;
@@ -100,7 +98,6 @@ interface StoryStoreState {
   selectVariant: (storyId: string, entryId: string, variantEntryId: string) => Promise<void>;
   loadVariantsForEntry: (storyId: string, entryId: string) => Promise<void>;
   loadImagesForStory: (storyId: string) => Promise<void>;
-  generateImageForEntry: (storyId: string, entryId: string, hint?: string) => Promise<void>;
   loadRollsForStory: (storyId: string) => Promise<void>;
   loadRollDetail: (storyId: string, entryId: string) => Promise<void>;
   _appendDelta: (streamId: string, text: string) => void;
@@ -307,23 +304,6 @@ export const useStoryStore = create<StoryStoreState>((set, get) => ({
       }
     }
   },
-  submitStoryText: async (storyId, content) => {
-    advanceGeneration(timelineGenerations, storyId);
-    set((state) => ({ bundles: patchBundle(state.bundles, storyId, { turnError: null, timelineLoading: false }) }));
-    try {
-      const result = await timelineApi.submitStory(storyId, content);
-      set((state) => ({
-        bundles: patchBundle(state.bundles, storyId, (bundle) => ({
-          entries: [...bundle.entries, result.entry],
-          streaming: newStream(result.stream_id, storyId, "append"),
-          timelineLoading: false,
-        })),
-      }));
-    } catch (error) {
-      await get().loadTimeline(storyId);
-      throw error;
-    }
-  },
   submitTurn: async (storyId, mode, content) => {
     advanceGeneration(timelineGenerations, storyId);
     set((state) => ({ bundles: patchBundle(state.bundles, storyId, { turnError: null, timelineLoading: false }) }));
@@ -331,7 +311,9 @@ export const useStoryStore = create<StoryStoreState>((set, get) => ({
       const result = await timelineApi.submitTurn(storyId, mode, content);
       set((state) => ({
         bundles: patchBundle(state.bundles, storyId, (bundle) => ({
-          entries: [...bundle.entries, result.entry],
+          entries: bundle.entries.some((entry) => entry.id === result.entry.id)
+            ? replaceEntry(bundle.entries, result.entry.id, result.entry)
+            : [...bundle.entries, result.entry],
           streaming: newStream(result.stream_id, storyId, "append"),
           timelineLoading: false,
         })),
@@ -341,21 +323,14 @@ export const useStoryStore = create<StoryStoreState>((set, get) => ({
       throw error;
     }
   },
-  submitGuide: async (storyId, note) => {
-    set((state) => ({ bundles: patchBundle(state.bundles, storyId, { turnError: null }) }));
-    const streamId = await timelineApi.submitGuide(storyId, note);
-    set((state) => ({ bundles: patchBundle(state.bundles, storyId, { streaming: newStream(streamId, storyId, "append") }) }));
-  },
-  continueScene: async (storyId) => {
-    set((state) => ({ bundles: patchBundle(state.bundles, storyId, { turnError: null }) }));
-    const streamId = await timelineApi.continueScene(storyId);
-    set((state) => ({ bundles: patchBundle(state.bundles, storyId, { streaming: newStream(streamId, storyId, "append") }) }));
-  },
   retryNarration: async (storyId, entryId) => {
     set((state) => ({ bundles: patchBundle(state.bundles, storyId, { turnError: null }) }));
+    const appends = get().bundles[storyId]?.entries.find((entry) => entry.id === entryId)?.kind === "player_message";
     const result = await timelineApi.retry(storyId, entryId);
     set((state) => ({
-      bundles: patchBundle(state.bundles, storyId, { streaming: newStream(result.stream_id, storyId, "replace", result.entry_id) }),
+      bundles: patchBundle(state.bundles, storyId, {
+        streaming: newStream(result.stream_id, storyId, appends ? "append" : "replace", appends ? undefined : result.entry_id),
+      }),
     }));
   },
   generateVariant: async (storyId, entryId) => {
@@ -452,20 +427,6 @@ export const useStoryStore = create<StoryStoreState>((set, get) => ({
       }));
     } catch (error) {
       console.error("failed to load images", error);
-    }
-  },
-  generateImageForEntry: async (storyId, entryId, hint) => {
-    set((state) => ({
-      bundles: patchBundle(state.bundles, storyId, (bundle) => ({
-        imageError: null,
-        imagePendingFor: bundle.imagePendingFor.includes(entryId) ? bundle.imagePendingFor : [...bundle.imagePendingFor, entryId],
-      })),
-    }));
-    try {
-      get()._imageGenerated(await timelineApi.generateImage(entryId, hint));
-    } catch (error) {
-      get()._imageFailed(entryId);
-      set((state) => ({ bundles: patchBundle(state.bundles, storyId, { imageError: String(error) }) }));
     }
   },
   loadRollsForStory: async (storyId) => {
@@ -569,7 +530,14 @@ export const useStoryStore = create<StoryStoreState>((set, get) => ({
       get().loadVariantsForEntry(storyId, current.targetEntryId);
     }
     get().loadRollsForStory(storyId);
-    get().loadCharacters(storyId);
+    // Entity/attribute tools are only offered to the narrator when this is
+    // enabled (see `attributes_enabled` gating in narration::commands), so a
+    // turn run with it off can't have touched a character — skip the refetch.
+    // Unknown (not-yet-loaded) settings are treated as enabled to match prior
+    // always-fetch behavior.
+    if (get().bundles[storyId]?.diceSettings?.attributes_enabled !== false) {
+      get().loadCharacters(storyId);
+    }
   },
   _swipeDone: (payload) => {
     const found = findStream(get().bundles, payload.stream_id);

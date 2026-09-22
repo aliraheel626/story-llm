@@ -1,23 +1,36 @@
 import { useEffect, useRef, useState } from "react";
-import { REASONING_EFFORT_OPTIONS, type ReasoningEffort } from "../../shared/types";
+import { REASONING_EFFORT_OPTIONS, type ActionMode, type ReasoningEffort } from "../../shared/types";
 import { useImageModelStore } from "../settings/imageModelStore";
 import { DEFAULT_DICEROLL_SETTINGS, useStoryStore } from "../story/store";
 
-type Mode = "do" | "say" | "story" | "guide" | "see";
+export type ModeDisplay = "bubble" | "chip" | "hidden";
+type DisabledWhen = "image-unavailable" | "no-entry" | null;
+export interface ModeDefinition {
+  id: ActionMode;
+  label: string;
+  placeholder: string;
+  textRequired: boolean;
+  display: ModeDisplay;
+  composerTab: boolean;
+  disabledWhen: DisabledWhen;
+}
 
-const MODES: { id: Mode; label: string; placeholder: string }[] = [
-  { id: "do", label: "Do", placeholder: "What do you do?" },
-  { id: "say", label: "Say", placeholder: "What do you say?" },
-  { id: "story", label: "Story", placeholder: "Write the next passage yourself..." },
-  { id: "guide", label: "Guide", placeholder: "Steer the story out of character (won't appear as an action)..." },
-  { id: "see", label: "See", placeholder: 'Optional: what to show — "the bucket", "the girl you are seeing"...' },
+export const MODES: readonly ModeDefinition[] = [
+  { id: "do", label: "Do", placeholder: "What do you do?", textRequired: true, display: "bubble", composerTab: true, disabledWhen: null },
+  { id: "say", label: "Say", placeholder: "What do you say?", textRequired: true, display: "bubble", composerTab: true, disabledWhen: null },
+  { id: "story", label: "Story", placeholder: "Write the next passage yourself...", textRequired: true, display: "bubble", composerTab: true, disabledWhen: null },
+  { id: "guide", label: "Guide", placeholder: "Steer the story out of character...", textRequired: true, display: "chip", composerTab: true, disabledWhen: null },
+  { id: "see", label: "See", placeholder: 'Optional: what to show, such as "the brass orrery"...', textRequired: false, display: "hidden", composerTab: true, disabledWhen: "image-unavailable" },
+  { id: "continue", label: "Continue", placeholder: "", textRequired: false, display: "hidden", composerTab: false, disabledWhen: "no-entry" },
 ];
+
+export const modeDefinition = (mode: ActionMode) => MODES.find((candidate) => candidate.id === mode)!;
 
 /** `storyId` is null while composing a not-yet-persisted draft story; the
  *  first submit creates the story (see `ensureStory`), so an
  *  abandoned draft never leaves an empty story behind. */
 export function Composer({ storyId }: { storyId: string | null }) {
-  const [mode, setMode] = useState<Mode>("do");
+  const [mode, setMode] = useState<ActionMode>("do");
   const [text, setText] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -25,16 +38,11 @@ export function Composer({ storyId }: { storyId: string | null }) {
 
   const createStory = useStoryStore((s) => s.createStory);
   const submitTurn = useStoryStore((s) => s.submitTurn);
-  const submitStoryText = useStoryStore((s) => s.submitStoryText);
-  const submitGuide = useStoryStore((s) => s.submitGuide);
-  const continueScene = useStoryStore((s) => s.continueScene);
   const streaming = useStoryStore((s) => storyId ? s.bundles[storyId]?.streaming : undefined);
   const timelineLoading = useStoryStore((s) => storyId ? (s.bundles[storyId]?.timelineLoading ?? false) : false);
   const turnError = useStoryStore((s) => storyId ? s.bundles[storyId]?.turnError : null);
   const entries = useStoryStore((s) => storyId ? s.bundles[storyId]?.entries : undefined);
-  const generateImageForEntry = useStoryStore((s) => s.generateImageForEntry);
   const imagePendingFor = useStoryStore((s) => storyId ? s.bundles[storyId]?.imagePendingFor : undefined);
-  const imageError = useStoryStore((s) => storyId ? s.bundles[storyId]?.imageError : null);
   const imageSettings = useImageModelStore((s) => s.settings);
   const loadImageSettings = useImageModelStore((s) => s.load);
   const saveSettings = useStoryStore((s) => s.saveDiceSettings);
@@ -53,8 +61,9 @@ export function Composer({ storyId }: { storyId: string | null }) {
 
   const busy = submitting || !!streaming || timelineLoading;
   const lastEntry = entries && entries.length > 0 ? entries[entries.length - 1] : undefined;
-  const imageBusy = !!lastEntry && (imagePendingFor?.includes(lastEntry.id) ?? false);
-  const imagesDisabled = imageSettings ? !imageSettings.enabled : false;
+  const lastNarration = entries?.slice().reverse().find((entry) => entry.kind === "narration");
+  const imageBusy = !!lastNarration && (imagePendingFor?.includes(lastNarration.id) ?? false);
+  const imagesDisabled = imageSettings ? !imageSettings.enabled || !imageSettings.has_api_key : false;
 
   useEffect(() => {
     loadImageSettings();
@@ -83,32 +92,14 @@ export function Composer({ storyId }: { storyId: string | null }) {
     if (busy) return;
     setError(null);
 
-    if (mode === "see") {
-      if (!lastEntry || imageBusy || imagesDisabled) return;
-      setSubmitting(true);
-      try {
-        await generateImageForEntry(storyId!, lastEntry.id, text.trim() || undefined);
-        setText("");
-      } catch (e) {
-        setError(String(e));
-      } finally {
-        setSubmitting(false);
-      }
-      return;
-    }
-
     const trimmed = text.trim();
-    if (!trimmed) return;
+    const definition = modeDefinition(mode);
+    if (definition.textRequired && !trimmed) return;
+    if (mode === "see" && (!storyId || !lastNarration || imageBusy || imagesDisabled)) return;
     setSubmitting(true);
     try {
-      const persistedStoryId = await ensureStory();
-      if (mode === "story") {
-        await submitStoryText(persistedStoryId, trimmed);
-      } else if (mode === "guide") {
-        await submitGuide(persistedStoryId, trimmed);
-      } else {
-        await submitTurn(persistedStoryId, mode, trimmed);
-      }
+      const persistedStoryId = mode === "see" ? storyId! : await ensureStory();
+      await submitTurn(persistedStoryId, mode, trimmed);
       setText("");
     } catch (e) {
       setError(String(e));
@@ -122,7 +113,7 @@ export function Composer({ storyId }: { storyId: string | null }) {
     setSubmitting(true);
     setError(null);
     try {
-      await continueScene(storyId);
+      await submitTurn(storyId, "continue", "");
     } catch (e) {
       setError(String(e));
     } finally {
@@ -137,10 +128,12 @@ export function Composer({ storyId }: { storyId: string | null }) {
     }
   };
 
-  const activeMode = MODES.find((m) => m.id === mode)!;
-  const displayedError = mode === "see" ? (error ?? imageError) : (error ?? turnError);
+  const activeMode = modeDefinition(mode);
+  const displayedError = error ?? turnError;
 
-  const submitDisabled = mode === "see" ? busy || !lastEntry || imageBusy || imagesDisabled : busy || !text.trim();
+  const submitDisabled = busy
+    || (activeMode.textRequired && !text.trim())
+    || (activeMode.disabledWhen === "image-unavailable" && (!lastNarration || imageBusy || imagesDisabled));
 
   const submitLabel = mode === "see" ? (imageBusy ? "Generating..." : "Generate") : busy ? "Writing..." : "Send";
 
@@ -158,7 +151,7 @@ export function Composer({ storyId }: { storyId: string | null }) {
       <div className="mx-auto w-full max-w-measure">
         <div className="mb-2 flex items-center justify-between gap-1.5">
           <div className="flex gap-1.5">
-            {MODES.map((m) => (
+            {MODES.filter((candidate) => candidate.composerTab).map((m) => (
               <button
                 key={m.id}
                 onClick={() => setMode(m.id)}

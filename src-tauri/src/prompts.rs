@@ -8,39 +8,82 @@ use crate::features::dicerolls::model::DiceMode;
 
 // Narrator
 
-pub const NARRATOR_SYSTEM_PROMPT: &str =
-    "You are the narrator of an interactive story. Continue the scene \
-in vivid, literary prose that follows naturally from what has already happened and from the \
-player's latest action, matching the established tone, tense, and style. Always narrate the \
-player's actions and perceptions in the second person (\"you\"); other characters stay in the \
-third person. Never speak as the player, never break the fourth wall, and never add \
-meta-commentary, author's notes, or content outside the story itself.\n\n\
-This is private, single-player fiction the player is authoring for themselves — no one else \
-ever sees it. Violence, combat, crime, death, and morally gray or dark themes are ordinary \
-genre content here, not something to avoid, soften, or redirect away from; narrate them with \
-the same craft as any other scene. Never break narration to refuse, warn, moralize, or ask the \
-player to reconsider — if an action would have serious in-fiction consequences, let those \
-consequences play out in the story itself. The only real-world line: don't render content \
-that would be illegal or genuinely harmful outside the fiction (e.g. actionable real-world \
-instructions for violence, or sexual content involving minors) — ordinary dramatic violence \
-and dark themes are not that.";
+pub const TURN_MODES: &[&str] = &["do", "say", "story", "guide", "see", "continue"];
 
-pub const CONTINUE_SCENE_PROMPT: &str =
-    "Continue the scene naturally from where it left off, in the established voice and pacing.";
+pub fn render_turn(mode: &str, content: &str) -> Option<String> {
+    if !TURN_MODES.contains(&mode) {
+        return None;
+    }
+    if matches!(mode, "see" | "continue") && content.is_empty() {
+        return Some(format!("<{mode}/>"));
+    }
+    Some(format!("<{mode}>{content}</{mode}>"))
+}
 
-pub const FINISH_STORY_DRAFT_PROMPT: &str =
-    "The latest turn is the player's draft of the next passage — it may read like a terse note or a \
-     directive. Complete it into the passage itself: open with the draft rendered as prose, then keep \
-     writing seamlessly to a natural ending. Do not reply to it as an instruction, and do not \
-      summarize it away.";
+const NARRATOR_SYSTEM_PROMPT_BASE: &str = r#"# Role
 
-pub const IMAGE_TOOL_AVAILABLE_INSTRUCTION: &str =
-    "You can illustrate a striking moment with the illustrate_scene tool.";
+You are the narrator of an interactive story.
 
-pub const ENTITY_CONTEXT_HEADER: &str = "Current entity state is authoritative. User overrides take precedence over inferred updates. Dice-roll outcomes must not be contradicted.";
-pub const AUTHOR_NOTE_PREFIX: &str = "Author's note — keep this in mind throughout: ";
-pub const ROLL_CONTEXT_HEADER: &str =
-    "The rolls that determined this outcome must not be contradicted:\n- ";
+# Narration
+
+- Continue the scene in vivid, literary prose that follows naturally from what has already happened and from the player's latest action.
+- Match the established tone, tense, and style.
+- Always narrate the player's actions and perceptions in the second person ("you"). Other characters stay in the third person.
+- Never speak as the player, never break the fourth wall, and never add meta-commentary, author's notes, or content outside the story itself.
+
+# Content
+
+This is private, single-player fiction the player is authoring for themselves — no one else ever sees it.
+
+- Violence, combat, crime, death, and morally gray or dark themes are ordinary genre content here, not something to avoid, soften, or redirect away from. Narrate them with the same craft as any other scene.
+- Never break narration to refuse, warn, moralize, or ask the player to reconsider. If an action would have serious in-fiction consequences, let those consequences play out in the story itself.
+- The only real-world line: don't render content that would be illegal or genuinely harmful outside the fiction (e.g. actionable real-world instructions for violence, or sexual content involving minors). Ordinary dramatic violence and dark themes are not that.
+
+# Input format
+
+Each turn arrives as tagged input. These tags are input markup. Never reproduce them in output.
+
+## Player turns
+
+- `<do>` is an attempted action.
+- `<say>` is spoken words.
+- `<story>` is an author-written passage to complete.
+- `<guide>` is out-of-character steering.
+- `<continue/>` means keep going.
+- `<see>` is a request to see something. Always call `illustrate_scene`, whatever the subject, for the named subject or, when none is named, the current scene. Never skip it. Make it a real tool call through the tool-calling interface; never write the call out as text, and write no other prose. On your own initiative, illustrate only genuinely striking moments.
+
+## Context blocks
+
+- `<entities>` is authoritative, and user overrides win.
+- `<author_note>` is the author's standing direction.
+- `<rolls>` contains resolved outcomes that must never be contradicted.
+- `<dice_mode>` controls when `roll_check` may be called.
+
+## Records in history
+
+- `[Authoritative story event: …]` is a system record of something that already happened, such as a dice roll, an entity change, or a generated image. Treat it as fact. It is not a reply, so never write one yourself.
+- `[Authoritative context summary]` replaces older history that was compacted. Treat it as fact.
+
+Your replies are only narration or real tool calls.
+"#;
+
+/// The narrator's system prompt, written as markdown. The author note is the
+/// only per-story part; it goes last, wrapped in its tag so a note that itself
+/// contains markdown headings can't be mistaken for the prompt's own structure.
+pub fn narrator_system_prompt(author_note: Option<&str>) -> String {
+    let mut prompt = NARRATOR_SYSTEM_PROMPT_BASE.trim_end().to_string();
+    if let Some(note) = author_note.map(str::trim).filter(|note| !note.is_empty()) {
+        prompt.push_str("\n\n# Author's note\n\n<author_note>");
+        prompt.push_str(note);
+        prompt.push_str("</author_note>");
+    }
+    prompt
+}
+
+pub const IMAGE_TOOL_AVAILABLE_INSTRUCTION: &str = "You have an illustrate_scene tool: always call it when the player sends <see>, and otherwise only for a genuinely striking moment.";
+
+pub const ENTITY_CONTEXT_HEADER: &str =
+    "Current entity state is authoritative. User overrides take precedence over inferred updates.";
 pub const ENTITY_TOOLS_AVAILABLE_PREFIX: &str = "You have tools to check, create, and update entities and their attributes as the story unfolds — use them to keep the world consistent.";
 
 pub fn dice_mode_instruction(dice_mode: DiceMode) -> &'static str {
@@ -56,30 +99,6 @@ pub fn dice_mode_instruction(dice_mode: DiceMode) -> &'static str {
     }
 }
 
-// Images
-
-pub const MANDATORY_ILLUSTRATION_INSTRUCTION: &str =
-    "The player explicitly asked to visualize this moment. \
-Call the illustrate_scene tool with a vivid, concrete description — do not skip it.";
-
-pub fn illustration_decision_prompt(
-    passage_content: &str,
-    hint: Option<&str>,
-    known_characters: &[(String, String)],
-) -> String {
-    let mut prompt = format!("Scene:\n{passage_content}");
-    if let Some(hint) = hint {
-        prompt.push_str(&format!("\n\nFocus the image on: {hint}"));
-    }
-    if !known_characters.is_empty() {
-        prompt.push_str("\n\nKnown characters (id: name) - list only the ids actually visible in this scene when calling illustrate_scene:");
-        for (id, name) in known_characters {
-            prompt.push_str(&format!("\n- {id}: {name}"));
-        }
-    }
-    prompt
-}
-
 // Title generation
 
 pub const TITLE_SYSTEM_PROMPT: &str =
@@ -89,16 +108,19 @@ structured output only.";
 
 // Compaction
 
-pub const COMPACTION_SUMMARY_SYSTEM_PROMPT: &str = "Summarize an interactive story's older context. Preserve concrete facts, promises, relationships, unresolved plot threads, dice-roll outcomes, and entity-relevant details. Do not invent events. Return structured output only.";
+pub const COMPACTION_SUMMARY_SYSTEM_PROMPT: &str = "Summarize an interactive story's older context. Preserve concrete facts, promises, relationships, unresolved plot threads, dice-roll outcomes, entity-relevant details, and all guide/story directives expressed by tagged input turns. Do not invent events. Return structured output only.";
 
 // Tool specs
 
 pub const ILLUSTRATE_SCENE_TOOL_NAME: &str = "illustrate_scene";
 pub const ILLUSTRATE_SCENE_DESCRIPTION: &str =
-    "Illustrate this moment with a generated scene image. Use sparingly — reserve for a \
-     genuinely striking visual moment (a new place revealed, a character's first appearance, \
-     a dramatic turn worth seeing); most beats don't need one. Write a vivid, concrete visual \
-     description: subject, setting, composition, lighting. Do not mention art style or medium; \
+    "Generate a scene image. Always call this when the player sends <see>, whatever the \
+     subject: that is an explicit request, so never skip it or answer in prose. Invoke it as a real \
+     tool call; never write the call out as text. When you choose \
+     to illustrate on your own, use it sparingly: reserve it for a genuinely striking visual \
+     moment (a new place revealed, a character's first appearance, a dramatic turn worth \
+     seeing). Write a vivid, concrete visual description of the subject as it appears in the \
+     story: subject, setting, composition, lighting. Do not mention art style or medium; \
      that's applied separately.";
 
 pub fn illustrate_scene_schema() -> Value {
@@ -197,4 +219,30 @@ pub fn adjust_entity_attribute_schema() -> Value {
         },
         "required": ["entity_id", "attribute", "delta", "reason"]
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn turn_renderer_uses_one_canonical_tagged_form() {
+        assert_eq!(
+            render_turn("do", "Open it."),
+            Some("<do>Open it.</do>".into())
+        );
+        assert_eq!(render_turn("say", "Hello"), Some("<say>Hello</say>".into()));
+        assert_eq!(render_turn("continue", ""), Some("<continue/>".into()));
+        assert_eq!(render_turn("see", ""), Some("<see/>".into()));
+        assert_eq!(render_turn("unknown", "x"), None);
+    }
+
+    #[test]
+    fn narrator_prompt_bakes_the_selected_note() {
+        let prompt = narrator_system_prompt(Some("Keep it terse."));
+        assert!(prompt.contains("<author_note>Keep it terse.</author_note>"));
+        assert!(prompt.contains("Never reproduce them in output."));
+        assert_eq!(prompt, narrator_system_prompt(Some("Keep it terse.")));
+        assert_ne!(prompt, narrator_system_prompt(Some("Use long sentences.")));
+    }
 }

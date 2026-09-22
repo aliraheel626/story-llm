@@ -5,7 +5,8 @@ export interface Story {
 export const DEFAULT_STORY_TITLE = "New story";
 export interface StoryTitleUpdatedPayload { story_id: string; title: string }
 
-export type InputMode = "do" | "say" | "story" | "generated" | "generated_guide" | "generated_continue" | "generated_story";
+export type ActionMode = "do" | "say" | "story" | "guide" | "see" | "continue";
+export type InputMode = ActionMode | "generated";
 export type TimelineVisibility = "visible" | "hidden";
 export type TimelineEntryKind =
   | "player_message" | "narration" | "narration_variant" | "narration_selected" | "content_edited"
