@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use super::model::{kind, LedgerEntry};
+use super::model::{kind, LedgerEntry, LedgerSnapshot};
 
 fn edits_by_target(entries: &[LedgerEntry]) -> HashMap<String, String> {
     let mut edits = HashMap::new();
@@ -29,6 +29,16 @@ pub fn active_visible_entries(entries: &[LedgerEntry]) -> Vec<LedgerEntry> {
             active
         })
         .collect()
+}
+
+pub fn snapshot(entries: Vec<LedgerEntry>) -> LedgerSnapshot {
+    LedgerSnapshot {
+        visible: active_visible_entries(&entries),
+        hidden: entries
+            .into_iter()
+            .filter(|entry| entry.visibility == "hidden")
+            .collect(),
+    }
 }
 
 #[cfg(test)]
