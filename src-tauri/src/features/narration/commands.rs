@@ -6,49 +6,27 @@ use std::{
 
 use chrono::Utc;
 use r2d2_sqlite::SqliteConnectionManager;
-use rig_agent::tool::DynamicTool;
 use rusqlite::OptionalExtension;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, State};
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
-use crate::ai::{
-    self, HistoryTurn, NarrateRequest, NarratorChunk, TextModelConfig, ToolActivityPhase,
-};
 use crate::features::{
     compaction, images,
     ledger::{
         model::{kind as ledger_kind, LedgerEntry},
         reducer, repository as ledger_repository,
     },
-    settings, stories,
+    narrator, stories,
 };
 use crate::prompts;
 use crate::shared::db::{with_transaction, Pool};
 use crate::shared::error::{AppError, AppResult};
 
-use super::context::{self, combine_context_blocks, ContextPlan};
-use super::history::load_history;
-use super::staging::TurnStaging;
-use super::tools;
-
-fn narrator_image_tools(
-    enabled: bool,
-) -> (
-    Vec<DynamicTool>,
-    Arc<Mutex<Vec<images::model::ImageRequest>>>,
-) {
-    let requests = Arc::new(Mutex::new(Vec::new()));
-    let tools = if enabled {
-        vec![DynamicTool::from_portable(tools::illustrate_scene_tool(
-            requests.clone(),
-        ))]
-    } else {
-        Vec::new()
-    };
-    (tools, requests)
-}
+use narrator::{
+    staging::TurnStaging, transcript::load_transcript, Candidate, NarratorInputs, NarratorPurpose,
+};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct SubmitTurnResult {
@@ -63,21 +41,9 @@ pub struct RetryResult {
 }
 
 #[derive(Debug, Clone, Serialize)]
-struct NarrationDeltaPayload<'a> {
-    stream_id: &'a str,
-    text: &'a str,
-}
-
-#[derive(Debug, Clone, Serialize)]
 struct NarrationDonePayload {
     stream_id: String,
     entry: LedgerEntry,
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct NarrationErrorPayload<'a> {
-    stream_id: &'a str,
-    message: &'a str,
 }
 
 /// Inserts a fresh narration entry. If the narrator's tool calls staged any
@@ -95,7 +61,7 @@ async fn append_narration_entry(
     // Acquired before the transaction opens (not held across an `.await`
     // with it live) so the whole rest of this function stays synchronous —
     // a `rusqlite::Transaction` isn't `Send`, so awaiting anything while one
-    // is alive would make this future unusable from `spawn_narration`.
+    // is alive would make this future unusable from `narrator::spawn`.
     let staging_guard = match &staging {
         Some(s) => Some(s.lock().await),
         None => None,
@@ -120,216 +86,16 @@ fn kick_auto_title(app: &AppHandle, pool: &Pool, story_id: &str) {
     stories::maybe_auto_title(app, pool, story_id);
 }
 
-/// Spawns the background narration stream shared by every path that produces
-/// or updates a narrator passage without blocking the command's return:
-/// `narration-delta` / `narration-thoughts` fire as text arrives, then
-/// `on_success` runs with the final text (and should emit its own terminal
-/// event), or `narration-error` fires if the stream or `on_success` fails.
-/// `turn_context_plan` supplies the complete per-message context used both for
-/// compaction budgeting and for the final action sent to the model.
-struct NarrationJob {
-    app: AppHandle,
-    pool: Pool,
-    story_id: String,
-    config: TextModelConfig,
-    history: Vec<HistoryTurn>,
-    turn_context_plan: ContextPlan,
-    /// Effective tools for this action or replacement attempt.
-    tools: Vec<DynamicTool>,
-    stop_after_tool_result: bool,
-    reasoning_effort: Option<String>,
-    before_seq: Option<i64>,
-    stream_id: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct NarrationToolActivityPayload<'a> {
-    stream_id: &'a str,
-    call_id: String,
-    label: String,
-    phase: &'static str,
-    /// `None` while starting; `Some(false)` lets the frontend show a tool
-    /// call didn't succeed instead of just quietly disappearing.
-    ok: Option<bool>,
-}
-
-fn spawn_narration<F, Fut>(job: NarrationJob, on_success: F)
-where
-    F: FnOnce(AppHandle, Pool, String, String, Option<String>) -> Fut + Send + 'static,
-    Fut: std::future::Future<Output = AppResult<()>> + Send + 'static,
-{
-    let NarrationJob {
-        app,
-        pool,
-        story_id,
-        config,
-        history,
-        turn_context_plan,
-        tools,
-        stop_after_tool_result,
-        reasoning_effort,
-        before_seq,
-        stream_id,
-    } = job;
-    tauri::async_runtime::spawn(async move {
-        let preamble = prompts::narrator_system_prompt();
-        let prepared = compaction::prepare_history(
-            &pool,
-            &story_id,
-            &config,
-            &preamble,
-            &turn_context_plan.full,
-            history,
-            before_seq,
-        )
-        .await;
-        let mut history = prepared.turns;
-        let Some(mut action) = history.pop() else {
-            let _ = app.emit(
-                "narration-error",
-                NarrationErrorPayload {
-                    stream_id: &stream_id,
-                    message: "the narration history has no action turn",
-                },
-            );
-            return;
-        };
-        if !action.is_player {
-            let _ = app.emit(
-                "narration-error",
-                NarrationErrorPayload {
-                    stream_id: &stream_id,
-                    message: "the narration history does not end with an action turn",
-                },
-            );
-            return;
-        }
-        action.content = combine_context_blocks(&[turn_context_plan.live, action.content]);
-        #[cfg(debug_assertions)]
-        log::info!(
-            "assembled narrator request: system={:?} history={:?} last_turn={:?}",
-            preamble,
-            history
-                .iter()
-                .map(|turn| (
-                    if turn.is_player { "player" } else { "narrator" },
-                    &turn.content
-                ))
-                .collect::<Vec<_>>(),
-            action.content,
-        );
-        let req = NarrateRequest {
-            config,
-            preamble,
-            history,
-            prompt: action.content,
-            stop_after_tool_result,
-            reasoning_effort,
-            tools,
-        };
-
-        let app_for_chunks = app.clone();
-        let stream_id_for_chunks = stream_id.clone();
-        let result = ai::stream_narration(req, move |chunk| match chunk {
-            NarratorChunk::Text(text) => {
-                let _ = app_for_chunks.emit(
-                    "narration-delta",
-                    NarrationDeltaPayload {
-                        stream_id: &stream_id_for_chunks,
-                        text: &text,
-                    },
-                );
-            }
-            NarratorChunk::Reasoning(text) => {
-                let _ = app_for_chunks.emit(
-                    "narration-thoughts",
-                    NarrationDeltaPayload {
-                        stream_id: &stream_id_for_chunks,
-                        text: &text,
-                    },
-                );
-            }
-            NarratorChunk::ToolActivity {
-                call_id,
-                tool_name,
-                args,
-                phase,
-            } => {
-                let (phase_str, ok) = match phase {
-                    ToolActivityPhase::Started => ("started", None),
-                    ToolActivityPhase::Finished { ok } => ("finished", Some(ok)),
-                };
-                let _ = app_for_chunks.emit(
-                    "narration-tool-activity",
-                    NarrationToolActivityPayload {
-                        stream_id: &stream_id_for_chunks,
-                        call_id,
-                        label: tools::friendly_tool_label(&tool_name, &args),
-                        phase: phase_str,
-                        ok,
-                    },
-                );
-            }
-        })
-        .await;
-
-        match result {
-            Ok((visible, thoughts)) => {
-                let visible = visible.trim().to_string();
-                let thoughts = thoughts.trim();
-                let thoughts_opt = if thoughts.is_empty() {
-                    None
-                } else {
-                    Some(thoughts.to_string())
-                };
-                if let Err(e) =
-                    on_success(app.clone(), pool, stream_id.clone(), visible, thoughts_opt).await
-                {
-                    let _ = app.emit(
-                        "narration-error",
-                        NarrationErrorPayload {
-                            stream_id: &stream_id,
-                            message: &e.to_string(),
-                        },
-                    );
-                }
-            }
-            Err(e) => {
-                let _ = app.emit(
-                    "narration-error",
-                    NarrationErrorPayload {
-                        stream_id: &stream_id,
-                        message: &e.to_string(),
-                    },
-                );
-            }
-        }
-    });
-}
-
 fn start_action_generation(
     app: AppHandle,
     pool: Pool,
     story_id: String,
     action: LedgerEntry,
     mode: String,
-    history: Vec<HistoryTurn>,
+    transcript: Vec<crate::ai::HistoryTurn>,
     before_seq: Option<i64>,
 ) -> AppResult<String> {
-    let config = settings::resolve_text_model(&app, &pool)?;
-    let tool_settings = stories::settings::read_story_narrator_tools(&pool, &story_id)?;
-    let reasoning_effort = stories::settings::read_story_reasoning_effort(&pool, &story_id)?;
-    let reasoning_effort = (!reasoning_effort.is_empty()).then_some(reasoning_effort);
-    let image_settings = settings::read_image_model_settings(&app, &pool)?;
     let is_see = mode == "see";
-    let image_enabled =
-        image_settings.enabled && image_settings.has_api_key && tool_settings.illustrate_scene;
-    let (image_tools, image_requests) = narrator_image_tools(image_enabled);
-    if is_see && !image_enabled {
-        return Err(AppError::Invalid(
-            "image generation is disabled or has no API key".into(),
-        ));
-    }
     let prior_narration = {
         let conn = pool.get()?;
         let raw = ledger_repository::list_logical_entries(&conn, &story_id)?;
@@ -339,133 +105,104 @@ fn start_action_generation(
             .find(|entry| entry.kind == ledger_kind::NARRATION)
             .map(|entry| (entry.id, entry.content.unwrap_or_default()))
     };
+    let prepared: narrator::Prepared = narrator::prepare(NarratorInputs {
+        app: &app,
+        settings_pool: &pool,
+        world_pool: &pool,
+        story_id: &story_id,
+        transcript,
+        before_seq,
+        purpose: if is_see {
+            NarratorPurpose::Illustrate
+        } else {
+            NarratorPurpose::Action
+        },
+    })?;
     if is_see && prior_narration.is_none() {
         return Err(AppError::Invalid(
             "there is no narrated scene to illustrate".into(),
         ));
     }
-
-    let (mut tool_set, staging) = if !is_see
-        && (tool_settings.get_entities
-            || tool_settings.create_entity
-            || tool_settings.update_entity
-            || tool_settings.adjust_entity_attribute
-            || tool_settings.roll_check)
-    {
-        let staging = Arc::new(Mutex::new(TurnStaging::new(pool.clone(), story_id.clone())));
-        let embedding_api_key = settings::read_api_key(&app, "openrouter").unwrap_or_default();
-        (
-            tools::narrator_tools_for_settings(staging.clone(), embedding_api_key, &tool_settings),
-            Some(staging),
-        )
-    } else {
-        (Vec::new(), None)
-    };
-
-    if image_enabled {
-        tool_set.extend(image_tools);
-    }
-    let turn_context_plan = context::build_message_context(&context::Inputs {
-        pool: &pool,
-        story_id: &story_id,
-        history: &history,
-        config: &config,
-        tool_settings: if is_see { None } else { Some(&tool_settings) },
-        image_enabled,
-    })?;
-    let stream_id = Uuid::new_v4().to_string();
     let story_id_bg = story_id.clone();
     let action_for_done = action.clone();
     let source_action_id = action.id.clone();
 
-    spawn_narration(
-        NarrationJob {
-            app,
-            pool,
-            story_id,
-            config,
-            history,
-            turn_context_plan,
-            tools: tool_set,
-            stop_after_tool_result: is_see,
-            reasoning_effort,
-            before_seq,
-            stream_id: stream_id.clone(),
-        },
-        move |app, pool, sid, visible, thoughts| async move {
-            if is_see {
-                let request = std::mem::take(&mut *image_requests.lock().await)
-                    .into_iter()
-                    .next();
-                let Some(request) = request else {
-                    return Err(AppError::Other(
-                        "the narrator did not request an illustration".into(),
-                    ));
-                };
-                let (target_id, target_content) = prior_narration
-                    .ok_or_else(|| AppError::Invalid("no narration to illustrate".into()))?;
-                let _ = app.emit(
-                    "narration-done",
-                    NarrationDonePayload {
-                        stream_id: sid,
-                        entry: action_for_done,
-                    },
-                );
-                images::generate_from_narrator_requests(
-                    &app,
-                    &pool,
-                    &target_id,
-                    &target_content,
-                    vec![request],
-                    Some(source_action_id),
-                );
-                return Ok(());
-            }
-            if visible.is_empty() {
-                let _ = app.emit(
-                    "narration-done",
-                    NarrationDonePayload {
-                        stream_id: sid,
-                        entry: action_for_done,
-                    },
-                );
-                return Ok(());
-            }
-            let passage = append_narration_entry(
-                &pool,
-                &story_id_bg,
-                "generated",
-                &visible,
-                thoughts.as_deref(),
-                staging,
-            )
-            .await?;
-            let entry = {
-                let conn = pool.get()?;
-                ledger_repository::active_entry(&conn, &passage.id)?
+    let stream_id = narrator::spawn(prepared, move |app, sid, candidate| async move {
+        let Candidate {
+            visible,
+            thoughts,
+            staging,
+            image_requests,
+        } = candidate;
+        if is_see {
+            let request = image_requests.into_iter().next();
+            let Some(request) = request else {
+                return Err(AppError::Other(
+                    "the narrator did not request an illustration".into(),
+                ));
             };
+            let (target_id, target_content) = prior_narration
+                .ok_or_else(|| AppError::Invalid("no narration to illustrate".into()))?;
             let _ = app.emit(
                 "narration-done",
                 NarrationDonePayload {
                     stream_id: sid,
-                    entry,
+                    entry: action_for_done,
                 },
             );
-            kick_auto_title(&app, &pool, &story_id_bg);
-            let requests = std::mem::take(&mut *image_requests.lock().await);
-            if !requests.is_empty() {
-                images::generate_from_narrator_requests(
-                    &app,
-                    &pool,
-                    &passage.id,
-                    &visible,
-                    requests,
-                    None,
-                );
-            }
-            Ok(())
-        },
-    );
+            images::generate_from_narrator_requests(
+                &app,
+                &pool,
+                &target_id,
+                &target_content,
+                vec![request],
+                Some(source_action_id),
+            );
+            return Ok(());
+        }
+        if visible.is_empty() {
+            let _ = app.emit(
+                "narration-done",
+                NarrationDonePayload {
+                    stream_id: sid,
+                    entry: action_for_done,
+                },
+            );
+            return Ok(());
+        }
+        let passage = append_narration_entry(
+            &pool,
+            &story_id_bg,
+            "generated",
+            &visible,
+            thoughts.as_deref(),
+            staging,
+        )
+        .await?;
+        let entry = {
+            let conn = pool.get()?;
+            ledger_repository::active_entry(&conn, &passage.id)?
+        };
+        let _ = app.emit(
+            "narration-done",
+            NarrationDonePayload {
+                stream_id: sid,
+                entry,
+            },
+        );
+        kick_auto_title(&app, &pool, &story_id_bg);
+        if !image_requests.is_empty() {
+            images::generate_from_narrator_requests(
+                &app,
+                &pool,
+                &passage.id,
+                &visible,
+                image_requests,
+                None,
+            );
+        }
+        Ok(())
+    });
     Ok(stream_id)
 }
 
@@ -518,7 +255,7 @@ pub async fn submit_turn(
         }
     };
 
-    let history = load_history(pool.inner(), &story_id, None)?;
+    let history = load_transcript(pool.inner(), &story_id, None)?;
     let stream_id = start_action_generation(
         app,
         pool.inner().clone(),
@@ -775,89 +512,56 @@ fn start_replacement_generation(
     };
 
     let snapshot = snapshot_for_retry(&pool, &story_id, &target.id)?;
-    let history = load_history(&snapshot.pool, &story_id, None)?;
-    let config = settings::resolve_text_model(&app, pool.inner())?;
-    let reasoning_effort = stories::settings::read_story_reasoning_effort(pool.inner(), &story_id)?;
-    let reasoning_effort = (!reasoning_effort.is_empty()).then_some(reasoning_effort);
-    let tool_settings = stories::settings::read_story_narrator_tools(pool.inner(), &story_id)?;
-    let image_settings = settings::read_image_model_settings(&app, pool.inner())?;
-    let image_enabled =
-        image_settings.enabled && image_settings.has_api_key && tool_settings.illustrate_scene;
-    let (image_tools, image_requests) = narrator_image_tools(image_enabled);
-    let staging = if tool_settings.get_entities
-        || tool_settings.create_entity
-        || tool_settings.update_entity
-        || tool_settings.adjust_entity_attribute
-        || tool_settings.roll_check
-    {
-        Some(Arc::new(Mutex::new(TurnStaging::new(
-            snapshot.pool.clone(),
-            story_id.clone(),
-        ))))
-    } else {
-        None
-    };
-    let mut tool_set = if let Some(staging) = &staging {
-        let embedding_api_key = settings::read_api_key(&app, "openrouter").unwrap_or_default();
-        tools::narrator_tools_for_settings(staging.clone(), embedding_api_key, &tool_settings)
-    } else {
-        Vec::new()
-    };
-    tool_set.extend(image_tools);
-    let turn_context_plan = context::build_message_context(&context::Inputs {
-        pool: &snapshot.pool,
+    let transcript = load_transcript(&snapshot.pool, &story_id, None)?;
+    let prepared = narrator::prepare(NarratorInputs {
+        app: &app,
+        settings_pool: pool.inner(),
+        world_pool: &snapshot.pool,
         story_id: &story_id,
-        history: &history,
-        config: &config,
-        tool_settings: Some(&tool_settings),
-        image_enabled,
+        transcript,
+        before_seq: None,
+        purpose: NarratorPurpose::Replacement,
     })?;
 
-    let stream_id = Uuid::new_v4().to_string();
     let story_id_bg = story_id.clone();
     let live_pool = pool.inner().clone();
-    spawn_narration(
-        NarrationJob {
-            app,
-            pool: snapshot.pool.clone(),
-            story_id,
-            config,
-            history,
-            turn_context_plan,
-            tools: tool_set,
-            stop_after_tool_result: false,
-            reasoning_effort,
-            before_seq: None,
-            stream_id: stream_id.clone(),
-        },
-        move |app, _scratch_pool, sid, visible, thoughts| async move {
-            let (entry, image_paths) = replace_narration_entry(
+    let stream_id = narrator::spawn(prepared, move |app, sid, candidate| async move {
+        let Candidate {
+            visible,
+            thoughts,
+            staging,
+            image_requests,
+        } = candidate;
+        let (entry, image_paths) = replace_narration_entry(
+            &live_pool,
+            &snapshot,
+            &story_id_bg,
+            &target.id,
+            &visible,
+            thoughts.as_deref(),
+            staging,
+        )
+        .await?;
+        images::delete_assets(&image_paths);
+        let _ = app.emit(
+            "narration-done",
+            NarrationDonePayload {
+                stream_id: sid,
+                entry: entry.clone(),
+            },
+        );
+        if !image_requests.is_empty() {
+            images::generate_from_narrator_requests(
+                &app,
                 &live_pool,
-                &snapshot,
-                &story_id_bg,
-                &target.id,
+                &entry.id,
                 &visible,
-                thoughts.as_deref(),
-                staging,
-            )
-            .await?;
-            images::delete_assets(&image_paths);
-            let _ = app.emit(
-                "narration-done",
-                NarrationDonePayload {
-                    stream_id: sid,
-                    entry: entry.clone(),
-                },
+                image_requests,
+                None,
             );
-            let requests = std::mem::take(&mut *image_requests.lock().await);
-            if !requests.is_empty() {
-                images::generate_from_narrator_requests(
-                    &app, &live_pool, &entry.id, &visible, requests, None,
-                );
-            }
-            Ok(())
-        },
-    );
+        }
+        Ok(())
+    });
 
     Ok(stream_id)
 }
@@ -875,7 +579,7 @@ pub async fn retry_narration(
             .filter(|entry| entry.id == entry_id && entry.role() == "player")
     };
     let stream_id = if let Some(action) = trailing_action {
-        let history = load_history(pool.inner(), &story_id, Some(action.seq + 1))?;
+        let history = load_transcript(pool.inner(), &story_id, Some(action.seq + 1))?;
         let active_action = {
             let conn = pool.get()?;
             ledger_repository::active_entry(&conn, &action.id)?
@@ -1080,17 +784,8 @@ pub fn erase_last_exchange(pool: State<Pool>, story_id: String) -> AppResult<Vec
 mod tests {
     use super::*;
     use crate::features::ledger::repository::append_entry;
+    use crate::features::narrator::tools;
     use serde_json::json;
-
-    #[test]
-    fn image_tools_include_only_illustration_when_enabled() {
-        let (enabled, _) = narrator_image_tools(true);
-        let (disabled, _) = narrator_image_tools(false);
-
-        assert_eq!(enabled.len(), 1);
-        assert_eq!(enabled[0].name(), "illustrate_scene");
-        assert!(disabled.is_empty());
-    }
 
     fn retry_fixture() -> (Pool, String, String) {
         let pool = crate::shared::db::test_pool();
@@ -1185,7 +880,7 @@ mod tests {
             .unwrap()
             .iter()
             .any(|entry| entry.kind == ledger_kind::DICEROLL));
-        let history = load_history(&snapshot.pool, "s", None).unwrap();
+        let history = load_transcript(&snapshot.pool, "s", None).unwrap();
         assert_eq!(
             history.last().and_then(|turn| turn.entry_id.as_deref()),
             Some(action.as_str())
@@ -1231,7 +926,7 @@ mod tests {
         drop(conn);
 
         let snapshot = snapshot_for_retry(&pool, "s", &reply).unwrap();
-        let history = load_history(&snapshot.pool, "s", None).unwrap();
+        let history = load_transcript(&snapshot.pool, "s", None).unwrap();
         assert_eq!(
             history.last().and_then(|turn| turn.entry_id.as_deref()),
             Some(action.as_str())

@@ -20,6 +20,7 @@ struct EntityContextData {
 
 pub(super) struct Inputs<'a> {
     pub pool: &'a Pool,
+    pub settings_pool: &'a Pool,
     pub story_id: &'a str,
     pub history: &'a [HistoryTurn],
     pub config: &'a TextModelConfig,
@@ -178,8 +179,8 @@ impl EntitiesFull {
     }
 }
 
-fn entities_full(pool: &Pool, story_id: &str) -> AppResult<EntitiesFull> {
-    let context = settings::read_context_injection_settings(pool)?;
+fn entities_full(pool: &Pool, settings_pool: &Pool, story_id: &str) -> AppResult<EntitiesFull> {
+    let context = settings::read_context_injection_settings(settings_pool)?;
     if context.entity_context_mode == "none" {
         return Ok(EntitiesFull::None);
     }
@@ -242,7 +243,7 @@ pub(super) fn combine_context_blocks(parts: &[String]) -> String {
 }
 
 pub(super) fn build_message_context(inputs: &Inputs<'_>) -> AppResult<ContextPlan> {
-    let entities = entities_full(inputs.pool, inputs.story_id)?;
+    let entities = entities_full(inputs.pool, inputs.settings_pool, inputs.story_id)?;
     let author_note = author_note::context_block(inputs.pool, inputs.story_id)?;
     let tools = tool_context(inputs.tool_settings, inputs.image_enabled);
 
@@ -328,6 +329,7 @@ mod tests {
         let tools = NarratorToolSettings::default();
         let plan = build_message_context(&Inputs {
             pool: &pool,
+            settings_pool: &pool,
             story_id: "s",
             history: &history,
             config: &config,

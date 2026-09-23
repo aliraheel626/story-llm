@@ -3,5 +3,6 @@ pub mod entities;
 pub mod images;
 pub mod ledger;
 pub mod narration;
+pub mod narrator;
 pub mod settings;
 pub mod stories;

@@ -89,6 +89,18 @@ pub fn illustrate_scene_tool(image_requests: Arc<Mutex<Vec<ImageRequest>>>) -> P
     )
 }
 
+pub fn narrator_image_tools(enabled: bool) -> (Vec<DynamicTool>, Arc<Mutex<Vec<ImageRequest>>>) {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let tools = if enabled {
+        vec![DynamicTool::from_portable(illustrate_scene_tool(
+            requests.clone(),
+        ))]
+    } else {
+        Vec::new()
+    };
+    (tools, requests)
+}
+
 fn roll_check_tool(staging: Arc<Mutex<TurnStaging>>) -> PortableDynamicTool {
     PortableDynamicTool::new(
         prompts::ROLL_CHECK_TOOL_NAME,
@@ -515,6 +527,16 @@ mod tests {
         let tx = conn.transaction().unwrap();
         staging.commit(&tx, &passage.id).unwrap();
         tx.commit().unwrap();
+    }
+
+    #[test]
+    fn image_tools_include_only_illustration_when_enabled() {
+        let (enabled, _) = narrator_image_tools(true);
+        let (disabled, _) = narrator_image_tools(false);
+
+        assert_eq!(enabled.len(), 1);
+        assert_eq!(enabled[0].name(), "illustrate_scene");
+        assert!(disabled.is_empty());
     }
 
     #[test]

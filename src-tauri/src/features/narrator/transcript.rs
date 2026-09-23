@@ -13,7 +13,7 @@ use crate::shared::error::AppResult;
 /// already exists, only entries from its boundary onward are even fetched —
 /// a long, already-compacted story doesn't reload and re-decode everything
 /// before it on every turn.
-pub(crate) fn load_history(
+pub fn load_transcript(
     pool: &Pool,
     story_id: &str,
     before_seq: Option<i64>,
@@ -314,7 +314,7 @@ mod tests {
     }
 
     #[test]
-    fn load_history_respects_saved_dice_roll_preference() {
+    fn load_transcript_respects_saved_dice_roll_preference() {
         let pool = crate::shared::db::test_pool();
         let conn = pool.get().unwrap();
         conn.execute(
@@ -333,7 +333,7 @@ mod tests {
         )
         .unwrap();
         drop(conn);
-        assert_eq!(load_history(&pool, "s", None).unwrap().len(), 1);
+        assert_eq!(load_transcript(&pool, "s", None).unwrap().len(), 1);
 
         let conn = pool.get().unwrap();
         conn.execute(
@@ -342,7 +342,7 @@ mod tests {
         )
         .unwrap();
         drop(conn);
-        assert!(load_history(&pool, "s", None).unwrap().is_empty());
+        assert!(load_transcript(&pool, "s", None).unwrap().is_empty());
     }
 
     #[test]
@@ -441,7 +441,7 @@ mod tests {
         .unwrap();
         drop(conn);
 
-        let history = load_history(&pool, "s", Some(response.seq)).unwrap();
+        let history = load_transcript(&pool, "s", Some(response.seq)).unwrap();
         assert_eq!(
             history.last().map(|turn| turn.content.as_str()),
             Some("<guide>Keep the rain relentless.</guide>")
@@ -511,7 +511,7 @@ mod tests {
         assert_eq!(query_count, 0);
         drop(conn);
 
-        let history = load_history(&pool, "s", None).unwrap();
+        let history = load_transcript(&pool, "s", None).unwrap();
         assert_eq!(history.len(), 1);
         assert_eq!(history[0].entry_id.as_deref(), Some(old.id.as_str()));
         assert_eq!(history[0].content, "<do>Keep this older turn.</do>");
@@ -596,7 +596,7 @@ mod tests {
         .unwrap();
         drop(conn);
 
-        let history = load_history(&pool, "s", Some(retry_target.seq)).unwrap();
+        let history = load_transcript(&pool, "s", Some(retry_target.seq)).unwrap();
         assert_eq!(history.len(), 2);
         assert!(history[0]
             .content

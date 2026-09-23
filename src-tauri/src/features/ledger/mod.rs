@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::State;
 
-use crate::features::narration::staging::RollFactor;
+use crate::features::narrator::staging::RollFactor;
 use crate::shared::db::Pool;
 use crate::shared::error::{AppError, AppResult};
 use model::{kind, LedgerSnapshot};
