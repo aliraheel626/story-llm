@@ -2,7 +2,6 @@ use chrono::Utc;
 use rusqlite::OptionalExtension;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use tauri::State;
 
 use crate::shared::db::{with_transaction, Pool};
 use crate::shared::error::{AppError, AppResult};
@@ -58,24 +57,11 @@ pub fn read_story_narrator_tools(pool: &Pool, story_id: &str) -> AppResult<Narra
     }
 }
 
-#[tauri::command]
-pub fn get_story_narrator_tools(
-    pool: State<Pool>,
-    story_id: String,
-) -> AppResult<NarratorToolSettings> {
-    read_story_narrator_tools(pool.inner(), &story_id)
-}
-
-#[tauri::command]
-pub fn save_story_narrator_tools(
-    pool: State<Pool>,
-    story_id: String,
+pub(super) fn save_narrator_tools(
+    pool: &Pool,
+    story_id: &str,
     tools: NarratorToolSettings,
 ) -> AppResult<()> {
-    save_narrator_tools(pool.inner(), &story_id, tools)
-}
-
-fn save_narrator_tools(pool: &Pool, story_id: &str, tools: NarratorToolSettings) -> AppResult<()> {
     with_transaction(pool, |tx| {
         let mut settings = story_settings(tx, story_id)?;
         settings["narrator_tools"] = json!(tools);
@@ -111,21 +97,11 @@ pub fn read_story_reasoning_effort(pool: &Pool, story_id: &str) -> AppResult<Str
         .to_string())
 }
 
-#[tauri::command]
-pub fn get_story_reasoning_effort(pool: State<Pool>, story_id: String) -> AppResult<String> {
-    read_story_reasoning_effort(pool.inner(), &story_id)
-}
-
-#[tauri::command]
-pub fn save_story_reasoning_effort(
-    pool: State<Pool>,
-    story_id: String,
-    reasoning_effort: String,
+pub(super) fn save_reasoning_effort(
+    pool: &Pool,
+    story_id: &str,
+    reasoning_effort: &str,
 ) -> AppResult<()> {
-    save_reasoning_effort(pool.inner(), &story_id, &reasoning_effort)
-}
-
-fn save_reasoning_effort(pool: &Pool, story_id: &str, reasoning_effort: &str) -> AppResult<()> {
     let effort = if reasoning_effort.trim().is_empty() {
         None
     } else {
