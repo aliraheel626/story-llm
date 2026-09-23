@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { isPlayerEntry, ledgerInputMode, type ActionMode, type LedgerEntry, type NarrationVariant, type RollDetail, type StoryImage } from "../../shared/types";
+import { isPlayerEntry, ledgerInputMode, type ActionMode, type LedgerEntry, type Roll, type StoryImage } from "../../shared/types";
 import { useStoryStore } from "../story/store";
 import { RollDisclosure } from "./RollDisclosure";
 import { modeDefinition } from "./Composer";
@@ -10,20 +10,17 @@ interface LedgerEntryViewProps {
   storyId: string;
   isLast: boolean;
   retryEntryId: string;
-  canSwipe: boolean;
+  canRetry?: boolean;
   images?: StoryImage[];
-  variants?: NarrationVariant[];
-  rollSummaries?: RollDetail[];
+  rolls?: Roll[];
 }
 
-export function LedgerEntryView({ entry, storyId, isLast, retryEntryId, canSwipe, images, variants, rollSummaries }: LedgerEntryViewProps) {
+export function LedgerEntryView({ entry, storyId, isLast, retryEntryId, canRetry = true, images, rolls }: LedgerEntryViewProps) {
   const streaming = useStoryStore((s) => s.bundles[storyId]?.streaming);
+  const requestPending = useStoryStore((s) => s.bundles[storyId]?.requestPending ?? false);
   const retryNarration = useStoryStore((s) => s.retryNarration);
   const eraseLastExchange = useStoryStore((s) => s.eraseLastExchange);
-  const generateVariant = useStoryStore((s) => s.generateVariant);
   const editEntry = useStoryStore((s) => s.editEntry);
-  const selectVariant = useStoryStore((s) => s.selectVariant);
-  const loadVariantsForEntry = useStoryStore((s) => s.loadVariantsForEntry);
   const imagePending = useStoryStore((s) => s.bundles[storyId]?.imagePendingFor.includes(entry.id) ?? false);
 
   const [editing, setEditing] = useState(false);
@@ -31,17 +28,9 @@ export function LedgerEntryView({ entry, storyId, isLast, retryEntryId, canSwipe
   const [actionBusy, setActionBusy] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  const isNarrator = entry.kind === "narration";
   const inputMode = ledgerInputMode(entry);
   const isBeingReplaced = streaming?.mode === "replace" && streaming.targetEntryId === entry.id;
-  const anyStreamBusy = !!streaming;
-
-  useEffect(() => {
-    if (isLast && isNarrator && !variants) {
-      loadVariantsForEntry(storyId, entry.id);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isLast, isNarrator, entry.id]);
+  const anyStreamBusy = requestPending || !!streaming;
 
   useEffect(() => {
     if (editing) {
@@ -84,19 +73,7 @@ export function LedgerEntryView({ entry, storyId, isLast, retryEntryId, canSwipe
     }
   };
 
-  const selectedIndex = variants?.findIndex((v) => v.is_selected) ?? -1;
-  const showVariantPager = isLast && canSwipe && isNarrator && !!variants && variants.length > 1;
-
-  const onPrevVariant = () => {
-    if (!variants || selectedIndex <= 0) return;
-    runAction(() => selectVariant(storyId, entry.id, variants[selectedIndex - 1].id));
-  };
-  const onNextVariant = () => {
-    if (!variants || selectedIndex === -1 || selectedIndex >= variants.length - 1) return;
-    runAction(() => selectVariant(storyId, entry.id, variants[selectedIndex + 1].id));
-  };
-
-  const displayContent = isBeingReplaced ? streaming!.text : (entry.content ?? "");
+  const displayContent = entry.content ?? "";
 
   const editControls = !editing && !anyStreamBusy && (
     <button
@@ -120,7 +97,7 @@ export function LedgerEntryView({ entry, storyId, isLast, retryEntryId, canSwipe
             {editControls}
             {isLast && !anyStreamBusy && (
               <>
-                <button onClick={() => runAction(() => retryNarration(storyId, retryEntryId))} disabled={actionBusy} className="rounded border border-border bg-bg px-2 py-0.5 text-[11px] text-muted hover:text-text disabled:opacity-40">Retry</button>
+                {canRetry && <button onClick={() => runAction(() => retryNarration(storyId, retryEntryId))} disabled={actionBusy} className="rounded border border-border bg-bg px-2 py-0.5 text-[11px] text-muted hover:text-text disabled:opacity-40">Retry</button>}
                 <button onClick={() => runAction(() => eraseLastExchange(storyId))} disabled={actionBusy} className="rounded border border-border bg-bg px-2 py-0.5 text-[11px] text-danger hover:opacity-80 disabled:opacity-40">Erase</button>
               </>
             )}
@@ -150,7 +127,7 @@ export function LedgerEntryView({ entry, storyId, isLast, retryEntryId, canSwipe
           {editControls}
           {isLast && !anyStreamBusy && (
             <>
-              <button onClick={() => runAction(() => retryNarration(storyId, retryEntryId))} disabled={actionBusy} className="rounded border border-border bg-bg px-2 py-0.5 text-[11px] text-muted hover:text-text disabled:opacity-40">Retry</button>
+              {canRetry && <button onClick={() => runAction(() => retryNarration(storyId, retryEntryId))} disabled={actionBusy} className="rounded border border-border bg-bg px-2 py-0.5 text-[11px] text-muted hover:text-text disabled:opacity-40">Retry</button>}
               <button onClick={() => runAction(() => eraseLastExchange(storyId))} disabled={actionBusy} className="rounded border border-border bg-bg px-2 py-0.5 text-[11px] text-danger hover:opacity-80 disabled:opacity-40">Erase</button>
             </>
           )}
@@ -166,14 +143,13 @@ export function LedgerEntryView({ entry, storyId, isLast, retryEntryId, canSwipe
       ) : (
         <p className="whitespace-pre-wrap font-prose text-base leading-8 text-text">
           {displayContent}
-          {isBeingReplaced && (
-            <span className="ml-0.5 inline-block h-4 w-1.5 translate-y-0.5 animate-pulse bg-muted motion-reduce:animate-none" />
-          )}
         </p>
       )}
 
-      {rollSummaries?.map((summary) => (
-        <RollDisclosure key={summary.roll.id} storyId={storyId} entryId={entry.id} summary={summary} />
+      {isBeingReplaced && <p className="text-xs italic text-muted" role="status">Retrying this reply. The original stays until the new reply succeeds.</p>}
+
+      {rolls?.map((roll) => (
+        <RollDisclosure key={roll.id} roll={roll} />
       ))}
 
       {images?.map((image) => (
@@ -191,45 +167,18 @@ export function LedgerEntryView({ entry, storyId, isLast, retryEntryId, canSwipe
       )}
 
       {!editing && (
-        <div className="flex items-center justify-between">
-          <div>
-            {showVariantPager && (
-              <div className="flex items-center gap-2 text-[11px] text-muted">
-                <button onClick={onPrevVariant} disabled={selectedIndex <= 0 || actionBusy || anyStreamBusy} className="hover:text-text disabled:opacity-30">
-                  ‹
-                </button>
-                <span>
-                  {selectedIndex + 1}/{variants!.length}
-                </span>
-                <button
-                  onClick={onNextVariant}
-                  disabled={selectedIndex === -1 || selectedIndex >= variants!.length - 1 || actionBusy || anyStreamBusy}
-                  className="hover:text-text disabled:opacity-30"
-                >
-                  ›
-                </button>
-              </div>
-            )}
-          </div>
-
+        <div className="flex justify-end">
           <div className="flex gap-1.5 opacity-0 transition-opacity group-hover:opacity-100">
             {editControls}
             {isLast && !anyStreamBusy && (
               <>
-                {canSwipe && <button
-                  onClick={() => runAction(() => generateVariant(storyId, entry.id))}
-                  disabled={actionBusy}
-                  className="rounded border border-border bg-bg px-2 py-0.5 text-[11px] text-muted hover:text-text disabled:opacity-40"
-                >
-                  Swipe
-                </button>}
-                <button
+                {canRetry && <button
                   onClick={() => runAction(() => retryNarration(storyId, retryEntryId))}
                   disabled={actionBusy}
                   className="rounded border border-border bg-bg px-2 py-0.5 text-[11px] text-muted hover:text-text disabled:opacity-40"
                 >
                   Retry
-                </button>
+                </button>}
                 <button
                   onClick={() => runAction(() => eraseLastExchange(storyId))}
                   disabled={actionBusy}

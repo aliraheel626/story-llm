@@ -1,95 +1,34 @@
-import { useState } from "react";
-import type { EntityAttributeValue, RollDetail } from "../../shared/types";
-import { useStoryStore } from "../story/store";
+import type { Roll } from "../../shared/types";
 
-function attrLine(attrs: EntityAttributeValue[]): string {
-  return attrs.map((a) => `${a.canonical_name} ${Math.round(a.value)}/${Math.round(a.max)}`).join(", ");
-}
-
-/** Roll-high-succeeds: mirrors src-tauri/src/features/dicerolls/resolve.rs::needed_roll. */
-function neededRoll(pSuccess: number): number {
-  return Math.round(100 - pSuccess * 100);
-}
-
-function matchupLabel(summary: RollDetail): string {
-  const actor = summary.actor_attribute_name ? `${summary.actor_attribute_name} (${summary.actor_name})` : summary.actor_name;
-  if (!summary.target_name) return actor;
-  const target = summary.target_attribute_name ? `${summary.target_attribute_name} (${summary.target_name})` : summary.target_name;
-  return `${actor} vs ${target}`;
-}
-
-/** `summary` is the cheap, always-available version (names, no attribute
- * snapshots) from the story-wide bulk load; all details for the entry are
- * fetched together, then matched by roll identity. */
-export function RollDisclosure({ storyId, entryId, summary }: { storyId: string; entryId: string; summary: RollDetail }) {
-  const [open, setOpen] = useState(false);
-  const details = useStoryStore((s) => s.bundles[storyId]?.rollDetailByEntry[entryId]);
-  const detail = details?.find((candidate) => candidate.roll.id === summary.roll.id);
-  const loadRollDetail = useStoryStore((s) => s.loadRollDetail);
-
-  const toggle = () => {
-    if (!open && !details) loadRollDetail(storyId, entryId);
-    setOpen((v) => !v);
-  };
-
-  const { roll } = summary;
-  const pct = Math.round(roll.p_success * 100);
-  const needed = neededRoll(roll.p_success);
-
+/** Roll-high-succeeds, with an integer draw from 0 through 99. */
+export function RollDisclosure({ roll }: { roll: Roll }) {
+  const needed = 100 - roll.chance_percent;
+  const source = roll.chance_source
+    ? { default: "Default", narrator: "Narrator", attributes: "Attributes" }[roll.chance_source]
+    : "Unspecified";
+  const factors = roll.factors ?? [];
   return (
-    <div className="text-[11px] text-muted">
-      <button onClick={toggle} className="flex items-center gap-1 hover:text-text">
-        <span>🎲</span>
-        <span>
-          {matchupLabel(summary)} — {pct}% chance → rolled {roll.roll}, needed {needed}+ → {roll.outcome} ({roll.degree})
-        </span>
-        <span className="text-muted">{open ? "▲" : "▼"}</span>
-      </button>
-
-      {open && (
-        <div className="mt-1.5 rounded border border-border bg-bg px-2.5 py-2 leading-5">
-          {!detail ? (
-            <span>Loading...</span>
-          ) : (
-            <div className="flex flex-col gap-1">
-              <div>
-                <span className="text-text">{detail.actor_name}</span>
-                {detail.actor_attribute_name && (
-                  <>
-                    {" "}
-                    {detail.actor_attribute_name} {Math.round(roll.actor_value ?? 0)}
-                  </>
-                )}
-                {detail.target_name && (
-                  <>
-                    {" "}
-                    vs <span className="text-text">{detail.target_name}</span>
-                    {detail.target_attribute_name && (
-                      <>
-                        {" "}
-                        {detail.target_attribute_name} {Math.round(roll.target_value ?? 0)}
-                      </>
-                    )}
-                  </>
-                )}
-              </div>
-              <div>
-                {pct}% chance → needed {needed}+, rolled {roll.roll} → {roll.outcome} ({roll.degree}). Seed {roll.seed}.
-              </div>
-              {detail.actor_attributes.length > 0 && (
-                <div>
-                  {detail.actor_name}: {attrLine(detail.actor_attributes)}
-                </div>
-              )}
-              {detail.target_name && detail.target_attributes.length > 0 && (
-                <div>
-                  {detail.target_name}: {attrLine(detail.target_attributes)}
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-      )}
-    </div>
+    <details className="text-[11px] text-muted">
+      <summary className="cursor-pointer text-left hover:text-text">
+        Roll: {roll.reason ? `${roll.reason} · ` : ""}{source} · {roll.chance_percent}% chance · needed {needed}+ · rolled {roll.roll} · {roll.outcome}
+        {factors.length > 0 && ` · ${factors.map((factor) => `${factor.entity_name}: ${factor.attribute_name}`).join(" vs ")}`}
+      </summary>
+      <div className="mt-1.5 rounded border border-border bg-bg px-2.5 py-2 leading-5">
+        {roll.reason && <p className="text-text">Reason: {roll.reason}</p>}
+        <p>Chance source: {source}. Chance: {roll.chance_percent}%. Needed: {needed} or higher (0-99). Actual roll: {roll.roll}. Outcome: {roll.outcome}. Seed: {roll.seed}.</p>
+        {factors.length > 0 ? (
+          <>
+            <p>Values are normalized to their ranges. The first factor acts; the second opposes it, or a neutral midpoint is used when absent.</p>
+            <ul className="list-disc pl-4">
+              {factors.map((factor, index) => (
+                <li key={`${factor.entity_id}:${factor.attribute_id}:${index}`}>
+                  {factor.entity_name}: {factor.attribute_name} {factor.value} (range {factor.min}-{factor.max})
+                </li>
+              ))}
+            </ul>
+          </>
+        ) : <p>No attribute factors.</p>}
+      </div>
+    </details>
   );
 }

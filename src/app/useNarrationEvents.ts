@@ -8,7 +8,6 @@ import type {
   NarrationToolActivityPayload,
   StoryImage,
   StoryTitleUpdatedPayload,
-  SwipeDonePayload,
 } from "../shared/types";
 
 /** Wires the Rust-side narration-* events into the story store. Mount once near the app root. */
@@ -23,9 +22,6 @@ export function useNarrationEvents() {
       }),
       listen<NarrationDonePayload>("narration-done", (event) => {
         useStoryStore.getState()._finalize(event.payload);
-      }),
-      listen<SwipeDonePayload>("swipe-done", (event) => {
-        useStoryStore.getState()._swipeDone(event.payload);
       }),
       listen<NarrationErrorPayload>("narration-error", (event) => {
         useStoryStore.getState()._fail(event.payload.stream_id, event.payload.message);

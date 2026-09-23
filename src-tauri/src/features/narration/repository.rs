@@ -5,7 +5,6 @@ use crate::features::ledger::{
 use crate::shared::error::AppResult;
 
 use super::model::ActiveStoryEntry;
-use crate::features::ledger::model::NarrationVariant;
 
 fn to_story_entry(entry: LedgerEntry) -> ActiveStoryEntry {
     let role = if entry.kind == kind::PLAYER_MESSAGE {
@@ -78,13 +77,4 @@ pub(super) fn image_paths_for_entry(
     entry_id: &str,
 ) -> AppResult<Vec<String>> {
     ledger::image_paths_for_entry(conn, entry_id)
-}
-
-pub(super) fn list_variants(
-    conn: &rusqlite::Connection,
-    entry_id: &str,
-) -> AppResult<Vec<NarrationVariant>> {
-    let entry = ledger::get_entry(conn, entry_id)?;
-    let raw = ledger::list_logical_entries(conn, &entry.story_id)?;
-    Ok(reducer::variants_for_entry(&raw, entry_id))
 }

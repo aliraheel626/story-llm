@@ -24,7 +24,6 @@ export function StoryView() {
   const loadImagesForStory = useStoryStore((s) => s.loadImagesForStory);
   const loadRollsForStory = useStoryStore((s) => s.loadRollsForStory);
   const imagesByEntry = useStoryStore((s) => activeStoryId ? s.bundles[activeStoryId]?.imagesByEntry : undefined);
-  const variantsByEntry = useStoryStore((s) => activeStoryId ? s.bundles[activeStoryId]?.variantsByEntry : undefined);
   const rollsByEntry = useStoryStore((s) => activeStoryId ? s.bundles[activeStoryId]?.rollsByEntry : undefined);
   const streaming = useStoryStore((s) => activeStoryId ? s.bundles[activeStoryId]?.streaming : undefined);
   const hidden = useStoryStore((s) => activeStoryId ? s.bundles[activeStoryId]?.hidden : undefined);
@@ -35,18 +34,17 @@ export function StoryView() {
 
   /**
    * Reasoning and tool calls for one narration entry. Committed turns read
-   * from the entry's own payload plus the hidden events it targeted (so the
+   * from the entry's payload plus the hidden events it targeted (so the
    * panel survives a reload); the newest turn also falls back to the
    * in-session snapshot for anything the fetched events don't cover yet.
    */
   const activityFor = (entry: LedgerEntry, isLastEntry: boolean): TurnActivityData | undefined => {
     if (entry.kind !== "narration") return undefined;
-    const selected = variantsByEntry?.[entry.id]?.find((variant) => variant.is_selected);
-    const thoughts = selected ? selected.thoughts : (entry.payload as NarrativePayload).thoughts;
+    const thoughts = (entry.payload as NarrativePayload).thoughts;
     const tools = toolCallsFromEvents(entry.id, hidden);
     // Hidden events for the turn that just finished aren't in the store until
     // a reload, so fill whichever half is missing from the session snapshot.
-    const snapshot = isLastEntry ? lastTurnActivity : undefined;
+    const snapshot = isLastEntry && lastTurnActivity?.entryId === entry.id ? lastTurnActivity : undefined;
     const activity: TurnActivityData = {
       thoughts: thoughts ?? snapshot?.thoughts,
       tools: tools.length > 0
@@ -116,7 +114,8 @@ export function StoryView() {
             const pinHere = isStreamingReplace ? entry.id === streaming!.targetEntryId : isLastEntry && !isStreamingAppend;
             const activity = activityFor(entry, isLastEntry);
             const hiddenTrailingAction = isLastEntry
-              && actualLastEntry?.kind === "player_message"
+               && actualLastEntry?.kind === "player_message"
+               && ledgerInputMode(actualLastEntry) !== "see"
               && modeDefinition(ledgerInputMode(actualLastEntry) as ActionMode).display === "hidden"
               ? actualLastEntry
               : undefined;
@@ -128,10 +127,9 @@ export function StoryView() {
                   storyId={activeStoryId!}
                   isLast={isLastEntry}
                   retryEntryId={hiddenTrailingAction?.id ?? entry.id}
-                  canSwipe={actualLastEntry?.id === entry.id}
+                  canRetry={!(isLastEntry && actualLastEntry?.kind === "player_message" && ledgerInputMode(actualLastEntry) === "see")}
                   images={imagesByEntry?.[entry.id]}
-                  variants={variantsByEntry?.[entry.id]}
-                  rollSummaries={rollsByEntry?.[entry.id]}
+                  rolls={rollsByEntry?.[entry.id]}
                 />
               </div>
             );

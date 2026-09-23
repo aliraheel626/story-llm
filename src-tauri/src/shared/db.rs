@@ -3,6 +3,8 @@ use rusqlite::OptionalExtension;
 use std::path::Path;
 use uuid::Uuid;
 
+use crate::features::ledger::{model::kind, repository};
+use crate::features::stories::settings::NarratorToolSettings;
 use crate::shared::error::{AppError, AppResult};
 
 pub type Pool = r2d2::Pool<SqliteConnectionManager>;
@@ -124,9 +126,9 @@ fn run_migrations(conn: &mut PooledConn) -> AppResult<()> {
         "#,
     )?;
     migrate_ledger_retention_settings(conn)?;
-    migrate_existing_story_dice_settings(conn)?;
     migrate_narrator_memory_settings(conn)?;
     migrate_author_notes(conn)?;
+    migrate_narrator_tools(conn)?;
     Ok(())
 }
 
@@ -182,38 +184,205 @@ fn migrate_ledger_retention_settings(conn: &mut rusqlite::Connection) -> AppResu
     Ok(())
 }
 
-fn migrate_existing_story_dice_settings(conn: &mut rusqlite::Connection) -> AppResult<()> {
-    const MIGRATION_KEY: &str = "migration_existing_story_dice_settings";
-    let migrated: bool = conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM settings WHERE key = ?1)",
-        [MIGRATION_KEY],
+/// Idempotent on name rather than on a migration marker: creation and upgrade
+/// both call this with their existing story transaction.
+pub(crate) fn seed_player_entity(conn: &rusqlite::Connection, story_id: &str) -> AppResult<()> {
+    let exists: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM story_entity_state
+         WHERE story_id = ?1 AND name = 'You' COLLATE NOCASE)",
+        [story_id],
         |row| row.get(0),
     )?;
-    if migrated {
+    if exists {
         return Ok(());
     }
+    let id = Uuid::new_v4().to_string();
+    crate::features::entities::create_entity_with_id_sync(
+        conn,
+        &id,
+        story_id,
+        "character",
+        "You",
+        None,
+        "story_bootstrap",
+        None,
+    )?;
+    Ok(())
+}
+
+fn migrate_narrator_tools(conn: &mut rusqlite::Connection) -> AppResult<()> {
+    const MIGRATION_KEY: &str = "migration_narrator_tools_stateless_roll_v1";
+    let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+    if tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM settings WHERE key = ?1)",
+        [MIGRATION_KEY],
+        |row| row.get::<_, bool>(0),
+    )? {
+        tx.commit()?;
+        return Ok(());
+    }
+
     let stories = {
-        let mut stmt = conn.prepare("SELECT id, settings_json FROM stories")?;
+        let mut stmt = tx.prepare("SELECT id, settings_json FROM stories")?;
         let rows = stmt.query_map([], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
         })?;
         rows.collect::<Result<Vec<_>, _>>()?
     };
-    let tx = conn.transaction()?;
     for (story_id, raw) in stories {
         let mut settings = serde_json::from_str::<serde_json::Value>(&raw)
             .unwrap_or_else(|_| serde_json::json!({}));
         if !settings.is_object() {
             settings = serde_json::json!({});
         }
-        if settings.get("attributes_enabled").is_some() {
-            continue;
-        }
-        settings["attributes_enabled"] = serde_json::json!(true);
+        let object = settings.as_object_mut().unwrap();
+        object.remove("attributes_enabled");
+        object.remove("dice_mode");
+        object.insert(
+            "narrator_tools".into(),
+            serde_json::json!(NarratorToolSettings::default()),
+        );
         tx.execute(
             "UPDATE stories SET settings_json = ?1 WHERE id = ?2",
             rusqlite::params![settings.to_string(), story_id],
         )?;
+        seed_player_entity(&tx, &story_id)?;
+
+        let entries = repository::list_logical_entries(&tx, &story_id)?;
+        for base in entries.iter().filter(|entry| entry.kind == kind::NARRATION) {
+            // Mirror the legacy reducer before removing its variant records.
+            let selected_id = entries
+                .iter()
+                .rev()
+                .filter(|entry| entry.target_entry_id.as_deref() == Some(&base.id))
+                .find_map(|entry| match entry.kind.as_str() {
+                    "narration_variant" => Some(entry.id.as_str()),
+                    "narration_selected" => entry
+                        .payload
+                        .get("selected_entry_id")
+                        .and_then(|id| id.as_str()),
+                    _ => None,
+                })
+                .unwrap_or(&base.id);
+            let selected = entries.iter().find(|entry| {
+                entry.id == selected_id
+                    && entry.kind == "narration_variant"
+                    && entry.target_entry_id.as_deref() == Some(&base.id)
+            });
+            let selected_id = selected.map(|entry| entry.id.as_str()).unwrap_or(&base.id);
+            let edit = entries.iter().rev().find(|entry| {
+                entry.kind == kind::CONTENT_EDITED
+                    && entry.target_entry_id.as_deref() == Some(&base.id)
+                    && entry
+                        .payload
+                        .get("applies_to")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or(&base.id)
+                        == selected_id
+                    && entry.content.is_some()
+            });
+            let content = edit
+                .and_then(|entry| entry.content.as_ref())
+                .or_else(|| selected.and_then(|entry| entry.content.as_ref()))
+                .or(base.content.as_ref());
+            let mut payload = base.payload.clone();
+            if let Some(variant) = selected {
+                if let Some(object) = payload.as_object_mut() {
+                    if let Some(thoughts) = variant.payload.get("thoughts") {
+                        object.insert("thoughts".into(), thoughts.clone());
+                    } else {
+                        object.remove("thoughts");
+                    }
+                }
+            }
+            tx.execute(
+                "UPDATE ledger_entries SET content = ?1, payload_json = ?2 WHERE id = ?3",
+                rusqlite::params![content, payload.to_string(), base.id],
+            )?;
+        }
+    }
+
+    // Narration edits are now folded into base content; player edits stay as
+    // events. Cascades remove any dependents of discarded alternatives.
+    tx.execute(
+        "DELETE FROM ledger_entries WHERE kind = ?1 AND target_entry_id IN
+         (SELECT id FROM ledger_entries WHERE kind = ?2)",
+        rusqlite::params![kind::CONTENT_EDITED, kind::NARRATION],
+    )?;
+    tx.execute(
+        "DELETE FROM ledger_entries WHERE kind IN (?1, ?2, ?3, ?4)",
+        rusqlite::params![
+            "narration_variant",
+            "narration_selected",
+            kind::DICEROLL,
+            kind::DICEROLL_SETTINGS_CHANGED
+        ],
+    )?;
+
+    // A summary covering a deleted roll/revision can no longer identify its
+    // original cut; discard it instead of hiding still-visible history.
+    let summaries = {
+        let mut stmt = tx.prepare(
+            "SELECT id, story_id, seq, payload_json FROM ledger_entries WHERE kind = ?1",
+        )?;
+        let rows = stmt.query_map([kind::CONTEXT_SUMMARY], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, String>(3)?,
+            ))
+        })?;
+        rows.collect::<Result<Vec<_>, _>>()?
+    };
+    for (id, story_id, seq, raw) in summaries {
+        let boundary = serde_json::from_str::<serde_json::Value>(&raw).ok();
+        let through_id = boundary
+            .as_ref()
+            .and_then(|value| value.get("through_entry_id"))
+            .and_then(|value| value.as_str());
+        let through_seq = boundary
+            .as_ref()
+            .and_then(|value| value.get("through_seq"))
+            .and_then(|value| value.as_i64());
+        let valid = if let (Some(through_id), Some(through_seq)) = (through_id, through_seq) {
+            tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM ledger_entries WHERE id = ?1 AND story_id = ?2 AND seq = ?3)",
+                rusqlite::params![through_id, story_id, through_seq],
+                |row| row.get::<_, bool>(0),
+            )? && through_seq < seq
+        } else {
+            false
+        };
+        if !valid {
+            tx.execute("DELETE FROM ledger_entries WHERE id = ?1", [id])?;
+        }
+    }
+
+    let image: Option<String> = tx
+        .query_row(
+            "SELECT value FROM settings WHERE key = 'image_model_default'",
+            [],
+            |row| row.get(0),
+        )
+        .optional()?;
+    if let Some(raw) = image {
+        if let Ok(mut value) = serde_json::from_str::<serde_json::Value>(&raw) {
+            if let Some(object) = value.as_object_mut() {
+                if object.remove("narrator_images").is_some() {
+                    tx.execute(
+                        "UPDATE settings SET value = ?1 WHERE key = 'image_model_default'",
+                        [value.to_string()],
+                    )?;
+                }
+            }
+        }
+    }
+    tx.execute("DELETE FROM settings WHERE key = 'narrator_images'", [])?;
+    if tx.prepare("PRAGMA foreign_key_check")?.exists([])? {
+        return Err(AppError::Other(
+            "narrator tools migration failed foreign key validation".into(),
+        ));
     }
     tx.execute(
         "INSERT INTO settings (key, value) VALUES (?1, 'true')",
@@ -412,17 +581,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn old_stories_keep_dice_tools_and_new_stories_default_off() {
+    fn legacy_stories_reset_tools_once_and_new_stories_default_on() {
         let pool = test_pool();
         let mut conn = pool.get().unwrap();
         conn.execute(
-            "DELETE FROM settings WHERE key = 'migration_existing_story_dice_settings'",
+            "DELETE FROM settings WHERE key = 'migration_narrator_tools_stateless_roll_v1'",
             [],
         )
         .unwrap();
         for (id, settings) in [
-            ("old", "{}"),
-            ("disabled", "{\"attributes_enabled\":false}"),
+            ("old", "{\"dice_mode\":\"never\",\"reasoning_effort\":\"high\",\"author_note\":\"remember\"}"),
+            ("disabled", "{\"attributes_enabled\":false,\"narrator_tools\":{\"roll_check\":false}}"),
         ] {
             conn.execute(
                 "INSERT INTO stories (id, title, created_at, updated_at, settings_json) VALUES (?1, 'story', 'now', 'now', ?2)",
@@ -431,6 +600,18 @@ mod tests {
             .unwrap();
         }
         run_migrations(&mut conn).unwrap();
+        let updated = NarratorToolSettings {
+            roll_check: false,
+            ..NarratorToolSettings::default()
+        };
+        conn.execute(
+            "UPDATE stories SET settings_json = ?1 WHERE id = 'old'",
+            [serde_json::json!({
+                "narrator_tools": updated, "reasoning_effort": "high", "author_note": "remember"
+            })
+            .to_string()],
+        )
+        .unwrap();
         conn.execute(
             "INSERT INTO stories (id, title, created_at, updated_at, settings_json) VALUES ('new', 'story', 'now', 'now', '{}')",
             [],
@@ -439,14 +620,184 @@ mod tests {
         run_migrations(&mut conn).unwrap();
         drop(conn);
 
-        for (id, enabled) in [("old", true), ("disabled", false), ("new", false)] {
+        for (id, expected) in [
+            ("old", updated),
+            ("disabled", NarratorToolSettings::default()),
+            ("new", NarratorToolSettings::default()),
+        ] {
             assert_eq!(
-                crate::features::dicerolls::commands::read_story_diceroll_settings(&pool, id)
-                    .unwrap()
-                    .attributes_enabled,
-                enabled
+                crate::features::stories::settings::read_story_narrator_tools(&pool, id).unwrap(),
+                expected
             );
         }
+        let conn = pool.get().unwrap();
+        let old: String = conn
+            .query_row(
+                "SELECT settings_json FROM stories WHERE id = 'old'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let old: serde_json::Value = serde_json::from_str(&old).unwrap();
+        assert_eq!(old["reasoning_effort"], "high");
+        assert_eq!(old["author_note"], "remember");
+        assert!(old.get("dice_mode").is_none());
+        let disabled: String = conn
+            .query_row(
+                "SELECT settings_json FROM stories WHERE id = 'disabled'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(serde_json::from_str::<serde_json::Value>(&disabled)
+            .unwrap()
+            .get("attributes_enabled")
+            .is_none());
+        for id in ["old", "disabled"] {
+            let count: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM story_entity_state WHERE story_id=?1 AND name='You'",
+                    [id],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(count, 1);
+        }
+    }
+
+    #[test]
+    fn migration_materializes_selected_edit_and_discards_legacy_rolls_without_repeating() {
+        let dir = std::env::temp_dir().join(format!("dungeon-tool-migration-{}", Uuid::new_v4()));
+        let pool = init_pool(&dir).unwrap();
+        let conn = pool.get().unwrap();
+        conn.execute(
+            "DELETE FROM settings WHERE key = 'migration_narrator_tools_stateless_roll_v1'",
+            [],
+        )
+        .unwrap();
+        conn.execute_batch(
+            "INSERT INTO stories (id,title,created_at,updated_at,settings_json) VALUES
+             ('s','Story','now','now','{\"attributes_enabled\":false,\"reasoning_effort\":\"low\",\"extra\":9}');
+             INSERT INTO ledger_entries (id,story_id,seq,kind,visibility,content,payload_json,target_entry_id,created_at) VALUES
+             ('player','s',0,'player_message','visible','old player','{}',NULL,'now'),
+             ('player-edit','s',1,'content_edited','hidden','edited player','{}','player','now'),
+             ('base','s',2,'narration','visible','base text','{\"thoughts\":\"base thought\",\"input_mode\":\"do\"}',NULL,'now'),
+             ('variant','s',3,'narration_variant','hidden','variant text','{\"thoughts\":\"variant thought\"}','base','now'),
+             ('edited','s',4,'content_edited','hidden','visible edited text','{\"applies_to\":\"variant\"}','base','now'),
+             ('selected','s',5,'narration_selected','hidden',NULL,'{\"selected_entry_id\":\"variant\"}','base','now'),
+             ('roll','s',6,'diceroll','hidden',NULL,'{\"roll\":7}','base','now'),
+             ('dice-setting','s',7,'diceroll_settings_changed','hidden',NULL,'{}',NULL,'now'),
+             ('invalid-summary','s',8,'context_summary','hidden','old summary','{\"through_seq\":6,\"through_entry_id\":\"roll\"}',NULL,'now'),
+             ('valid-summary','s',9,'context_summary','hidden','safe summary','{\"through_seq\":2,\"through_entry_id\":\"base\"}',NULL,'now');
+             INSERT INTO settings (key,value) VALUES ('image_model_default','{\"model\":\"image-v1\",\"enabled\":true,\"style\":\"ink\",\"narrator_images\":false}');",
+        ).unwrap();
+        drop(conn);
+        drop(pool);
+        let pool = init_pool(&dir).unwrap();
+        let conn = pool.get().unwrap();
+        let (content, payload): (String, String) = conn
+            .query_row(
+                "SELECT content,payload_json FROM ledger_entries WHERE id='base'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(content, "visible edited text");
+        let payload: serde_json::Value = serde_json::from_str(&payload).unwrap();
+        assert_eq!(payload["thoughts"], "variant thought");
+        assert_eq!(payload["input_mode"], "do");
+        let surviving: Vec<String> = conn
+            .prepare("SELECT id FROM ledger_entries ORDER BY seq")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(
+            &surviving[..4],
+            ["player", "player-edit", "base", "valid-summary"]
+        );
+        assert_eq!(surviving.len(), 5);
+        let (seed_kind, seed_payload): (String, String) = conn
+            .query_row(
+                "SELECT kind, payload_json FROM ledger_entries WHERE id = ?1",
+                [&surviving[4]],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(seed_kind, kind::ENTITY_CREATED);
+        let seed_payload: serde_json::Value = serde_json::from_str(&seed_payload).unwrap();
+        assert_eq!(seed_payload["name"], "You");
+        let image: String = conn
+            .query_row(
+                "SELECT value FROM settings WHERE key='image_model_default'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let image: serde_json::Value = serde_json::from_str(&image).unwrap();
+        assert_eq!(image["style"], "ink");
+        assert!(image.get("narrator_images").is_none());
+        assert!(!conn
+            .prepare("PRAGMA foreign_key_check")
+            .unwrap()
+            .exists([])
+            .unwrap());
+        conn.execute("INSERT INTO ledger_entries (id,story_id,seq,kind,visibility,content,payload_json,target_entry_id,created_at) VALUES ('new-roll','s',(SELECT COALESCE(MAX(seq),-1)+1 FROM ledger_entries WHERE story_id='s'),'diceroll','hidden',NULL,'{\"chance_percent\":50}','base','now')", []).unwrap();
+        drop(conn);
+        drop(pool);
+        let pool = init_pool(&dir).unwrap();
+        let conn = pool.get().unwrap();
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM ledger_entries WHERE id='new-roll'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 1);
+        let you_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM story_entity_state WHERE story_id='s' AND name='You'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(you_count, 1);
+        drop(conn);
+        drop(pool);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn seed_player_entity_respects_existing_case_insensitive_name_and_no_attributes() {
+        let pool = test_pool();
+        let conn = pool.get().unwrap();
+        conn.execute_batch(
+            "INSERT INTO stories (id,title,created_at,updated_at) VALUES
+             ('existing','Existing','now','now'), ('fresh','Fresh','now','now');
+             INSERT INTO entities (id,story_id,kind,created_at) VALUES ('original','existing','character','now');
+             INSERT INTO story_entity_state (story_id,entity_id,name,is_present,updated_at)
+             VALUES ('existing','original','yOu',1,'now');",
+        ).unwrap();
+        for story_id in ["existing", "fresh"] {
+            seed_player_entity(&conn, story_id).unwrap();
+            seed_player_entity(&conn, story_id).unwrap();
+            let (count, attributes): (i64, i64) = conn
+                .query_row(
+                    "SELECT COUNT(*), (SELECT COUNT(*) FROM entity_attributes WHERE story_id=?1)
+                 FROM story_entity_state WHERE story_id=?1 AND name='You' COLLATE NOCASE",
+                    [story_id],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .unwrap();
+            assert_eq!((count, attributes), (1, 0));
+        }
+        let original: String = conn.query_row(
+            "SELECT entity_id FROM story_entity_state WHERE story_id='existing' AND name='You' COLLATE NOCASE",
+            [], |row| row.get(0),
+        ).unwrap();
+        assert_eq!(original, "original");
     }
 
     #[test]

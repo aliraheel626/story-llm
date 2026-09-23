@@ -20,23 +20,9 @@ pub struct LedgerSnapshot {
     pub hidden: Vec<LedgerEntry>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NarrationVariant {
-    pub id: String,
-    pub entry_id: String,
-    pub content: String,
-    pub is_selected: bool,
-    pub created_at: String,
-    /// That revision's own reasoning, for the composer's activity panel.
-    /// Display only — never fed back to the model as context.
-    pub thoughts: Option<String>,
-}
-
 pub mod kind {
     pub const PLAYER_MESSAGE: &str = "player_message";
     pub const NARRATION: &str = "narration";
-    pub const NARRATION_VARIANT: &str = "narration_variant";
-    pub const NARRATION_SELECTED: &str = "narration_selected";
     pub const CONTENT_EDITED: &str = "content_edited";
     pub const DICEROLL: &str = "diceroll";
     pub const ENTITY_CREATED: &str = "entity_created";

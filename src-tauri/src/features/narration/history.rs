@@ -95,10 +95,16 @@ fn history_from_entries(
             });
             continue;
         }
-        // CONTENT_EDITED/NARRATION_SELECTED are deliberately excluded here:
+        // CONTENT_EDITED is deliberately excluded here:
         // their effect is already folded into the primary turn above via
         // `active`, so surfacing them again would duplicate that same text
         // as a second, decontextualized "authoritative event" line.
+        if entry.kind == kind::ENTITY_CREATED
+            && entry.payload.get("source").and_then(|value| value.as_str())
+                == Some("story_bootstrap")
+        {
+            continue;
+        }
         let contextual = matches!(
             entry.kind.as_str(),
             kind::ENTITY_CREATED
@@ -108,7 +114,6 @@ fn history_from_entries(
                 | kind::ENTITY_ATTRIBUTE_CHANGED
                 | kind::ENTITY_ATTRIBUTE_REMOVED
                 | kind::IMAGE_GENERATED
-                | kind::DICEROLL_SETTINGS_CHANGED
         ) || (dice_rolls_in_context && entry.kind == kind::DICEROLL);
         if !contextual {
             continue;
@@ -174,7 +179,31 @@ mod tests {
     }
 
     #[test]
-    fn edited_and_reselected_narration_appears_only_once() {
+    fn migrated_player_bootstrap_does_not_trail_narration_history() {
+        let rows = vec![
+            entry(
+                "p1",
+                0,
+                kind::PLAYER_MESSAGE,
+                Some("Open the door"),
+                json!({"input_mode":"do"}),
+            ),
+            entry("n1", 1, kind::NARRATION, Some("It opens."), json!({})),
+            entry(
+                "bootstrap",
+                2,
+                kind::ENTITY_CREATED,
+                Some("You was added as a character."),
+                json!({"name":"You","source":"story_bootstrap"}),
+            ),
+        ];
+        let history = history_from_entries(&rows, true);
+        assert_eq!(history.len(), 2);
+        assert_eq!(history.last().unwrap().entry_id.as_deref(), Some("n1"));
+    }
+
+    #[test]
+    fn edited_narration_appears_only_once() {
         let mut narration = entry(
             "n1",
             0,
@@ -187,20 +216,12 @@ mod tests {
             1,
             kind::CONTENT_EDITED,
             Some("edited text"),
-            json!({"reason":"user_edit","applies_to":"n1"}),
+            json!({"reason":"user_edit"}),
         );
         edited.target_entry_id = Some("n1".into());
-        let mut selected = entry(
-            "s1",
-            2,
-            kind::NARRATION_SELECTED,
-            None,
-            json!({"selected_entry_id":"n1"}),
-        );
-        selected.target_entry_id = Some("n1".into());
         narration.target_entry_id = None;
 
-        let history = history_from_entries(&[narration, edited, selected], true);
+        let history = history_from_entries(&[narration, edited], true);
         assert_eq!(history.len(), 1);
         assert_eq!(history[0].content, "edited text");
     }

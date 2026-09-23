@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { REASONING_EFFORT_OPTIONS, type ActionMode, type ReasoningEffort } from "../../shared/types";
 import { useImageModelStore } from "../settings/imageModelStore";
-import { DEFAULT_DICEROLL_SETTINGS, useStoryStore } from "../story/store";
+import { useStoryStore } from "../story/store";
 
 export type ModeDisplay = "bubble" | "chip" | "hidden";
 type DisabledWhen = "image-unavailable" | "no-entry" | null;
@@ -39,39 +39,45 @@ export function Composer({ storyId }: { storyId: string | null }) {
   const createStory = useStoryStore((s) => s.createStory);
   const submitTurn = useStoryStore((s) => s.submitTurn);
   const streaming = useStoryStore((s) => storyId ? s.bundles[storyId]?.streaming : undefined);
+  const requestPending = useStoryStore((s) => storyId ? (s.bundles[storyId]?.requestPending ?? false) : false);
   const ledgerLoading = useStoryStore((s) => storyId ? (s.bundles[storyId]?.ledgerLoading ?? false) : false);
   const turnError = useStoryStore((s) => storyId ? s.bundles[storyId]?.turnError : null);
   const entries = useStoryStore((s) => storyId ? s.bundles[storyId]?.entries : undefined);
   const imagePendingFor = useStoryStore((s) => storyId ? s.bundles[storyId]?.imagePendingFor : undefined);
   const imageSettings = useImageModelStore((s) => s.settings);
   const loadImageSettings = useImageModelStore((s) => s.load);
-  const saveSettings = useStoryStore((s) => s.saveDiceSettings);
-  const loadDiceSettings = useStoryStore((s) => s.loadDiceSettings);
-  const reasoningEffort =
-    (useStoryStore((s) => (storyId ? s.bundles[storyId]?.diceSettings : s.draftDiceSettings)) ?? DEFAULT_DICEROLL_SETTINGS)
-      .reasoning_effort;
+  const saveReasoningEffort = useStoryStore((s) => s.saveReasoningEffort);
+  const loadReasoningEffort = useStoryStore((s) => s.loadReasoningEffort);
+  const loadNarratorTools = useStoryStore((s) => s.loadNarratorTools);
+  const reasoningEffort = useStoryStore((s) => storyId ? s.bundles[storyId]?.reasoningEffort : s.draftReasoningEffort);
+  const reasoningEffortLoaded = useStoryStore((s) => storyId ? (s.bundles[storyId]?.reasoningEffortLoaded ?? false) : true);
+  const reasoningEffortError = useStoryStore((s) => storyId ? s.bundles[storyId]?.reasoningEffortError : null);
+  const tools = useStoryStore((s) => storyId ? s.bundles[storyId]?.narratorTools : s.draftNarratorTools);
 
   const changeReasoningEffort = async (value: string) => {
     try {
-      await saveSettings(storyId, { reasoning_effort: (value || null) as ReasoningEffort | null });
+      await saveReasoningEffort(storyId, (value || null) as ReasoningEffort | null);
     } catch (e) {
-      console.error("failed to save reasoning effort", e);
+      setError(`Failed to save reasoning effort: ${String(e)}`);
     }
   };
 
-  const busy = submitting || !!streaming || ledgerLoading;
+  const busy = submitting || requestPending || !!streaming || ledgerLoading;
   const lastEntry = entries && entries.length > 0 ? entries[entries.length - 1] : undefined;
   const lastNarration = entries?.slice().reverse().find((entry) => entry.kind === "narration");
   const imageBusy = !!lastNarration && (imagePendingFor?.includes(lastNarration.id) ?? false);
-  const imagesDisabled = imageSettings ? !imageSettings.enabled || !imageSettings.has_api_key : false;
+  const imagesDisabled = !imageSettings?.enabled || !imageSettings.has_api_key || !tools?.illustrate_scene;
 
   useEffect(() => {
     loadImageSettings();
   }, [loadImageSettings]);
 
   useEffect(() => {
-    if (storyId) loadDiceSettings(storyId);
-  }, [storyId, loadDiceSettings]);
+    if (storyId) {
+      loadNarratorTools(storyId);
+      loadReasoningEffort(storyId);
+    }
+  }, [storyId, loadNarratorTools, loadReasoningEffort]);
 
   useEffect(() => {
     const el = textareaRef.current;
@@ -129,19 +135,21 @@ export function Composer({ storyId }: { storyId: string | null }) {
   };
 
   const activeMode = modeDefinition(mode);
-  const displayedError = error ?? turnError;
+  const displayedError = error ?? turnError ?? reasoningEffortError;
 
   const submitDisabled = busy
     || (activeMode.textRequired && !text.trim())
-    || (activeMode.disabledWhen === "image-unavailable" && (!lastNarration || imageBusy || imagesDisabled));
+    || (activeMode.disabledWhen === "image-unavailable" && (!storyId || !lastNarration || imageBusy || imagesDisabled));
 
   const submitLabel = mode === "see" ? (imageBusy ? "Generating..." : "Generate") : busy ? "Writing..." : "Send";
 
   const statusHint =
     mode === "see"
-      ? imagesDisabled
-        ? "Image generation is disabled in the Image Model panel."
-        : !lastEntry
+      ? !tools?.illustrate_scene
+        ? "Turn on Illustrate scenes in Narrator Tools to use See."
+        : !imageSettings?.enabled || !imageSettings.has_api_key
+          ? "Enable image generation and configure a key in Image Model / Text Model."
+        : !lastNarration
           ? "Write a passage first, then generate an image."
           : (displayedError ?? "Enter to generate · Shift + Enter for a new line")
       : (displayedError ?? "Enter to send · Shift + Enter for a new line");
@@ -180,7 +188,7 @@ export function Composer({ storyId }: { storyId: string | null }) {
           onKeyDown={onKeyDown}
           placeholder={activeMode.placeholder}
           rows={2}
-          disabled={busy || (mode === "see" && imagesDisabled)}
+          disabled={busy || (mode === "see" && (imagesDisabled || !storyId || !lastNarration))}
           className="w-full resize-none overflow-y-auto rounded border border-border bg-bg px-3 py-2 font-prose text-sm leading-6 text-text placeholder:text-muted focus:outline-none focus:border-accent disabled:opacity-60"
         />
         <div className="mt-2 flex items-center justify-between gap-2">
@@ -196,7 +204,7 @@ export function Composer({ storyId }: { storyId: string | null }) {
               <select
                 value={reasoningEffort ?? ""}
                 onChange={(e) => changeReasoningEffort(e.target.value)}
-                disabled={busy}
+                disabled={busy || !reasoningEffortLoaded}
                 className="rounded border border-border bg-bg px-1.5 py-0.5 text-xs text-text focus:border-accent focus:outline-none disabled:opacity-60"
               >
                 {REASONING_EFFORT_OPTIONS.map((option) => (
@@ -206,6 +214,9 @@ export function Composer({ storyId }: { storyId: string | null }) {
                 ))}
               </select>
             </label>
+            {reasoningEffortError && storyId && !reasoningEffortLoaded && (
+              <button onClick={() => loadReasoningEffort(storyId)} className="text-xs text-danger underline">Retry effort</button>
+            )}
             <button
               onClick={onSubmit}
               disabled={submitDisabled}

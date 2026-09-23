@@ -1,7 +1,7 @@
 import { AccordionPanel } from "../../shared/ui/AccordionPanel";
 import { StoriesPanel } from "../stories/StoriesPanel";
 import { CharactersPanel } from "../characters/CharactersPanel";
-import { AttributesPanel } from "../dicerolls/AttributesPanel";
+import { NarratorToolsPanel } from "../narratorTools/NarratorToolsPanel";
 import { WritingStylePanel } from "../writingStyle/WritingStylePanel";
 import { TextModelPanel } from "../settings/TextModelPanel";
 import { ImageModelPanel } from "../settings/ImageModelPanel";
@@ -14,7 +14,7 @@ const PANEL_LABELS: Record<string, string> = {
   stories: "Stories",
   characters: "Characters",
   writingStyle: "Writing Style",
-  attributes: "Attributes",
+  narratorTools: "Narrator Tools",
   textModel: "Text Model",
   imageModel: "Image Model",
   contextInjection: "Context Injection",
@@ -44,8 +44,8 @@ export function Sidebar() {
         <WritingStylePanel />
       </AccordionPanel>
 
-      <AccordionPanel title={PANEL_LABELS.attributes} open={openPanels.attributes} onToggle={() => togglePanel("attributes")}>
-        <AttributesPanel />
+      <AccordionPanel title={PANEL_LABELS.narratorTools} open={openPanels.narratorTools} onToggle={() => togglePanel("narratorTools")}>
+        <NarratorToolsPanel />
       </AccordionPanel>
 
       <AccordionPanel title={PANEL_LABELS.textModel} open={openPanels.textModel} onToggle={() => togglePanel("textModel")}>

@@ -4,7 +4,8 @@ use std::collections::{HashMap, HashSet};
 
 use crate::ai::{HistoryTurn, TextModelConfig};
 use crate::features::{
-    compaction, dicerolls::model::DiceMode, entities, ledger::model::kind as ledger_kind, settings,
+    compaction, entities, ledger::model::kind as ledger_kind, settings,
+    stories::settings::NarratorToolSettings,
 };
 use crate::prompts;
 use crate::shared::db::Pool;
@@ -22,12 +23,8 @@ pub(super) struct Inputs<'a> {
     pub story_id: &'a str,
     pub history: &'a [HistoryTurn],
     pub config: &'a TextModelConfig,
-    /// Only retries/swipes target an existing narrated passage. Fresh actions
-    /// have no resolved roll outcome to carry into their request.
-    pub target_entry_id: Option<&'a str>,
-    /// Revision paths do not attach entity/dice tools and therefore omit this
-    /// instruction instead of pretending a dice mode is available.
-    pub dice_mode: Option<DiceMode>,
+    /// Effective per-turn permissions, with non-applicable tools turned off.
+    pub tool_settings: Option<&'a NarratorToolSettings>,
     pub image_enabled: bool,
 }
 
@@ -196,47 +193,43 @@ fn entities_full(pool: &Pool, story_id: &str) -> AppResult<EntitiesFull> {
     })
 }
 
-/// Resolved rolls are replayed only when regenerating the narration they
-/// produced. Fresh actions have no target and therefore no roll block.
-fn rolls_context(pool: &Pool, target_entry_id: Option<&str>) -> AppResult<String> {
-    let Some(entry_id) = target_entry_id else {
-        return Ok(String::new());
-    };
-    let conn = pool.get()?;
-    let mut stmt = conn.prepare(
-        "SELECT content FROM ledger_entries WHERE target_entry_id = ?1 AND kind = ?2 ORDER BY seq ASC",
-    )?;
-    let contents = stmt
-        .query_map(rusqlite::params![entry_id, ledger_kind::DICEROLL], |row| {
-            row.get::<_, Option<String>>(0)
-        })?
-        .filter_map(Result::transpose)
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(if contents.is_empty() {
-        String::new()
-    } else {
-        format!("<rolls>\n- {}\n</rolls>", contents.join("\n- "))
-    })
-}
-
-fn dice_mode_context(dice_mode: Option<DiceMode>) -> String {
-    dice_mode
-        .map(|mode| {
-            format!(
-                "{} <dice_mode>{}</dice_mode>",
-                prompts::ENTITY_TOOLS_AVAILABLE_PREFIX,
-                prompts::dice_mode_instruction(mode)
-            )
-        })
-        .unwrap_or_default()
-}
-
-fn image_context(image_enabled: bool) -> String {
-    if image_enabled {
-        prompts::IMAGE_TOOL_AVAILABLE_INSTRUCTION.to_string()
-    } else {
-        String::new()
+fn tool_context(settings: Option<&NarratorToolSettings>, image_enabled: bool) -> String {
+    let mut available = Vec::new();
+    if settings.is_some_and(|settings| settings.get_entities) {
+        available.push(prompts::GET_ENTITIES_TOOL_NAME);
     }
+    if settings.is_some_and(|settings| settings.create_entity) {
+        available.push(prompts::CREATE_ENTITY_TOOL_NAME);
+    }
+    if settings.is_some_and(|settings| settings.update_entity) {
+        available.push(prompts::UPDATE_ENTITY_TOOL_NAME);
+    }
+    if settings.is_some_and(|settings| settings.adjust_entity_attribute) {
+        available.push(prompts::ADJUST_ENTITY_ATTRIBUTE_TOOL_NAME);
+    }
+    if settings.is_some_and(|settings| settings.roll_check) {
+        available.push(prompts::ROLL_CHECK_TOOL_NAME);
+    }
+    if image_enabled {
+        available.push(prompts::ILLUSTRATE_SCENE_TOOL_NAME);
+    }
+    if available.is_empty() {
+        return String::new();
+    }
+    let mut lines = vec![format!(
+        "Available narrator tools for this turn: {}.",
+        available.join(", ")
+    )];
+    if settings.is_some_and(|settings| settings.roll_check) {
+        lines.push(prompts::ROLL_CHECK_AVAILABLE_INSTRUCTION.to_string());
+    }
+    if image_enabled {
+        lines.push(prompts::IMAGE_TOOL_AVAILABLE_INSTRUCTION.to_string());
+    }
+    format!(
+        "<additional_instructions>\n{}\n</additional_instructions>",
+        lines.join("\n")
+    )
 }
 
 pub(super) fn combine_context_blocks(parts: &[String]) -> String {
@@ -251,19 +244,15 @@ pub(super) fn combine_context_blocks(parts: &[String]) -> String {
 pub(super) fn build_message_context(inputs: &Inputs<'_>) -> AppResult<ContextPlan> {
     let entities = entities_full(inputs.pool, inputs.story_id)?;
     let author_note = author_note::context_block(inputs.pool, inputs.story_id)?;
-    let rolls = rolls_context(inputs.pool, inputs.target_entry_id)?;
-    let dice_mode = dice_mode_context(inputs.dice_mode);
-    let image = image_context(inputs.image_enabled);
+    let tools = tool_context(inputs.tool_settings, inputs.image_enabled);
 
     let full = combine_context_blocks(&[
         entities.full().to_string(),
         author_note.clone(),
-        rolls.clone(),
-        dice_mode.clone(),
-        image.clone(),
+        tools.clone(),
     ]);
     let entities_live = entities.live(inputs.pool, inputs.history, inputs.config, &full)?;
-    let live = combine_context_blocks(&[entities_live, author_note, rolls, dice_mode, image]);
+    let live = combine_context_blocks(&[entities_live, author_note, tools]);
     Ok(ContextPlan { live, full })
 }
 
@@ -283,7 +272,7 @@ mod tests {
         }
     }
 
-    fn story_with_roll() -> (Pool, String, HistoryTurn) {
+    fn story_with_entity_query() -> (Pool, HistoryTurn) {
         let pool = crate::shared::db::test_pool();
         let conn = pool.get().unwrap();
         conn.execute(
@@ -313,26 +302,6 @@ mod tests {
             None,
         )
         .unwrap();
-        let target = append_entry(
-            &conn,
-            "s",
-            ledger_kind::NARRATION,
-            "visible",
-            Some("result"),
-            &json!({"input_mode":"generated"}),
-            None,
-        )
-        .unwrap();
-        append_entry(
-            &conn,
-            "s",
-            ledger_kind::DICEROLL,
-            "hidden",
-            Some("The roll succeeded."),
-            &json!({}),
-            Some(&target.id),
-        )
-        .unwrap();
         conn.execute(
             "INSERT INTO settings (key, value) VALUES ('context_injection', ?1)",
             [json!({"entity_context_mode":"scoped"}).to_string()],
@@ -342,7 +311,6 @@ mod tests {
 
         (
             pool,
-            target.id,
             HistoryTurn {
                 entry_id: Some(query.id),
                 is_player: false,
@@ -354,16 +322,16 @@ mod tests {
 
     #[test]
     fn pipeline_builds_all_blocks_in_fixed_order() {
-        let (pool, target_id, history_turn) = story_with_roll();
+        let (pool, history_turn) = story_with_entity_query();
         let history = vec![history_turn];
         let config = config();
+        let tools = NarratorToolSettings::default();
         let plan = build_message_context(&Inputs {
             pool: &pool,
             story_id: "s",
             history: &history,
             config: &config,
-            target_entry_id: Some(&target_id),
-            dice_mode: Some(DiceMode::Classifier),
+            tool_settings: Some(&tools),
             image_enabled: true,
         })
         .unwrap();
@@ -373,22 +341,33 @@ mod tests {
             .contains("- Bob (character); appearance: a red cloak"));
         let entities = plan.live.find("<entities>").unwrap();
         let note = plan.live.find("<author_note>").unwrap();
-        let rolls = plan.live.find("<rolls>").unwrap();
-        let dice = plan.live.find("<dice_mode>").unwrap();
-        let image = plan
-            .live
-            .find(prompts::IMAGE_TOOL_AVAILABLE_INSTRUCTION)
-            .unwrap();
-        assert!(entities < note && note < rolls && rolls < dice && dice < image);
+        let tools_position = plan.live.find("<additional_instructions>").unwrap();
+        assert!(entities < note && note < tools_position);
+        assert!(plan.live.contains(&tool_context(Some(&tools), true)));
+        assert!(plan.full.contains(&tool_context(Some(&tools), true)));
         assert!(plan.full.contains("<entities>"));
     }
 
     #[test]
-    fn rolls_are_absent_for_fresh_actions_and_present_for_retries() {
-        let (pool, target_id, _) = story_with_roll();
-        assert_eq!(rolls_context(&pool, None).unwrap(), "");
-        let retry = rolls_context(&pool, Some(&target_id)).unwrap();
-        assert!(retry.contains("<rolls>"));
-        assert!(retry.contains("The roll succeeded."));
+    fn tool_instructions_name_only_available_tools() {
+        let mut settings = NarratorToolSettings {
+            get_entities: false,
+            create_entity: false,
+            update_entity: false,
+            adjust_entity_attribute: false,
+            roll_check: false,
+            ..NarratorToolSettings::default()
+        };
+        assert_eq!(tool_context(Some(&settings), false), "");
+        let image = tool_context(None, true);
+        assert!(image.starts_with("<additional_instructions>\n"));
+        assert!(image.contains("illustrate_scene"));
+        assert!(!image.contains("roll_check"));
+        assert!(!image.contains("get_entities"));
+
+        settings.roll_check = true;
+        let roll = tool_context(Some(&settings), false);
+        assert!(roll.contains("roll_check"));
+        assert!(!roll.contains("illustrate_scene"));
     }
 }

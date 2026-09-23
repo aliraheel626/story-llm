@@ -1,30 +1,22 @@
 import { create } from "zustand";
+import { DEFAULT_NARRATOR_TOOLS } from "../../shared/types";
 import type {
   ActionMode,
-  DicerollSettings,
   Entity,
+  NarratorToolSettings,
   NarrationDonePayload,
   NarrationToolActivityPayload,
-  NarrationVariant,
-  RollDetail,
+  ReasoningEffort,
+  Roll,
   Story,
   StoryImage,
-  SwipeDonePayload,
   LedgerEntry,
 } from "../../shared/types";
 import { charactersApi } from "../characters/api";
-import { dicerollApi } from "../dicerolls/api";
+import { narratorToolsApi } from "../narratorTools/api";
 import { storiesApi } from "../stories/api";
 import { ledgerApi } from "../ledger/api";
 import { writingStyleApi } from "../writingStyle/api";
-
-export const DEFAULT_DICEROLL_SETTINGS: DicerollSettings = {
-  dice_mode: "classifier",
-  attributes_enabled: false,
-  reasoning_effort: null,
-};
-
-export type DicerollSettingsPatch = Partial<DicerollSettings>;
 
 type ToolActivity = {
   callId: string;
@@ -45,6 +37,7 @@ interface StreamingState {
 }
 
 interface TurnActivity {
+  entryId: string;
   thoughts: string;
   tools: ToolActivity[];
 }
@@ -54,19 +47,22 @@ export interface StoryBundle {
   entries: LedgerEntry[];
   hidden: LedgerEntry[];
   ledgerLoading: boolean;
+  requestPending: boolean;
   streaming: StreamingState | null;
   turnError: string | null;
   turnActivity: TurnActivity | null;
-  variantsByEntry: Record<string, NarrationVariant[]>;
   imagesByEntry: Record<string, StoryImage[]>;
   imagePendingFor: string[];
   imageError: string | null;
-  rollsByEntry: Record<string, RollDetail[]>;
-  rollDetailByEntry: Record<string, RollDetail[]>;
+  rollsByEntry: Record<string, Roll[]>;
   characters: Entity[];
   charactersLoading: boolean;
-  diceSettings: DicerollSettings | null;
-  diceSettingsLoading: boolean;
+  narratorTools: NarratorToolSettings | null;
+  narratorToolsLoading: boolean;
+  narratorToolsError: string | null;
+  reasoningEffort: ReasoningEffort | null;
+  reasoningEffortLoaded: boolean;
+  reasoningEffortError: string | null;
   authorNote: string | null;
   authorNoteLoading: boolean;
   authorNoteSaving: boolean;
@@ -78,7 +74,8 @@ interface StoryStoreState {
   creatingStory: boolean;
   activeStoryId: string | null;
   draft: boolean;
-  draftDiceSettings: DicerollSettings | null;
+  draftNarratorTools: NarratorToolSettings;
+  draftReasoningEffort: ReasoningEffort | null;
   bundles: Record<string, StoryBundle>;
 
   loadStories: () => Promise<void>;
@@ -92,19 +89,14 @@ interface StoryStoreState {
   loadLedger: (storyId: string) => Promise<void>;
   submitTurn: (storyId: string, mode: ActionMode, content: string) => Promise<void>;
   retryNarration: (storyId: string, entryId: string) => Promise<void>;
-  generateVariant: (storyId: string, entryId: string) => Promise<void>;
   eraseLastExchange: (storyId: string) => Promise<void>;
   editEntry: (storyId: string, entryId: string, content: string) => Promise<void>;
-  selectVariant: (storyId: string, entryId: string, variantEntryId: string) => Promise<void>;
-  loadVariantsForEntry: (storyId: string, entryId: string) => Promise<void>;
   loadImagesForStory: (storyId: string) => Promise<void>;
   loadRollsForStory: (storyId: string) => Promise<void>;
-  loadRollDetail: (storyId: string, entryId: string) => Promise<void>;
   _appendDelta: (streamId: string, text: string) => void;
   _appendThoughts: (streamId: string, text: string) => void;
   _toolActivity: (payload: NarrationToolActivityPayload) => void;
   _finalize: (payload: NarrationDonePayload) => void;
-  _swipeDone: (payload: SwipeDonePayload) => void;
   _fail: (streamId: string, message: string) => void;
   _imagePending: (entryId: string) => void;
   _imageGenerated: (image: StoryImage) => void;
@@ -115,9 +107,10 @@ interface StoryStoreState {
   updateCharacter: (storyId: string, entityId: string, name: string, appearanceAnchor?: string) => Promise<void>;
   deleteCharacter: (storyId: string, entityId: string) => Promise<void>;
 
-  loadDiceSettings: (storyId: string) => Promise<void>;
-  saveDiceSettings: (storyId: string | null, patch: DicerollSettingsPatch) => Promise<void>;
-  resetDraftDiceSettings: () => void;
+  loadNarratorTools: (storyId: string) => Promise<void>;
+  saveNarratorTools: (storyId: string | null, patch: Partial<NarratorToolSettings>) => Promise<void>;
+  loadReasoningEffort: (storyId: string) => Promise<void>;
+  saveReasoningEffort: (storyId: string | null, value: ReasoningEffort | null) => Promise<void>;
 
   loadAuthorNote: (storyId: string) => Promise<void>;
   saveAuthorNote: (storyId: string, note: string) => Promise<void>;
@@ -128,19 +121,22 @@ const newBundle = (id: string): StoryBundle => ({
   entries: [],
   hidden: [],
   ledgerLoading: false,
+  requestPending: false,
   streaming: null,
   turnError: null,
   turnActivity: null,
-  variantsByEntry: {},
   imagesByEntry: {},
   imagePendingFor: [],
   imageError: null,
   rollsByEntry: {},
-  rollDetailByEntry: {},
   characters: [],
   charactersLoading: false,
-  diceSettings: null,
-  diceSettingsLoading: false,
+  narratorTools: null,
+  narratorToolsLoading: false,
+  narratorToolsError: null,
+  reasoningEffort: null,
+  reasoningEffortLoaded: false,
+  reasoningEffortError: null,
   authorNote: null,
   authorNoteLoading: false,
   authorNoteSaving: false,
@@ -199,7 +195,9 @@ const closeTool = (log: ToolActivity[], callId: string, ok: boolean | null): Too
 };
 
 const ledgerGenerations = new Map<string, number>();
-const variantGenerations = new Map<string, number>();
+const imageGenerations = new Map<string, number>();
+const imageEventGenerations = new Map<string, number>();
+const rollGenerations = new Map<string, number>();
 const advanceGeneration = (generations: Map<string, number>, key: string) => {
   const generation = (generations.get(key) ?? 0) + 1;
   generations.set(key, generation);
@@ -207,16 +205,16 @@ const advanceGeneration = (generations: Map<string, number>, key: string) => {
 };
 const isCurrentGeneration = (generations: Map<string, number>, key: string, generation: number) =>
   generations.get(key) === generation;
-const variantKey = (storyId: string, entryId: string) => `${storyId}:${entryId}`;
-
 const settingsQueues = new Map<string, Promise<void>>();
 const settingsLoads = new Map<string, Promise<void>>();
-const enqueueSettings = (storyId: string, operation: () => Promise<void>): Promise<void> => {
-  const previous = settingsQueues.get(storyId) ?? Promise.resolve();
+const reasoningLoads = new Map<string, Promise<void>>();
+const reasoningQueues = new Map<string, Promise<void>>();
+const enqueueSettings = (queues: Map<string, Promise<void>>, storyId: string, operation: () => Promise<void>): Promise<void> => {
+  const previous = queues.get(storyId) ?? Promise.resolve();
   const current = previous.catch(() => undefined).then(operation);
-  settingsQueues.set(storyId, current);
+  queues.set(storyId, current);
   return current.finally(() => {
-    if (settingsQueues.get(storyId) === current) settingsQueues.delete(storyId);
+    if (queues.get(storyId) === current) queues.delete(storyId);
   });
 };
 
@@ -226,7 +224,8 @@ export const useStoryStore = create<StoryStoreState>((set, get) => ({
   creatingStory: false,
   activeStoryId: null,
   draft: false,
-  draftDiceSettings: null,
+  draftNarratorTools: { ...DEFAULT_NARRATOR_TOOLS },
+  draftReasoningEffort: null,
   bundles: {},
 
   loadStories: async () => {
@@ -238,18 +237,22 @@ export const useStoryStore = create<StoryStoreState>((set, get) => ({
       set({ storiesLoading: false });
     }
   },
-  startDraft: () => set({ activeStoryId: null, draft: true, draftDiceSettings: null }),
+  startDraft: () => set({ activeStoryId: null, draft: true, draftNarratorTools: { ...DEFAULT_NARRATOR_TOOLS }, draftReasoningEffort: null }),
   createStory: async () => {
-    const draftDiceSettings = get().draftDiceSettings;
+    const { draftNarratorTools, draftReasoningEffort } = get();
     set({ creatingStory: true });
     try {
-      const story = await storiesApi.create(undefined, draftDiceSettings);
+      const story = await storiesApi.create(undefined, {
+        narrator_tools: draftNarratorTools,
+        ...(draftReasoningEffort ? { reasoning_effort: draftReasoningEffort } : {}),
+      });
       set((state) => ({
         stories: [story, ...state.stories],
         activeStoryId: story.id,
         draft: false,
-        draftDiceSettings: null,
-        bundles: patchBundle(state.bundles, story.id, { diceSettings: draftDiceSettings }),
+        draftNarratorTools: { ...DEFAULT_NARRATOR_TOOLS },
+        draftReasoningEffort: null,
+        bundles: patchBundle(state.bundles, story.id, { narratorTools: draftNarratorTools, reasoningEffort: draftReasoningEffort, reasoningEffortLoaded: true }),
       }));
       return story;
     } finally {
@@ -276,7 +279,7 @@ export const useStoryStore = create<StoryStoreState>((set, get) => ({
     set((state) => ({ stories: state.stories.map((story) => (story.id === storyId ? { ...story, title } : story)) })),
   setActiveStory: (storyId) => {
     if (get().activeStoryId !== storyId || get().draft) {
-      set({ activeStoryId: storyId, draft: false, draftDiceSettings: null });
+      set({ activeStoryId: storyId, draft: false, draftNarratorTools: { ...DEFAULT_NARRATOR_TOOLS }, draftReasoningEffort: null });
     }
   },
 
@@ -286,14 +289,9 @@ export const useStoryStore = create<StoryStoreState>((set, get) => ({
     try {
       const snapshot = await ledgerApi.list(storyId);
       if (!isCurrentGeneration(ledgerGenerations, storyId, generation)) return;
-      const revisedEntryIds = [...new Set(snapshot.hidden.flatMap((entry) =>
-        (entry.kind === "narration_variant" || entry.kind === "narration_selected") && entry.target_entry_id
-          ? [entry.target_entry_id]
-          : []))];
       set((state) => ({
         bundles: patchBundle(state.bundles, storyId, { entries: snapshot.visible, hidden: snapshot.hidden }),
       }));
-      await Promise.all(revisedEntryIds.map((entryId) => get().loadVariantsForEntry(storyId, entryId)));
       if (isCurrentGeneration(ledgerGenerations, storyId, generation)) {
         set((state) => ({ bundles: patchBundle(state.bundles, storyId, { ledgerLoading: false }) }));
       }
@@ -305,9 +303,12 @@ export const useStoryStore = create<StoryStoreState>((set, get) => ({
     }
   },
   submitTurn: async (storyId, mode, content) => {
+    if (get().bundles[storyId]?.requestPending || get().bundles[storyId]?.streaming) throw new Error("A narration request is already in progress");
+    set((state) => ({ bundles: patchBundle(state.bundles, storyId, { requestPending: true }) }));
     advanceGeneration(ledgerGenerations, storyId);
     set((state) => ({ bundles: patchBundle(state.bundles, storyId, { turnError: null, ledgerLoading: false }) }));
     try {
+      await Promise.all([settingsQueues.get(storyId), reasoningQueues.get(storyId)]);
       const result = await ledgerApi.submitTurn(storyId, mode, content);
       set((state) => ({
         bundles: patchBundle(state.bundles, storyId, (bundle) => ({
@@ -321,54 +322,54 @@ export const useStoryStore = create<StoryStoreState>((set, get) => ({
     } catch (error) {
       await get().loadLedger(storyId);
       throw error;
+    } finally {
+      set((state) => ({ bundles: patchBundle(state.bundles, storyId, { requestPending: false }) }));
     }
   },
   retryNarration: async (storyId, entryId) => {
-    set((state) => ({ bundles: patchBundle(state.bundles, storyId, { turnError: null }) }));
+    if (get().bundles[storyId]?.requestPending || get().bundles[storyId]?.streaming) throw new Error("A narration request is already in progress");
+    set((state) => ({ bundles: patchBundle(state.bundles, storyId, { turnError: null, requestPending: true }) }));
     const appends = get().bundles[storyId]?.entries.find((entry) => entry.id === entryId)?.kind === "player_message";
-    const result = await ledgerApi.retry(storyId, entryId);
-    set((state) => ({
-      bundles: patchBundle(state.bundles, storyId, {
-        streaming: newStream(result.stream_id, storyId, appends ? "append" : "replace", appends ? undefined : result.entry_id),
-      }),
-    }));
-  },
-  generateVariant: async (storyId, entryId) => {
-    set((state) => ({ bundles: patchBundle(state.bundles, storyId, { turnError: null }) }));
-    const streamId = await ledgerApi.generateVariant(storyId, entryId);
-    set((state) => ({
-      bundles: patchBundle(state.bundles, storyId, { streaming: newStream(streamId, storyId, "replace", entryId) }),
-    }));
+    try {
+      await Promise.all([settingsQueues.get(storyId), reasoningQueues.get(storyId)]);
+      const result = await ledgerApi.retry(storyId, entryId);
+      set((state) => ({
+        bundles: patchBundle(state.bundles, storyId, {
+          streaming: newStream(result.stream_id, storyId, appends ? "append" : "replace", appends ? undefined : entryId),
+        }),
+      }));
+    } catch (error) {
+      set((state) => ({ bundles: patchBundle(state.bundles, storyId, { turnError: String(error) }) }));
+      throw error;
+    } finally {
+      set((state) => ({ bundles: patchBundle(state.bundles, storyId, { requestPending: false }) }));
+    }
   },
   eraseLastExchange: async (storyId) => {
     const ids = await ledgerApi.eraseLastExchange(storyId);
     if (!ids.length) return;
     advanceGeneration(ledgerGenerations, storyId);
-    ids.forEach((entryId) => advanceGeneration(variantGenerations, variantKey(storyId, entryId)));
+    advanceGeneration(imageGenerations, storyId);
+    advanceGeneration(rollGenerations, storyId);
     set((state) => ({
       bundles: patchBundle(state.bundles, storyId, (bundle) => {
         const imagesByEntry = { ...bundle.imagesByEntry };
-        const variantsByEntry = { ...bundle.variantsByEntry };
         const rollsByEntry = { ...bundle.rollsByEntry };
-        const rollDetailByEntry = { ...bundle.rollDetailByEntry };
         ids.forEach((entryId) => {
           delete imagesByEntry[entryId];
-          delete variantsByEntry[entryId];
           delete rollsByEntry[entryId];
-          delete rollDetailByEntry[entryId];
         });
         return {
           entries: bundle.entries.filter((entry) => !ids.includes(entry.id)),
           imagesByEntry,
-          variantsByEntry,
           rollsByEntry,
-          rollDetailByEntry,
           imagePendingFor: bundle.imagePendingFor.filter((entryId) => !ids.includes(entryId)),
           ledgerLoading: false,
         };
       }),
     }));
     await get().loadCharacters(storyId);
+    await get().loadImagesForStory(storyId);
   },
   editEntry: async (storyId, entryId, content) => {
     const entry = await ledgerApi.edit(entryId, content);
@@ -381,78 +382,40 @@ export const useStoryStore = create<StoryStoreState>((set, get) => ({
       })),
     }));
   },
-  selectVariant: async (storyId, entryId, variantEntryId) => {
-    const entry = await ledgerApi.selectVariant(entryId, variantEntryId);
-    advanceGeneration(ledgerGenerations, storyId);
-    advanceGeneration(variantGenerations, variantKey(storyId, entryId));
-    set((state) => ({
-      bundles: patchBundle(state.bundles, storyId, (bundle) => ({
-        entries: replaceEntry(bundle.entries, entryId, entry),
-        variantsByEntry: {
-          ...bundle.variantsByEntry,
-          [entryId]: (bundle.variantsByEntry[entryId] ?? []).map((variant) => ({
-            ...variant,
-            is_selected: variant.id === variantEntryId,
-          })),
-        },
-        imagesByEntry: { ...bundle.imagesByEntry, [entryId]: [] },
-        ledgerLoading: false,
-      })),
-    }));
-  },
-  loadVariantsForEntry: async (storyId, entryId) => {
-    const key = variantKey(storyId, entryId);
-    const generation = advanceGeneration(variantGenerations, key);
-    try {
-      const variants = await ledgerApi.listVariants(entryId);
-      if (!isCurrentGeneration(variantGenerations, key, generation)) return;
-      set((state) => ({
-        bundles: patchBundle(state.bundles, storyId, (bundle) => ({
-          variantsByEntry: { ...bundle.variantsByEntry, [entryId]: variants },
-        })),
-      }));
-    } catch (error) {
-      console.error("failed to load variants", error);
-    }
-  },
   loadImagesForStory: async (storyId) => {
+    const generation = advanceGeneration(imageGenerations, storyId);
+    const eventGeneration = imageEventGenerations.get(storyId);
     try {
       const images = await ledgerApi.listImages(storyId);
+      if (!isCurrentGeneration(imageGenerations, storyId, generation)) return;
       const grouped: Record<string, StoryImage[]> = {};
       images.forEach((image) => (grouped[image.entry_id] ??= []).push(image));
-      set((state) => ({
-        bundles: patchBundle(state.bundles, storyId, (bundle) => ({
-          imagesByEntry: { ...bundle.imagesByEntry, ...grouped },
-        })),
-      }));
+      set((state) => ({ bundles: patchBundle(state.bundles, storyId, (bundle) => {
+        if (imageEventGenerations.get(storyId) !== eventGeneration) {
+          for (const [entryId, current] of Object.entries(bundle.imagesByEntry)) {
+            if (!bundle.entries.some((entry) => entry.id === entryId)) continue;
+            const images = grouped[entryId] ?? [];
+            grouped[entryId] = [...images, ...current.filter((image) => !images.some((candidate) => candidate.id === image.id))];
+          }
+        }
+        return { imagesByEntry: grouped };
+      }) }));
     } catch (error) {
       console.error("failed to load images", error);
     }
   },
   loadRollsForStory: async (storyId) => {
+    const generation = advanceGeneration(rollGenerations, storyId);
     try {
       const rolls = await ledgerApi.listRolls(storyId);
-      const grouped: Record<string, RollDetail[]> = {};
-      rolls.forEach((detail) => (grouped[detail.roll.entry_id] ??= []).push(detail));
+      if (!isCurrentGeneration(rollGenerations, storyId, generation)) return;
+      const grouped: Record<string, Roll[]> = {};
+      rolls.forEach((roll) => (grouped[roll.entry_id] ??= []).push(roll));
       set((state) => ({
-        bundles: patchBundle(state.bundles, storyId, (bundle) => ({
-          rollsByEntry: { ...bundle.rollsByEntry, ...grouped },
-        })),
+        bundles: patchBundle(state.bundles, storyId, { rollsByEntry: grouped }),
       }));
     } catch (error) {
       console.error("failed to load rolls", error);
-    }
-  },
-  loadRollDetail: async (storyId, entryId) => {
-    try {
-      const details = await dicerollApi.listRollDetailsForEntry(storyId, entryId);
-      set((state) => ({
-        bundles: patchBundle(state.bundles, storyId, (bundle) => ({
-          rollDetailByEntry: { ...bundle.rollDetailByEntry, [entryId]: details },
-        })),
-      }));
-    } catch (error) {
-      console.error("failed to load roll detail", error);
     }
   },
   _appendDelta: (streamId, text) => {
@@ -511,50 +474,39 @@ export const useStoryStore = create<StoryStoreState>((set, get) => ({
     if (!found) return;
     const [storyId, current] = found;
     advanceGeneration(ledgerGenerations, storyId);
+    advanceGeneration(imageGenerations, storyId);
+    advanceGeneration(rollGenerations, storyId);
     set((state) => ({
-      bundles: patchBundle(state.bundles, storyId, (bundle) => ({
-        entries: current.mode === "replace" && current.targetEntryId
-          ? replaceEntry(bundle.entries, current.targetEntryId, payload.entry)
-          : bundle.entries.some((entry) => entry.id === payload.entry.id)
-            ? replaceEntry(bundle.entries, payload.entry.id, payload.entry)
-            : [...bundle.entries, payload.entry],
-        streaming: null,
-        turnActivity: { thoughts: current.thoughts, tools: current.toolLog },
-        ledgerLoading: false,
-        ...(current.mode === "replace" && current.targetEntryId
-          ? { imagesByEntry: { ...bundle.imagesByEntry, [current.targetEntryId]: [] } }
-          : {}),
-      })),
+      bundles: patchBundle(state.bundles, storyId, (bundle) => {
+        const oldId = current.mode === "replace" ? current.targetEntryId : undefined;
+        const imagesByEntry = { ...bundle.imagesByEntry };
+        const rollsByEntry = { ...bundle.rollsByEntry };
+        if (oldId) {
+          delete imagesByEntry[oldId];
+          delete rollsByEntry[oldId];
+        }
+        return {
+          entries: oldId
+            ? replaceEntry(bundle.entries, oldId, payload.entry)
+            : bundle.entries.some((entry) => entry.id === payload.entry.id)
+              ? replaceEntry(bundle.entries, payload.entry.id, payload.entry)
+              : [...bundle.entries, payload.entry],
+          hidden: oldId ? [] : bundle.hidden,
+          imagesByEntry,
+          rollsByEntry,
+          imagePendingFor: oldId ? removeOne(bundle.imagePendingFor, oldId) : bundle.imagePendingFor,
+          streaming: null,
+          turnActivity: payload.entry.kind === "narration"
+            ? { entryId: payload.entry.id, thoughts: current.thoughts, tools: current.toolLog }
+            : null,
+          ledgerLoading: false,
+        };
+      }),
     }));
-    if (current.mode === "replace" && current.targetEntryId) {
-      get().loadVariantsForEntry(storyId, current.targetEntryId);
-    }
+    get().loadLedger(storyId);
+    get().loadImagesForStory(storyId);
     get().loadRollsForStory(storyId);
-    // Entity/attribute tools are only offered to the narrator when this is
-    // enabled (see `attributes_enabled` gating in narration::commands), so a
-    // turn run with it off can't have touched a character — skip the refetch.
-    // Unknown (not-yet-loaded) settings are treated as enabled to match prior
-    // always-fetch behavior.
-    if (get().bundles[storyId]?.diceSettings?.attributes_enabled !== false) {
-      get().loadCharacters(storyId);
-    }
-  },
-  _swipeDone: (payload) => {
-    const found = findStream(get().bundles, payload.stream_id);
-    if (!found) return;
-    const [storyId, current] = found;
-    advanceGeneration(ledgerGenerations, storyId);
-    advanceGeneration(variantGenerations, variantKey(storyId, payload.entry.id));
-    set((state) => ({
-      bundles: patchBundle(state.bundles, storyId, (bundle) => ({
-        entries: replaceEntry(bundle.entries, payload.entry.id, payload.entry),
-        variantsByEntry: { ...bundle.variantsByEntry, [payload.entry.id]: payload.variants },
-        imagesByEntry: { ...bundle.imagesByEntry, [payload.entry.id]: [] },
-        streaming: null,
-        turnActivity: { thoughts: current.thoughts, tools: current.toolLog },
-        ledgerLoading: false,
-      })),
-    }));
+    get().loadCharacters(storyId);
   },
   _fail: (streamId, message) => {
     const found = findStream(get().bundles, streamId);
@@ -563,7 +515,9 @@ export const useStoryStore = create<StoryStoreState>((set, get) => ({
     set((state) => ({
       bundles: patchBundle(state.bundles, storyId, {
         streaming: null,
-        turnActivity: { thoughts: current.thoughts, tools: current.toolLog },
+        turnActivity: current.mode === "replace" && current.targetEntryId
+          ? { entryId: current.targetEntryId, thoughts: "", tools: [] }
+          : null,
         turnError: message,
       }),
     }));
@@ -580,6 +534,7 @@ export const useStoryStore = create<StoryStoreState>((set, get) => ({
   _imageGenerated: (image) => {
     const storyId = findStoryForEntry(get().bundles, image.entry_id);
     if (!storyId) return;
+    advanceGeneration(imageEventGenerations, storyId);
     set((state) => ({
       bundles: patchBundle(state.bundles, storyId, (bundle) => {
         const current = bundle.imagesByEntry[image.entry_id] ?? [];
@@ -636,37 +591,78 @@ export const useStoryStore = create<StoryStoreState>((set, get) => ({
     }));
   },
 
-  loadDiceSettings: async (storyId) => {
+  loadNarratorTools: async (storyId) => {
     const activeLoad = settingsLoads.get(storyId);
     if (activeLoad) return activeLoad;
-    set((state) => ({ bundles: patchBundle(state.bundles, storyId, { diceSettingsLoading: true }) }));
-    const load = enqueueSettings(storyId, async () => {
-      const diceSettings = await dicerollApi.getSettings(storyId);
-      set((state) => ({ bundles: patchBundle(state.bundles, storyId, { diceSettings }) }));
+    if (get().bundles[storyId]?.narratorTools) return;
+    set((state) => ({ bundles: patchBundle(state.bundles, storyId, { narratorToolsLoading: true, narratorToolsError: null }) }));
+    const load = enqueueSettings(settingsQueues, storyId, async () => {
+      const narratorTools = await narratorToolsApi.get(storyId);
+      set((state) => ({ bundles: patchBundle(state.bundles, storyId, { narratorTools }) }));
     })
-      .catch((error) => console.error("failed to load dice-roll settings", error))
+      .catch((error) => set((state) => ({ bundles: patchBundle(state.bundles, storyId, { narratorToolsError: String(error) }) })))
       .finally(() => {
         if (settingsLoads.get(storyId) === load) settingsLoads.delete(storyId);
-        set((state) => ({ bundles: patchBundle(state.bundles, storyId, { diceSettingsLoading: false }) }));
+        set((state) => ({ bundles: patchBundle(state.bundles, storyId, { narratorToolsLoading: false }) }));
       });
     settingsLoads.set(storyId, load);
     return load;
   },
-  saveDiceSettings: async (storyId, patch) => {
+  saveNarratorTools: async (storyId, patch) => {
     if (!storyId) {
-      set((state) => ({
-        draftDiceSettings: { ...(state.draftDiceSettings ?? DEFAULT_DICEROLL_SETTINGS), ...patch },
-      }));
+      set((state) => ({ draftNarratorTools: { ...state.draftNarratorTools, ...patch } }));
       return;
     }
-    await enqueueSettings(storyId, async () => {
-      const current = get().bundles[storyId]?.diceSettings ?? await dicerollApi.getSettings(storyId);
-      const next = { ...current, ...patch };
-      await dicerollApi.saveSettings(storyId, next.dice_mode, next.attributes_enabled, next.reasoning_effort);
-      set((state) => ({ bundles: patchBundle(state.bundles, storyId, { diceSettings: next }) }));
-    });
+    const loaded = get().bundles[storyId]?.narratorTools;
+    if (!loaded) throw new Error("Narrator tools are not loaded yet");
+    set((state) => ({ bundles: patchBundle(state.bundles, storyId, (bundle) => ({
+      narratorTools: { ...bundle.narratorTools!, ...patch }, narratorToolsError: null,
+    })) }));
+    try {
+      await enqueueSettings(settingsQueues, storyId, async () => {
+        const current = await narratorToolsApi.get(storyId);
+        await narratorToolsApi.save(storyId, { ...current, ...patch });
+      });
+    } catch (error) {
+      set((state) => ({ bundles: patchBundle(state.bundles, storyId, { narratorToolsError: String(error) }) }));
+      await enqueueSettings(settingsQueues, storyId, async () => {
+        const narratorTools = await narratorToolsApi.get(storyId);
+        set((state) => ({ bundles: patchBundle(state.bundles, storyId, { narratorTools }) }));
+      });
+      throw error;
+    }
   },
-  resetDraftDiceSettings: () => set({ draftDiceSettings: null }),
+  loadReasoningEffort: async (storyId) => {
+    const activeLoad = reasoningLoads.get(storyId);
+    if (activeLoad) return activeLoad;
+    if (get().bundles[storyId]?.reasoningEffortLoaded) return;
+    const load = enqueueSettings(reasoningQueues, storyId, async () => {
+      const reasoningEffort = await narratorToolsApi.getReasoningEffort(storyId);
+      set((state) => ({ bundles: patchBundle(state.bundles, storyId, { reasoningEffort, reasoningEffortLoaded: true, reasoningEffortError: null }) }));
+    })
+      .catch((error) => set((state) => ({ bundles: patchBundle(state.bundles, storyId, { reasoningEffortError: String(error) }) })))
+      .finally(() => { if (reasoningLoads.get(storyId) === load) reasoningLoads.delete(storyId); });
+    reasoningLoads.set(storyId, load);
+    return load;
+  },
+  saveReasoningEffort: async (storyId, value) => {
+    if (!storyId) {
+      set({ draftReasoningEffort: value });
+      return;
+    }
+    if (!get().bundles[storyId]?.reasoningEffortLoaded) throw new Error("Reasoning effort is not loaded yet");
+    set((state) => ({ bundles: patchBundle(state.bundles, storyId, { reasoningEffort: value, reasoningEffortError: null }) }));
+    try {
+      await enqueueSettings(reasoningQueues, storyId, () => narratorToolsApi.saveReasoningEffort(storyId, value));
+    } catch (error) {
+      set((state) => ({ bundles: patchBundle(state.bundles, storyId, { reasoningEffortError: String(error) }) }));
+      await enqueueSettings(reasoningQueues, storyId, async () => {
+        const reasoningEffort = await narratorToolsApi.getReasoningEffort(storyId);
+        set((state) => ({ bundles: patchBundle(state.bundles, storyId, { reasoningEffort }) }));
+      });
+      throw error;
+    }
+  },
 
   loadAuthorNote: async (storyId) => {
     set((state) => ({ bundles: patchBundle(state.bundles, storyId, { authorNoteLoading: true }) }));

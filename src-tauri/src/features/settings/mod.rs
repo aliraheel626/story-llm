@@ -185,9 +185,6 @@ pub struct ImageModelSettings {
     /// Images reuse the OpenRouter key set in the Text Model panel — there is
     /// only one provider (OpenRouter) for both text and images.
     pub has_api_key: bool,
-    /// Whether narrator-driven images are enabled. This gates the live
-    /// `illustrate_scene` tool on narration paths that support it.
-    pub narrator_images: bool,
 }
 
 #[tauri::command]
@@ -210,7 +207,7 @@ pub fn read_image_model_settings(app: &AppHandle, pool: &Pool) -> AppResult<Imag
         )
         .ok();
 
-    let (model, enabled, style, narrator_images) = stored
+    let (model, enabled, style) = stored
         .and_then(|v| serde_json::from_str::<serde_json::Value>(&v).ok())
         .map(|v| {
             let model = v
@@ -224,18 +221,13 @@ pub fn read_image_model_settings(app: &AppHandle, pool: &Pool) -> AppResult<Imag
                 .and_then(|s| s.as_str())
                 .unwrap_or(DEFAULT_IMAGE_STYLE)
                 .to_string();
-            let narrator_images = v
-                .get("narrator_images")
-                .and_then(|n| n.as_bool())
-                .unwrap_or(true);
-            (model, enabled, style, narrator_images)
+            (model, enabled, style)
         })
         .unwrap_or_else(|| {
             (
                 crate::features::images::openrouter::DEFAULT_IMAGE_MODEL.to_string(),
                 true,
                 DEFAULT_IMAGE_STYLE.to_string(),
-                true,
             )
         });
 
@@ -249,7 +241,6 @@ pub fn read_image_model_settings(app: &AppHandle, pool: &Pool) -> AppResult<Imag
         enabled,
         style,
         has_api_key,
-        narrator_images,
     })
 }
 
@@ -259,7 +250,6 @@ pub fn save_image_model_settings(
     model: String,
     enabled: bool,
     style: String,
-    narrator_images: bool,
 ) -> AppResult<()> {
     let conn = pool.get()?;
     let style = if style.trim().is_empty() {
@@ -267,7 +257,7 @@ pub fn save_image_model_settings(
     } else {
         style.trim().to_string()
     };
-    let value = json!({ "model": model, "enabled": enabled, "style": style, "narrator_images": narrator_images }).to_string();
+    let value = json!({ "model": model, "enabled": enabled, "style": style }).to_string();
     conn.execute(
         "INSERT INTO settings (key, value) VALUES (?1, ?2)
          ON CONFLICT(key) DO UPDATE SET value = excluded.value",

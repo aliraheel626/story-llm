@@ -4,8 +4,6 @@
 
 use serde_json::{json, Value};
 
-use crate::features::dicerolls::model::DiceMode;
-
 // Narrator
 
 pub const TURN_MODES: &[&str] = &["do", "say", "story", "guide", "see", "continue"];
@@ -27,7 +25,7 @@ You are the narrator of an interactive story.
 # Narration
 
 - Continue the scene in vivid, literary prose that follows naturally from what has already happened and from the player's latest action.
-- Match the established tone, tense, and style.
+- Match the established tone, tense, and style unless the current author's note directs otherwise.
 - Always narrate the player's actions and perceptions in the second person ("you"). Other characters stay in the third person.
 - Never speak as the player, never break the fourth wall, and never add meta-commentary, author's notes, or content outside the story itself.
 
@@ -55,9 +53,8 @@ Each turn arrives as tagged input. These tags are input markup. Never reproduce 
 ## Context blocks
 
 - `<entities>` is authoritative, and user overrides win.
-- `<author_note>` is the author's standing direction.
-- `<rolls>` contains resolved outcomes that must never be contradicted.
-- `<dice_mode>` controls when `roll_check` may be called.
+- `<author_note>` contains the author's current standing guidance. Follow it on every turn while present, including tone, style, pacing, and scene constraints even when they differ from earlier narration. Keep the rules above, authoritative story facts and rolls, and the player's latest action intact. Never quote or mention the note in your reply.
+- `<additional_instructions>` contains extra guidance for this turn, such as tool availability and when to use those tools.
 
 ## Records in history
 
@@ -77,20 +74,7 @@ pub const IMAGE_TOOL_AVAILABLE_INSTRUCTION: &str = "You have an illustrate_scene
 
 pub const ENTITY_CONTEXT_HEADER: &str =
     "Current entity state is authoritative. User overrides take precedence over inferred updates.";
-pub const ENTITY_TOOLS_AVAILABLE_PREFIX: &str = "You have tools to check, create, and update entities and their attributes as the story unfolds — use them to keep the world consistent.";
-
-pub fn dice_mode_instruction(dice_mode: DiceMode) -> &'static str {
-    match dice_mode {
-        DiceMode::Always => {
-            "Call the roll_check tool for every meaningful action before narrating its outcome."
-        }
-        DiceMode::Classifier => {
-            "Call the roll_check tool only when the outcome is genuinely uncertain — routine or \
-             clearly one-sided actions don't need it."
-        }
-        DiceMode::Never => "Do not call the roll_check tool; narrate outcomes purely from context.",
-    }
-}
+pub const ROLL_CHECK_AVAILABLE_INSTRUCTION: &str = "For a genuinely uncertain outcome, call roll_check before narrating the result. With no factors it defaults to 50% unless you provide chance_percent. For a check based on registered attributes, select one acting entity-attribute pair or two opposing pairs; the backend reads their current values and calculates the chance. Use get_entities to find IDs and attribute names when that tool is available. Never invent attribute values or pass chance_percent together with factors. Do not roll routine or certain actions.";
 
 // Title generation
 
@@ -129,27 +113,42 @@ pub fn illustrate_scene_schema() -> Value {
 
 pub const ROLL_CHECK_TOOL_NAME: &str = "roll_check";
 pub const ROLL_CHECK_DESCRIPTION: &str =
-    "Roll the dice for an uncertain action. Resolves the player's relevant attribute against an \
-     optional opposing entity/attribute and returns the outcome. Call this before narrating the \
-     result of any action whose success is genuinely in doubt.";
+    "Resolve a genuinely uncertain action. With zero factors, chance_percent is optional and \
+     defaults to 50. For one factor, identify the acting entity_id and attribute_name; for two, \
+     put the acting pair first and the opposing pair second. The backend reads stored attribute \
+     values, normalizes each by its registered min/max, and calculates chance_percent as \
+     round(50 + 50 * (actor_normalized - opponent_normalized)); a single factor faces a neutral \
+     opponent at 0.5. Do not pass chance_percent with factors, and do not invent entity IDs or \
+     values. The tool returns the draw and success or failure.";
 
 pub fn roll_check_schema() -> Value {
     json!({
         "type": "object",
         "properties": {
-            "attribute": {"type": "string", "description": "The player's attribute this action draws on, e.g. \"Stealth\"."},
-            "target_entity_id": {"type": "string", "description": "Id of the opposing entity, from get_entities, if any."},
-            "target_attribute": {"type": "string", "description": "The opposing entity's attribute, if target_entity_id is given."},
-            "modifier": {"type": "number", "description": "Situational adjustment to success probability, e.g. 0.1 for +10%."}
+            "chance_percent": {"type": "integer", "minimum": 0, "maximum": 100, "description": "Optional narrator-estimated chance when no factors are given; defaults to 50%. Must be omitted when factors are present."},
+            "reason": {"type": "string", "description": "A short description of the uncertain action and why it needs a roll."},
+            "factors": {
+                "type": "array", "maxItems": 2,
+                "description": "Zero, one acting, or two acting-then-opposing registered entity attributes. Values are fetched by the backend; never supply numbers here.",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "entity_id": {"type": "string", "description": "Entity id in this story, preferably from get_entities."},
+                        "attribute_name": {"type": "string", "description": "Name of an attribute currently set on the entity."}
+                    },
+                    "required": ["entity_id", "attribute_name"],
+                    "additionalProperties": false
+                }
+            }
         },
-        "required": ["attribute"]
+        "additionalProperties": false
     })
 }
 
 pub const GET_ENTITIES_TOOL_NAME: &str = "get_entities";
 pub const GET_ENTITIES_DESCRIPTION: &str =
     "List known entities (characters, objects, locations) and their current attribute values. \
-     Use this to check who or what is present before narrating, rolling, or adjusting state.";
+     Use this to check who or what is present before narrating or changing entity state.";
 
 pub fn get_entities_schema() -> Value {
     json!({
@@ -180,7 +179,7 @@ pub fn create_entity_schema() -> Value {
 
 pub const UPDATE_ENTITY_TOOL_NAME: &str = "update_entity";
 pub const UPDATE_ENTITY_DESCRIPTION: &str =
-    "Rename an entity or update its appearance description. Look it up with get_entities first.";
+    "Rename an entity or update its appearance description. Use a known entity id; look it up first when the lookup tool is available.";
 
 pub fn update_entity_schema() -> Value {
     json!({
@@ -204,7 +203,7 @@ pub fn adjust_entity_attribute_schema() -> Value {
     json!({
         "type": "object",
         "properties": {
-            "entity_id": {"type": "string", "description": "Entity id from get_entities/create_entity. Use \"You\" for the player via get_entities first."},
+            "entity_id": {"type": "string", "description": "A known entity id from available context or an enabled lookup/create tool. The player character is named \"You\"."},
             "attribute": {"type": "string", "description": "Attribute name, e.g. \"Trust\"."},
             "delta": {"type": "number", "description": "Positive or negative change, on the attribute's own scale."},
             "dramatic": {"type": "boolean", "description": "True only for a major, story-changing swing."},
@@ -228,5 +227,27 @@ mod tests {
         assert_eq!(render_turn("continue", ""), Some("<continue/>".into()));
         assert_eq!(render_turn("see", ""), Some("<see/>".into()));
         assert_eq!(render_turn("unknown", "x"), None);
+    }
+
+    #[test]
+    fn narrator_prompt_follows_current_author_note_without_exposing_it() {
+        let prompt = narrator_system_prompt();
+        assert!(prompt.contains("unless the current author's note directs otherwise"));
+        assert!(prompt.contains("Follow it on every turn while present"));
+        assert!(prompt.contains("Never quote or mention the note in your reply"));
+    }
+
+    #[test]
+    fn roll_check_schema_accepts_optional_chance_or_two_attribute_references() {
+        let schema = roll_check_schema();
+        assert!(schema.get("required").is_none());
+        assert_eq!(schema["properties"]["chance_percent"]["minimum"], 0);
+        assert_eq!(schema["properties"]["chance_percent"]["maximum"], 100);
+        assert_eq!(schema["properties"]["factors"]["maxItems"], 2);
+        assert_eq!(
+            schema["properties"]["factors"]["items"]["required"],
+            json!(["entity_id", "attribute_name"])
+        );
+        assert!(schema["properties"].get("attribute").is_none());
     }
 }

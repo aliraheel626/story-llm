@@ -1,4 +1,5 @@
 pub mod model;
+pub mod settings;
 
 use chrono::Utc;
 use schemars::JsonSchema;
@@ -7,15 +8,16 @@ use serde_json::json;
 use tauri::{AppHandle, Emitter, State};
 use uuid::Uuid;
 
+use self::settings::{normalize_reasoning_effort, NarratorToolSettings};
 use crate::ai;
 use crate::features::{
     ledger::{
         model::kind as ledger_kind, reducer as ledger_reducer, repository as ledger_repository,
     },
-    settings,
+    settings as global_settings,
 };
 use crate::prompts;
-use crate::shared::db::{with_transaction, Pool};
+use crate::shared::db::{seed_player_entity, with_transaction, Pool};
 use crate::shared::error::{AppError, AppResult};
 use model::Story;
 
@@ -55,6 +57,14 @@ pub fn create_story(
     title: Option<String>,
     settings: Option<serde_json::Value>,
 ) -> AppResult<Story> {
+    create_story_in_pool(pool.inner(), title, settings)
+}
+
+fn create_story_in_pool(
+    pool: &Pool,
+    title: Option<String>,
+    settings: Option<serde_json::Value>,
+) -> AppResult<Story> {
     let title = title.unwrap_or_default();
     let title = title.trim();
     let title = if title.is_empty() {
@@ -62,15 +72,50 @@ pub fn create_story(
     } else {
         title
     };
-    let settings_json = settings.unwrap_or_else(|| json!({})).to_string();
-    let conn = pool.get()?;
+    let mut settings = settings.unwrap_or_else(|| json!({}));
+    let object = settings
+        .as_object_mut()
+        .ok_or_else(|| AppError::Invalid("story settings must be an object".into()))?;
+    object.remove("attributes_enabled");
+    object.remove("dice_mode");
+    let tools = match object.get("narrator_tools") {
+        Some(value) => serde_json::from_value::<NarratorToolSettings>(value.clone())
+            .map_err(|error| AppError::Invalid(format!("invalid narrator tools: {error}")))?,
+        None => NarratorToolSettings::default(),
+    };
+    object.insert("narrator_tools".into(), json!(tools));
+    if let Some(value) = object.get("reasoning_effort") {
+        match value {
+            serde_json::Value::Null => {
+                object.remove("reasoning_effort");
+            }
+            serde_json::Value::String(effort) if effort.trim().is_empty() => {
+                object.remove("reasoning_effort");
+            }
+            serde_json::Value::String(effort) => {
+                let normalized = normalize_reasoning_effort(effort).ok_or_else(|| {
+                    AppError::Invalid(format!("unsupported reasoning effort: {effort}"))
+                })?;
+                object.insert("reasoning_effort".into(), json!(normalized));
+            }
+            _ => {
+                return Err(AppError::Invalid(
+                    "reasoning effort must be a string".into(),
+                ))
+            }
+        }
+    }
+    let settings_json = settings.to_string();
     let now = Utc::now().to_rfc3339();
     let story_id = Uuid::new_v4().to_string();
-    conn.execute(
-        "INSERT INTO stories (id, title, created_at, updated_at, settings_json)
-         VALUES (?1, ?2, ?3, ?3, ?4)",
-        rusqlite::params![story_id, title, now, settings_json],
-    )?;
+    with_transaction(pool, |tx| {
+        tx.execute(
+            "INSERT INTO stories (id, title, created_at, updated_at, settings_json)
+             VALUES (?1, ?2, ?3, ?3, ?4)",
+            rusqlite::params![story_id, title, now, settings_json],
+        )?;
+        seed_player_entity(tx, &story_id)
+    })?;
 
     Ok(Story {
         id: story_id,
@@ -187,7 +232,7 @@ pub fn maybe_auto_title(app: &AppHandle, pool: &Pool, story_id: &str) {
         return;
     }
 
-    let Ok(config) = settings::resolve_text_model(app, pool) else {
+    let Ok(config) = global_settings::resolve_text_model(app, pool) else {
         // No text model configured yet (or no API key): keep the placeholder;
         // a later exchange retries once the model is set up.
         return;
@@ -256,7 +301,67 @@ fn sanitize_title(raw: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::sanitize_title;
+    use super::settings::NarratorToolSettings;
+    use super::{create_story_in_pool, sanitize_title};
+    use crate::shared::db::test_pool;
+    use serde_json::json;
+
+    #[test]
+    fn story_creation_validates_draft_and_seeds_canonical_player() {
+        let pool = test_pool();
+        let tools = NarratorToolSettings {
+            roll_check: false,
+            ..NarratorToolSettings::default()
+        };
+        let created = create_story_in_pool(
+            &pool,
+            None,
+            Some(json!({
+                "narrator_tools": tools,
+                "reasoning_effort": "HIGH",
+                "author_note": "keep",
+                "attributes_enabled": false,
+                "dice_mode": "never"
+            })),
+        )
+        .unwrap();
+        let settings: serde_json::Value = serde_json::from_str(&created.settings_json).unwrap();
+        assert_eq!(settings["narrator_tools"], json!(tools));
+        assert_eq!(settings["reasoning_effort"], "high");
+        assert_eq!(settings["author_note"], "keep");
+        assert!(settings.get("attributes_enabled").is_none());
+        assert!(settings.get("dice_mode").is_none());
+        let conn = pool.get().unwrap();
+        let (name, kind): (String, String) = conn
+            .query_row(
+                "SELECT story_entity_state.name, entities.kind FROM story_entity_state
+             JOIN entities ON entities.id = story_entity_state.entity_id
+             WHERE story_entity_state.story_id = ?1",
+                [&created.id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!((name.as_str(), kind.as_str()), ("You", "character"));
+        drop(conn);
+        let fresh = create_story_in_pool(&pool, None, None).unwrap();
+        let defaults: serde_json::Value = serde_json::from_str(&fresh.settings_json).unwrap();
+        assert_eq!(
+            defaults["narrator_tools"],
+            json!(NarratorToolSettings::default())
+        );
+        assert!(create_story_in_pool(
+            &pool,
+            None,
+            Some(json!({"narrator_tools":{"roll_check":true}}))
+        )
+        .is_err());
+        let count: i64 = pool
+            .get()
+            .unwrap()
+            .query_row("SELECT COUNT(*) FROM stories", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(count, 2);
+    }
 
     #[test]
     fn sanitize_title_strips_quotes_punctuation_and_whitespace() {

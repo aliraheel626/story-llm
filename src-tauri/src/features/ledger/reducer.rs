@@ -1,128 +1,34 @@
 use std::collections::HashMap;
 
-use super::model::{kind, LedgerEntry, NarrationVariant};
+use super::model::{kind, LedgerEntry};
 
-/// For a given target entry, which underlying entry (the base narration, or
-/// one of its variants) is currently selected to supply its content. Folding
-/// this separately from edits is what lets an edit "stick" to the variant it
-/// was made against instead of being wiped out by an unrelated re-selection.
-pub fn active_variant_id(entries: &[LedgerEntry], target: &str) -> String {
-    entries
-        .iter()
-        .rev()
-        .filter(|entry| entry.target_entry_id.as_deref() == Some(target))
-        .find_map(|entry| match entry.kind.as_str() {
-            kind::NARRATION_VARIANT => Some(entry.id.clone()),
-            kind::NARRATION_SELECTED => entry
-                .payload
-                .get("selected_entry_id")
-                .and_then(|value| value.as_str())
-                .map(str::to_string),
-            _ => None,
-        })
-        .unwrap_or_else(|| target.to_string())
-}
-
-/// Latest edited text per (target entry, the variant it was edited against).
-/// `applies_to` defaults to the target itself for edits made before this
-/// field existed, preserving old data.
-fn edits_by_target_and_variant(entries: &[LedgerEntry]) -> HashMap<(String, String), String> {
+fn edits_by_target(entries: &[LedgerEntry]) -> HashMap<String, String> {
     let mut edits = HashMap::new();
     for entry in entries {
         if entry.kind != kind::CONTENT_EDITED {
             continue;
         }
         if let (Some(target), Some(content)) = (&entry.target_entry_id, &entry.content) {
-            let applies_to = entry
-                .payload
-                .get("applies_to")
-                .and_then(|v| v.as_str())
-                .unwrap_or(target.as_str())
-                .to_string();
-            edits.insert((target.clone(), applies_to), content.clone());
+            edits.insert(target.clone(), content.clone());
         }
     }
     edits
 }
 
 pub fn active_visible_entries(entries: &[LedgerEntry]) -> Vec<LedgerEntry> {
-    let by_id: HashMap<&str, &LedgerEntry> = entries.iter().map(|e| (e.id.as_str(), e)).collect();
-    let edits = edits_by_target_and_variant(entries);
+    let edits = edits_by_target(entries);
 
     entries
         .iter()
         .filter(|e| e.kind == kind::PLAYER_MESSAGE || e.kind == kind::NARRATION)
         .map(|e| {
             let mut active = e.clone();
-            let variant_id = active_variant_id(entries, &e.id);
-            if let Some(edited) = edits.get(&(e.id.clone(), variant_id.clone())) {
+            if let Some(edited) = edits.get(&e.id) {
                 active.content = Some(edited.clone());
-            } else if variant_id != e.id {
-                if let Some(content) = by_id
-                    .get(variant_id.as_str())
-                    .and_then(|v| v.content.as_ref())
-                {
-                    active.content = Some(content.clone());
-                }
             }
             active
         })
         .collect()
-}
-
-/// A revision's reasoning, if it recorded any. Display only.
-fn thoughts_of(payload: &serde_json::Value) -> Option<String> {
-    payload
-        .get("thoughts")
-        .and_then(|v| v.as_str())
-        .map(str::trim)
-        .filter(|t| !t.is_empty())
-        .map(str::to_string)
-}
-
-pub fn variants_for_entry(entries: &[LedgerEntry], entry_id: &str) -> Vec<NarrationVariant> {
-    let selected = active_variant_id(entries, entry_id);
-    let edits = edits_by_target_and_variant(entries);
-
-    let mut out = Vec::new();
-    if let Some(base) = entries.iter().find(|e| e.id == entry_id) {
-        if let Some(content) = &base.content {
-            let content = edits
-                .get(&(entry_id.to_string(), base.id.clone()))
-                .cloned()
-                .unwrap_or_else(|| content.clone());
-            out.push(NarrationVariant {
-                id: base.id.clone(),
-                entry_id: entry_id.to_string(),
-                content,
-                is_selected: selected == base.id,
-                created_at: base.created_at.clone(),
-                thoughts: thoughts_of(&base.payload),
-            });
-        }
-    }
-    out.extend(
-        entries
-            .iter()
-            .filter(|e| {
-                e.kind == kind::NARRATION_VARIANT && e.target_entry_id.as_deref() == Some(entry_id)
-            })
-            .filter_map(|e| {
-                let content = edits
-                    .get(&(entry_id.to_string(), e.id.clone()))
-                    .cloned()
-                    .or_else(|| e.content.clone())?;
-                Some(NarrationVariant {
-                    id: e.id.clone(),
-                    entry_id: entry_id.to_string(),
-                    content,
-                    is_selected: selected == e.id,
-                    created_at: e.created_at.clone(),
-                    thoughts: thoughts_of(&e.payload),
-                })
-            }),
-    );
-    out
 }
 
 #[cfg(test)]
@@ -151,29 +57,15 @@ mod tests {
     }
 
     #[test]
-    fn selection_and_edit_fold_without_mutating_original() {
+    fn edits_fold_without_mutating_original() {
         let rows = vec![
             entry("n", kind::NARRATION, Some("original"), None, json!({})),
-            entry(
-                "v",
-                kind::NARRATION_VARIANT,
-                Some("variant"),
-                Some("n"),
-                json!({}),
-            ),
-            entry(
-                "s",
-                kind::NARRATION_SELECTED,
-                None,
-                Some("n"),
-                json!({"selected_entry_id":"v"}),
-            ),
             entry(
                 "e",
                 kind::CONTENT_EDITED,
                 Some("edited"),
                 Some("n"),
-                json!({"applies_to":"v"}),
+                json!({"reason":"user_edit"}),
             ),
         ];
         let visible = active_visible_entries(&rows);
@@ -182,223 +74,34 @@ mod tests {
     }
 
     #[test]
-    fn editing_the_active_variant_survives_reselecting_it_later() {
+    fn latest_edit_wins_for_player_and_narration() {
         let rows = vec![
-            entry("n", kind::NARRATION, Some("original"), None, json!({})),
+            entry("p", kind::PLAYER_MESSAGE, Some("original"), None, json!({})),
+            entry("n", kind::NARRATION, Some("first"), None, json!({})),
             entry(
-                "v",
-                kind::NARRATION_VARIANT,
-                Some("variant"),
+                "e1",
+                kind::CONTENT_EDITED,
+                Some("second"),
                 Some("n"),
                 json!({}),
             ),
             entry(
-                "s1",
-                kind::NARRATION_SELECTED,
-                None,
-                Some("n"),
-                json!({"selected_entry_id":"v"}),
-            ),
-            entry(
-                "e",
+                "e2",
                 kind::CONTENT_EDITED,
-                Some("edited variant"),
+                Some("third"),
                 Some("n"),
-                json!({"applies_to":"v"}),
+                json!({}),
             ),
-            // Re-selecting the same variant later must not discard the edit
-            // made against it.
             entry(
-                "s2",
-                kind::NARRATION_SELECTED,
-                None,
-                Some("n"),
-                json!({"selected_entry_id":"v"}),
+                "ep",
+                kind::CONTENT_EDITED,
+                Some("player edit"),
+                Some("p"),
+                json!({}),
             ),
         ];
         let visible = active_visible_entries(&rows);
-        assert_eq!(visible[0].content.as_deref(), Some("edited variant"));
-
-        let variants = variants_for_entry(&rows, "n");
-        let v = variants.iter().find(|v| v.id == "v").unwrap();
-        assert_eq!(v.content, "edited variant");
-    }
-
-    #[test]
-    fn editing_the_active_variant_does_not_leak_into_a_different_variant() {
-        let rows = vec![
-            entry("n", kind::NARRATION, Some("original"), None, json!({})),
-            entry(
-                "v1",
-                kind::NARRATION_VARIANT,
-                Some("first"),
-                Some("n"),
-                json!({}),
-            ),
-            entry(
-                "v2",
-                kind::NARRATION_VARIANT,
-                Some("second"),
-                Some("n"),
-                json!({}),
-            ),
-            entry(
-                "s1",
-                kind::NARRATION_SELECTED,
-                None,
-                Some("n"),
-                json!({"selected_entry_id":"v1"}),
-            ),
-            entry(
-                "e",
-                kind::CONTENT_EDITED,
-                Some("edited first"),
-                Some("n"),
-                json!({"applies_to":"v1"}),
-            ),
-            entry(
-                "s2",
-                kind::NARRATION_SELECTED,
-                None,
-                Some("n"),
-                json!({"selected_entry_id":"v2"}),
-            ),
-        ];
-        // Switching to the un-edited variant must show its own text, not the
-        // other variant's edit.
-        assert_eq!(
-            active_visible_entries(&rows)[0].content.as_deref(),
-            Some("second")
-        );
-    }
-
-    #[test]
-    fn latest_variant_selection_is_active_and_all_variants_remain_available() {
-        let rows = vec![
-            entry("n", kind::NARRATION, Some("original"), None, json!({})),
-            entry(
-                "v1",
-                kind::NARRATION_VARIANT,
-                Some("first variant"),
-                Some("n"),
-                json!({}),
-            ),
-            entry(
-                "v2",
-                kind::NARRATION_VARIANT,
-                Some("second variant"),
-                Some("n"),
-                json!({}),
-            ),
-            entry(
-                "s1",
-                kind::NARRATION_SELECTED,
-                None,
-                Some("n"),
-                json!({"selected_entry_id":"v1"}),
-            ),
-            entry(
-                "s2",
-                kind::NARRATION_SELECTED,
-                None,
-                Some("n"),
-                json!({"selected_entry_id":"v2"}),
-            ),
-        ];
-
-        assert_eq!(
-            active_visible_entries(&rows)[0].content.as_deref(),
-            Some("second variant")
-        );
-        let variants = variants_for_entry(&rows, "n");
-        assert_eq!(variants.len(), 3);
-        assert_eq!(
-            variants
-                .iter()
-                .find(|variant| variant.is_selected)
-                .unwrap()
-                .id,
-            "v2"
-        );
-    }
-
-    #[test]
-    fn newest_variant_is_active_without_an_explicit_selection() {
-        let rows = vec![
-            entry("n", kind::NARRATION, Some("original"), None, json!({})),
-            entry(
-                "v1",
-                kind::NARRATION_VARIANT,
-                Some("first"),
-                Some("n"),
-                json!({}),
-            ),
-            entry(
-                "v2",
-                kind::NARRATION_VARIANT,
-                Some("second"),
-                Some("n"),
-                json!({}),
-            ),
-        ];
-
-        assert_eq!(active_variant_id(&rows, "n"), "v2");
-        assert_eq!(
-            active_visible_entries(&rows)[0].content.as_deref(),
-            Some("second")
-        );
-        let selected = variants_for_entry(&rows, "n")
-            .into_iter()
-            .find(|variant| variant.is_selected)
-            .unwrap();
-        assert_eq!(selected.id, "v2");
-    }
-
-    #[test]
-    fn base_is_active_when_no_variants_exist() {
-        let rows = vec![entry(
-            "n",
-            kind::NARRATION,
-            Some("original"),
-            None,
-            json!({}),
-        )];
-
-        assert_eq!(active_variant_id(&rows, "n"), "n");
-        assert!(variants_for_entry(&rows, "n")[0].is_selected);
-    }
-
-    #[test]
-    fn a_new_variant_supersedes_an_older_explicit_selection() {
-        let rows = vec![
-            entry("n", kind::NARRATION, Some("original"), None, json!({})),
-            entry(
-                "v1",
-                kind::NARRATION_VARIANT,
-                Some("first"),
-                Some("n"),
-                json!({}),
-            ),
-            entry(
-                "s",
-                kind::NARRATION_SELECTED,
-                None,
-                Some("n"),
-                json!({"selected_entry_id":"n"}),
-            ),
-            entry(
-                "v2",
-                kind::NARRATION_VARIANT,
-                Some("second"),
-                Some("n"),
-                json!({}),
-            ),
-        ];
-
-        assert_eq!(active_variant_id(&rows, "n"), "v2");
-        assert_eq!(
-            active_visible_entries(&rows)[0].content.as_deref(),
-            Some("second")
-        );
+        assert_eq!(visible[0].content.as_deref(), Some("player edit"));
+        assert_eq!(visible[1].content.as_deref(), Some("third"));
     }
 }

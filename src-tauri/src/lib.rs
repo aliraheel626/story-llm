@@ -45,11 +45,12 @@ pub fn run() {
             features::ledger::list_ledger_entries,
             features::narration::submit_turn,
             features::narration::retry_narration,
-            features::narration::generate_narration_variant,
-            features::narration::list_narration_variants,
-            features::narration::select_narration_variant,
             features::narration::edit_ledger_entry,
             features::narration::erase_last_exchange,
+            features::stories::settings::get_story_narrator_tools,
+            features::stories::settings::save_story_narrator_tools,
+            features::stories::settings::get_story_reasoning_effort,
+            features::stories::settings::save_story_reasoning_effort,
             features::settings::get_text_model_settings,
             features::settings::save_text_model_settings,
             features::settings::get_image_model_settings,
@@ -67,10 +68,8 @@ pub fn run() {
             features::entities::attributes::list_attribute_registry,
             features::entities::attributes::set_entity_attribute,
             features::entities::attributes::remove_entity_attribute,
-            features::dicerolls::commands::get_story_diceroll_settings,
-            features::dicerolls::commands::save_story_diceroll_settings,
-            features::dicerolls::commands::list_rolls_for_story,
-            features::dicerolls::commands::list_roll_details_for_entry,
+            features::ledger::list_rolls_for_story,
+            features::ledger::list_roll_details_for_entry,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
