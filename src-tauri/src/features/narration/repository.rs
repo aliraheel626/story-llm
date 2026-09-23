@@ -1,13 +1,13 @@
-use crate::features::timeline::{
-    model::{kind, TimelineEntry},
-    reducer, repository as timeline,
+use crate::features::ledger::{
+    model::{kind, LedgerEntry},
+    reducer, repository as ledger,
 };
 use crate::shared::error::AppResult;
 
 use super::model::ActiveStoryEntry;
-use crate::features::timeline::model::NarrationVariant;
+use crate::features::ledger::model::NarrationVariant;
 
-fn to_story_entry(entry: TimelineEntry) -> ActiveStoryEntry {
+fn to_story_entry(entry: LedgerEntry) -> ActiveStoryEntry {
     let role = if entry.kind == kind::PLAYER_MESSAGE {
         "player"
     } else {
@@ -35,7 +35,7 @@ pub(super) fn get_last_story_entry(
     conn: &rusqlite::Connection,
     story_id: &str,
 ) -> AppResult<Option<ActiveStoryEntry>> {
-    let raw = timeline::list_logical_entries(conn, story_id)?;
+    let raw = ledger::list_logical_entries(conn, story_id)?;
     Ok(reducer::active_visible_entries(&raw)
         .pop()
         .map(to_story_entry))
@@ -61,7 +61,7 @@ pub(super) fn insert_story_entry(
         Some(thoughts) => serde_json::json!({ "input_mode": input_mode, "thoughts": thoughts }),
         None => serde_json::json!({ "input_mode": input_mode }),
     };
-    let entry = timeline::append_entry(
+    let entry = ledger::append_entry(
         conn,
         story_id,
         event_kind,
@@ -77,14 +77,14 @@ pub(super) fn image_paths_for_entry(
     conn: &rusqlite::Connection,
     entry_id: &str,
 ) -> AppResult<Vec<String>> {
-    timeline::image_paths_for_entry(conn, entry_id)
+    ledger::image_paths_for_entry(conn, entry_id)
 }
 
 pub(super) fn list_variants(
     conn: &rusqlite::Connection,
     entry_id: &str,
 ) -> AppResult<Vec<NarrationVariant>> {
-    let entry = timeline::get_entry(conn, entry_id)?;
-    let raw = timeline::list_logical_entries(conn, &entry.story_id)?;
+    let entry = ledger::get_entry(conn, entry_id)?;
+    let raw = ledger::list_logical_entries(conn, &entry.story_id)?;
     Ok(reducer::variants_for_entry(&raw, entry_id))
 }

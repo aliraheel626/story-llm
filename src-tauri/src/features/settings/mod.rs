@@ -1,3 +1,4 @@
+use rusqlite::OptionalExtension;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tauri::{AppHandle, State};
@@ -10,7 +11,8 @@ use crate::shared::error::{AppError, AppResult};
 const SECRETS_STORE: &str = "secrets.json";
 const SETTINGS_KEY_TEXT_MODEL: &str = "text_model_default";
 const SETTINGS_KEY_IMAGE_MODEL: &str = "image_model_default";
-const SETTINGS_KEY_NARRATOR_MEMORY: &str = "narrator_memory";
+const SETTINGS_KEY_CONTEXT_INJECTION: &str = "context_injection";
+const SETTINGS_KEY_LEDGER_RETENTION: &str = "ledger_retention";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TextModelSettings {
@@ -275,36 +277,41 @@ pub fn save_image_model_settings(
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NarratorMemorySettings {
-    pub tool_call_persistence: bool,
+pub struct ContextInjectionSettings {
     pub entity_context_mode: String,
+    #[serde(default = "default_dice_rolls_in_context")]
+    pub dice_rolls_in_context: bool,
 }
 
-impl Default for NarratorMemorySettings {
+fn default_dice_rolls_in_context() -> bool {
+    true
+}
+
+impl Default for ContextInjectionSettings {
     fn default() -> Self {
         Self {
-            tool_call_persistence: true,
             entity_context_mode: "all".to_string(),
+            dice_rolls_in_context: true,
         }
     }
 }
 
 #[tauri::command]
-pub fn get_narrator_memory_settings(pool: State<Pool>) -> AppResult<NarratorMemorySettings> {
-    read_narrator_memory_settings(pool.inner())
+pub fn get_context_injection_settings(pool: State<Pool>) -> AppResult<ContextInjectionSettings> {
+    read_context_injection_settings(pool.inner())
 }
 
-pub fn read_narrator_memory_settings(pool: &Pool) -> AppResult<NarratorMemorySettings> {
+pub fn read_context_injection_settings(pool: &Pool) -> AppResult<ContextInjectionSettings> {
     let conn = pool.get()?;
     let stored: Option<String> = conn
         .query_row(
             "SELECT value FROM settings WHERE key = ?1",
-            [SETTINGS_KEY_NARRATOR_MEMORY],
+            [SETTINGS_KEY_CONTEXT_INJECTION],
             |row| row.get(0),
         )
         .ok();
     let mut settings = stored
-        .and_then(|value| serde_json::from_str::<NarratorMemorySettings>(&value).ok())
+        .and_then(|value| serde_json::from_str::<ContextInjectionSettings>(&value).ok())
         .unwrap_or_default();
     if !matches!(
         settings.entity_context_mode.as_str(),
@@ -316,31 +323,206 @@ pub fn read_narrator_memory_settings(pool: &Pool) -> AppResult<NarratorMemorySet
 }
 
 #[tauri::command]
-pub fn save_narrator_memory_settings(
+pub fn save_context_injection_settings(
     pool: State<Pool>,
-    tool_call_persistence: bool,
     entity_context_mode: String,
+    dice_rolls_in_context: bool,
+) -> AppResult<()> {
+    write_context_injection_settings(pool.inner(), entity_context_mode, dice_rolls_in_context)
+}
+
+fn write_legacy_narrator_memory_settings(
+    conn: &rusqlite::Connection,
+    entity_context_mode: &str,
+    tool_call_persistence: bool,
+) -> AppResult<()> {
+    let value = json!({
+        "entity_context_mode": entity_context_mode,
+        "tool_call_persistence": tool_call_persistence,
+    })
+    .to_string();
+    conn.execute(
+        "INSERT INTO settings (key, value) VALUES ('narrator_memory', ?1)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        [value],
+    )?;
+    Ok(())
+}
+
+fn write_context_injection_settings(
+    pool: &Pool,
+    entity_context_mode: String,
+    dice_rolls_in_context: bool,
 ) -> AppResult<()> {
     if !matches!(entity_context_mode.as_str(), "all" | "scoped" | "none") {
         return Err(AppError::Invalid(format!(
             "invalid narrator entity context mode: {entity_context_mode}"
         )));
     }
-    let conn = pool.get()?;
-    let value = serde_json::to_string(&NarratorMemorySettings {
-        tool_call_persistence,
+    let mut conn = pool.get()?;
+    let context = ContextInjectionSettings {
         entity_context_mode,
+        dice_rolls_in_context,
+    };
+    let value = serde_json::to_string(&context).map_err(|error| {
+        AppError::Other(format!(
+            "failed to serialize context injection settings: {error}"
+        ))
+    })?;
+    let tx = conn.transaction()?;
+    let retention: Option<String> = tx
+        .query_row(
+            "SELECT value FROM settings WHERE key = ?1",
+            [SETTINGS_KEY_LEDGER_RETENTION],
+            |row| row.get(0),
+        )
+        .optional()?;
+    let tool_call_persistence = retention
+        .and_then(|value| serde_json::from_str::<LedgerRetentionSettings>(&value).ok())
+        .unwrap_or_default()
+        .tool_call_persistence;
+    tx.execute(
+        "INSERT INTO settings (key, value) VALUES (?1, ?2)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        rusqlite::params![SETTINGS_KEY_CONTEXT_INJECTION, value],
+    )?;
+    write_legacy_narrator_memory_settings(
+        &tx,
+        &context.entity_context_mode,
+        tool_call_persistence,
+    )?;
+    tx.commit()?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn context_injection_defaults_and_legacy_rows_preserve_entity_mode() {
+        let pool = crate::shared::db::test_pool();
+        let defaults = read_context_injection_settings(&pool).unwrap();
+        assert_eq!(defaults.entity_context_mode, "all");
+        assert!(defaults.dice_rolls_in_context);
+
+        let conn = pool.get().unwrap();
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES (?1, ?2)",
+            rusqlite::params![
+                SETTINGS_KEY_CONTEXT_INJECTION,
+                r#"{"entity_context_mode":"scoped"}"#
+            ],
+        )
+        .unwrap();
+        drop(conn);
+        let legacy = read_context_injection_settings(&pool).unwrap();
+        assert_eq!(legacy.entity_context_mode, "scoped");
+        assert!(legacy.dice_rolls_in_context);
+    }
+
+    #[test]
+    fn settings_saves_keep_legacy_preferences_current_for_rollback() {
+        let pool = crate::shared::db::test_pool();
+        write_context_injection_settings(&pool, "scoped".to_string(), false).unwrap();
+        write_ledger_retention_settings(&pool, false).unwrap();
+        let conn = pool.get().unwrap();
+        let legacy: String = conn
+            .query_row(
+                "SELECT value FROM settings WHERE key = 'narrator_memory'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let legacy: serde_json::Value = serde_json::from_str(&legacy).unwrap();
+        assert_eq!(legacy["entity_context_mode"], "scoped");
+        assert_eq!(legacy["tool_call_persistence"], false);
+        drop(conn);
+
+        write_context_injection_settings(&pool, "none".to_string(), false).unwrap();
+        let conn = pool.get().unwrap();
+        let legacy: String = conn
+            .query_row(
+                "SELECT value FROM settings WHERE key = 'narrator_memory'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let legacy: serde_json::Value = serde_json::from_str(&legacy).unwrap();
+        assert_eq!(legacy["entity_context_mode"], "none");
+        assert_eq!(legacy["tool_call_persistence"], false);
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LedgerRetentionSettings {
+    pub tool_call_persistence: bool,
+}
+
+impl Default for LedgerRetentionSettings {
+    fn default() -> Self {
+        Self {
+            tool_call_persistence: true,
+        }
+    }
+}
+
+#[tauri::command]
+pub fn get_ledger_retention_settings(pool: State<Pool>) -> AppResult<LedgerRetentionSettings> {
+    read_ledger_retention_settings(pool.inner())
+}
+
+pub fn read_ledger_retention_settings(pool: &Pool) -> AppResult<LedgerRetentionSettings> {
+    let conn = pool.get()?;
+    let stored: Option<String> = conn
+        .query_row(
+            "SELECT value FROM settings WHERE key = ?1",
+            [SETTINGS_KEY_LEDGER_RETENTION],
+            |row| row.get(0),
+        )
+        .ok();
+    Ok(stored
+        .and_then(|value| serde_json::from_str::<LedgerRetentionSettings>(&value).ok())
+        .unwrap_or_default())
+}
+
+#[tauri::command]
+pub fn save_ledger_retention_settings(
+    pool: State<Pool>,
+    tool_call_persistence: bool,
+) -> AppResult<()> {
+    write_ledger_retention_settings(pool.inner(), tool_call_persistence)
+}
+
+fn write_ledger_retention_settings(pool: &Pool, tool_call_persistence: bool) -> AppResult<()> {
+    let mut conn = pool.get()?;
+    let value = serde_json::to_string(&LedgerRetentionSettings {
+        tool_call_persistence,
     })
     .map_err(|error| {
         AppError::Other(format!(
-            "failed to serialize narrator memory settings: {error}"
+            "failed to serialize ledger retention settings: {error}"
         ))
     })?;
-    conn.execute(
+    let tx = conn.transaction()?;
+    let context: Option<String> = tx
+        .query_row(
+            "SELECT value FROM settings WHERE key = ?1",
+            [SETTINGS_KEY_CONTEXT_INJECTION],
+            |row| row.get(0),
+        )
+        .optional()?;
+    let entity_context_mode = context
+        .and_then(|value| serde_json::from_str::<ContextInjectionSettings>(&value).ok())
+        .unwrap_or_default()
+        .entity_context_mode;
+    tx.execute(
         "INSERT INTO settings (key, value) VALUES (?1, ?2)
          ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-        rusqlite::params![SETTINGS_KEY_NARRATOR_MEMORY, value],
+        rusqlite::params![SETTINGS_KEY_LEDGER_RETENTION, value],
     )?;
+    write_legacy_narrator_memory_settings(&tx, &entity_context_mode, tool_call_persistence)?;
+    tx.commit()?;
     Ok(())
 }
 

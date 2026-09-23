@@ -2,13 +2,12 @@ use std::collections::HashMap;
 
 use crate::ai::{HistoryTurn, HistoryTurnMarker};
 use crate::features::compaction;
-use crate::features::timeline::{model::kind, reducer, repository};
+use crate::features::ledger::{model::kind, reducer, repository};
+use crate::features::settings;
 use crate::shared::db::Pool;
 use crate::shared::error::AppResult;
 
-use super::author_note;
-
-/// Reconstructs model history from the story timeline. The latest
+/// Reconstructs model history from the story ledger. The latest
 /// durable summary replaces its covered prefix; later revisions and hidden
 /// authoritative events are replayed in chronological order. When a summary
 /// already exists, only entries from its boundary onward are even fetched —
@@ -20,6 +19,8 @@ pub(crate) fn load_history(
     before_seq: Option<i64>,
 ) -> AppResult<Vec<HistoryTurn>> {
     let conn = pool.get()?;
+    let dice_rolls_in_context =
+        settings::read_context_injection_settings(pool)?.dice_rolls_in_context;
     let since_seq =
         compaction::boundary_for(&conn, story_id, before_seq)?.map(|boundary| boundary.through_seq);
     let mut raw = match since_seq {
@@ -29,11 +30,12 @@ pub(crate) fn load_history(
     if let Some(seq) = before_seq {
         raw.retain(|entry| entry.seq < seq);
     }
-    Ok(history_from_entries(&raw))
+    Ok(history_from_entries(&raw, dice_rolls_in_context))
 }
 
 fn history_from_entries(
-    raw: &[crate::features::timeline::model::TimelineEntry],
+    raw: &[crate::features::ledger::model::LedgerEntry],
+    dice_rolls_in_context: bool,
 ) -> Vec<HistoryTurn> {
     let active: HashMap<String, _> = reducer::active_visible_entries(raw)
         .into_iter()
@@ -89,7 +91,7 @@ fn history_from_entries(
                 entry_id: Some(entry.id.clone()),
                 is_player,
                 content,
-                marker: HistoryTurnMarker::Timeline,
+                marker: HistoryTurnMarker::Ledger,
             });
             continue;
         }
@@ -99,37 +101,28 @@ fn history_from_entries(
         // as a second, decontextualized "authoritative event" line.
         let contextual = matches!(
             entry.kind.as_str(),
-            kind::DICEROLL
-                | kind::ENTITY_CREATED
+            kind::ENTITY_CREATED
                 | kind::ENTITY_QUERIED
                 | kind::ENTITY_UPDATED
                 | kind::ENTITY_DELETED
                 | kind::ENTITY_ATTRIBUTE_CHANGED
                 | kind::ENTITY_ATTRIBUTE_REMOVED
                 | kind::IMAGE_GENERATED
-                | kind::CONTEXT_NOTE_UPDATED
                 | kind::DICEROLL_SETTINGS_CHANGED
-        );
+        ) || (dice_rolls_in_context && entry.kind == kind::DICEROLL);
         if !contextual {
             continue;
         }
-        let content = if entry.kind == kind::CONTEXT_NOTE_UPDATED {
-            format!(
-                "<author_note>{}</author_note>",
-                author_note::event_note(&entry.payload)
-            )
-        } else {
-            let content = entry
-                .content
-                .clone()
-                .unwrap_or_else(|| entry.payload.to_string());
-            format!("[Authoritative story event: {}]\n{content}", entry.kind)
-        };
+        let content = entry
+            .content
+            .clone()
+            .unwrap_or_else(|| entry.payload.to_string());
+        let content = format!("[Authoritative story event: {}]\n{content}", entry.kind);
         history.push(HistoryTurn {
             entry_id: Some(entry.id.clone()),
             is_player: false,
             content,
-            marker: HistoryTurnMarker::Timeline,
+            marker: HistoryTurnMarker::Ledger,
         });
     }
     history
@@ -138,7 +131,7 @@ fn history_from_entries(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::features::timeline::model::TimelineEntry;
+    use crate::features::ledger::model::LedgerEntry;
     use crate::prompts;
     use serde_json::json;
 
@@ -148,8 +141,8 @@ mod tests {
         event_kind: &str,
         content: Option<&str>,
         payload: serde_json::Value,
-    ) -> TimelineEntry {
-        TimelineEntry {
+    ) -> LedgerEntry {
+        LedgerEntry {
             id: id.into(),
             story_id: "s".into(),
             seq,
@@ -165,6 +158,19 @@ mod tests {
             target_entry_id: None,
             created_at: "now".into(),
         }
+    }
+
+    #[test]
+    fn legacy_author_note_events_are_inert() {
+        let note = entry(
+            "note",
+            0,
+            "context_note_updated",
+            Some("Author's note was updated"),
+            json!({"author_note":"old direction"}),
+        );
+
+        assert!(history_from_entries(&[note], true).is_empty());
     }
 
     #[test]
@@ -194,7 +200,7 @@ mod tests {
         selected.target_entry_id = Some("n1".into());
         narration.target_entry_id = None;
 
-        let history = history_from_entries(&[narration, edited, selected]);
+        let history = history_from_entries(&[narration, edited, selected], true);
         assert_eq!(history.len(), 1);
         assert_eq!(history[0].content, "edited text");
     }
@@ -239,7 +245,7 @@ mod tests {
             ),
         ];
 
-        let history = history_from_entries(&rows);
+        let history = history_from_entries(&rows, true);
         assert_eq!(history.len(), 3);
         assert!(history[0].content.contains("The archive was entered."));
         assert!(history[1].content.contains("Stealth succeeded."));
@@ -247,6 +253,75 @@ mod tests {
         assert!(!history
             .iter()
             .any(|turn| turn.content.contains("old narration")));
+    }
+
+    #[test]
+    fn dice_rolls_excluded_from_history_when_setting_is_off() {
+        let rows = vec![
+            entry("n1", 0, kind::NARRATION, Some("The door opens."), json!({})),
+            entry(
+                "diceroll",
+                1,
+                kind::DICEROLL,
+                Some("Stealth succeeded."),
+                json!({}),
+            ),
+            entry(
+                "query",
+                2,
+                kind::ENTITY_QUERIED,
+                Some("Looked up: Bob"),
+                json!({}),
+            ),
+            entry(
+                "p2",
+                3,
+                kind::PLAYER_MESSAGE,
+                Some("I take the key."),
+                json!({"input_mode":"do"}),
+            ),
+        ];
+
+        let history = history_from_entries(&rows, false);
+        assert_eq!(history.len(), 3);
+        assert_eq!(history[0].content, "The door opens.");
+        assert!(history[1].content.contains("Looked up: Bob"));
+        assert_eq!(history[2].content, "<do>I take the key.</do>");
+        assert!(!history
+            .iter()
+            .any(|turn| turn.entry_id.as_deref() == Some("diceroll")));
+    }
+
+    #[test]
+    fn load_history_respects_saved_dice_roll_preference() {
+        let pool = crate::shared::db::test_pool();
+        let conn = pool.get().unwrap();
+        conn.execute(
+            "INSERT INTO stories (id, title, created_at, updated_at, settings_json) VALUES ('s', 'story', 'now', 'now', '{}')",
+            [],
+        )
+        .unwrap();
+        repository::append_entry(
+            &conn,
+            "s",
+            kind::DICEROLL,
+            "hidden",
+            Some("Stealth succeeded."),
+            &json!({}),
+            None,
+        )
+        .unwrap();
+        drop(conn);
+        assert_eq!(load_history(&pool, "s", None).unwrap().len(), 1);
+
+        let conn = pool.get().unwrap();
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES ('context_injection', ?1)",
+            [r#"{"entity_context_mode":"scoped","dice_rolls_in_context":false}"#],
+        )
+        .unwrap();
+        drop(conn);
+        assert!(load_history(&pool, "s", None).unwrap().is_empty());
     }
 
     #[test]
@@ -267,7 +342,7 @@ mod tests {
                 json!({"through_entry_id":"missing"}),
             ),
         ];
-        let history = history_from_entries(&rows);
+        let history = history_from_entries(&rows, true);
         assert_eq!(history.len(), 1);
         assert_eq!(history[0].content, "<do>keep me</do>");
     }
@@ -282,7 +357,7 @@ mod tests {
             json!({"entity_ids":["bob"]}),
         )];
 
-        let history = history_from_entries(&rows);
+        let history = history_from_entries(&rows, true);
         assert_eq!(history.len(), 1);
         assert_eq!(
             history[0].content,
@@ -305,7 +380,7 @@ mod tests {
                 Some(content),
                 json!({"input_mode": mode}),
             );
-            let history = history_from_entries(&[row]);
+            let history = history_from_entries(&[row], true);
             assert_eq!(
                 history[0].content,
                 prompts::render_turn(mode, content).unwrap()
@@ -403,14 +478,11 @@ mod tests {
         )
         .unwrap();
 
-        conn.execute(
-            "DELETE FROM timeline_entries WHERE id = ?1",
-            [&narration.id],
-        )
-        .unwrap();
+        conn.execute("DELETE FROM ledger_entries WHERE id = ?1", [&narration.id])
+            .unwrap();
         let query_count: i64 = conn
             .query_row(
-                "SELECT COUNT(*) FROM timeline_entries WHERE id = ?1",
+                "SELECT COUNT(*) FROM ledger_entries WHERE id = ?1",
                 [&query.id],
                 |row| row.get(0),
             )

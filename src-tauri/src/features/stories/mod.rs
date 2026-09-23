@@ -9,11 +9,10 @@ use uuid::Uuid;
 
 use crate::ai;
 use crate::features::{
-    settings,
-    timeline::{
-        model::kind as timeline_kind, reducer as timeline_reducer,
-        repository as timeline_repository,
+    ledger::{
+        model::kind as ledger_kind, reducer as ledger_reducer, repository as ledger_repository,
     },
+    settings,
 };
 use crate::prompts;
 use crate::shared::db::{with_transaction, Pool};
@@ -111,8 +110,8 @@ pub fn delete_story(pool: State<Pool>, story_id: String) -> AppResult<()> {
         let paths: Vec<String> = {
             let mut stmt = tx.prepare(
                 "SELECT image_assets.path FROM image_assets
-                 JOIN timeline_entries ON timeline_entries.id = image_assets.entry_id
-                 WHERE timeline_entries.story_id = ?1",
+                 JOIN ledger_entries ON ledger_entries.id = image_assets.entry_id
+                 WHERE ledger_entries.story_id = ?1",
             )?;
             let paths = stmt
                 .query_map([&story_id], |row| row.get(0))?
@@ -170,15 +169,15 @@ pub fn maybe_auto_title(app: &AppHandle, pool: &Pool, story_id: &str) {
     if title != DEFAULT_STORY_TITLE {
         return;
     }
-    // The opening exchange: the earliest one or two visible timeline entries,
+    // The opening exchange: the earliest one or two visible ledger entries,
     // folded through the reducer so an edit/swipe made before this fires
     // (auto-title only runs once, right after the first exchange) titles
     // from what the player actually sees rather than the discarded original.
     let opening: Vec<(String, String)> = {
-        let Ok(raw) = timeline_repository::list_logical_entries(&conn, story_id) else {
+        let Ok(raw) = ledger_repository::list_logical_entries(&conn, story_id) else {
             return;
         };
-        timeline_reducer::active_visible_entries(&raw)
+        ledger_reducer::active_visible_entries(&raw)
             .into_iter()
             .take(2)
             .map(|e| (e.kind, e.content.unwrap_or_default()))
@@ -199,7 +198,7 @@ pub fn maybe_auto_title(app: &AppHandle, pool: &Pool, story_id: &str) {
         .map(|(role, content)| {
             format!(
                 "{}: {}",
-                if role == timeline_kind::PLAYER_MESSAGE {
+                if role == ledger_kind::PLAYER_MESSAGE {
                     "Player"
                 } else {
                     "Narrator"

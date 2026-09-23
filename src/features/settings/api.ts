@@ -1,5 +1,11 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { EntityContextMode, ImageModelSettings, NarratorMemorySettings, TextModelSettings } from "../../shared/types";
+import type {
+  ContextInjectionSettings,
+  EntityContextMode,
+  ImageModelSettings,
+  TextModelSettings,
+  LedgerRetentionSettings,
+} from "../../shared/types";
 
 export const textModelApi = {
   get: () => invoke<TextModelSettings>("get_text_model_settings"),
@@ -13,8 +19,14 @@ export const imageModelApi = {
     invoke<void>("save_image_model_settings", { model, enabled, style, narratorImages }),
 };
 
-export const narratorMemoryApi = {
-  get: () => invoke<NarratorMemorySettings>("get_narrator_memory_settings"),
-  save: (toolCallPersistence: boolean, entityContextMode: EntityContextMode) =>
-    invoke<void>("save_narrator_memory_settings", { toolCallPersistence, entityContextMode }),
+export const contextInjectionApi = {
+  get: () => invoke<ContextInjectionSettings>("get_context_injection_settings"),
+  save: (entityContextMode: EntityContextMode, diceRollsInContext: boolean) =>
+    invoke<void>("save_context_injection_settings", { entityContextMode, diceRollsInContext }),
+};
+
+export const ledgerRetentionApi = {
+  get: () => invoke<LedgerRetentionSettings>("get_ledger_retention_settings"),
+  save: (toolCallPersistence: boolean) =>
+    invoke<void>("save_ledger_retention_settings", { toolCallPersistence }),
 };

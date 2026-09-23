@@ -67,17 +67,10 @@ Each turn arrives as tagged input. These tags are input markup. Never reproduce 
 Your replies are only narration or real tool calls.
 "#;
 
-/// The narrator's system prompt, written as markdown. The author note is the
-/// only per-story part; it goes last, wrapped in its tag so a note that itself
-/// contains markdown headings can't be mistaken for the prompt's own structure.
-pub fn narrator_system_prompt(author_note: Option<&str>) -> String {
-    let mut prompt = NARRATOR_SYSTEM_PROMPT_BASE.trim_end().to_string();
-    if let Some(note) = author_note.map(str::trim).filter(|note| !note.is_empty()) {
-        prompt.push_str("\n\n# Author's note\n\n<author_note>");
-        prompt.push_str(note);
-        prompt.push_str("</author_note>");
-    }
-    prompt
+/// The narrator's fixed system prompt. Story-specific context is prepended to
+/// the player's action instead of being baked into this value.
+pub fn narrator_system_prompt() -> String {
+    NARRATOR_SYSTEM_PROMPT_BASE.trim_end().to_string()
 }
 
 pub const IMAGE_TOOL_AVAILABLE_INSTRUCTION: &str = "You have an illustrate_scene tool: always call it when the player sends <see>, and otherwise only for a genuinely striking moment.";
@@ -235,14 +228,5 @@ mod tests {
         assert_eq!(render_turn("continue", ""), Some("<continue/>".into()));
         assert_eq!(render_turn("see", ""), Some("<see/>".into()));
         assert_eq!(render_turn("unknown", "x"), None);
-    }
-
-    #[test]
-    fn narrator_prompt_bakes_the_selected_note() {
-        let prompt = narrator_system_prompt(Some("Keep it terse."));
-        assert!(prompt.contains("<author_note>Keep it terse.</author_note>"));
-        assert!(prompt.contains("Never reproduce them in output."));
-        assert_eq!(prompt, narrator_system_prompt(Some("Keep it terse.")));
-        assert_ne!(prompt, narrator_system_prompt(Some("Use long sentences.")));
     }
 }

@@ -5,8 +5,8 @@ use chrono::Utc;
 use tauri::{AppHandle, Emitter, Manager, State};
 use uuid::Uuid;
 
+use crate::features::ledger::{model::kind as ledger_kind, repository as ledger_repository};
 use crate::features::settings;
-use crate::features::timeline::{model::kind as timeline_kind, repository as timeline_repository};
 use crate::shared::db::{with_transaction, Pool};
 use crate::shared::error::{AppError, AppResult};
 use model::{ImageRequest, StoryImage};
@@ -77,11 +77,11 @@ async fn generate_from_description(
         let conn = pool.get()?;
         let story_id: String = conn
             .query_row(
-                "SELECT story_id FROM timeline_entries WHERE id = ?1",
+                "SELECT story_id FROM ledger_entries WHERE id = ?1",
                 [entry_id],
                 |row| row.get(0),
             )
-            .map_err(|_| AppError::NotFound(format!("timeline entry {entry_id} not found")))?;
+            .map_err(|_| AppError::NotFound(format!("ledger entry {entry_id} not found")))?;
         characters_by_ids(&conn, &story_id, character_ids)?
     };
     let matched: Vec<&(String, String)> = characters.iter().collect();
@@ -129,7 +129,7 @@ async fn persist_and_store_image(
     let now = Utc::now().to_rfc3339();
 
     let persist_result = with_transaction(pool, |tx| {
-        let current_content = timeline_repository::active_entry(tx, entry_id)?
+        let current_content = ledger_repository::active_entry(tx, entry_id)?
             .content
             .unwrap_or_default();
         if current_content != expected_content {
@@ -142,11 +142,11 @@ async fn persist_and_store_image(
              VALUES (?1, ?2, ?3, ?4, ?5)",
             rusqlite::params![id, entry_id, path_str, prompt, now],
         )?;
-        let base = timeline_repository::get_entry(tx, entry_id)?;
-        timeline_repository::append_entry(
+        let base = ledger_repository::get_entry(tx, entry_id)?;
+        ledger_repository::append_entry(
             tx,
             &base.story_id,
-            timeline_kind::IMAGE_GENERATED,
+            ledger_kind::IMAGE_GENERATED,
             "hidden",
             Some(&format!(
                 "A scene image was generated depicting: {description}"
@@ -228,8 +228,8 @@ pub fn list_images_for_story(pool: State<Pool>, story_id: String) -> AppResult<V
     let conn = pool.get()?;
     let mut stmt = conn.prepare(
         "SELECT image_assets.id, image_assets.entry_id, image_assets.path, image_assets.prompt, image_assets.created_at
-         FROM image_assets JOIN timeline_entries ON timeline_entries.id = image_assets.entry_id
-         WHERE timeline_entries.story_id = ?1 ORDER BY image_assets.created_at ASC",
+         FROM image_assets JOIN ledger_entries ON ledger_entries.id = image_assets.entry_id
+         WHERE ledger_entries.story_id = ?1 ORDER BY image_assets.created_at ASC",
     )?;
     let rows = stmt.query_map([story_id], row_to_image)?;
     let mut out = Vec::new();

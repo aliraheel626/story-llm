@@ -4,6 +4,7 @@ import type { SettingsStore } from "./settingsStore";
 export function useSettingsForm<T, Args extends unknown[]>(
   store: SettingsStore<T, Args>,
   applySettings: (settings: T) => void,
+  skipCachedLoad = false,
 ) {
   const settings = store((state) => state.settings);
   const loading = store((state) => state.loading);
@@ -17,8 +18,8 @@ export function useSettingsForm<T, Args extends unknown[]>(
   applySettingsRef.current = applySettings;
 
   useEffect(() => {
-    load();
-  }, [load]);
+    if (!skipCachedLoad || !store.getState().settings) load();
+  }, [load, skipCachedLoad, store]);
 
   useEffect(() => {
     if (settings) applySettingsRef.current(settings);

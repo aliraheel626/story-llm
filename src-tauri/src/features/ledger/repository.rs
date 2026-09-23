@@ -4,11 +4,11 @@ use uuid::Uuid;
 
 use crate::shared::error::{AppError, AppResult};
 
-use super::model::TimelineEntry;
+use super::model::LedgerEntry;
 
-pub(crate) fn row_to_entry(row: &rusqlite::Row) -> rusqlite::Result<TimelineEntry> {
+pub(crate) fn row_to_entry(row: &rusqlite::Row) -> rusqlite::Result<LedgerEntry> {
     let raw: String = row.get(6)?;
-    Ok(TimelineEntry {
+    Ok(LedgerEntry {
         id: row.get(0)?,
         story_id: row.get(1)?,
         seq: row.get(2)?,
@@ -23,7 +23,7 @@ pub(crate) fn row_to_entry(row: &rusqlite::Row) -> rusqlite::Result<TimelineEntr
 
 fn next_seq(conn: &rusqlite::Connection, story_id: &str) -> AppResult<i64> {
     Ok(conn.query_row(
-        "SELECT COALESCE(MAX(seq), -1) + 1 FROM timeline_entries WHERE story_id = ?1",
+        "SELECT COALESCE(MAX(seq), -1) + 1 FROM ledger_entries WHERE story_id = ?1",
         [story_id],
         |row| row.get(0),
     )?)
@@ -37,31 +37,31 @@ pub fn append_entry(
     content: Option<&str>,
     payload: &Value,
     target_entry_id: Option<&str>,
-) -> AppResult<TimelineEntry> {
+) -> AppResult<LedgerEntry> {
     if visibility != "visible" && visibility != "hidden" {
         return Err(AppError::Invalid(format!(
-            "invalid timeline visibility: {visibility}"
+            "invalid ledger visibility: {visibility}"
         )));
     }
     let id = Uuid::new_v4().to_string();
     if let Some(target_id) = target_entry_id {
         let target_belongs_to_story: bool = conn.query_row(
-            "SELECT EXISTS(SELECT 1 FROM timeline_entries WHERE id = ?1 AND story_id = ?2)",
+            "SELECT EXISTS(SELECT 1 FROM ledger_entries WHERE id = ?1 AND story_id = ?2)",
             rusqlite::params![target_id, story_id],
             |row| row.get(0),
         )?;
         if !target_belongs_to_story {
             return Err(AppError::Invalid(format!(
-                "target timeline entry {target_id} does not belong to story {story_id}"
+                "target ledger entry {target_id} does not belong to story {story_id}"
             )));
         }
     }
     let seq = next_seq(conn, story_id)?;
     let now = Utc::now().to_rfc3339();
     let payload_json = serde_json::to_string(payload)
-        .map_err(|e| AppError::Other(format!("timeline payload serialization failed: {e}")))?;
+        .map_err(|e| AppError::Other(format!("ledger payload serialization failed: {e}")))?;
     conn.execute(
-        "INSERT INTO timeline_entries
+        "INSERT INTO ledger_entries
          (id, story_id, seq, kind, visibility, content, payload_json, target_entry_id, created_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
         rusqlite::params![
@@ -80,7 +80,7 @@ pub fn append_entry(
         "UPDATE stories SET updated_at = ?1 WHERE id = ?2",
         rusqlite::params![now, story_id],
     )?;
-    Ok(TimelineEntry {
+    Ok(LedgerEntry {
         id,
         story_id: story_id.to_string(),
         seq,
@@ -93,24 +93,24 @@ pub fn append_entry(
     })
 }
 
-pub fn get_entry(conn: &rusqlite::Connection, id: &str) -> AppResult<TimelineEntry> {
+pub fn get_entry(conn: &rusqlite::Connection, id: &str) -> AppResult<LedgerEntry> {
     conn.query_row(
         "SELECT id, story_id, seq, kind, visibility, content, payload_json, target_entry_id, created_at
-         FROM timeline_entries WHERE id = ?1",
+         FROM ledger_entries WHERE id = ?1",
         [id],
         row_to_entry,
     )
-    .map_err(|_| AppError::NotFound(format!("timeline entry {id} not found")))
+    .map_err(|_| AppError::NotFound(format!("ledger entry {id} not found")))
 }
 
 fn entries(
     conn: &rusqlite::Connection,
     story_id: &str,
     since_seq: Option<i64>,
-) -> AppResult<Vec<TimelineEntry>> {
+) -> AppResult<Vec<LedgerEntry>> {
     let mut stmt = conn.prepare(
         "SELECT id, story_id, seq, kind, visibility, content, payload_json, target_entry_id, created_at
-         FROM timeline_entries WHERE story_id = ?1 AND seq >= ?2 ORDER BY seq ASC",
+         FROM ledger_entries WHERE story_id = ?1 AND seq >= ?2 ORDER BY seq ASC",
     )?;
     let rows = stmt.query_map(
         rusqlite::params![story_id, since_seq.unwrap_or(i64::MIN)],
@@ -122,7 +122,7 @@ fn entries(
 pub fn list_logical_entries(
     conn: &rusqlite::Connection,
     story_id: &str,
-) -> AppResult<Vec<TimelineEntry>> {
+) -> AppResult<Vec<LedgerEntry>> {
     entries(conn, story_id, None)
 }
 
@@ -130,7 +130,7 @@ pub fn list_logical_entries_since(
     conn: &rusqlite::Connection,
     story_id: &str,
     since_seq: i64,
-) -> AppResult<Vec<TimelineEntry>> {
+) -> AppResult<Vec<LedgerEntry>> {
     entries(conn, story_id, Some(since_seq))
 }
 
@@ -143,13 +143,13 @@ pub fn image_paths_for_entry(
     Ok(rows.collect::<Result<Vec<_>, _>>()?)
 }
 
-pub fn active_entry(conn: &rusqlite::Connection, entry_id: &str) -> AppResult<TimelineEntry> {
+pub fn active_entry(conn: &rusqlite::Connection, entry_id: &str) -> AppResult<LedgerEntry> {
     let base = get_entry(conn, entry_id)?;
     let entries = list_logical_entries(conn, &base.story_id)?;
     super::reducer::active_visible_entries(&entries)
         .into_iter()
         .find(|entry| entry.id == entry_id)
-        .ok_or_else(|| AppError::NotFound(format!("active timeline entry {entry_id} not found")))
+        .ok_or_else(|| AppError::NotFound(format!("active ledger entry {entry_id} not found")))
 }
 
 #[cfg(test)]
@@ -162,7 +162,7 @@ mod tests {
     fn since_seq_includes_boundary_and_excludes_earlier_entries() {
         let conn = rusqlite::Connection::open_in_memory().unwrap();
         conn.execute_batch("CREATE TABLE stories(id TEXT PRIMARY KEY, updated_at TEXT NOT NULL);
-            CREATE TABLE timeline_entries(id TEXT PRIMARY KEY, story_id TEXT NOT NULL, seq INTEGER NOT NULL, kind TEXT NOT NULL, visibility TEXT NOT NULL, content TEXT, payload_json TEXT NOT NULL, target_entry_id TEXT, created_at TEXT NOT NULL, UNIQUE(story_id,seq));").unwrap();
+            CREATE TABLE ledger_entries(id TEXT PRIMARY KEY, story_id TEXT NOT NULL, seq INTEGER NOT NULL, kind TEXT NOT NULL, visibility TEXT NOT NULL, content TEXT, payload_json TEXT NOT NULL, target_entry_id TEXT, created_at TEXT NOT NULL, UNIQUE(story_id,seq));").unwrap();
         conn.execute("INSERT INTO stories VALUES ('s','now')", [])
             .unwrap();
 
@@ -220,7 +220,7 @@ mod tests {
     fn append_assigns_monotonic_sequence_and_decodes_payloads() {
         let conn = rusqlite::Connection::open_in_memory().unwrap();
         conn.execute_batch("CREATE TABLE stories(id TEXT PRIMARY KEY, updated_at TEXT NOT NULL);
-            CREATE TABLE timeline_entries(id TEXT PRIMARY KEY, story_id TEXT NOT NULL, seq INTEGER NOT NULL, kind TEXT NOT NULL, visibility TEXT NOT NULL, content TEXT, payload_json TEXT NOT NULL, target_entry_id TEXT, created_at TEXT NOT NULL, UNIQUE(story_id,seq));").unwrap();
+            CREATE TABLE ledger_entries(id TEXT PRIMARY KEY, story_id TEXT NOT NULL, seq INTEGER NOT NULL, kind TEXT NOT NULL, visibility TEXT NOT NULL, content TEXT, payload_json TEXT NOT NULL, target_entry_id TEXT, created_at TEXT NOT NULL, UNIQUE(story_id,seq));").unwrap();
         conn.execute("INSERT INTO stories VALUES ('s','now')", [])
             .unwrap();
 
@@ -269,7 +269,7 @@ mod tests {
     fn append_rejects_a_target_owned_by_another_story() {
         let conn = rusqlite::Connection::open_in_memory().unwrap();
         conn.execute_batch("CREATE TABLE stories(id TEXT PRIMARY KEY, updated_at TEXT NOT NULL);
-            CREATE TABLE timeline_entries(id TEXT PRIMARY KEY, story_id TEXT NOT NULL, seq INTEGER NOT NULL, kind TEXT NOT NULL, visibility TEXT NOT NULL, content TEXT, payload_json TEXT NOT NULL, target_entry_id TEXT, created_at TEXT NOT NULL, UNIQUE(story_id,seq));").unwrap();
+            CREATE TABLE ledger_entries(id TEXT PRIMARY KEY, story_id TEXT NOT NULL, seq INTEGER NOT NULL, kind TEXT NOT NULL, visibility TEXT NOT NULL, content TEXT, payload_json TEXT NOT NULL, target_entry_id TEXT, created_at TEXT NOT NULL, UNIQUE(story_id,seq));").unwrap();
         conn.execute(
             "INSERT INTO stories VALUES ('first','now'), ('second','now')",
             [],
@@ -301,7 +301,7 @@ mod tests {
             error,
             AppError::Invalid(message)
                 if message == format!(
-                    "target timeline entry {} does not belong to story second",
+                     "target ledger entry {} does not belong to story second",
                     target.id
                 )
         ));

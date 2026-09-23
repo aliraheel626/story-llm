@@ -1,12 +1,12 @@
 use std::collections::HashMap;
 
-use super::model::{kind, NarrationVariant, TimelineEntry};
+use super::model::{kind, LedgerEntry, NarrationVariant};
 
 /// For a given target entry, which underlying entry (the base narration, or
 /// one of its variants) is currently selected to supply its content. Folding
 /// this separately from edits is what lets an edit "stick" to the variant it
 /// was made against instead of being wiped out by an unrelated re-selection.
-pub fn active_variant_id(entries: &[TimelineEntry], target: &str) -> String {
+pub fn active_variant_id(entries: &[LedgerEntry], target: &str) -> String {
     entries
         .iter()
         .rev()
@@ -26,7 +26,7 @@ pub fn active_variant_id(entries: &[TimelineEntry], target: &str) -> String {
 /// Latest edited text per (target entry, the variant it was edited against).
 /// `applies_to` defaults to the target itself for edits made before this
 /// field existed, preserving old data.
-fn edits_by_target_and_variant(entries: &[TimelineEntry]) -> HashMap<(String, String), String> {
+fn edits_by_target_and_variant(entries: &[LedgerEntry]) -> HashMap<(String, String), String> {
     let mut edits = HashMap::new();
     for entry in entries {
         if entry.kind != kind::CONTENT_EDITED {
@@ -45,8 +45,8 @@ fn edits_by_target_and_variant(entries: &[TimelineEntry]) -> HashMap<(String, St
     edits
 }
 
-pub fn active_visible_entries(entries: &[TimelineEntry]) -> Vec<TimelineEntry> {
-    let by_id: HashMap<&str, &TimelineEntry> = entries.iter().map(|e| (e.id.as_str(), e)).collect();
+pub fn active_visible_entries(entries: &[LedgerEntry]) -> Vec<LedgerEntry> {
+    let by_id: HashMap<&str, &LedgerEntry> = entries.iter().map(|e| (e.id.as_str(), e)).collect();
     let edits = edits_by_target_and_variant(entries);
 
     entries
@@ -80,7 +80,7 @@ fn thoughts_of(payload: &serde_json::Value) -> Option<String> {
         .map(str::to_string)
 }
 
-pub fn variants_for_entry(entries: &[TimelineEntry], entry_id: &str) -> Vec<NarrationVariant> {
+pub fn variants_for_entry(entries: &[LedgerEntry], entry_id: &str) -> Vec<NarrationVariant> {
     let selected = active_variant_id(entries, entry_id);
     let edits = edits_by_target_and_variant(entries);
 
@@ -136,8 +136,8 @@ mod tests {
         content: Option<&str>,
         target: Option<&str>,
         payload: serde_json::Value,
-    ) -> TimelineEntry {
-        TimelineEntry {
+    ) -> LedgerEntry {
+        LedgerEntry {
             id: id.into(),
             story_id: "s".into(),
             seq: 0,

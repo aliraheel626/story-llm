@@ -39,7 +39,7 @@ export function Composer({ storyId }: { storyId: string | null }) {
   const createStory = useStoryStore((s) => s.createStory);
   const submitTurn = useStoryStore((s) => s.submitTurn);
   const streaming = useStoryStore((s) => storyId ? s.bundles[storyId]?.streaming : undefined);
-  const timelineLoading = useStoryStore((s) => storyId ? (s.bundles[storyId]?.timelineLoading ?? false) : false);
+  const ledgerLoading = useStoryStore((s) => storyId ? (s.bundles[storyId]?.ledgerLoading ?? false) : false);
   const turnError = useStoryStore((s) => storyId ? s.bundles[storyId]?.turnError : null);
   const entries = useStoryStore((s) => storyId ? s.bundles[storyId]?.entries : undefined);
   const imagePendingFor = useStoryStore((s) => storyId ? s.bundles[storyId]?.imagePendingFor : undefined);
@@ -59,7 +59,7 @@ export function Composer({ storyId }: { storyId: string | null }) {
     }
   };
 
-  const busy = submitting || !!streaming || timelineLoading;
+  const busy = submitting || !!streaming || ledgerLoading;
   const lastEntry = entries && entries.length > 0 ? entries[entries.length - 1] : undefined;
   const lastNarration = entries?.slice().reverse().find((entry) => entry.kind === "narration");
   const imageBusy = !!lastNarration && (imagePendingFor?.includes(lastNarration.id) ?? false);

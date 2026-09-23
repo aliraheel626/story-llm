@@ -34,7 +34,7 @@ impl Compactor for NarratorCompactor {
             let transcript =
                 serde_json::to_string(evicted).map_err(|e| MemoryError::Internal(e.to_string()))?;
             let prompt = format!(
-                "Previous summary:\n{prior}\n\nOlder timeline messages to compact:\n{transcript}"
+                "Previous summary:\n{prior}\n\nOlder ledger messages to compact:\n{transcript}"
             );
             ai::prompt_typed::<ContextSummary>(
                 &self.config,

@@ -13,7 +13,7 @@ use serde_json::json;
 use tauri::State;
 use uuid::Uuid;
 
-use crate::features::timeline::{model::kind as timeline_kind, repository::append_entry};
+use crate::features::ledger::{model::kind as ledger_kind, repository::append_entry};
 use crate::shared::db::{with_transaction, Pool};
 use crate::shared::error::{AppError, AppResult};
 
@@ -307,7 +307,7 @@ pub fn get_or_init_entity_attribute(
     let event = append_entry(
         conn,
         story_id,
-        timeline_kind::ENTITY_ATTRIBUTE_CHANGED,
+        ledger_kind::ENTITY_ATTRIBUTE_CHANGED,
         "hidden",
         Some(&format!(
             "{} was initialized to {}.",
@@ -351,7 +351,7 @@ pub fn clamp_delta(
 }
 
 /// Applies a proposed delta with clamping and rate-limiting, and logs an
-/// append-only timeline event. Returns `(before, after)`.
+/// append-only ledger event. Returns `(before, after)`.
 #[allow(clippy::too_many_arguments)]
 pub fn apply_attribute_delta(
     conn: &rusqlite::Connection,
@@ -381,7 +381,7 @@ pub fn apply_attribute_delta(
     let event = append_entry(
         conn,
         story_id,
-        timeline_kind::ENTITY_ATTRIBUTE_CHANGED,
+        ledger_kind::ENTITY_ATTRIBUTE_CHANGED,
         "hidden",
         Some(&format!(
             "{} changed from {} to {}: {cause}",
@@ -524,7 +524,7 @@ pub(crate) fn set_entity_attribute_sync(
     let event = append_entry(
         conn,
         story_id,
-        timeline_kind::ENTITY_ATTRIBUTE_CHANGED,
+        ledger_kind::ENTITY_ATTRIBUTE_CHANGED,
         "hidden",
         Some(&format!(
             "User changed {name} from {} to {value}.",
@@ -580,7 +580,7 @@ pub(crate) fn remove_entity_attribute_sync(
     append_entry(
         conn,
         story_id,
-        timeline_kind::ENTITY_ATTRIBUTE_REMOVED,
+        ledger_kind::ENTITY_ATTRIBUTE_REMOVED,
         "hidden",
         Some(&format!("User removed {name} (previously {before}).")),
         &json!({"entity_id": entity_id, "attribute_id": attribute_id, "attribute_name": name, "before": before, "source": "user"}),
@@ -668,12 +668,12 @@ mod tests {
         assert_eq!(updated.value, 7.0);
         let mut stmt = conn
             .prepare(
-                "SELECT payload_json FROM timeline_entries
+                "SELECT payload_json FROM ledger_entries
                  WHERE kind = ?1 ORDER BY seq",
             )
             .unwrap();
         let payloads = stmt
-            .query_map([timeline_kind::ENTITY_ATTRIBUTE_CHANGED], |row| {
+            .query_map([ledger_kind::ENTITY_ATTRIBUTE_CHANGED], |row| {
                 row.get::<_, String>(0)
             })
             .unwrap()
@@ -710,8 +710,8 @@ mod tests {
             .unwrap();
         let removal_events: i64 = conn
             .query_row(
-                "SELECT COUNT(*) FROM timeline_entries WHERE kind = ?1",
-                [timeline_kind::ENTITY_ATTRIBUTE_REMOVED],
+                "SELECT COUNT(*) FROM ledger_entries WHERE kind = ?1",
+                [ledger_kind::ENTITY_ATTRIBUTE_REMOVED],
                 |row| row.get(0),
             )
             .unwrap();
@@ -738,8 +738,8 @@ mod tests {
         ));
         let changed_events: i64 = conn
             .query_row(
-                "SELECT COUNT(*) FROM timeline_entries WHERE kind = ?1",
-                [timeline_kind::ENTITY_ATTRIBUTE_CHANGED],
+                "SELECT COUNT(*) FROM ledger_entries WHERE kind = ?1",
+                [ledger_kind::ENTITY_ATTRIBUTE_CHANGED],
                 |row| row.get(0),
             )
             .unwrap();

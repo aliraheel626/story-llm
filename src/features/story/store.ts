@@ -10,17 +10,17 @@ import type {
   Story,
   StoryImage,
   SwipeDonePayload,
-  TimelineEntry,
+  LedgerEntry,
 } from "../../shared/types";
 import { charactersApi } from "../characters/api";
 import { dicerollApi } from "../dicerolls/api";
 import { storiesApi } from "../stories/api";
-import { timelineApi } from "../timeline/api";
+import { ledgerApi } from "../ledger/api";
 import { writingStyleApi } from "../writingStyle/api";
 
 export const DEFAULT_DICEROLL_SETTINGS: DicerollSettings = {
   dice_mode: "classifier",
-  attributes_enabled: true,
+  attributes_enabled: false,
   reasoning_effort: null,
 };
 
@@ -51,9 +51,9 @@ interface TurnActivity {
 
 export interface StoryBundle {
   id: string;
-  entries: TimelineEntry[];
-  hidden: TimelineEntry[];
-  timelineLoading: boolean;
+  entries: LedgerEntry[];
+  hidden: LedgerEntry[];
+  ledgerLoading: boolean;
   streaming: StreamingState | null;
   turnError: string | null;
   turnActivity: TurnActivity | null;
@@ -89,7 +89,7 @@ interface StoryStoreState {
   applyStoryTitle: (storyId: string, title: string) => void;
   setActiveStory: (storyId: string) => void;
 
-  loadTimeline: (storyId: string) => Promise<void>;
+  loadLedger: (storyId: string) => Promise<void>;
   submitTurn: (storyId: string, mode: ActionMode, content: string) => Promise<void>;
   retryNarration: (storyId: string, entryId: string) => Promise<void>;
   generateVariant: (storyId: string, entryId: string) => Promise<void>;
@@ -127,7 +127,7 @@ const newBundle = (id: string): StoryBundle => ({
   id,
   entries: [],
   hidden: [],
-  timelineLoading: false,
+  ledgerLoading: false,
   streaming: null,
   turnError: null,
   turnActivity: null,
@@ -155,7 +155,7 @@ const patchBundle = (
   return { ...bundles, [storyId]: { ...bundle, ...(typeof patch === "function" ? patch(bundle) : patch) } };
 };
 
-const replaceEntry = (entries: TimelineEntry[], id: string, next: TimelineEntry) =>
+const replaceEntry = (entries: LedgerEntry[], id: string, next: LedgerEntry) =>
   entries.map((entry) => (entry.id === id ? next : entry));
 
 const removeOne = (items: string[], value: string) => {
@@ -198,7 +198,7 @@ const closeTool = (log: ToolActivity[], callId: string, ok: boolean | null): Too
     : log.map((tool, index) => (index === open ? { ...tool, phase: "finished" as const, ok } : tool));
 };
 
-const timelineGenerations = new Map<string, number>();
+const ledgerGenerations = new Map<string, number>();
 const variantGenerations = new Map<string, number>();
 const advanceGeneration = (generations: Map<string, number>, key: string) => {
   const generation = (generations.get(key) ?? 0) + 1;
@@ -280,12 +280,12 @@ export const useStoryStore = create<StoryStoreState>((set, get) => ({
     }
   },
 
-  loadTimeline: async (storyId) => {
-    const generation = advanceGeneration(timelineGenerations, storyId);
-    set((state) => ({ bundles: patchBundle(state.bundles, storyId, { timelineLoading: true }) }));
+  loadLedger: async (storyId) => {
+    const generation = advanceGeneration(ledgerGenerations, storyId);
+    set((state) => ({ bundles: patchBundle(state.bundles, storyId, { ledgerLoading: true }) }));
     try {
-      const snapshot = await timelineApi.list(storyId);
-      if (!isCurrentGeneration(timelineGenerations, storyId, generation)) return;
+      const snapshot = await ledgerApi.list(storyId);
+      if (!isCurrentGeneration(ledgerGenerations, storyId, generation)) return;
       const revisedEntryIds = [...new Set(snapshot.hidden.flatMap((entry) =>
         (entry.kind === "narration_variant" || entry.kind === "narration_selected") && entry.target_entry_id
           ? [entry.target_entry_id]
@@ -294,39 +294,39 @@ export const useStoryStore = create<StoryStoreState>((set, get) => ({
         bundles: patchBundle(state.bundles, storyId, { entries: snapshot.visible, hidden: snapshot.hidden }),
       }));
       await Promise.all(revisedEntryIds.map((entryId) => get().loadVariantsForEntry(storyId, entryId)));
-      if (isCurrentGeneration(timelineGenerations, storyId, generation)) {
-        set((state) => ({ bundles: patchBundle(state.bundles, storyId, { timelineLoading: false }) }));
+      if (isCurrentGeneration(ledgerGenerations, storyId, generation)) {
+        set((state) => ({ bundles: patchBundle(state.bundles, storyId, { ledgerLoading: false }) }));
       }
     } catch (error) {
-      console.error("failed to load timeline", error);
-      if (isCurrentGeneration(timelineGenerations, storyId, generation)) {
-        set((state) => ({ bundles: patchBundle(state.bundles, storyId, { timelineLoading: false }) }));
+      console.error("failed to load ledger", error);
+      if (isCurrentGeneration(ledgerGenerations, storyId, generation)) {
+        set((state) => ({ bundles: patchBundle(state.bundles, storyId, { ledgerLoading: false }) }));
       }
     }
   },
   submitTurn: async (storyId, mode, content) => {
-    advanceGeneration(timelineGenerations, storyId);
-    set((state) => ({ bundles: patchBundle(state.bundles, storyId, { turnError: null, timelineLoading: false }) }));
+    advanceGeneration(ledgerGenerations, storyId);
+    set((state) => ({ bundles: patchBundle(state.bundles, storyId, { turnError: null, ledgerLoading: false }) }));
     try {
-      const result = await timelineApi.submitTurn(storyId, mode, content);
+      const result = await ledgerApi.submitTurn(storyId, mode, content);
       set((state) => ({
         bundles: patchBundle(state.bundles, storyId, (bundle) => ({
           entries: bundle.entries.some((entry) => entry.id === result.entry.id)
             ? replaceEntry(bundle.entries, result.entry.id, result.entry)
             : [...bundle.entries, result.entry],
           streaming: newStream(result.stream_id, storyId, "append"),
-          timelineLoading: false,
+          ledgerLoading: false,
         })),
       }));
     } catch (error) {
-      await get().loadTimeline(storyId);
+      await get().loadLedger(storyId);
       throw error;
     }
   },
   retryNarration: async (storyId, entryId) => {
     set((state) => ({ bundles: patchBundle(state.bundles, storyId, { turnError: null }) }));
     const appends = get().bundles[storyId]?.entries.find((entry) => entry.id === entryId)?.kind === "player_message";
-    const result = await timelineApi.retry(storyId, entryId);
+    const result = await ledgerApi.retry(storyId, entryId);
     set((state) => ({
       bundles: patchBundle(state.bundles, storyId, {
         streaming: newStream(result.stream_id, storyId, appends ? "append" : "replace", appends ? undefined : result.entry_id),
@@ -335,15 +335,15 @@ export const useStoryStore = create<StoryStoreState>((set, get) => ({
   },
   generateVariant: async (storyId, entryId) => {
     set((state) => ({ bundles: patchBundle(state.bundles, storyId, { turnError: null }) }));
-    const streamId = await timelineApi.generateVariant(storyId, entryId);
+    const streamId = await ledgerApi.generateVariant(storyId, entryId);
     set((state) => ({
       bundles: patchBundle(state.bundles, storyId, { streaming: newStream(streamId, storyId, "replace", entryId) }),
     }));
   },
   eraseLastExchange: async (storyId) => {
-    const ids = await timelineApi.eraseLastExchange(storyId);
+    const ids = await ledgerApi.eraseLastExchange(storyId);
     if (!ids.length) return;
-    advanceGeneration(timelineGenerations, storyId);
+    advanceGeneration(ledgerGenerations, storyId);
     ids.forEach((entryId) => advanceGeneration(variantGenerations, variantKey(storyId, entryId)));
     set((state) => ({
       bundles: patchBundle(state.bundles, storyId, (bundle) => {
@@ -364,26 +364,26 @@ export const useStoryStore = create<StoryStoreState>((set, get) => ({
           rollsByEntry,
           rollDetailByEntry,
           imagePendingFor: bundle.imagePendingFor.filter((entryId) => !ids.includes(entryId)),
-          timelineLoading: false,
+          ledgerLoading: false,
         };
       }),
     }));
     await get().loadCharacters(storyId);
   },
   editEntry: async (storyId, entryId, content) => {
-    const entry = await timelineApi.edit(entryId, content);
-    advanceGeneration(timelineGenerations, storyId);
+    const entry = await ledgerApi.edit(entryId, content);
+    advanceGeneration(ledgerGenerations, storyId);
     set((state) => ({
       bundles: patchBundle(state.bundles, storyId, (bundle) => ({
         entries: replaceEntry(bundle.entries, entryId, entry),
         imagesByEntry: { ...bundle.imagesByEntry, [entryId]: [] },
-        timelineLoading: false,
+        ledgerLoading: false,
       })),
     }));
   },
   selectVariant: async (storyId, entryId, variantEntryId) => {
-    const entry = await timelineApi.selectVariant(entryId, variantEntryId);
-    advanceGeneration(timelineGenerations, storyId);
+    const entry = await ledgerApi.selectVariant(entryId, variantEntryId);
+    advanceGeneration(ledgerGenerations, storyId);
     advanceGeneration(variantGenerations, variantKey(storyId, entryId));
     set((state) => ({
       bundles: patchBundle(state.bundles, storyId, (bundle) => ({
@@ -396,7 +396,7 @@ export const useStoryStore = create<StoryStoreState>((set, get) => ({
           })),
         },
         imagesByEntry: { ...bundle.imagesByEntry, [entryId]: [] },
-        timelineLoading: false,
+        ledgerLoading: false,
       })),
     }));
   },
@@ -404,7 +404,7 @@ export const useStoryStore = create<StoryStoreState>((set, get) => ({
     const key = variantKey(storyId, entryId);
     const generation = advanceGeneration(variantGenerations, key);
     try {
-      const variants = await timelineApi.listVariants(entryId);
+      const variants = await ledgerApi.listVariants(entryId);
       if (!isCurrentGeneration(variantGenerations, key, generation)) return;
       set((state) => ({
         bundles: patchBundle(state.bundles, storyId, (bundle) => ({
@@ -417,7 +417,7 @@ export const useStoryStore = create<StoryStoreState>((set, get) => ({
   },
   loadImagesForStory: async (storyId) => {
     try {
-      const images = await timelineApi.listImages(storyId);
+      const images = await ledgerApi.listImages(storyId);
       const grouped: Record<string, StoryImage[]> = {};
       images.forEach((image) => (grouped[image.entry_id] ??= []).push(image));
       set((state) => ({
@@ -431,7 +431,7 @@ export const useStoryStore = create<StoryStoreState>((set, get) => ({
   },
   loadRollsForStory: async (storyId) => {
     try {
-      const rolls = await timelineApi.listRolls(storyId);
+      const rolls = await ledgerApi.listRolls(storyId);
       const grouped: Record<string, RollDetail[]> = {};
       rolls.forEach((detail) => (grouped[detail.roll.entry_id] ??= []).push(detail));
       set((state) => ({
@@ -510,7 +510,7 @@ export const useStoryStore = create<StoryStoreState>((set, get) => ({
     const found = findStream(get().bundles, payload.stream_id);
     if (!found) return;
     const [storyId, current] = found;
-    advanceGeneration(timelineGenerations, storyId);
+    advanceGeneration(ledgerGenerations, storyId);
     set((state) => ({
       bundles: patchBundle(state.bundles, storyId, (bundle) => ({
         entries: current.mode === "replace" && current.targetEntryId
@@ -520,7 +520,7 @@ export const useStoryStore = create<StoryStoreState>((set, get) => ({
             : [...bundle.entries, payload.entry],
         streaming: null,
         turnActivity: { thoughts: current.thoughts, tools: current.toolLog },
-        timelineLoading: false,
+        ledgerLoading: false,
         ...(current.mode === "replace" && current.targetEntryId
           ? { imagesByEntry: { ...bundle.imagesByEntry, [current.targetEntryId]: [] } }
           : {}),
@@ -543,7 +543,7 @@ export const useStoryStore = create<StoryStoreState>((set, get) => ({
     const found = findStream(get().bundles, payload.stream_id);
     if (!found) return;
     const [storyId, current] = found;
-    advanceGeneration(timelineGenerations, storyId);
+    advanceGeneration(ledgerGenerations, storyId);
     advanceGeneration(variantGenerations, variantKey(storyId, payload.entry.id));
     set((state) => ({
       bundles: patchBundle(state.bundles, storyId, (bundle) => ({
@@ -552,7 +552,7 @@ export const useStoryStore = create<StoryStoreState>((set, get) => ({
         imagesByEntry: { ...bundle.imagesByEntry, [payload.entry.id]: [] },
         streaming: null,
         turnActivity: { thoughts: current.thoughts, tools: current.toolLog },
-        timelineLoading: false,
+        ledgerLoading: false,
       })),
     }));
   },

@@ -7,14 +7,14 @@ export interface StoryTitleUpdatedPayload { story_id: string; title: string }
 
 export type ActionMode = "do" | "say" | "story" | "guide" | "see" | "continue";
 export type InputMode = ActionMode | "generated";
-export type TimelineVisibility = "visible" | "hidden";
-export type TimelineEntryKind =
+export type LedgerVisibility = "visible" | "hidden";
+export type LedgerEntryKind =
   | "player_message" | "narration" | "narration_variant" | "narration_selected" | "content_edited"
   | "diceroll" | "entity_created" | "entity_queried" | "entity_updated" | "entity_deleted"
   | "entity_attribute_changed" | "entity_attribute_removed" | "image_generated"
-  | "context_note_updated" | "diceroll_settings_changed" | "context_summary";
+  | "diceroll_settings_changed" | "context_summary";
 
-interface TimelinePayloadBase extends Record<string, unknown> {
+interface LedgerPayloadBase extends Record<string, unknown> {
   input_mode?: InputMode;
   selected_entry_id?: string;
   entity_id?: string;
@@ -22,55 +22,56 @@ interface TimelinePayloadBase extends Record<string, unknown> {
   source?: "user" | "mechanics" | "inferred" | string;
   through_entry_id?: string;
 }
-export interface NarrativePayload extends TimelinePayloadBase { input_mode: InputMode; thoughts?: string }
-export interface NarrationVariantPayload extends TimelinePayloadBase { reason: "retry" | "swipe" | string; input_mode: InputMode; thoughts?: string }
-export interface NarrationSelectedPayload extends TimelinePayloadBase { selected_entry_id: string; reason?: string }
-export interface ContentEditedPayload extends TimelinePayloadBase { reason: "user_edit" | string; applies_to?: string }
-export interface EntityEventPayload extends TimelinePayloadBase {
+export interface NarrativePayload extends LedgerPayloadBase { input_mode: InputMode; thoughts?: string }
+export interface NarrationVariantPayload extends LedgerPayloadBase { reason: "retry" | "swipe" | string; input_mode: InputMode; thoughts?: string }
+export interface NarrationSelectedPayload extends LedgerPayloadBase { selected_entry_id: string; reason?: string }
+export interface ContentEditedPayload extends LedgerPayloadBase { reason: "user_edit" | string; applies_to?: string }
+export interface EntityEventPayload extends LedgerPayloadBase {
   entity_id: string; name?: string; kind?: EntityKind; appearance_anchor?: string | null;
   before?: Record<string, unknown> | null; after?: Record<string, unknown> | null;
 }
-export interface EntityAttributeEventPayload extends TimelinePayloadBase {
+export interface EntityAttributeEventPayload extends LedgerPayloadBase {
   entity_id: string; attribute_id: string; attribute_name?: string;
   before?: number | null; after?: number | null; source: "user" | "mechanics" | "inferred" | string;
 }
-export interface ImageGeneratedPayload extends TimelinePayloadBase { asset_id: string; prompt: string }
-export interface ContextSummaryPayload extends TimelinePayloadBase {
+export interface ImageGeneratedPayload extends LedgerPayloadBase { asset_id: string; prompt: string }
+export interface ContextSummaryPayload extends LedgerPayloadBase {
   through_entry_id: string; facts?: string[]; entity_notes?: string[];
   open_threads?: string[]; unresolved_mechanics?: string[];
 }
 
-interface TimelineEntryBase {
-  id: string; story_id: string; seq: number; visibility: TimelineVisibility;
+interface LedgerEntryBase {
+  id: string; story_id: string; seq: number; visibility: LedgerVisibility;
   content: string | null; target_entry_id: string | null; created_at: string;
 }
-export type TimelineEntry =
-  | (TimelineEntryBase & { kind: "player_message" | "narration"; payload: NarrativePayload })
-  | (TimelineEntryBase & { kind: "narration_variant"; payload: NarrationVariantPayload })
-  | (TimelineEntryBase & { kind: "narration_selected"; payload: NarrationSelectedPayload })
-  | (TimelineEntryBase & { kind: "content_edited"; payload: ContentEditedPayload })
-  | (TimelineEntryBase & { kind: "entity_created" | "entity_updated" | "entity_deleted"; payload: EntityEventPayload })
-  | (TimelineEntryBase & { kind: "entity_attribute_changed" | "entity_attribute_removed"; payload: EntityAttributeEventPayload })
-  | (TimelineEntryBase & { kind: "image_generated"; payload: ImageGeneratedPayload })
-  | (TimelineEntryBase & { kind: "context_summary"; payload: ContextSummaryPayload })
-  | (TimelineEntryBase & { kind: "diceroll" | "entity_queried" | "context_note_updated" | "diceroll_settings_changed"; payload: TimelinePayloadBase });
-export interface TimelineSnapshot { visible: TimelineEntry[]; hidden: TimelineEntry[] }
+export type LedgerEntry =
+  | (LedgerEntryBase & { kind: "player_message" | "narration"; payload: NarrativePayload })
+  | (LedgerEntryBase & { kind: "narration_variant"; payload: NarrationVariantPayload })
+  | (LedgerEntryBase & { kind: "narration_selected"; payload: NarrationSelectedPayload })
+  | (LedgerEntryBase & { kind: "content_edited"; payload: ContentEditedPayload })
+  | (LedgerEntryBase & { kind: "entity_created" | "entity_updated" | "entity_deleted"; payload: EntityEventPayload })
+  | (LedgerEntryBase & { kind: "entity_attribute_changed" | "entity_attribute_removed"; payload: EntityAttributeEventPayload })
+  | (LedgerEntryBase & { kind: "image_generated"; payload: ImageGeneratedPayload })
+  | (LedgerEntryBase & { kind: "context_summary"; payload: ContextSummaryPayload })
+  | (LedgerEntryBase & { kind: "diceroll" | "entity_queried" | "diceroll_settings_changed"; payload: LedgerPayloadBase });
+export interface LedgerSnapshot { visible: LedgerEntry[]; hidden: LedgerEntry[] }
 
 export interface NarrationVariant {
   id: string; entry_id: string; content: string; is_selected: boolean; created_at: string; thoughts?: string | null;
 }
-export interface SubmitTurnResult { entry: TimelineEntry; stream_id: string }
+export interface SubmitTurnResult { entry: LedgerEntry; stream_id: string }
 export interface RetryResult { entry_id: string; stream_id: string }
 export interface NarrationDeltaPayload { stream_id: string; text: string }
-export interface NarrationDonePayload { stream_id: string; entry: TimelineEntry }
+export interface NarrationDonePayload { stream_id: string; entry: LedgerEntry }
 export interface NarrationErrorPayload { stream_id: string; message: string }
 export interface NarrationToolActivityPayload { stream_id: string; call_id: string; label: string; phase: "started" | "finished"; ok: boolean | null }
-export interface SwipeDonePayload { stream_id: string; entry: TimelineEntry; variants: NarrationVariant[] }
+export interface SwipeDonePayload { stream_id: string; entry: LedgerEntry; variants: NarrationVariant[] }
 
 export interface TextModelSettings { provider: string; model: string; has_api_key: boolean; context_window: number }
 export interface ImageModelSettings { model: string; enabled: boolean; style: string; has_api_key: boolean; narrator_images: boolean }
 export type EntityContextMode = "all" | "scoped" | "none";
-export interface NarratorMemorySettings { tool_call_persistence: boolean; entity_context_mode: EntityContextMode }
+export interface ContextInjectionSettings { entity_context_mode: EntityContextMode; dice_rolls_in_context: boolean }
+export interface LedgerRetentionSettings { tool_call_persistence: boolean }
 export interface StoryImage { id: string; entry_id: string; path: string; prompt: string; created_at: string }
 
 export type EntityKind = "character" | "object" | "location" | "relationship" | "campaign";
@@ -117,7 +118,7 @@ export interface RollDetail {
   target_attribute_name: string | null; actor_attributes: EntityAttributeValue[]; target_attributes: EntityAttributeValue[];
 }
 
-export function timelineInputMode(entry: TimelineEntry): InputMode {
+export function ledgerInputMode(entry: LedgerEntry): InputMode {
   return (entry.payload.input_mode as InputMode | undefined) ?? "generated";
 }
-export function isPlayerEntry(entry: TimelineEntry): boolean { return entry.kind === "player_message" }
+export function isPlayerEntry(entry: LedgerEntry): boolean { return entry.kind === "player_message" }

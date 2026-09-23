@@ -6,7 +6,7 @@ use rig_core::{completion::Message, memory::Compactor};
 use rig_memory::{HeuristicTokenCounter, MemoryPolicy, TokenCounter, TokenWindowMemory};
 
 use crate::ai::{HistoryTurn, TextModelConfig};
-use crate::features::timeline::{model::kind, repository};
+use crate::features::ledger::{model::kind, repository};
 use crate::shared::db::{with_transaction, Pool};
 use crate::shared::error::AppResult;
 
@@ -23,7 +23,6 @@ pub(crate) struct SummaryBoundary {
 
 pub(crate) struct PreparedHistory {
     pub turns: Vec<HistoryTurn>,
-    pub through_seq: Option<i64>,
 }
 
 /// Latest valid summary for the requested cut. A retry may have newer summary
@@ -35,7 +34,7 @@ pub(crate) fn boundary_for(
     before_seq: Option<i64>,
 ) -> AppResult<Option<SummaryBoundary>> {
     let mut stmt = conn.prepare(
-        "SELECT id, seq, payload_json FROM timeline_entries
+        "SELECT id, seq, payload_json FROM ledger_entries
          WHERE story_id = ?1 AND kind = ?2 ORDER BY seq DESC",
     )?;
     let rows = stmt.query_map(rusqlite::params![story_id, kind::CONTEXT_SUMMARY], |row| {
@@ -57,7 +56,7 @@ pub(crate) fn boundary_for(
             });
         if let Some((through_seq, through_entry_id)) = boundary {
             let boundary_exists: bool = conn.query_row(
-                "SELECT EXISTS(SELECT 1 FROM timeline_entries WHERE id = ?1)",
+                "SELECT EXISTS(SELECT 1 FROM ledger_entries WHERE id = ?1)",
                 [through_entry_id],
                 |row| row.get(0),
             )?;
@@ -84,11 +83,6 @@ pub async fn prepare_history(
     before_seq: Option<i64>,
 ) -> PreparedHistory {
     let compactor = NarratorCompactor::new(config.clone());
-    let existing_through_seq = pool
-        .get()
-        .ok()
-        .and_then(|conn| boundary_for(&conn, story_id, before_seq).ok().flatten())
-        .map(|boundary| boundary.through_seq);
     let result = prepare_history_with_compactor(
         HistoryPreparation {
             pool,
@@ -104,13 +98,11 @@ pub async fn prepare_history(
     .await;
     PreparedHistory {
         turns: result.turns,
-        through_seq: result.through_seq.or(existing_through_seq),
     }
 }
 
 struct PreparationResult {
     turns: Vec<HistoryTurn>,
-    through_seq: Option<i64>,
 }
 
 struct HistoryPreparation<'a> {
@@ -152,10 +144,7 @@ where
     let target_history_budget = (((context_window as f64) * 0.75) as usize).saturating_sub(fixed);
     let split = raw_tail_boundary(&history, config, preamble, prompt);
     if split == 0 {
-        return PreparationResult {
-            turns: history,
-            through_seq: None,
-        };
+        return PreparationResult { turns: history };
     }
     let keep_count = history.len() - split;
     let through_entry_id = history[..split]
@@ -180,12 +169,6 @@ where
     {
         Ok(artifact) => {
             let summary_text = format_summary(&artifact.0);
-            let through_seq = through_entry_id.as_deref().and_then(|id| {
-                pool.get()
-                    .ok()
-                    .and_then(|conn| repository::get_entry(&conn, id).ok())
-                    .map(|entry| entry.seq)
-            });
             let _ = with_transaction(pool, |tx| {
                 let boundary = through_entry_id
                     .as_deref()
@@ -212,10 +195,7 @@ where
                 marker: crate::ai::HistoryTurnMarker::Summary,
             }];
             compacted.extend(history.into_iter().skip(split));
-            PreparationResult {
-                turns: compacted,
-                through_seq,
-            }
+            PreparationResult { turns: compacted }
         }
         Err(_) => {
             if history
@@ -241,15 +221,11 @@ where
                     .collect::<Vec<_>>();
                 recent.reverse();
                 fallback.extend(recent);
-                PreparationResult {
-                    turns: fallback,
-                    through_seq: None,
-                }
+                PreparationResult { turns: fallback }
             } else {
                 let skip = history.len().saturating_sub(keep_count);
                 PreparationResult {
                     turns: history.into_iter().skip(skip).collect(),
-                    through_seq: None,
                 }
             }
         }
@@ -321,7 +297,7 @@ mod tests {
                 entry_id: Some(format!("entry-{index}")),
                 is_player: index % 2 == 0,
                 content: format!("Long historical turn {index}: {}", "context ".repeat(40)),
-                marker: crate::ai::HistoryTurnMarker::Timeline,
+                marker: crate::ai::HistoryTurnMarker::Ledger,
             })
             .collect::<Vec<_>>();
         let config = TextModelConfig {

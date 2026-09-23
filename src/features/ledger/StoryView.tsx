@@ -1,13 +1,13 @@
 import { useEffect, useRef } from "react";
-import { DEFAULT_STORY_TITLE, timelineInputMode, type ActionMode } from "../../shared/types";
-import type { NarrativePayload, TimelineEntry } from "../../shared/types";
+import { DEFAULT_STORY_TITLE, ledgerInputMode, type ActionMode } from "../../shared/types";
+import type { LedgerEntry, NarrativePayload } from "../../shared/types";
 import { useStoryStore } from "../story/store";
 import { EditableStoryTitle } from "../stories/EditableStoryTitle";
-import { TimelineEntryView } from "./TimelineEntryView";
+import { LedgerEntryView } from "./LedgerEntryView";
 import { TurnActivity, toolCallsFromEvents, type TurnActivityData } from "./TurnActivity";
 import { Composer, modeDefinition } from "./Composer";
 
-const EMPTY_ENTRIES: TimelineEntry[] = [];
+const EMPTY_ENTRIES: LedgerEntry[] = [];
 
 function usePrefersReducedMotion() {
   return typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -20,7 +20,7 @@ export function StoryView() {
   const activeStory = stories.find((s) => s.id === activeStoryId);
 
   const entries = useStoryStore((s) => activeStoryId ? (s.bundles[activeStoryId]?.entries ?? EMPTY_ENTRIES) : EMPTY_ENTRIES);
-  const loadTimeline = useStoryStore((s) => s.loadTimeline);
+  const loadLedger = useStoryStore((s) => s.loadLedger);
   const loadImagesForStory = useStoryStore((s) => s.loadImagesForStory);
   const loadRollsForStory = useStoryStore((s) => s.loadRollsForStory);
   const imagesByEntry = useStoryStore((s) => activeStoryId ? s.bundles[activeStoryId]?.imagesByEntry : undefined);
@@ -39,7 +39,7 @@ export function StoryView() {
    * panel survives a reload); the newest turn also falls back to the
    * in-session snapshot for anything the fetched events don't cover yet.
    */
-  const activityFor = (entry: TimelineEntry, isLastEntry: boolean): TurnActivityData | undefined => {
+  const activityFor = (entry: LedgerEntry, isLastEntry: boolean): TurnActivityData | undefined => {
     if (entry.kind !== "narration") return undefined;
     const selected = variantsByEntry?.[entry.id]?.find((variant) => variant.is_selected);
     const thoughts = selected ? selected.thoughts : (entry.payload as NarrativePayload).thoughts;
@@ -58,16 +58,16 @@ export function StoryView() {
 
   useEffect(() => {
     if (activeStoryId) {
-      loadTimeline(activeStoryId);
+      loadLedger(activeStoryId);
       loadImagesForStory(activeStoryId);
       loadRollsForStory(activeStoryId);
     }
-  }, [activeStoryId, loadTimeline, loadImagesForStory, loadRollsForStory]);
+  }, [activeStoryId, loadLedger, loadImagesForStory, loadRollsForStory]);
 
   const isStreamingAppend = streaming?.mode === "append";
   const isStreamingReplace = streaming?.mode === "replace";
   const displayedEntries = entries.filter((entry) => {
-    const inputMode = timelineInputMode(entry);
+    const inputMode = ledgerInputMode(entry);
     return inputMode === "generated" || modeDefinition(inputMode as ActionMode).display !== "hidden";
   });
   const actualLastEntry = entries[entries.length - 1];
@@ -117,13 +117,13 @@ export function StoryView() {
             const activity = activityFor(entry, isLastEntry);
             const hiddenTrailingAction = isLastEntry
               && actualLastEntry?.kind === "player_message"
-              && modeDefinition(timelineInputMode(actualLastEntry) as ActionMode).display === "hidden"
+              && modeDefinition(ledgerInputMode(actualLastEntry) as ActionMode).display === "hidden"
               ? actualLastEntry
               : undefined;
             return (
               <div key={entry.id} ref={pinHere ? pinRef : undefined}>
                 {activity && <TurnActivity activity={activity} />}
-                <TimelineEntryView
+                <LedgerEntryView
                   entry={entry}
                   storyId={activeStoryId!}
                   isLast={isLastEntry}

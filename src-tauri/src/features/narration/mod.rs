@@ -1,6 +1,6 @@
 pub mod author_note;
 mod commands;
-mod entity_context;
+mod context;
 pub(crate) mod history;
 pub mod model;
 mod repository;

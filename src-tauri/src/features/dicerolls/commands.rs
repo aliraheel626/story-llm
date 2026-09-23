@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tauri::State;
 
-use crate::features::timeline::{model::kind, repository as timeline};
+use crate::features::ledger::{model::kind, repository as ledger};
 use crate::shared::db::{with_transaction, Pool};
 use crate::shared::error::{AppError, AppResult};
 
@@ -73,7 +73,7 @@ pub(crate) fn read_story_diceroll_settings(
         attributes_enabled: settings
             .get("attributes_enabled")
             .and_then(Value::as_bool)
-            .unwrap_or(true),
+            .unwrap_or(false),
         reasoning_effort: settings
             .get("reasoning_effort")
             .and_then(Value::as_str)
@@ -113,7 +113,7 @@ pub fn save_story_diceroll_settings(
             "UPDATE stories SET settings_json = ?1, updated_at = ?2 WHERE id = ?3",
             rusqlite::params![settings.to_string(), Utc::now().to_rfc3339(), story_id],
         )?;
-        timeline::append_entry(tx, &story_id, kind::DICEROLL_SETTINGS_CHANGED, "hidden",
+        ledger::append_entry(tx, &story_id, kind::DICEROLL_SETTINGS_CHANGED, "hidden",
             Some(&format!("Dice-roll settings changed: dice mode {dice_mode}, attributes enabled {attributes_enabled}, reasoning effort {}.",
                 reasoning_effort.as_deref().unwrap_or("model default"))),
             &json!({"dice_mode": dice_mode, "attributes_enabled": attributes_enabled, "reasoning_effort": reasoning_effort}), None)?;
@@ -121,7 +121,7 @@ pub fn save_story_diceroll_settings(
     })
 }
 
-fn parse_roll(entry: &crate::features::timeline::model::TimelineEntry) -> Option<Roll> {
+fn parse_roll(entry: &crate::features::ledger::model::LedgerEntry) -> Option<Roll> {
     let p = &entry.payload;
     Some(Roll {
         id: entry.id.clone(),
@@ -216,7 +216,7 @@ fn detail(
 #[tauri::command]
 pub fn list_rolls_for_story(pool: State<Pool>, story_id: String) -> AppResult<Vec<RollDetail>> {
     let conn = pool.get()?;
-    timeline::list_logical_entries(&conn, &story_id)?
+    ledger::list_logical_entries(&conn, &story_id)?
         .iter()
         .filter(|e| e.kind == kind::DICEROLL)
         .filter_map(parse_roll)
@@ -239,20 +239,20 @@ fn list_roll_details_for_entry_in_conn(
     story_id: &str,
     entry_id: &str,
 ) -> AppResult<Vec<RollDetail>> {
-    let base = timeline::get_entry(conn, entry_id)?;
+    let base = ledger::get_entry(conn, entry_id)?;
     if base.story_id != story_id {
         return Err(AppError::NotFound(format!(
-            "timeline entry {entry_id} not found in story {story_id}"
+            "ledger entry {entry_id} not found in story {story_id}"
         )));
     }
     let mut stmt = conn.prepare(
         "SELECT id, story_id, seq, kind, visibility, content, payload_json, target_entry_id, created_at
-         FROM timeline_entries WHERE target_entry_id = ?1 AND story_id = ?2 AND kind = ?3 ORDER BY seq ASC",
+         FROM ledger_entries WHERE target_entry_id = ?1 AND story_id = ?2 AND kind = ?3 ORDER BY seq ASC",
     )?;
     let entries = stmt
         .query_map(
             rusqlite::params![entry_id, story_id, kind::DICEROLL],
-            timeline::row_to_entry,
+            ledger::row_to_entry,
         )?
         .collect::<Result<Vec<_>, _>>()?;
     entries
@@ -264,8 +264,11 @@ fn list_roll_details_for_entry_in_conn(
 
 #[cfg(test)]
 mod tests {
-    use super::{list_roll_details_for_entry_in_conn, normalize_reasoning_effort};
-    use crate::features::timeline::{model::kind, repository as timeline};
+    use super::{
+        list_roll_details_for_entry_in_conn, normalize_reasoning_effort,
+        read_story_diceroll_settings,
+    };
+    use crate::features::ledger::{model::kind, repository as ledger};
     use crate::shared::error::AppError;
     use serde_json::json;
 
@@ -288,8 +291,8 @@ mod tests {
         story_id: &str,
         target_entry_id: &str,
         marker: i64,
-    ) -> crate::features::timeline::model::TimelineEntry {
-        timeline::append_entry(
+    ) -> crate::features::ledger::model::LedgerEntry {
+        ledger::append_entry(
             conn,
             story_id,
             kind::DICEROLL,
@@ -324,13 +327,20 @@ mod tests {
     }
 
     #[test]
+    fn fresh_stories_default_dice_rolls_to_disabled() {
+        let pool = setup_story();
+        let settings = read_story_diceroll_settings(&pool, "story").unwrap();
+        assert!(!settings.attributes_enabled);
+    }
+
+    #[test]
     fn roll_details_reject_unknown_entry_id() {
         let pool = setup_story();
         let conn = pool.get().unwrap();
         let error = list_roll_details_for_entry_in_conn(&conn, "story", "missing").unwrap_err();
         assert!(matches!(
             error,
-            AppError::NotFound(message) if message == "timeline entry missing not found"
+            AppError::NotFound(message) if message == "ledger entry missing not found"
         ));
     }
 
@@ -338,7 +348,7 @@ mod tests {
     fn roll_details_are_scoped_to_the_story() {
         let pool = setup_story();
         let conn = pool.get().unwrap();
-        let anchor = timeline::append_entry(
+        let anchor = ledger::append_entry(
             &conn,
             "story",
             kind::NARRATION,

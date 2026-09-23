@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { isPlayerEntry, timelineInputMode, type ActionMode, type NarrationVariant, type RollDetail, type StoryImage, type TimelineEntry } from "../../shared/types";
+import { isPlayerEntry, ledgerInputMode, type ActionMode, type LedgerEntry, type NarrationVariant, type RollDetail, type StoryImage } from "../../shared/types";
 import { useStoryStore } from "../story/store";
 import { RollDisclosure } from "./RollDisclosure";
 import { modeDefinition } from "./Composer";
 
-interface TimelineEntryViewProps {
-  entry: TimelineEntry;
+interface LedgerEntryViewProps {
+  entry: LedgerEntry;
   storyId: string;
   isLast: boolean;
   retryEntryId: string;
@@ -16,7 +16,7 @@ interface TimelineEntryViewProps {
   rollSummaries?: RollDetail[];
 }
 
-export function TimelineEntryView({ entry, storyId, isLast, retryEntryId, canSwipe, images, variants, rollSummaries }: TimelineEntryViewProps) {
+export function LedgerEntryView({ entry, storyId, isLast, retryEntryId, canSwipe, images, variants, rollSummaries }: LedgerEntryViewProps) {
   const streaming = useStoryStore((s) => s.bundles[storyId]?.streaming);
   const retryNarration = useStoryStore((s) => s.retryNarration);
   const eraseLastExchange = useStoryStore((s) => s.eraseLastExchange);
@@ -32,7 +32,7 @@ export function TimelineEntryView({ entry, storyId, isLast, retryEntryId, canSwi
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const isNarrator = entry.kind === "narration";
-  const inputMode = timelineInputMode(entry);
+  const inputMode = ledgerInputMode(entry);
   const isBeingReplaced = streaming?.mode === "replace" && streaming.targetEntryId === entry.id;
   const anyStreamBusy = !!streaming;
 

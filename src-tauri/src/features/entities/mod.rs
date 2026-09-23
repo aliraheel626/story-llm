@@ -7,7 +7,7 @@ use serde_json::json;
 use tauri::State;
 use uuid::Uuid;
 
-use crate::features::timeline::{model::kind, repository::append_entry};
+use crate::features::ledger::{model::kind, repository::append_entry};
 use crate::shared::db::{with_transaction, Pool};
 use crate::shared::error::{AppError, AppResult};
 use model::Entity;

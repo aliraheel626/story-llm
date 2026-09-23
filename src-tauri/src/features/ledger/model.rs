@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct TimelineEntry {
+pub struct LedgerEntry {
     pub id: String,
     pub story_id: String,
     pub seq: i64,
@@ -15,9 +15,9 @@ pub struct TimelineEntry {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TimelineSnapshot {
-    pub visible: Vec<TimelineEntry>,
-    pub hidden: Vec<TimelineEntry>,
+pub struct LedgerSnapshot {
+    pub visible: Vec<LedgerEntry>,
+    pub hidden: Vec<LedgerEntry>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -46,7 +46,6 @@ pub mod kind {
     pub const ENTITY_ATTRIBUTE_CHANGED: &str = "entity_attribute_changed";
     pub const ENTITY_ATTRIBUTE_REMOVED: &str = "entity_attribute_removed";
     pub const IMAGE_GENERATED: &str = "image_generated";
-    pub const CONTEXT_NOTE_UPDATED: &str = "context_note_updated";
     pub const DICEROLL_SETTINGS_CHANGED: &str = "diceroll_settings_changed";
     pub const CONTEXT_SUMMARY: &str = "context_summary";
 }

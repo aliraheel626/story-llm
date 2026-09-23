@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { TimelineEntry } from "../../shared/types";
+import type { LedgerEntry } from "../../shared/types";
 
 export interface ToolCall { key: string; label: string; done: boolean; ok: boolean | null }
 export interface TurnActivityData { thoughts?: string | null; tools: ToolCall[] }
@@ -18,13 +18,13 @@ const TOOL_EVENT_KINDS = new Set([
   "image_generated",
 ]);
 
-const eventLabel = (entry: TimelineEntry): string => {
+const eventLabel = (entry: LedgerEntry): string => {
   const text = (entry.content ?? "").replace(/^Dice-roll outcome:\s*/i, "").replace(/\.$/, "");
   return text || entry.kind.replace(/_/g, " ");
 };
 
 /** The tool calls committed against one narration revision, in call order. */
-export function toolCallsFromEvents(entryId: string, hidden: TimelineEntry[] | undefined): ToolCall[] {
+export function toolCallsFromEvents(entryId: string, hidden: LedgerEntry[] | undefined): ToolCall[] {
   if (!hidden) return [];
   return hidden
     .filter((event) => event.target_entry_id === entryId && TOOL_EVENT_KINDS.has(event.kind))

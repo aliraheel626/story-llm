@@ -36,7 +36,7 @@ pub struct TextModelConfig {
     pub context_window: usize,
 }
 
-/// One turn of prior conversation, already resolved from the persisted timeline.
+/// One turn of prior conversation, already resolved from the persisted ledger.
 #[derive(Debug, Clone)]
 pub struct HistoryTurn {
     pub entry_id: Option<String>,
@@ -47,7 +47,7 @@ pub struct HistoryTurn {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HistoryTurnMarker {
-    Timeline,
+    Ledger,
     Summary,
 }
 

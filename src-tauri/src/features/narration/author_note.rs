@@ -1,108 +1,127 @@
-//! The story's Author's Note. It has no table of its own: the note is the
-//! latest `CONTEXT_NOTE_UPDATED` timeline event, so reading it "as of" a point
-//! in the timeline is just picking the newest such event at or before it.
+//! Per-story author's note storage and message-context injection.
 
-use rusqlite::OptionalExtension;
-use serde_json::json;
+use chrono::Utc;
+use serde_json::{json, Value};
 use tauri::State;
 
-use crate::features::timeline::{model::kind as timeline_kind, repository};
-use crate::shared::db::Pool;
+use crate::features::ledger::repository;
+use crate::shared::db::{with_transaction, Pool};
 use crate::shared::error::{AppError, AppResult};
 
-/// The note text a `CONTEXT_NOTE_UPDATED` event carries. The one place that
-/// knows the payload shape; history replay reads events through it too.
-pub(super) fn event_note(payload: &serde_json::Value) -> &str {
-    payload
-        .get("author_note")
-        .and_then(|value| value.as_str())
-        .unwrap_or_default()
-}
-
-fn note_from_latest_event(
-    conn: &rusqlite::Connection,
-    story_id: &str,
-    through_seq: Option<i64>,
-    before_seq: Option<i64>,
-) -> AppResult<Option<String>> {
-    let exists: bool = conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM stories WHERE id = ?1)",
-        [story_id],
-        |row| row.get(0),
-    )?;
-    if !exists {
-        return Err(AppError::NotFound(format!("story {story_id} not found")));
-    }
-
-    let payload: Option<String> = conn
+fn story_settings(conn: &rusqlite::Connection, story_id: &str) -> AppResult<Value> {
+    let raw: String = conn
         .query_row(
-            "SELECT payload_json FROM timeline_entries
-             WHERE story_id = ?1 AND kind = ?2
-               AND (?3 IS NULL OR seq <= ?3)
-               AND (?4 IS NULL OR seq < ?4)
-             ORDER BY seq DESC LIMIT 1",
-            rusqlite::params![
-                story_id,
-                timeline_kind::CONTEXT_NOTE_UPDATED,
-                through_seq,
-                before_seq
-            ],
+            "SELECT settings_json FROM stories WHERE id = ?1",
+            [story_id],
             |row| row.get(0),
         )
-        .optional()?;
-    let note = payload
-        .and_then(|payload| serde_json::from_str::<serde_json::Value>(&payload).ok())
-        .map(|payload| event_note(&payload).trim().to_string())
-        .unwrap_or_default();
-    Ok((!note.is_empty()).then_some(note))
+        .map_err(|_| AppError::NotFound(format!("story {story_id} not found")))?;
+    Ok(serde_json::from_str(&raw).unwrap_or_else(|_| json!({})))
+}
+
+fn read_author_note(pool: &Pool, story_id: &str) -> AppResult<String> {
+    let conn = pool.get()?;
+    let settings = story_settings(&conn, story_id)?;
+    Ok(settings
+        .get("author_note")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .trim()
+        .to_string())
+}
+
+fn write_author_note(pool: &Pool, story_id: &str, note: &str) -> AppResult<()> {
+    let note = note.trim();
+    with_transaction(pool, |tx| {
+        let mut settings = story_settings(tx, story_id)?;
+        if note.is_empty() {
+            if let Some(object) = settings.as_object_mut() {
+                object.remove("author_note");
+            }
+        } else {
+            settings["author_note"] = json!(note);
+        }
+        tx.execute(
+            "UPDATE stories SET settings_json = ?1, updated_at = ?2 WHERE id = ?3",
+            rusqlite::params![settings.to_string(), Utc::now().to_rfc3339(), story_id],
+        )?;
+        // The prior app version reads these events; current narration history ignores them.
+        repository::append_entry(
+            tx,
+            story_id,
+            "context_note_updated",
+            "hidden",
+            Some(&format!("Author's note was updated: {note}")),
+            &json!({"author_note": note}),
+            None,
+        )?;
+        Ok(())
+    })
+}
+
+fn read_author_note_enabled(pool: &Pool, story_id: &str) -> AppResult<bool> {
+    let conn = pool.get()?;
+    let settings = story_settings(&conn, story_id)?;
+    Ok(settings
+        .get("author_note_enabled")
+        .and_then(Value::as_bool)
+        .unwrap_or(true))
+}
+
+fn write_author_note_enabled(pool: &Pool, story_id: &str, enabled: bool) -> AppResult<()> {
+    with_transaction(pool, |tx| {
+        let mut settings = story_settings(tx, story_id)?;
+        settings["author_note_enabled"] = json!(enabled);
+        tx.execute(
+            "UPDATE stories SET settings_json = ?1, updated_at = ?2 WHERE id = ?3",
+            rusqlite::params![settings.to_string(), Utc::now().to_rfc3339(), story_id],
+        )?;
+        Ok(())
+    })
 }
 
 #[tauri::command]
 pub fn get_author_note(pool: State<Pool>, story_id: String) -> AppResult<String> {
-    let conn = pool.get()?;
-    Ok(note_from_latest_event(&conn, &story_id, None, None)?.unwrap_or_default())
+    read_author_note(pool.inner(), &story_id)
 }
 
 #[tauri::command]
 pub fn save_author_note(pool: State<Pool>, story_id: String, note: String) -> AppResult<()> {
-    let conn = pool.get()?;
-    let note = note.trim();
-    repository::append_entry(
-        &conn,
-        &story_id,
-        timeline_kind::CONTEXT_NOTE_UPDATED,
-        "hidden",
-        Some(&format!("Author's note was updated: {note}")),
-        &json!({"author_note": note}),
-        None,
-    )?;
-    Ok(())
+    write_author_note(pool.inner(), &story_id, &note)
 }
 
-/// The note in force just before `before_seq` (the latest one when `None`).
-/// Used to size the prompt before compaction has decided anything.
-pub(crate) fn current_for_cut(
-    pool: &Pool,
-    story_id: &str,
-    before_seq: Option<i64>,
-) -> AppResult<Option<String>> {
-    let conn = pool.get()?;
-    note_from_latest_event(&conn, story_id, None, before_seq)
+#[tauri::command]
+pub fn get_author_note_enabled(pool: State<Pool>, story_id: String) -> AppResult<bool> {
+    read_author_note_enabled(pool.inner(), &story_id)
 }
 
-/// The note as of the compaction boundary `through_seq` — the one baked into
-/// the system prompt. Edits after the boundary reach the model as events in
-/// the replayed history instead. With no boundary yet, nothing is baked.
-pub(crate) fn at_boundary(
-    pool: &Pool,
-    story_id: &str,
-    through_seq: Option<i64>,
-) -> AppResult<Option<String>> {
-    let Some(through_seq) = through_seq else {
-        return Ok(None);
-    };
+#[tauri::command]
+pub fn set_author_note_enabled(
+    pool: State<Pool>,
+    story_id: String,
+    enabled: bool,
+) -> AppResult<()> {
+    write_author_note_enabled(pool.inner(), &story_id, enabled)
+}
+
+/// Tagged per-message note, or an empty block when muted or blank.
+pub(super) fn context_block(pool: &Pool, story_id: &str) -> AppResult<String> {
     let conn = pool.get()?;
-    note_from_latest_event(&conn, story_id, Some(through_seq), None)
+    let settings = story_settings(&conn, story_id)?;
+    let enabled = settings
+        .get("author_note_enabled")
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
+    let note = settings
+        .get("author_note")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .trim();
+    Ok(if enabled && !note.is_empty() {
+        format!("<author_note>{note}</author_note>")
+    } else {
+        String::new()
+    })
 }
 
 #[cfg(test)]
@@ -110,7 +129,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn baked_note_follows_the_compaction_boundary() {
+    fn note_round_trips_through_story_settings_and_can_be_muted() {
         let pool = crate::shared::db::test_pool();
         let conn = pool.get().unwrap();
         conn.execute(
@@ -119,54 +138,36 @@ mod tests {
             [],
         )
         .unwrap();
-        let first = repository::append_entry(
-            &conn,
-            "s",
-            timeline_kind::CONTEXT_NOTE_UPDATED,
-            "hidden",
-            Some("first"),
-            &json!({"author_note":"first"}),
-            None,
-        )
-        .unwrap();
-        repository::append_entry(
-            &conn,
-            "s",
-            timeline_kind::PLAYER_MESSAGE,
-            "visible",
-            Some("act"),
-            &json!({"input_mode":"do"}),
-            None,
-        )
-        .unwrap();
-        let second = repository::append_entry(
-            &conn,
-            "s",
-            timeline_kind::CONTEXT_NOTE_UPDATED,
-            "hidden",
-            Some("second"),
-            &json!({"author_note":"second"}),
-            None,
-        )
-        .unwrap();
         drop(conn);
 
-        assert_eq!(at_boundary(&pool, "s", None).unwrap(), None);
+        write_author_note(&pool, "s", "  Keep it terse.  ").unwrap();
+        assert_eq!(read_author_note(&pool, "s").unwrap(), "Keep it terse.");
         assert_eq!(
-            at_boundary(&pool, "s", Some(first.seq)).unwrap().as_deref(),
-            Some("first")
+            context_block(&pool, "s").unwrap(),
+            "<author_note>Keep it terse.</author_note>"
         );
+
+        write_author_note_enabled(&pool, "s", false).unwrap();
+        assert!(!read_author_note_enabled(&pool, "s").unwrap());
+        assert_eq!(context_block(&pool, "s").unwrap(), "");
+
+        write_author_note_enabled(&pool, "s", true).unwrap();
+        write_author_note(&pool, "s", "   ").unwrap();
+        assert_eq!(read_author_note(&pool, "s").unwrap(), "");
+        assert_eq!(context_block(&pool, "s").unwrap(), "");
+        let settings = story_settings(&pool.get().unwrap(), "s").unwrap();
+        assert!(settings.get("author_note").is_none());
+        let conn = pool.get().unwrap();
+        let latest_note: String = conn
+            .query_row(
+                "SELECT payload_json FROM ledger_entries WHERE story_id = 's' AND kind = 'context_note_updated' ORDER BY seq DESC LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
         assert_eq!(
-            at_boundary(&pool, "s", Some(second.seq))
-                .unwrap()
-                .as_deref(),
-            Some("second")
-        );
-        assert_eq!(
-            current_for_cut(&pool, "s", Some(second.seq))
-                .unwrap()
-                .as_deref(),
-            Some("first")
+            serde_json::from_str::<Value>(&latest_note).unwrap()["author_note"],
+            ""
         );
     }
 }

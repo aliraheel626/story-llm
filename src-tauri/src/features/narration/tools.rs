@@ -28,7 +28,7 @@ use crate::features::entities::{
     model::{AttributeRegistryEntry, Entity},
 };
 use crate::features::images::model::ImageRequest;
-use crate::features::{settings, timeline};
+use crate::features::{ledger, settings};
 use crate::prompts;
 use crate::shared::db::Pool;
 use crate::shared::error::{AppError, AppResult};
@@ -331,10 +331,10 @@ impl TurnStaging {
                     } else {
                         format!("Looked up: {}", names.join(", "))
                     };
-                    timeline::repository::append_entry(
+                    ledger::repository::append_entry(
                         tx,
                         &self.story_id,
-                        timeline::model::kind::ENTITY_QUERIED,
+                        ledger::model::kind::ENTITY_QUERIED,
                         "hidden",
                         Some(&content),
                         &json!({
@@ -614,9 +614,9 @@ fn get_entities_tool(staging: Arc<Mutex<TurnStaging>>) -> PortableDynamicTool {
                         "appearance_anchor": entity.appearance_anchor, "attributes": attributes,
                     }));
                 }
-                let memory = settings::read_narrator_memory_settings(&staging.pool)
+                let retention = settings::read_ledger_retention_settings(&staging.pool)
                     .map_err(to_tool_error)?;
-                if memory.tool_call_persistence {
+                if retention.tool_call_persistence {
                     staging.pending.push(PendingOp::QueryEntities {
                         entity_ids,
                         kind_filter: kind.map(str::to_string),
@@ -832,7 +832,7 @@ pub fn narrator_tools(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::features::timeline::repository::append_entry;
+    use crate::features::ledger::repository::append_entry;
     use chrono::Utc;
 
     fn setup() -> (Pool, String) {
@@ -1066,7 +1066,7 @@ mod tests {
     }
 
     #[test]
-    fn query_entities_commit_writes_entity_ids_to_the_timeline() {
+    fn query_entities_commit_writes_entity_ids_to_the_ledger() {
         let (pool, story_id) = setup();
         let mut staging = TurnStaging::new(pool.clone(), story_id.clone());
         let (bob, _) = staging
@@ -1095,9 +1095,9 @@ mod tests {
 
         let (content, payload_json, target_entry_id): (String, String, String) = conn
             .query_row(
-                "SELECT content, payload_json, target_entry_id FROM timeline_entries
+                "SELECT content, payload_json, target_entry_id FROM ledger_entries
                  WHERE kind = ?1",
-                [timeline::model::kind::ENTITY_QUERIED],
+                [ledger::model::kind::ENTITY_QUERIED],
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
             .unwrap();
@@ -1363,8 +1363,8 @@ mod tests {
             .get()
             .unwrap()
             .query_row(
-                "SELECT payload_json FROM timeline_entries WHERE kind = ?1 ORDER BY seq DESC LIMIT 1",
-                [crate::features::timeline::model::kind::DICEROLL],
+                "SELECT payload_json FROM ledger_entries WHERE kind = ?1 ORDER BY seq DESC LIMIT 1",
+                [crate::features::ledger::model::kind::DICEROLL],
                 |row| row.get(0),
             )
             .unwrap();
@@ -1401,8 +1401,8 @@ mod tests {
             .get()
             .unwrap()
             .query_row(
-                "SELECT payload_json FROM timeline_entries WHERE kind = ?1 ORDER BY seq DESC LIMIT 1",
-                [crate::features::timeline::model::kind::DICEROLL],
+                "SELECT payload_json FROM ledger_entries WHERE kind = ?1 ORDER BY seq DESC LIMIT 1",
+                [crate::features::ledger::model::kind::DICEROLL],
                 |row| row.get(0),
             )
             .unwrap();
@@ -1501,10 +1501,10 @@ mod tests {
         assert_eq!((value_count, distinct_attribute_ids), (2, 1));
 
         let mut stmt = conn
-            .prepare("SELECT payload_json FROM timeline_entries WHERE kind = ?1 ORDER BY seq ASC")
+            .prepare("SELECT payload_json FROM ledger_entries WHERE kind = ?1 ORDER BY seq ASC")
             .unwrap();
         let roll_payloads = stmt
-            .query_map([crate::features::timeline::model::kind::DICEROLL], |row| {
+            .query_map([crate::features::ledger::model::kind::DICEROLL], |row| {
                 row.get::<_, String>(0)
             })
             .unwrap()
@@ -1519,14 +1519,14 @@ mod tests {
 
         let mut stmt = conn
             .prepare(
-                "SELECT content, payload_json FROM timeline_entries
+                "SELECT content, payload_json FROM ledger_entries
                  WHERE kind = ?1 AND json_extract(payload_json, '$.source') = 'inferred'
                  ORDER BY seq ASC",
             )
             .unwrap();
         let changes = stmt
             .query_map(
-                [crate::features::timeline::model::kind::ENTITY_ATTRIBUTE_CHANGED],
+                [crate::features::ledger::model::kind::ENTITY_ATTRIBUTE_CHANGED],
                 |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
             )
             .unwrap()
@@ -1578,8 +1578,8 @@ mod tests {
         pool.get()
             .unwrap()
             .execute(
-                "INSERT INTO settings (key, value) VALUES ('narrator_memory', ?1)",
-                [json!({"tool_call_persistence":false,"entity_context_mode":"all"}).to_string()],
+                "INSERT INTO settings (key, value) VALUES ('ledger_retention', ?1)",
+                [json!({"tool_call_persistence":false}).to_string()],
             )
             .unwrap();
         let staging = Arc::new(Mutex::new(TurnStaging::new(pool, story_id)));

@@ -5,7 +5,8 @@ import { AttributesPanel } from "../dicerolls/AttributesPanel";
 import { WritingStylePanel } from "../writingStyle/WritingStylePanel";
 import { TextModelPanel } from "../settings/TextModelPanel";
 import { ImageModelPanel } from "../settings/ImageModelPanel";
-import { NarratorMemoryPanel } from "../settings/NarratorMemoryPanel";
+import { ContextInjectionPanel } from "../settings/ContextInjectionPanel";
+import { LedgerRetentionPanel } from "../settings/LedgerRetentionPanel";
 import { PlaceholderPanel } from "./PlaceholderPanel";
 import { useAppShellStore } from "../../app/store";
 
@@ -16,7 +17,8 @@ const PANEL_LABELS: Record<string, string> = {
   attributes: "Attributes",
   textModel: "Text Model",
   imageModel: "Image Model",
-  narratorMemory: "Narrator Memory",
+  contextInjection: "Context Injection",
+  ledgerRetention: "Ledger Retention",
   features: "Features",
 };
 
@@ -54,8 +56,12 @@ export function Sidebar() {
         <ImageModelPanel />
       </AccordionPanel>
 
-      <AccordionPanel title={PANEL_LABELS.narratorMemory} open={openPanels.narratorMemory} onToggle={() => togglePanel("narratorMemory")}>
-        <NarratorMemoryPanel />
+      <AccordionPanel title={PANEL_LABELS.contextInjection} open={openPanels.contextInjection} onToggle={() => togglePanel("contextInjection")}>
+        <ContextInjectionPanel />
+      </AccordionPanel>
+
+      <AccordionPanel title={PANEL_LABELS.ledgerRetention} open={openPanels.ledgerRetention} onToggle={() => togglePanel("ledgerRetention")}>
+        <LedgerRetentionPanel />
       </AccordionPanel>
 
       <AccordionPanel title={PANEL_LABELS.features} open={openPanels.features} onToggle={() => togglePanel("features")}>

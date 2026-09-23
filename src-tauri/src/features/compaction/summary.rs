@@ -44,7 +44,7 @@ pub(super) fn latest_summary_artifact(
     let boundary = boundary_for(&conn, story_id, before_seq).ok()??;
     let payload_json: String = conn
         .query_row(
-            "SELECT payload_json FROM timeline_entries WHERE id = ?1",
+            "SELECT payload_json FROM ledger_entries WHERE id = ?1",
             [boundary.summary_entry_id],
             |row| row.get(0),
         )

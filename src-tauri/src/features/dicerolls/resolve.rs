@@ -12,7 +12,7 @@
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
-use crate::features::timeline::{model::kind as timeline_kind, repository as timeline_repository};
+use crate::features::ledger::{model::kind as ledger_kind, repository as ledger_repository};
 use crate::shared::error::AppResult;
 
 /// Never mechanically impossible or guaranteed, however lopsided the gap.
@@ -69,11 +69,11 @@ pub fn persist_roll(
     entry_id: &str,
     pending: PendingRoll,
 ) -> AppResult<()> {
-    let base = timeline_repository::get_entry(conn, entry_id)?;
-    timeline_repository::append_entry(
+    let base = ledger_repository::get_entry(conn, entry_id)?;
+    ledger_repository::append_entry(
         conn,
         &base.story_id,
-        timeline_kind::DICEROLL,
+        ledger_kind::DICEROLL,
         "hidden",
         Some(&format!(
             "Dice-roll outcome: rolled {} and got {} ({}).",

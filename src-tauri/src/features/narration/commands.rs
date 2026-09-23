@@ -13,18 +13,18 @@ use crate::ai::{
 use crate::features::{
     compaction,
     dicerolls::{commands as diceroll_settings, model::DiceMode},
-    images, settings, stories,
-    timeline::{
-        model::{kind as timeline_kind, NarrationVariant, TimelineEntry},
-        reducer, repository as timeline_repository,
+    images,
+    ledger::{
+        model::{kind as ledger_kind, LedgerEntry, NarrationVariant},
+        reducer, repository as ledger_repository,
     },
+    settings, stories,
 };
 use crate::prompts;
 use crate::shared::db::{with_transaction, Pool};
 use crate::shared::error::{AppError, AppResult};
 
-use super::author_note;
-use super::entity_context::{build_entity_context, EntityContextPlan};
+use super::context::{self, combine_context_blocks, ContextPlan};
 use super::history::load_history;
 use super::model::ActiveStoryEntry;
 use super::repository::{get_last_story_entry, image_paths_for_entry, insert_story_entry};
@@ -49,7 +49,7 @@ fn narrator_image_tools(
 
 #[derive(Debug, Clone, Serialize)]
 pub struct SubmitTurnResult {
-    pub entry: TimelineEntry,
+    pub entry: LedgerEntry,
     pub stream_id: String,
 }
 
@@ -68,13 +68,13 @@ struct NarrationDeltaPayload<'a> {
 #[derive(Debug, Clone, Serialize)]
 struct NarrationDonePayload {
     stream_id: String,
-    entry: TimelineEntry,
+    entry: LedgerEntry,
 }
 
 #[derive(Debug, Clone, Serialize)]
 struct SwipeDonePayload {
     stream_id: String,
-    entry: TimelineEntry,
+    entry: LedgerEntry,
     variants: Vec<NarrationVariant>,
 }
 
@@ -93,62 +93,6 @@ fn variant_payload(reason: &str, input_mode: &str, thoughts: Option<&str>) -> se
         }
         None => serde_json::json!({"reason": reason, "input_mode": input_mode}),
     }
-}
-
-fn build_turn_context(
-    pool: &Pool,
-    story_id: &str,
-    history: &[HistoryTurn],
-    config: &TextModelConfig,
-    extra_instructions: &str,
-) -> AppResult<EntityContextPlan> {
-    let current_note = author_note::current_for_cut(pool, story_id, None)?;
-    let preamble = prompts::narrator_system_prompt(current_note.as_deref());
-    let entity_context = build_entity_context(pool, story_id, history, config, &preamble)?;
-    Ok(EntityContextPlan {
-        live_context: Some(combine_context_blocks(&[
-            entity_context.live_context.unwrap_or_default(),
-            extra_instructions.to_string(),
-        ])),
-        full_context: Some(combine_context_blocks(&[
-            entity_context.full_context.unwrap_or_default(),
-            extra_instructions.to_string(),
-        ])),
-    })
-}
-
-pub(super) fn combine_context_blocks(parts: &[String]) -> String {
-    parts
-        .iter()
-        .filter(|p| !p.is_empty())
-        .cloned()
-        .collect::<Vec<_>>()
-        .join("\n\n")
-}
-
-/// The dice roll that produced `entry_id`'s narration, if any — folded
-/// into retry/swipe's turn context so regenerating a roll-driven turn stays
-/// consistent with the outcome that already happened. The roll's timeline
-/// seq is assigned after the narration it explains, so it falls outside the
-/// history window a retry/swipe deliberately cuts off at the target's seq;
-/// this is the only channel that outcome reaches the regenerated call by.
-fn roll_context_block(pool: &Pool, entry_id: &str) -> AppResult<String> {
-    let conn = pool.get()?;
-    let mut stmt = conn.prepare(
-        "SELECT content FROM timeline_entries WHERE target_entry_id = ?1 AND kind = ?2 ORDER BY seq ASC",
-    )?;
-    let contents = stmt
-        .query_map(
-            rusqlite::params![entry_id, timeline_kind::DICEROLL],
-            |row| row.get::<_, Option<String>>(0),
-        )?
-        .filter_map(Result::transpose)
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(if contents.is_empty() {
-        String::new()
-    } else {
-        format!("<rolls>\n- {}\n</rolls>", contents.join("\n- "))
-    })
 }
 
 /// Inserts a fresh narration entry. If the narrator's tool calls staged any
@@ -189,18 +133,18 @@ fn append_variant(
     visible: &str,
     thoughts: Option<&str>,
     reason: &str,
-) -> AppResult<TimelineEntry> {
+) -> AppResult<LedgerEntry> {
     let (image_paths, entry) = with_transaction(pool, |tx| {
         let image_paths = image_paths_for_entry(tx, &target.id)?;
         tx.execute("DELETE FROM image_assets WHERE entry_id = ?1", [&target.id])?;
         tx.execute(
-            "DELETE FROM timeline_entries WHERE kind = ?1 AND target_entry_id = ?2",
-            rusqlite::params![timeline_kind::IMAGE_GENERATED, target.id],
+            "DELETE FROM ledger_entries WHERE kind = ?1 AND target_entry_id = ?2",
+            rusqlite::params![ledger_kind::IMAGE_GENERATED, target.id],
         )?;
-        timeline_repository::append_entry(
+        ledger_repository::append_entry(
             tx,
             &target.story_id,
-            timeline_kind::NARRATION_VARIANT,
+            ledger_kind::NARRATION_VARIANT,
             "hidden",
             Some(visible),
             &variant_payload(reason, &target.input_mode, thoughts),
@@ -208,7 +152,7 @@ fn append_variant(
         )?;
         Ok((
             image_paths,
-            timeline_repository::active_entry(tx, &target.id)?,
+            ledger_repository::active_entry(tx, &target.id)?,
         ))
     })?;
 
@@ -232,15 +176,15 @@ fn kick_auto_title(app: &AppHandle, pool: &Pool, story_id: &str) {
 /// `narration-delta` / `narration-thoughts` fire as text arrives, then
 /// `on_success` runs with the final text (and should emit its own terminal
 /// event), or `narration-error` fires if the stream or `on_success` fails.
-/// `turn_context_plan` folds Stage 1/2 context (attribute snapshot, roll
-/// outcome constraint) into the final persisted action turn.
+/// `turn_context_plan` supplies the complete per-message context used both for
+/// compaction budgeting and for the final action sent to the model.
 struct NarrationJob {
     app: AppHandle,
     pool: Pool,
     story_id: String,
     config: TextModelConfig,
     history: Vec<HistoryTurn>,
-    turn_context_plan: EntityContextPlan,
+    turn_context_plan: ContextPlan,
     /// Live tools available to this narration path. Revision jobs receive only
     /// the image tool, never state-changing entity or dice tools.
     tools: Vec<DynamicTool>,
@@ -280,23 +224,18 @@ where
         stream_id,
     } = job;
     tauri::async_runtime::spawn(async move {
-        let current_note =
-            author_note::current_for_cut(&pool, &story_id, before_seq).unwrap_or_default();
-        let budget_preamble = prompts::narrator_system_prompt(current_note.as_deref());
-        let budget_context = turn_context_plan.full_context.unwrap_or_default();
+        let preamble = prompts::narrator_system_prompt();
         let prepared = compaction::prepare_history(
             &pool,
             &story_id,
             &config,
-            &budget_preamble,
-            &budget_context,
+            &preamble,
+            &turn_context_plan.full,
             history,
             before_seq,
         )
         .await;
         let mut history = prepared.turns;
-        let baked_note =
-            author_note::at_boundary(&pool, &story_id, prepared.through_seq).unwrap_or_default();
         let Some(mut action) = history.pop() else {
             let _ = app.emit(
                 "narration-error",
@@ -317,11 +256,7 @@ where
             );
             return;
         }
-        action.content = combine_context_blocks(&[
-            turn_context_plan.live_context.unwrap_or_default(),
-            action.content,
-        ]);
-        let preamble = prompts::narrator_system_prompt(baked_note.as_deref());
+        action.content = combine_context_blocks(&[turn_context_plan.live, action.content]);
         #[cfg(debug_assertions)]
         log::info!(
             "assembled narrator request: system={:?} history={:?} last_turn={:?}",
@@ -428,11 +363,10 @@ fn start_action_generation(
     app: AppHandle,
     pool: Pool,
     story_id: String,
-    action: TimelineEntry,
+    action: LedgerEntry,
     mode: String,
     history: Vec<HistoryTurn>,
     before_seq: Option<i64>,
-    extra_context: String,
 ) -> AppResult<String> {
     let config = settings::resolve_text_model(&app, &pool)?;
     let dicerolls = diceroll_settings::read_story_diceroll_settings(&pool, &story_id)?;
@@ -451,11 +385,11 @@ fn start_action_generation(
     }
     let prior_narration = {
         let conn = pool.get()?;
-        let raw = timeline_repository::list_logical_entries(&conn, &story_id)?;
+        let raw = ledger_repository::list_logical_entries(&conn, &story_id)?;
         reducer::active_visible_entries(&raw)
             .into_iter()
             .rev()
-            .find(|entry| entry.kind == timeline_kind::NARRATION)
+            .find(|entry| entry.kind == ledger_kind::NARRATION)
             .map(|entry| (entry.id, entry.content.unwrap_or_default()))
     };
     if is_see && prior_narration.is_none() {
@@ -475,20 +409,18 @@ fn start_action_generation(
         (Vec::new(), None)
     };
 
-    let mut context = vec![extra_context];
-    if dicerolls.attributes_enabled {
-        context.push(format!(
-            "{} <dice_mode>{}</dice_mode>",
-            prompts::ENTITY_TOOLS_AVAILABLE_PREFIX,
-            prompts::dice_mode_instruction(dice_mode)
-        ));
-    }
     if image_enabled {
         tool_set.extend(image_tools);
-        context.push(prompts::IMAGE_TOOL_AVAILABLE_INSTRUCTION.to_string());
     }
-    let context = combine_context_blocks(&context);
-    let turn_context_plan = build_turn_context(&pool, &story_id, &history, &config, &context)?;
+    let turn_context_plan = context::build_message_context(&context::Inputs {
+        pool: &pool,
+        story_id: &story_id,
+        history: &history,
+        config: &config,
+        target_entry_id: None,
+        dice_mode: dicerolls.attributes_enabled.then_some(dice_mode),
+        image_enabled,
+    })?;
     let stream_id = Uuid::new_v4().to_string();
     let story_id_bg = story_id.clone();
     let action_for_done = action.clone();
@@ -558,7 +490,7 @@ fn start_action_generation(
             .await?;
             let entry = {
                 let conn = pool.get()?;
-                timeline_repository::active_entry(&conn, &passage.id)?
+                ledger_repository::active_entry(&conn, &passage.id)?
             };
             let _ = app.emit(
                 "narration-done",
@@ -606,9 +538,9 @@ pub async fn submit_turn(
         match get_last_story_entry(&conn, &story_id)?.filter(|entry| entry.role == "player") {
             Some(entry) => {
                 let has_completed_effect: bool = conn.query_row(
-                    "SELECT EXISTS(SELECT 1 FROM timeline_entries
+                    "SELECT EXISTS(SELECT 1 FROM ledger_entries
                      WHERE target_entry_id = ?1 AND kind = ?2)",
-                    rusqlite::params![entry.id, timeline_kind::IMAGE_GENERATED],
+                    rusqlite::params![entry.id, ledger_kind::IMAGE_GENERATED],
                     |row| row.get(0),
                 )?;
                 (!has_completed_effect).then_some(entry)
@@ -621,12 +553,12 @@ pub async fn submit_turn(
     let action = match existing_trailing_action {
         Some(action) => {
             let conn = pool.get()?;
-            timeline_repository::active_entry(&conn, &action.id)?
+            ledger_repository::active_entry(&conn, &action.id)?
         }
         None => {
             let conn = pool.get()?;
             let action = insert_story_entry(&conn, &story_id, "player", &mode, content, None)?;
-            timeline_repository::active_entry(&conn, &action.id)?
+            ledger_repository::active_entry(&conn, &action.id)?
         }
     };
 
@@ -639,7 +571,6 @@ pub async fn submit_turn(
         mode,
         history,
         None,
-        String::new(),
     )?;
     Ok(SubmitTurnResult {
         entry: action,
@@ -703,26 +634,19 @@ fn start_variant_generation(
     let config = settings::resolve_text_model(&app, pool.inner())?;
     let reasoning_effort =
         diceroll_settings::read_story_diceroll_settings(pool.inner(), &story_id)?.reasoning_effort;
-    let roll_context = roll_context_block(pool.inner(), &target.id)?;
     let image_settings = settings::read_image_model_settings(&app, pool.inner())?;
     let image_enabled =
         image_settings.enabled && image_settings.narrator_images && image_settings.has_api_key;
     let (tool_set, image_requests) = narrator_image_tools(image_enabled);
-    let extra_instructions = [
-        (!roll_context.is_empty()).then_some(roll_context.as_str()),
-        image_enabled.then_some(prompts::IMAGE_TOOL_AVAILABLE_INSTRUCTION),
-    ]
-    .into_iter()
-    .flatten()
-    .collect::<Vec<_>>()
-    .join(" ");
-    let turn_context_plan = build_turn_context(
-        pool.inner(),
-        &story_id,
-        &history,
-        &config,
-        &extra_instructions,
-    )?;
+    let turn_context_plan = context::build_message_context(&context::Inputs {
+        pool: pool.inner(),
+        story_id: &story_id,
+        history: &history,
+        config: &config,
+        target_entry_id: Some(target.id.as_str()),
+        dice_mode: None,
+        image_enabled,
+    })?;
 
     let stream_id = Uuid::new_v4().to_string();
     spawn_narration(
@@ -796,7 +720,7 @@ pub async fn retry_narration(
         let history = load_history(pool.inner(), &story_id, Some(action.seq + 1))?;
         let active_action = {
             let conn = pool.get()?;
-            timeline_repository::active_entry(&conn, &action.id)?
+            ledger_repository::active_entry(&conn, &action.id)?
         };
         let mode = action.input_mode.clone();
         start_action_generation(
@@ -807,7 +731,6 @@ pub async fn retry_narration(
             mode,
             history,
             Some(action.seq + 1),
-            String::new(),
         )?
     } else {
         start_variant_generation(app, pool, story_id, entry_id.clone(), VariantMode::Retry)?
@@ -846,13 +769,13 @@ pub fn select_narration_variant(
     pool: State<Pool>,
     entry_id: String,
     variant_entry_id: String,
-) -> AppResult<TimelineEntry> {
+) -> AppResult<LedgerEntry> {
     let (image_paths, entry) = with_transaction(pool.inner(), |tx| {
         let image_paths = image_paths_for_entry(tx, &entry_id)?;
-        let target = timeline_repository::get_entry(tx, &entry_id)?;
+        let target = ledger_repository::get_entry(tx, &entry_id)?;
         if variant_entry_id != entry_id {
-            let variant = timeline_repository::get_entry(tx, &variant_entry_id)?;
-            if variant.kind != timeline_kind::NARRATION_VARIANT
+            let variant = ledger_repository::get_entry(tx, &variant_entry_id)?;
+            if variant.kind != ledger_kind::NARRATION_VARIANT
                 || variant.target_entry_id.as_deref() != Some(&entry_id)
             {
                 return Err(AppError::NotFound(format!(
@@ -860,10 +783,10 @@ pub fn select_narration_variant(
                 )));
             }
         }
-        timeline_repository::append_entry(
+        ledger_repository::append_entry(
             tx,
             &target.story_id,
-            timeline_kind::NARRATION_SELECTED,
+            ledger_kind::NARRATION_SELECTED,
             "hidden",
             None,
             &serde_json::json!({"selected_entry_id": variant_entry_id, "reason":"user_selection"}),
@@ -871,13 +794,10 @@ pub fn select_narration_variant(
         )?;
         tx.execute("DELETE FROM image_assets WHERE entry_id = ?1", [&entry_id])?;
         tx.execute(
-            "DELETE FROM timeline_entries WHERE kind = ?1 AND target_entry_id = ?2",
-            rusqlite::params![timeline_kind::IMAGE_GENERATED, entry_id],
+            "DELETE FROM ledger_entries WHERE kind = ?1 AND target_entry_id = ?2",
+            rusqlite::params![ledger_kind::IMAGE_GENERATED, entry_id],
         )?;
-        Ok((
-            image_paths,
-            timeline_repository::active_entry(tx, &entry_id)?,
-        ))
+        Ok((image_paths, ledger_repository::active_entry(tx, &entry_id)?))
     })?;
 
     for path in image_paths {
@@ -887,30 +807,30 @@ pub fn select_narration_variant(
     Ok(entry)
 }
 
-/// "Edit": append a content override for any visible timeline entry. The
+/// "Edit": append a content override for any visible ledger entry. The
 /// override is recorded against whichever variant is currently active
 /// (`applies_to`), so it stays attached to that specific variant and survives
 /// paging away and back — re-selecting a *different* variant correctly shows
 /// that variant's own text instead.
 #[tauri::command]
-pub fn edit_timeline_entry(
+pub fn edit_ledger_entry(
     pool: State<Pool>,
     entry_id: String,
     content: String,
-) -> AppResult<TimelineEntry> {
+) -> AppResult<LedgerEntry> {
     let content = content.trim();
     if content.is_empty() {
         return Err(AppError::Invalid("content must not be empty".into()));
     }
     let (image_paths, entry) = with_transaction(pool.inner(), |tx| {
         let image_paths = image_paths_for_entry(tx, &entry_id)?;
-        let target = timeline_repository::get_entry(tx, &entry_id)?;
-        let raw = timeline_repository::list_logical_entries(tx, &target.story_id)?;
+        let target = ledger_repository::get_entry(tx, &entry_id)?;
+        let raw = ledger_repository::list_logical_entries(tx, &target.story_id)?;
         let applies_to = reducer::active_variant_id(&raw, &entry_id);
-        timeline_repository::append_entry(
+        ledger_repository::append_entry(
             tx,
             &target.story_id,
-            timeline_kind::CONTENT_EDITED,
+            ledger_kind::CONTENT_EDITED,
             "hidden",
             Some(content),
             &serde_json::json!({"reason":"user_edit", "applies_to": applies_to}),
@@ -918,13 +838,10 @@ pub fn edit_timeline_entry(
         )?;
         tx.execute("DELETE FROM image_assets WHERE entry_id = ?1", [&entry_id])?;
         tx.execute(
-            "DELETE FROM timeline_entries WHERE kind = ?1 AND target_entry_id = ?2",
-            rusqlite::params![timeline_kind::IMAGE_GENERATED, entry_id],
+            "DELETE FROM ledger_entries WHERE kind = ?1 AND target_entry_id = ?2",
+            rusqlite::params![ledger_kind::IMAGE_GENERATED, entry_id],
         )?;
-        Ok((
-            image_paths,
-            timeline_repository::active_entry(tx, &entry_id)?,
-        ))
+        Ok((image_paths, ledger_repository::active_entry(tx, &entry_id)?))
     })?;
 
     for path in image_paths {
@@ -941,11 +858,11 @@ fn cascade_entries(
         "WITH RECURSIVE doomed(id) AS (
              SELECT ?1
              UNION
-             SELECT timeline_entries.id FROM timeline_entries
-             JOIN doomed ON timeline_entries.target_entry_id = doomed.id
+             SELECT ledger_entries.id FROM ledger_entries
+             JOIN doomed ON ledger_entries.target_entry_id = doomed.id
          )
-         SELECT timeline_entries.id, timeline_entries.kind, timeline_entries.payload_json
-         FROM timeline_entries JOIN doomed ON doomed.id = timeline_entries.id",
+         SELECT ledger_entries.id, ledger_entries.kind, ledger_entries.payload_json
+         FROM ledger_entries JOIN doomed ON doomed.id = ledger_entries.id",
     )?;
     let entries = stmt
         .query_map([root_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
@@ -962,7 +879,7 @@ fn collect_cascade_effects(
 ) -> AppResult<()> {
     for (id, kind, payload_json) in cascade_entries(conn, root_id)? {
         doomed_ids.insert(id);
-        if kind == timeline_kind::IMAGE_GENERATED {
+        if kind == ledger_kind::IMAGE_GENERATED {
             if let Some(asset_id) = serde_json::from_str::<serde_json::Value>(&payload_json)
                 .ok()
                 .and_then(|payload| {
@@ -988,11 +905,11 @@ fn collect_cascade_effects(
             }
         } else if matches!(
             kind.as_str(),
-            timeline_kind::ENTITY_CREATED
-                | timeline_kind::ENTITY_UPDATED
-                | timeline_kind::ENTITY_DELETED
-                | timeline_kind::ENTITY_ATTRIBUTE_CHANGED
-                | timeline_kind::ENTITY_ATTRIBUTE_REMOVED
+            ledger_kind::ENTITY_CREATED
+                | ledger_kind::ENTITY_UPDATED
+                | ledger_kind::ENTITY_DELETED
+                | ledger_kind::ENTITY_ATTRIBUTE_CHANGED
+                | ledger_kind::ENTITY_ATTRIBUTE_REMOVED
         ) {
             if let Some(entity_id) = serde_json::from_str::<serde_json::Value>(&payload_json)
                 .ok()
@@ -1028,7 +945,7 @@ fn erase_last_exchange_in_tx(
         &mut affected_entities,
         &mut image_paths,
     )?;
-    tx.execute("DELETE FROM timeline_entries WHERE id = ?1", [&last.id])?;
+    tx.execute("DELETE FROM ledger_entries WHERE id = ?1", [&last.id])?;
 
     let paired = last.role == "narrator" && last.input_mode == "generated";
     if paired {
@@ -1043,7 +960,7 @@ fn erase_last_exchange_in_tx(
                     &mut image_paths,
                 )?;
                 removed.push(prev.id.clone());
-                tx.execute("DELETE FROM timeline_entries WHERE id = ?1", [&prev.id])?;
+                tx.execute("DELETE FROM ledger_entries WHERE id = ?1", [&prev.id])?;
             }
         }
     }
@@ -1053,11 +970,11 @@ fn erase_last_exchange_in_tx(
     // story doesn't have to redo all its prior compaction after one Erase.
     {
         let mut stmt = tx.prepare(
-            "SELECT id, payload_json FROM timeline_entries WHERE story_id = ?1 AND kind = ?2",
+            "SELECT id, payload_json FROM ledger_entries WHERE story_id = ?1 AND kind = ?2",
         )?;
         let summaries: Vec<(String, String)> = stmt
             .query_map(
-                rusqlite::params![story_id, timeline_kind::CONTEXT_SUMMARY],
+                rusqlite::params![story_id, ledger_kind::CONTEXT_SUMMARY],
                 |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
             )?
             .collect::<Result<_, _>>()?;
@@ -1070,13 +987,13 @@ fn erase_last_exchange_in_tx(
                         .map(str::to_string)
                 });
             if through_entry_id.is_some_and(|through| doomed_ids.contains(&through)) {
-                tx.execute("DELETE FROM timeline_entries WHERE id = ?1", [&summary_id])?;
+                tx.execute("DELETE FROM ledger_entries WHERE id = ?1", [&summary_id])?;
             }
         }
     }
 
     let now = Utc::now().to_rfc3339();
-    crate::features::timeline::projections::replay_entities(tx, story_id, &affected_entities)?;
+    crate::features::ledger::projections::replay_entities(tx, story_id, &affected_entities)?;
     tx.execute(
         "UPDATE stories SET updated_at = ?1 WHERE id = ?2",
         rusqlite::params![now, story_id],
@@ -1103,7 +1020,7 @@ pub fn erase_last_exchange(pool: State<Pool>, story_id: String) -> AppResult<Vec
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::features::timeline::repository::append_entry;
+    use crate::features::ledger::repository::append_entry;
     use serde_json::json;
 
     #[test]
@@ -1144,7 +1061,7 @@ mod tests {
         append_entry(
             &conn,
             "s",
-            timeline_kind::IMAGE_GENERATED,
+            ledger_kind::IMAGE_GENERATED,
             "hidden",
             Some("image"),
             &json!({}),
@@ -1173,10 +1090,10 @@ mod tests {
         assert_eq!(active.content.as_deref(), Some("swipe text"));
 
         let conn = pool.get().unwrap();
-        let raw = timeline_repository::list_logical_entries(&conn, "s").unwrap();
+        let raw = ledger_repository::list_logical_entries(&conn, "s").unwrap();
         let variants = raw
             .iter()
-            .filter(|entry| entry.kind == timeline_kind::NARRATION_VARIANT)
+            .filter(|entry| entry.kind == ledger_kind::NARRATION_VARIANT)
             .collect::<Vec<_>>();
         assert_eq!(variants.len(), 2);
         assert_eq!(variants[0].payload["reason"], json!("retry"));
@@ -1184,7 +1101,7 @@ mod tests {
         assert_eq!(variants[1].payload["thoughts"], json!("swipe thoughts"));
         assert!(!raw
             .iter()
-            .any(|entry| entry.kind == timeline_kind::NARRATION_SELECTED));
+            .any(|entry| entry.kind == ledger_kind::NARRATION_SELECTED));
         assert_eq!(
             reducer::variants_for_entry(&raw, &target.id)
                 .into_iter()
@@ -1204,43 +1121,6 @@ mod tests {
     }
 
     #[test]
-    fn roll_context_includes_every_roll_in_chronological_order() {
-        let pool = crate::shared::db::test_pool();
-        let conn = pool.get().unwrap();
-        conn.execute(
-            "INSERT INTO stories (id, title, created_at, updated_at, settings_json) VALUES ('s', 'story', 'now', 'now', '{}')",
-            [],
-        )
-        .unwrap();
-        let narration = append_entry(
-            &conn,
-            "s",
-            timeline_kind::NARRATION,
-            "visible",
-            Some("result"),
-            &json!({"input_mode":"generated"}),
-            None,
-        )
-        .unwrap();
-        for content in ["First roll succeeded.", "Second roll failed."] {
-            append_entry(
-                &conn,
-                "s",
-                timeline_kind::DICEROLL,
-                "hidden",
-                Some(content),
-                &json!({}),
-                Some(&narration.id),
-            )
-            .unwrap();
-        }
-        drop(conn);
-
-        let context = roll_context_block(&pool, &narration.id).unwrap();
-        assert!(context.contains("First roll succeeded.\n- Second roll failed."));
-    }
-
-    #[test]
     fn erase_removes_the_action_and_generated_response_for_every_mode() {
         for mode in ["do", "say", "story", "guide", "continue", "see"] {
             let pool = crate::shared::db::test_pool();
@@ -1254,7 +1134,7 @@ mod tests {
             let action = append_entry(
                 &conn,
                 "s",
-                timeline_kind::PLAYER_MESSAGE,
+                ledger_kind::PLAYER_MESSAGE,
                 "visible",
                 Some(if matches!(mode, "continue" | "see") {
                     ""
@@ -1268,7 +1148,7 @@ mod tests {
             let response = append_entry(
                 &conn,
                 "s",
-                timeline_kind::NARRATION,
+                ledger_kind::NARRATION,
                 "visible",
                 Some("response"),
                 &json!({"input_mode":"generated"}),
@@ -1296,7 +1176,7 @@ mod tests {
         let narration = append_entry(
             &conn,
             "s",
-            timeline_kind::NARRATION,
+            ledger_kind::NARRATION,
             "visible",
             Some("A moonlit harbor."),
             &json!({"input_mode":"generated"}),
@@ -1306,7 +1186,7 @@ mod tests {
         let see = append_entry(
             &conn,
             "s",
-            timeline_kind::PLAYER_MESSAGE,
+            ledger_kind::PLAYER_MESSAGE,
             "visible",
             Some(""),
             &json!({"input_mode":"see"}),
@@ -1322,7 +1202,7 @@ mod tests {
         let image_event = append_entry(
             &conn,
             "s",
-            timeline_kind::IMAGE_GENERATED,
+            ledger_kind::IMAGE_GENERATED,
             "hidden",
             Some("image"),
             &json!({"asset_id":"image"}),
@@ -1344,7 +1224,7 @@ mod tests {
         );
         assert_eq!(
             conn.query_row(
-                "SELECT COUNT(*) FROM timeline_entries WHERE id = ?1",
+                "SELECT COUNT(*) FROM ledger_entries WHERE id = ?1",
                 [&image_event.id],
                 |row| row.get::<_, i64>(0)
             )
@@ -1353,7 +1233,7 @@ mod tests {
         );
         assert_eq!(
             conn.query_row(
-                "SELECT COUNT(*) FROM timeline_entries WHERE id = ?1",
+                "SELECT COUNT(*) FROM ledger_entries WHERE id = ?1",
                 [&narration.id],
                 |row| row.get::<_, i64>(0)
             )
@@ -1375,7 +1255,7 @@ mod tests {
         let baseline = append_entry(
             &conn,
             "s",
-            timeline_kind::NARRATION,
+            ledger_kind::NARRATION,
             "visible",
             Some("Earlier scene"),
             &json!({"input_mode":"generated"}),
@@ -1457,7 +1337,7 @@ mod tests {
         let older_summary = append_entry(
             &conn,
             "s",
-            timeline_kind::CONTEXT_SUMMARY,
+            ledger_kind::CONTEXT_SUMMARY,
             "hidden",
             Some("older summary"),
             &json!({"through_entry_id":baseline.id}),
@@ -1468,7 +1348,7 @@ mod tests {
         let player = append_entry(
             &conn,
             "s",
-            timeline_kind::PLAYER_MESSAGE,
+            ledger_kind::PLAYER_MESSAGE,
             "visible",
             Some("act"),
             &json!({"input_mode":"do"}),
@@ -1478,7 +1358,7 @@ mod tests {
         let narration = append_entry(
             &conn,
             "s",
-            timeline_kind::NARRATION,
+            ledger_kind::NARRATION,
             "visible",
             Some("result"),
             &json!({"input_mode":"generated"}),
@@ -1520,7 +1400,7 @@ mod tests {
         let query = append_entry(
             &conn,
             "s",
-            timeline_kind::ENTITY_QUERIED,
+            ledger_kind::ENTITY_QUERIED,
             "hidden",
             Some("Looked up Mira"),
             &json!({"entity_ids":["mira"]}),
@@ -1528,11 +1408,11 @@ mod tests {
         )
         .unwrap();
         for kind in [
-            timeline_kind::DICEROLL,
-            timeline_kind::NARRATION_VARIANT,
-            timeline_kind::NARRATION_SELECTED,
-            timeline_kind::CONTENT_EDITED,
-            timeline_kind::IMAGE_GENERATED,
+            ledger_kind::DICEROLL,
+            ledger_kind::NARRATION_VARIANT,
+            ledger_kind::NARRATION_SELECTED,
+            ledger_kind::CONTENT_EDITED,
+            ledger_kind::IMAGE_GENERATED,
         ] {
             append_entry(
                 &conn,
@@ -1548,7 +1428,7 @@ mod tests {
         let doomed_summary = append_entry(
             &conn,
             "s",
-            timeline_kind::CONTEXT_SUMMARY,
+            ledger_kind::CONTEXT_SUMMARY,
             "hidden",
             Some("summary"),
             &json!({"through_entry_id":query.id}),
@@ -1570,7 +1450,7 @@ mod tests {
         let conn = pool.get().unwrap();
         assert_eq!(
             conn.query_row(
-                "SELECT COUNT(*) FROM timeline_entries WHERE id = ?1",
+                "SELECT COUNT(*) FROM ledger_entries WHERE id = ?1",
                 [&doomed_summary.id],
                 |row| row.get::<_, i64>(0)
             )
@@ -1579,7 +1459,7 @@ mod tests {
         );
         assert_eq!(
             conn.query_row(
-                "SELECT COUNT(*) FROM timeline_entries WHERE id = ?1",
+                "SELECT COUNT(*) FROM ledger_entries WHERE id = ?1",
                 [&older_summary.id],
                 |row| row.get::<_, i64>(0)
             )

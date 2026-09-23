@@ -1,5 +1,5 @@
 import { Sidebar } from "../features/layout/Sidebar";
-import { StoryView } from "../features/timeline/StoryView";
+import { StoryView } from "../features/ledger/StoryView";
 import { useNarrationEvents } from "./useNarrationEvents";
 
 function App() {
