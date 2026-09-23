@@ -68,8 +68,6 @@ pub fn run() {
             features::entities::attributes::list_attribute_registry,
             features::entities::attributes::set_entity_attribute,
             features::entities::attributes::remove_entity_attribute,
-            features::ledger::list_rolls_for_story,
-            features::ledger::list_roll_details_for_entry,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

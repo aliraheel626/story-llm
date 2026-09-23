@@ -6,7 +6,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 const calls = [];
 const stories = new Map();
-const rolls = new Map();
+const hiddenEntries = new Map();
 const images = new Map();
 const entries = new Map();
 let failTools = false;
@@ -16,6 +16,23 @@ let nextRetry;
 let server;
 let store;
 let RollDisclosure;
+let LedgerEntryView;
+let rollFromEntry;
+let groupRollsByEntry;
+
+const rollEvent = (id, target_entry_id, payload) => ({
+  id, story_id: "story", seq: 1, kind: "diceroll", visibility: "hidden",
+  content: null, target_entry_id, created_at: "2026-09-23T12:00:00Z", payload,
+});
+
+const renderedReply = (storyId) => {
+  const bundle = store.getState().bundles[storyId];
+  const entry = bundle.entries.find((item) => item.kind === "narration");
+  return renderToStaticMarkup(createElement(LedgerEntryView, {
+    entry, storyId, isLast: true, retryEntryId: entry.id,
+    rolls: groupRollsByEntry(bundle.hidden)[entry.id],
+  }));
+};
 
 globalThis.__storyTestInvoke = async (command, args = {}) => {
   calls.push({ command, args });
@@ -38,7 +55,7 @@ globalThis.__storyTestInvoke = async (command, args = {}) => {
       return;
     case "get_story_reasoning_effort": return story.reasoning_effort ?? "";
     case "save_story_reasoning_effort": story.reasoning_effort = args.reasoningEffort; return;
-    case "list_ledger_entries": return { visible: entries.get(args.storyId) ?? [], hidden: [] };
+    case "list_ledger_entries": return { visible: entries.get(args.storyId) ?? [], hidden: hiddenEntries.get(args.storyId) ?? [] };
     case "list_images_for_story":
       if (nextImageLoad) {
         const load = nextImageLoad;
@@ -46,7 +63,6 @@ globalThis.__storyTestInvoke = async (command, args = {}) => {
         return load;
       }
       return images.get(args.storyId) ?? [];
-    case "list_rolls_for_story": return rolls.get(args.storyId) ?? [];
     case "list_entities": return [];
     case "retry_narration":
       if (nextRetry) {
@@ -69,6 +85,8 @@ before(async () => {
   server = await createServer({ configFile: false, optimizeDeps: { noDiscovery: true }, server: { middlewareMode: true } });
   ({ useStoryStore: store } = await server.ssrLoadModule("/src/features/story/store.ts"));
   ({ RollDisclosure } = await server.ssrLoadModule("/src/features/ledger/RollDisclosure.tsx"));
+  ({ LedgerEntryView } = await server.ssrLoadModule("/src/features/ledger/LedgerEntryView.tsx"));
+  ({ rollFromEntry, groupRollsByEntry } = await server.ssrLoadModule("/src/shared/types.ts"));
 });
 
 after(async () => { await server?.close(); });
@@ -111,29 +129,35 @@ test("replacement keeps original through streaming and failure, then clears old 
   const original = { id: "original", story_id: storyId, kind: "narration", payload: { input_mode: "generated" }, content: "Original" };
   const replacement = { ...original, id: "replacement", content: "Replacement" };
   entries.set(storyId, [original]);
-  rolls.set(storyId, [{ id: "old-roll", entry_id: original.id, chance_percent: 50, roll: 90, outcome: "success", seed: 1 }]);
+  hiddenEntries.set(storyId, [rollEvent("old-roll", original.id, { chance_percent: 50, roll: 90, outcome: "success", seed: 1, reason: "Old roll" })]);
   images.set(storyId, [{ id: "old-image", entry_id: original.id, path: "old.png" }]);
-  await Promise.all([store.getState().loadLedger(storyId), store.getState().loadRollsForStory(storyId), store.getState().loadImagesForStory(storyId)]);
+  await Promise.all([store.getState().loadLedger(storyId), store.getState().loadImagesForStory(storyId)]);
   await store.getState().retryNarration(storyId, original.id);
   let stream = store.getState().bundles[storyId].streaming.streamId;
   store.getState()._appendDelta(stream, "Partial replacement");
   assert.equal(store.getState().bundles[storyId].entries[0].content, "Original");
   store.getState()._fail(stream, "provider failed");
   assert.equal(store.getState().bundles[storyId].entries[0].id, original.id);
-  assert.equal(store.getState().bundles[storyId].rollsByEntry[original.id][0].id, "old-roll");
+  assert.equal(groupRollsByEntry(store.getState().bundles[storyId].hidden)[original.id][0].id, "old-roll");
+  assert.match(renderedReply(storyId), /Old roll/);
   assert.equal(store.getState().bundles[storyId].imagesByEntry[original.id][0].id, "old-image");
 
   await store.getState().retryNarration(storyId, original.id);
   stream = store.getState().bundles[storyId].streaming.streamId;
   entries.set(storyId, [replacement]);
-  rolls.set(storyId, [{ id: "new-roll", entry_id: replacement.id, chance_percent: 40, roll: 72, outcome: "success", seed: 2 }]);
+  hiddenEntries.set(storyId, [rollEvent("new-roll", replacement.id, { chance_percent: 40, roll: 72, outcome: "success", seed: 2, reason: "New roll" })]);
   images.set(storyId, []);
   store.getState()._finalize({ stream_id: stream, entry: replacement });
   assert.equal(store.getState().bundles[storyId].entries[0].id, replacement.id);
   assert.equal(store.getState().bundles[storyId].imagesByEntry[original.id], undefined);
-  assert.equal(store.getState().bundles[storyId].rollsByEntry[original.id], undefined);
-  await Promise.all([store.getState().loadLedger(storyId), store.getState().loadRollsForStory(storyId)]);
-  assert.equal(store.getState().bundles[storyId].rollsByEntry[replacement.id][0].id, "new-roll");
+  assert.equal(groupRollsByEntry(store.getState().bundles[storyId].hidden)[original.id], undefined);
+  assert.doesNotMatch(renderedReply(storyId), /Old roll/);
+  await store.getState().loadLedger(storyId);
+  assert.equal(groupRollsByEntry(store.getState().bundles[storyId].hidden)[replacement.id][0].id, "new-roll");
+  const html = renderedReply(storyId);
+  assert.match(html, /New roll/);
+  assert.doesNotMatch(html, /Old roll/);
+  assert.equal(calls.some(({ command }) => command.startsWith("list_") && command.includes("roll")), false);
   assert.ok(calls.some(({ command }) => command === "list_entities"));
 });
 
@@ -182,6 +206,47 @@ test("erasing a trailing See refreshes images attached to prior narration", asyn
   assert.equal(store.getState().bundles[storyId].imagesByEntry.replacement[0].id, "fresh-image");
   await store.getState().eraseLastExchange(storyId);
   assert.equal(store.getState().bundles[storyId].imagesByEntry.replacement, undefined);
+});
+
+test("snapshot roll selector preserves both factor snapshots and optional fields", () => {
+  const factors = [
+    { entity_id: "player", entity_name: "You", attribute_id: "stealth", attribute_name: "Stealth", value: 8, min: 0, max: 10 },
+    { entity_id: "guard", entity_name: "Guard", attribute_id: "perception", attribute_name: "Perception", value: 6, min: 0, max: 10 },
+  ];
+  const payload = { chance_percent: 60, roll: 70, outcome: "success", reason: "Sneak", chance_source: "attributes", factors, seed: 42 };
+  const event = rollEvent("factored", "narration", payload);
+  const grouped = groupRollsByEntry([rollEvent("earlier", "other", { chance_percent: 50, roll: 50, outcome: "success", seed: 1 }), event]);
+  assert.deepEqual(grouped.narration, [{
+    id: "factored", entry_id: "narration", created_at: event.created_at,
+    reason: "Sneak", chance_percent: 60, roll: 70, outcome: "success", seed: 42,
+    chance_source: "attributes", factors,
+  }]);
+  assert.equal(grouped.other[0].chance_source, undefined);
+  assert.equal(grouped.other[0].reason, null);
+  assert.deepEqual(grouped.other[0].factors, []);
+  assert.equal(rollFromEntry(rollEvent("legacy", "narration", { ...payload, chance_source: 7, reason: false, factors: undefined })).chance_source, undefined);
+});
+
+test("snapshot selector drops malformed chance, factor, source, and target rows", () => {
+  const base = { chance_percent: 50, roll: 50, outcome: "success", seed: 42 };
+  const factor = { entity_id: "p", entity_name: "You", attribute_id: "a", attribute_name: "Agility", value: 5, min: 0, max: 10 };
+  const invalid = [
+    { chance_percent: 50.5 }, { chance_percent: -1 }, { chance_percent: 101 }, { roll: 100 },
+    { roll: 1.5 }, { outcome: "failure" }, { seed: "42" }, { seed: 1.5 },
+    { factors: null }, { factors: {} }, { factors: [factor, factor, factor] },
+    { factors: [{ ...factor, entity_name: null }] }, { factors: [{ ...factor, min: 10 }] },
+    { factors: [{ ...factor, value: 11 }] }, { factors: [{ ...factor, value: Infinity }] },
+    { chance_source: "unknown" }, { chance_source: "default", chance_percent: 40 },
+    { chance_source: "narrator", factors: [factor] }, { chance_source: "attributes" },
+  ];
+  const events = invalid.map((patch, index) => rollEvent(`invalid-${index}`, "narration", { ...base, ...patch }));
+  events.push(rollEvent("untargeted", null, base));
+  events.push({ ...rollEvent("not-a-roll", "narration", base), kind: "entity_queried" });
+  events.push(rollEvent("null-payload", "narration", null));
+  events.push(rollEvent("array-payload", "narration", []));
+  assert.deepEqual(groupRollsByEntry(events), {});
+  assert.equal(rollFromEntry(rollEvent("good", "narration", { ...base, chance_source: "default" })).chance_source, "default");
+  assert.equal(rollFromEntry(rollEvent("good", "narration", { ...base, chance_source: "narrator" })).chance_source, "narrator");
 });
 
 test("default chance rolls show their source and no factors alongside threshold, draw, and seed", () => {

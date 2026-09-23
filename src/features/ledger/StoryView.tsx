@@ -1,5 +1,5 @@
-import { useEffect, useRef } from "react";
-import { DEFAULT_STORY_TITLE, ledgerInputMode, type ActionMode } from "../../shared/types";
+import { useEffect, useMemo, useRef } from "react";
+import { DEFAULT_STORY_TITLE, groupRollsByEntry, ledgerInputMode, type ActionMode } from "../../shared/types";
 import type { LedgerEntry, NarrativePayload } from "../../shared/types";
 import { useStoryStore } from "../story/store";
 import { EditableStoryTitle } from "../stories/EditableStoryTitle";
@@ -22,11 +22,10 @@ export function StoryView() {
   const entries = useStoryStore((s) => activeStoryId ? (s.bundles[activeStoryId]?.entries ?? EMPTY_ENTRIES) : EMPTY_ENTRIES);
   const loadLedger = useStoryStore((s) => s.loadLedger);
   const loadImagesForStory = useStoryStore((s) => s.loadImagesForStory);
-  const loadRollsForStory = useStoryStore((s) => s.loadRollsForStory);
   const imagesByEntry = useStoryStore((s) => activeStoryId ? s.bundles[activeStoryId]?.imagesByEntry : undefined);
-  const rollsByEntry = useStoryStore((s) => activeStoryId ? s.bundles[activeStoryId]?.rollsByEntry : undefined);
   const streaming = useStoryStore((s) => activeStoryId ? s.bundles[activeStoryId]?.streaming : undefined);
   const hidden = useStoryStore((s) => activeStoryId ? s.bundles[activeStoryId]?.hidden : undefined);
+  const rollsByEntry = useMemo(() => groupRollsByEntry(hidden ?? EMPTY_ENTRIES), [hidden]);
   const lastTurnActivity = useStoryStore((s) => activeStoryId ? s.bundles[activeStoryId]?.turnActivity : undefined);
   const scrollRef = useRef<HTMLDivElement>(null);
   const pinRef = useRef<HTMLDivElement>(null);
@@ -58,9 +57,8 @@ export function StoryView() {
     if (activeStoryId) {
       loadLedger(activeStoryId);
       loadImagesForStory(activeStoryId);
-      loadRollsForStory(activeStoryId);
     }
-  }, [activeStoryId, loadLedger, loadImagesForStory, loadRollsForStory]);
+  }, [activeStoryId, loadLedger, loadImagesForStory]);
 
   const isStreamingAppend = streaming?.mode === "append";
   const isStreamingReplace = streaming?.mode === "replace";

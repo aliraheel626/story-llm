@@ -119,4 +119,52 @@ export interface Roll {
 export function ledgerInputMode(entry: LedgerEntry): InputMode {
   return (entry.payload.input_mode as InputMode | undefined) ?? "generated";
 }
+export function rollFromEntry(entry: LedgerEntry): Roll | null {
+  if (entry.payload === null || typeof entry.payload !== "object" || Array.isArray(entry.payload)) return null;
+  const p: Record<string, unknown> = entry.payload;
+  const { chance_percent: chance, roll, outcome, seed } = p;
+  if (
+    !Number.isInteger(chance) || typeof chance !== "number" || chance < 0 || chance > 100 ||
+    !Number.isInteger(roll) || typeof roll !== "number" || roll < 0 || roll >= 100 ||
+    !Number.isInteger(seed) || typeof seed !== "number" || seed < -(2 ** 63) || seed >= 2 ** 63 ||
+    (outcome !== "success" && outcome !== "failure") ||
+    (outcome === "success") !== (roll >= 100 - chance) ||
+    typeof entry.target_entry_id !== "string"
+  ) return null;
+
+  const factors: unknown = p.factors === undefined ? [] : p.factors;
+  if (!Array.isArray(factors) || factors.length > 2 || !factors.every((factor: unknown): factor is RollFactor => {
+    if (factor === null || typeof factor !== "object") return false;
+    const value = factor as Partial<RollFactor>;
+    return typeof value.entity_id === "string" && typeof value.entity_name === "string" &&
+      typeof value.attribute_id === "string" && typeof value.attribute_name === "string" &&
+      Number.isFinite(value.value) && Number.isFinite(value.min) && Number.isFinite(value.max) &&
+      value.min! < value.max! && value.value! >= value.min! && value.value! <= value.max!;
+  })) return null;
+
+  let chanceSource: Roll["chance_source"];
+  if (typeof p.chance_source === "string") {
+    if (p.chance_source === "default" && factors.length === 0 && chance === 50) chanceSource = "default";
+    else if (p.chance_source === "narrator" && factors.length === 0) chanceSource = "narrator";
+    else if (p.chance_source === "attributes" && factors.length > 0) chanceSource = "attributes";
+    else return null;
+  }
+
+  return {
+    id: entry.id, entry_id: entry.target_entry_id, created_at: entry.created_at,
+    chance_percent: chance, roll, outcome, seed,
+    reason: typeof p.reason === "string" ? p.reason : null,
+    chance_source: chanceSource, factors,
+  };
+}
+
+export function groupRollsByEntry(hidden: readonly LedgerEntry[]): Record<string, Roll[]> {
+  const grouped: Record<string, Roll[]> = {};
+  for (const entry of hidden) {
+    if (entry.kind !== "diceroll") continue;
+    const roll = rollFromEntry(entry);
+    if (roll) (grouped[roll.entry_id] ??= []).push(roll);
+  }
+  return grouped;
+}
 export function isPlayerEntry(entry: LedgerEntry): boolean { return entry.kind === "player_message" }

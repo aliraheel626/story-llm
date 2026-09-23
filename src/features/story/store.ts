@@ -7,7 +7,6 @@ import type {
   NarrationDonePayload,
   NarrationToolActivityPayload,
   ReasoningEffort,
-  Roll,
   Story,
   StoryImage,
   LedgerEntry,
@@ -54,7 +53,6 @@ export interface StoryBundle {
   imagesByEntry: Record<string, StoryImage[]>;
   imagePendingFor: string[];
   imageError: string | null;
-  rollsByEntry: Record<string, Roll[]>;
   characters: Entity[];
   charactersLoading: boolean;
   narratorTools: NarratorToolSettings | null;
@@ -92,7 +90,6 @@ interface StoryStoreState {
   eraseLastExchange: (storyId: string) => Promise<void>;
   editEntry: (storyId: string, entryId: string, content: string) => Promise<void>;
   loadImagesForStory: (storyId: string) => Promise<void>;
-  loadRollsForStory: (storyId: string) => Promise<void>;
   _appendDelta: (streamId: string, text: string) => void;
   _appendThoughts: (streamId: string, text: string) => void;
   _toolActivity: (payload: NarrationToolActivityPayload) => void;
@@ -128,7 +125,6 @@ const newBundle = (id: string): StoryBundle => ({
   imagesByEntry: {},
   imagePendingFor: [],
   imageError: null,
-  rollsByEntry: {},
   characters: [],
   charactersLoading: false,
   narratorTools: null,
@@ -197,7 +193,6 @@ const closeTool = (log: ToolActivity[], callId: string, ok: boolean | null): Too
 const ledgerGenerations = new Map<string, number>();
 const imageGenerations = new Map<string, number>();
 const imageEventGenerations = new Map<string, number>();
-const rollGenerations = new Map<string, number>();
 const advanceGeneration = (generations: Map<string, number>, key: string) => {
   const generation = (generations.get(key) ?? 0) + 1;
   generations.set(key, generation);
@@ -350,19 +345,16 @@ export const useStoryStore = create<StoryStoreState>((set, get) => ({
     if (!ids.length) return;
     advanceGeneration(ledgerGenerations, storyId);
     advanceGeneration(imageGenerations, storyId);
-    advanceGeneration(rollGenerations, storyId);
     set((state) => ({
       bundles: patchBundle(state.bundles, storyId, (bundle) => {
         const imagesByEntry = { ...bundle.imagesByEntry };
-        const rollsByEntry = { ...bundle.rollsByEntry };
         ids.forEach((entryId) => {
           delete imagesByEntry[entryId];
-          delete rollsByEntry[entryId];
         });
         return {
           entries: bundle.entries.filter((entry) => !ids.includes(entry.id)),
+          hidden: bundle.hidden.filter((entry) => !ids.includes(entry.id) && !ids.includes(entry.target_entry_id ?? "")),
           imagesByEntry,
-          rollsByEntry,
           imagePendingFor: bundle.imagePendingFor.filter((entryId) => !ids.includes(entryId)),
           ledgerLoading: false,
         };
@@ -402,20 +394,6 @@ export const useStoryStore = create<StoryStoreState>((set, get) => ({
       }) }));
     } catch (error) {
       console.error("failed to load images", error);
-    }
-  },
-  loadRollsForStory: async (storyId) => {
-    const generation = advanceGeneration(rollGenerations, storyId);
-    try {
-      const rolls = await ledgerApi.listRolls(storyId);
-      if (!isCurrentGeneration(rollGenerations, storyId, generation)) return;
-      const grouped: Record<string, Roll[]> = {};
-      rolls.forEach((roll) => (grouped[roll.entry_id] ??= []).push(roll));
-      set((state) => ({
-        bundles: patchBundle(state.bundles, storyId, { rollsByEntry: grouped }),
-      }));
-    } catch (error) {
-      console.error("failed to load rolls", error);
     }
   },
   _appendDelta: (streamId, text) => {
@@ -475,15 +453,12 @@ export const useStoryStore = create<StoryStoreState>((set, get) => ({
     const [storyId, current] = found;
     advanceGeneration(ledgerGenerations, storyId);
     advanceGeneration(imageGenerations, storyId);
-    advanceGeneration(rollGenerations, storyId);
     set((state) => ({
       bundles: patchBundle(state.bundles, storyId, (bundle) => {
         const oldId = current.mode === "replace" ? current.targetEntryId : undefined;
         const imagesByEntry = { ...bundle.imagesByEntry };
-        const rollsByEntry = { ...bundle.rollsByEntry };
         if (oldId) {
           delete imagesByEntry[oldId];
-          delete rollsByEntry[oldId];
         }
         return {
           entries: oldId
@@ -491,9 +466,8 @@ export const useStoryStore = create<StoryStoreState>((set, get) => ({
             : bundle.entries.some((entry) => entry.id === payload.entry.id)
               ? replaceEntry(bundle.entries, payload.entry.id, payload.entry)
               : [...bundle.entries, payload.entry],
-          hidden: oldId ? [] : bundle.hidden,
+          hidden: oldId ? bundle.hidden.filter((entry) => entry.id !== oldId && entry.target_entry_id !== oldId) : bundle.hidden,
           imagesByEntry,
-          rollsByEntry,
           imagePendingFor: oldId ? removeOne(bundle.imagePendingFor, oldId) : bundle.imagePendingFor,
           streaming: null,
           turnActivity: payload.entry.kind === "narration"
@@ -505,7 +479,6 @@ export const useStoryStore = create<StoryStoreState>((set, get) => ({
     }));
     get().loadLedger(storyId);
     get().loadImagesForStory(storyId);
-    get().loadRollsForStory(storyId);
     get().loadCharacters(storyId);
   },
   _fail: (streamId, message) => {

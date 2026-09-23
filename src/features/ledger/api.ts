@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { ActionMode, LedgerEntry, LedgerSnapshot, RetryResult, Roll, StoryImage, SubmitTurnResult } from "../../shared/types";
+import type { ActionMode, LedgerEntry, LedgerSnapshot, RetryResult, StoryImage, SubmitTurnResult } from "../../shared/types";
 
 export const ledgerApi = {
   list: (storyId: string) => invoke<LedgerSnapshot>("list_ledger_entries", { storyId }),
@@ -8,5 +8,4 @@ export const ledgerApi = {
   edit: (entryId: string, content: string) => invoke<LedgerEntry>("edit_ledger_entry", { entryId, content }),
   eraseLastExchange: (storyId: string) => invoke<string[]>("erase_last_exchange", { storyId }),
   listImages: (storyId: string) => invoke<StoryImage[]>("list_images_for_story", { storyId }),
-  listRolls: (storyId: string) => invoke<Roll[]>("list_rolls_for_story", { storyId }),
 };
