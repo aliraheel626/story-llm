@@ -1,5 +1,9 @@
+pub mod author_note;
+mod commands;
 pub mod model;
 pub mod settings;
+
+pub use commands::*;
 
 use chrono::Utc;
 use schemars::JsonSchema;

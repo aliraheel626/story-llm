@@ -1,4 +1,3 @@
-pub mod author_note;
 mod commands;
 mod context;
 pub(crate) mod history;

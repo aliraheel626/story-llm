@@ -4,14 +4,14 @@ use std::collections::{HashMap, HashSet};
 
 use crate::ai::{HistoryTurn, TextModelConfig};
 use crate::features::{
-    compaction, entities, ledger::model::kind as ledger_kind, settings,
-    stories::settings::NarratorToolSettings,
+    compaction, entities,
+    ledger::model::kind as ledger_kind,
+    settings,
+    stories::{author_note, settings::NarratorToolSettings},
 };
 use crate::prompts;
 use crate::shared::db::Pool;
 use crate::shared::error::{AppError, AppResult};
-
-use super::author_note;
 
 struct EntityContextData {
     entities: Vec<entities::model::Entity>,

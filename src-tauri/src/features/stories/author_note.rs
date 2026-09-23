@@ -2,7 +2,6 @@
 
 use chrono::Utc;
 use serde_json::{json, Value};
-use tauri::State;
 
 use crate::features::ledger::repository;
 use crate::shared::db::{with_transaction, Pool};
@@ -19,7 +18,7 @@ fn story_settings(conn: &rusqlite::Connection, story_id: &str) -> AppResult<Valu
     Ok(serde_json::from_str(&raw).unwrap_or_else(|_| json!({})))
 }
 
-fn read_author_note(pool: &Pool, story_id: &str) -> AppResult<String> {
+pub(super) fn read_author_note(pool: &Pool, story_id: &str) -> AppResult<String> {
     let conn = pool.get()?;
     let settings = story_settings(&conn, story_id)?;
     Ok(settings
@@ -30,7 +29,7 @@ fn read_author_note(pool: &Pool, story_id: &str) -> AppResult<String> {
         .to_string())
 }
 
-fn write_author_note(pool: &Pool, story_id: &str, note: &str) -> AppResult<()> {
+pub(super) fn write_author_note(pool: &Pool, story_id: &str, note: &str) -> AppResult<()> {
     let note = note.trim();
     with_transaction(pool, |tx| {
         let mut settings = story_settings(tx, story_id)?;
@@ -59,7 +58,7 @@ fn write_author_note(pool: &Pool, story_id: &str, note: &str) -> AppResult<()> {
     })
 }
 
-fn read_author_note_enabled(pool: &Pool, story_id: &str) -> AppResult<bool> {
+pub(super) fn read_author_note_enabled(pool: &Pool, story_id: &str) -> AppResult<bool> {
     let conn = pool.get()?;
     let settings = story_settings(&conn, story_id)?;
     Ok(settings
@@ -68,7 +67,11 @@ fn read_author_note_enabled(pool: &Pool, story_id: &str) -> AppResult<bool> {
         .unwrap_or(true))
 }
 
-fn write_author_note_enabled(pool: &Pool, story_id: &str, enabled: bool) -> AppResult<()> {
+pub(super) fn write_author_note_enabled(
+    pool: &Pool,
+    story_id: &str,
+    enabled: bool,
+) -> AppResult<()> {
     with_transaction(pool, |tx| {
         let mut settings = story_settings(tx, story_id)?;
         settings["author_note_enabled"] = json!(enabled);
@@ -80,32 +83,8 @@ fn write_author_note_enabled(pool: &Pool, story_id: &str, enabled: bool) -> AppR
     })
 }
 
-#[tauri::command]
-pub fn get_author_note(pool: State<Pool>, story_id: String) -> AppResult<String> {
-    read_author_note(pool.inner(), &story_id)
-}
-
-#[tauri::command]
-pub fn save_author_note(pool: State<Pool>, story_id: String, note: String) -> AppResult<()> {
-    write_author_note(pool.inner(), &story_id, &note)
-}
-
-#[tauri::command]
-pub fn get_author_note_enabled(pool: State<Pool>, story_id: String) -> AppResult<bool> {
-    read_author_note_enabled(pool.inner(), &story_id)
-}
-
-#[tauri::command]
-pub fn set_author_note_enabled(
-    pool: State<Pool>,
-    story_id: String,
-    enabled: bool,
-) -> AppResult<()> {
-    write_author_note_enabled(pool.inner(), &story_id, enabled)
-}
-
 /// Tagged per-message note, or an empty block when muted or blank.
-pub(super) fn context_block(pool: &Pool, story_id: &str) -> AppResult<String> {
+pub(crate) fn context_block(pool: &Pool, story_id: &str) -> AppResult<String> {
     let conn = pool.get()?;
     let settings = story_settings(&conn, story_id)?;
     let enabled = settings
