@@ -1,626 +1,20 @@
-//! Tools the narrator calls mid-generation: rolling dice, illustrating scenes,
-//! and reading, creating, and updating entities and their attributes. The narrator
-//! now discovers and records world state itself instead of being handed
-//! pre-computed context.
-//!
-//! Story-state writes are staged in `TurnStaging` during generation and only
-//! committed atomically alongside the narration. Attribute registry entries
-//! and aliases are staged as well, so failed generations cannot change the registry.
+//! Narrator tool adapters, schemas, activity labels, and image requests.
 
-use std::{
-    collections::{HashMap, HashSet},
-    sync::Arc,
-};
+use std::sync::Arc;
 
-use rand::rngs::StdRng;
-use rand::{Rng, SeedableRng};
 use rig_agent::tool::{DynamicTool, PortableDynamicTool, ToolExecutionError, ToolOutput};
 use serde_json::json;
 use tokio::sync::Mutex;
-use uuid::Uuid;
 
-use crate::features::entities::{
-    self,
-    attributes::{self, clamp_delta},
-    model::{AttributeRegistryEntry, Entity},
-};
 use crate::features::images::model::ImageRequest;
-use crate::features::{
-    ledger::{self, RollFactor},
-    settings,
-    stories::settings::NarratorToolSettings,
-};
+use crate::features::{settings, stories::settings::NarratorToolSettings};
 use crate::prompts;
-use crate::shared::db::Pool;
-use crate::shared::error::{AppError, AppResult};
+use crate::shared::error::AppError;
 
-#[derive(Debug, Clone, Copy)]
-struct RollOutcome {
-    chance_percent: u8,
-    seed: i64,
-    roll: i64,
-    needed: i64,
-    outcome: &'static str,
-}
-
-#[derive(Debug, Clone)]
-struct PendingRoll {
-    output: RollOutcome,
-    reason: Option<String>,
-    chance_source: &'static str,
-    factors: Vec<RollFactor>,
-}
-
-fn chance_from_factors(factors: &[RollFactor]) -> u8 {
-    let normalized = |factor: &RollFactor| (factor.value - factor.min) / (factor.max - factor.min);
-    let actor = normalized(&factors[0]);
-    let opponent = factors.get(1).map(normalized).unwrap_or(0.5);
-    (50.0 + 50.0 * (actor - opponent)).round().clamp(0.0, 100.0) as u8
-}
-
-fn resolve_roll(chance_percent: u8) -> RollOutcome {
-    assert!(chance_percent <= 100, "chance must be between 0 and 100");
-    let seed = rand::random::<u32>() as i64;
-    let mut rng = StdRng::seed_from_u64(seed as u64);
-    let roll = rng.gen_range(0..100);
-    let needed = 100 - i64::from(chance_percent);
-    RollOutcome {
-        chance_percent,
-        seed,
-        roll,
-        needed,
-        outcome: if roll >= needed { "success" } else { "failure" },
-    }
-}
-
-fn persist_roll(
-    conn: &rusqlite::Connection,
-    entry_id: &str,
-    pending: &PendingRoll,
-) -> AppResult<()> {
-    let base = ledger::repository::get_entry(conn, entry_id)?;
-    ledger::repository::append_entry(
-        conn,
-        &base.story_id,
-        ledger::model::kind::DICEROLL,
-        "hidden",
-        Some(&format!(
-            "Dice-roll outcome: rolled {} with {}% chance and got {}.",
-            pending.output.roll, pending.output.chance_percent, pending.output.outcome
-        )),
-        &json!({
-            "chance_percent": pending.output.chance_percent,
-            "roll": pending.output.roll,
-            "outcome": pending.output.outcome,
-            "reason": pending.reason,
-            "chance_source": pending.chance_source,
-            "factors": pending.factors,
-            "seed": pending.output.seed,
-        }),
-        Some(entry_id),
-    )?;
-    Ok(())
-}
-
-/// One staged write, replayed in call order at commit.
-#[derive(Debug, Clone)]
-enum PendingOp {
-    MintAttribute(AttributeRegistryEntry),
-    AddAlias {
-        attribute: AttributeRegistryEntry,
-        alias: String,
-    },
-    /// `id` is generated at staging time (not commit time) so a later tool
-    /// call in the same turn can reference an entity that only exists as a
-    /// pending op so far.
-    CreateEntity {
-        id: String,
-        kind: String,
-        name: String,
-        appearance_anchor: Option<String>,
-    },
-    UpdateEntity {
-        id: String,
-        name: String,
-        appearance_anchor: Option<String>,
-    },
-    AdjustAttribute {
-        entity_id: String,
-        attribute: AttributeRegistryEntry,
-        delta: f64,
-        cause: String,
-        dramatic: bool,
-    },
-    Roll(PendingRoll),
-    QueryEntities {
-        entity_ids: Vec<String>,
-        kind_filter: Option<String>,
-        name_filter: Option<String>,
-    },
-}
-
-fn fold_pending_delta(
-    base: f64,
-    entity_id: &str,
-    attribute_id: &str,
-    pending: &[PendingOp],
-    locked: bool,
-) -> f64 {
-    if locked {
-        return base;
-    }
-    pending.iter().fold(base, |value, op| match op {
-        PendingOp::AdjustAttribute {
-            entity_id: op_entity,
-            attribute: op_attribute,
-            delta,
-            dramatic,
-            ..
-        } if op_entity == entity_id && op_attribute.id == attribute_id => {
-            clamp_delta(value, *delta, *dramatic, op_attribute)
-        }
-        _ => value,
-    })
-}
-
-/// Everything a narrator turn's tool calls read and write, before any of it
-/// is durable. Built fresh per `submit_turn` call.
-pub struct TurnStaging {
-    pool: Pool,
-    story_id: String,
-    pending: Vec<PendingOp>,
-}
-
-impl TurnStaging {
-    pub fn new(pool: Pool, story_id: String) -> Self {
-        Self {
-            pool,
-            story_id,
-            pending: Vec::new(),
-        }
-    }
-
-    /// Committed entities plus any staged create/update replayed on top, so
-    /// mid-turn tool calls see each other's not-yet-committed effects.
-    fn effective_entities(&self, kind: Option<&str>, name: Option<&str>) -> AppResult<Vec<Entity>> {
-        let conn = self.pool.get()?;
-        let mut list = entities::list_entities_sync(&conn, &self.story_id, kind)?;
-        for op in &self.pending {
-            match op {
-                PendingOp::CreateEntity {
-                    id,
-                    kind: op_kind,
-                    name: op_name,
-                    appearance_anchor,
-                } => {
-                    if kind.is_some_and(|k| k != op_kind) {
-                        continue;
-                    }
-                    list.push(Entity {
-                        id: id.clone(),
-                        story_id: self.story_id.clone(),
-                        kind: op_kind.clone(),
-                        name: op_name.clone(),
-                        appearance_anchor: appearance_anchor.clone(),
-                        created_at: chrono::Utc::now().to_rfc3339(),
-                    });
-                }
-                PendingOp::UpdateEntity {
-                    id,
-                    name: new_name,
-                    appearance_anchor,
-                } => {
-                    if let Some(e) = list.iter_mut().find(|e| &e.id == id) {
-                        e.name = new_name.clone();
-                        e.appearance_anchor = appearance_anchor.clone();
-                    }
-                }
-                _ => {}
-            }
-        }
-        if let Some(name) = name {
-            list.retain(|e| e.name.eq_ignore_ascii_case(name));
-        }
-        Ok(list)
-    }
-
-    fn find_effective_entity(&self, entity_id: &str) -> AppResult<Option<Entity>> {
-        Ok(self
-            .effective_entities(None, None)?
-            .into_iter()
-            .find(|e| e.id == entity_id))
-    }
-
-    /// Case-insensitive lookup against the effective view; stages a create if
-    /// absent. Returns the entity and whether it was just staged.
-    fn resolve_or_stage_entity(
-        &mut self,
-        kind: &str,
-        name: &str,
-        appearance_anchor: Option<&str>,
-    ) -> AppResult<(Entity, bool)> {
-        if let Some(existing) = self
-            .effective_entities(Some(kind), Some(name))?
-            .into_iter()
-            .next()
-        {
-            return Ok((existing, false));
-        }
-        let id = Uuid::new_v4().to_string();
-        let entity = Entity {
-            id: id.clone(),
-            story_id: self.story_id.clone(),
-            kind: kind.to_string(),
-            name: name.to_string(),
-            appearance_anchor: appearance_anchor.map(str::to_string),
-            created_at: chrono::Utc::now().to_rfc3339(),
-        };
-        self.pending.push(PendingOp::CreateEntity {
-            id,
-            kind: kind.to_string(),
-            name: name.to_string(),
-            appearance_anchor: appearance_anchor.map(str::to_string),
-        });
-        Ok((entity, true))
-    }
-
-    /// Committed value plus staged deltas, without initializing a new row.
-    fn effective_attribute_state(
-        &self,
-        entity_id: &str,
-        attribute: &AttributeRegistryEntry,
-    ) -> AppResult<(f64, bool)> {
-        let conn = self.pool.get()?;
-        let (value, source) =
-            attributes::peek_entity_attribute(&conn, &self.story_id, entity_id, attribute)?;
-        let locked = source.as_deref() == Some("user");
-        Ok((
-            fold_pending_delta(value, entity_id, &attribute.id, &self.pending, locked),
-            locked,
-        ))
-    }
-
-    fn roll_factor(&self, entity_id: &str, attribute_name: &str) -> AppResult<RollFactor> {
-        let entity = self.find_effective_entity(entity_id)?.ok_or_else(|| {
-            AppError::NotFound(format!("entity {entity_id} not found in this story"))
-        })?;
-        let (committed, registry_match) = {
-            let conn = self.pool.get()?;
-            let committed = attributes::list_entity_attributes_for_entities_sync(
-                &conn,
-                &self.story_id,
-                &[entity_id],
-            )?;
-            (
-                committed,
-                attributes::find_exact_match(&conn, attribute_name)?,
-            )
-        };
-        let staged_match = self.pending.iter().rev().find_map(|op| match op {
-            PendingOp::MintAttribute(attribute) | PendingOp::AdjustAttribute { attribute, .. }
-                if attribute
-                    .canonical_name
-                    .eq_ignore_ascii_case(attribute_name) =>
-            {
-                Some(&attribute.id)
-            }
-            PendingOp::AddAlias { attribute, alias }
-                if alias.eq_ignore_ascii_case(attribute_name) =>
-            {
-                Some(&attribute.id)
-            }
-            _ => None,
-        });
-        let resolved_id = registry_match
-            .as_ref()
-            .map(|entry| &entry.id)
-            .or(staged_match);
-        let committed_value = committed.get(entity_id).and_then(|values| {
-            values.iter().find(|value| {
-                resolved_id.is_some_and(|id| id == &value.attribute_id)
-                    || (resolved_id.is_none()
-                        && value.canonical_name.eq_ignore_ascii_case(attribute_name))
-            })
-        });
-        let (attribute_id, canonical_name, value, min, max) =
-            if let Some(attribute) = committed_value {
-                (
-                    attribute.attribute_id.clone(),
-                    attribute.canonical_name.clone(),
-                    fold_pending_delta(
-                        attribute.value,
-                        entity_id,
-                        &attribute.attribute_id,
-                        &self.pending,
-                        attribute.source == "user",
-                    ),
-                    attribute.min,
-                    attribute.max,
-                )
-            } else if let Some(attribute) = self.pending.iter().rev().find_map(|op| match op {
-                PendingOp::AdjustAttribute {
-                    entity_id: id,
-                    attribute,
-                    ..
-                } if id == entity_id
-                    && resolved_id.is_some_and(|resolved| resolved == &attribute.id) =>
-                {
-                    Some(attribute)
-                }
-                _ => None,
-            }) {
-                let (value, _) = self.effective_attribute_state(entity_id, attribute)?;
-                (
-                    attribute.id.clone(),
-                    attribute.canonical_name.clone(),
-                    value,
-                    attribute.min,
-                    attribute.max,
-                )
-            } else {
-                return Err(AppError::NotFound(format!(
-                    "attribute {attribute_name} is not set on {}",
-                    entity.name
-                )));
-            };
-        if !value.is_finite()
-            || !min.is_finite()
-            || !max.is_finite()
-            || min >= max
-            || value < min
-            || value > max
-        {
-            return Err(AppError::Invalid(format!(
-                "invalid value or range for {}'s {canonical_name}",
-                entity.name
-            )));
-        }
-        Ok(RollFactor {
-            entity_id: entity.id,
-            entity_name: entity.name,
-            attribute_id,
-            attribute_name: canonical_name,
-            value,
-            min,
-            max,
-        })
-    }
-
-    fn attribute_snapshot_for_entities(
-        &self,
-        entity_ids: &[&str],
-    ) -> AppResult<HashMap<String, Vec<serde_json::Value>>> {
-        let mut out: HashMap<String, Vec<serde_json::Value>> = entity_ids
-            .iter()
-            .map(|entity_id| ((*entity_id).to_string(), Vec::new()))
-            .collect();
-        if entity_ids.is_empty() {
-            return Ok(out);
-        }
-
-        let conn = self.pool.get()?;
-        let committed = attributes::list_entity_attributes_for_entities_sync(
-            &conn,
-            &self.story_id,
-            entity_ids,
-        )?;
-        for (entity_id, entity_attributes) in committed {
-            let snapshot = out.entry(entity_id.clone()).or_default();
-            for attribute in entity_attributes {
-                let value = fold_pending_delta(
-                    attribute.value,
-                    &entity_id,
-                    &attribute.attribute_id,
-                    &self.pending,
-                    attribute.source == "user",
-                );
-                snapshot.push(json!({
-                "name": attribute.canonical_name,
-                "value": value,
-                "min": attribute.min,
-                "max": attribute.max,
-                }));
-            }
-        }
-        Ok(out)
-    }
-
-    /// Replays every staged op against the real transaction, using the same
-    /// helpers a live write would use today. Applying each op before the
-    /// next is read means chained ops (e.g. two deltas on the same
-    /// attribute) compose correctly with no special-casing.
-    pub fn commit(&self, tx: &rusqlite::Transaction, passage_id: &str) -> AppResult<()> {
-        // Concurrent turns can independently mint the same name. The registry
-        // insert returns the existing canonical ID; remap dependent deltas.
-        let mut canonical_ids = HashMap::new();
-        for op in &self.pending {
-            match op {
-                PendingOp::MintAttribute(attribute) => {
-                    let id = attributes::insert_minted_attribute(tx, attribute)?;
-                    canonical_ids.insert(attribute.id.clone(), id);
-                }
-                PendingOp::AddAlias { attribute, alias } => {
-                    let id = canonical_ids.get(&attribute.id).unwrap_or(&attribute.id);
-                    attributes::add_alias(tx, id, alias)?;
-                }
-                PendingOp::CreateEntity {
-                    id,
-                    kind,
-                    name,
-                    appearance_anchor,
-                } => {
-                    entities::create_entity_with_id_sync(
-                        tx,
-                        id,
-                        &self.story_id,
-                        kind,
-                        name,
-                        appearance_anchor.as_deref(),
-                        "narrator_tool",
-                        Some(passage_id),
-                    )?;
-                }
-                PendingOp::UpdateEntity {
-                    id,
-                    name,
-                    appearance_anchor,
-                } => {
-                    entities::update_entity_sync(
-                        tx,
-                        &self.story_id,
-                        id,
-                        name,
-                        appearance_anchor.as_deref(),
-                        "narrator_tool",
-                        Some(passage_id),
-                    )?;
-                }
-                PendingOp::AdjustAttribute {
-                    entity_id,
-                    attribute,
-                    delta,
-                    cause,
-                    dramatic,
-                } => {
-                    let attribute = if let Some(id) = canonical_ids.get(&attribute.id) {
-                        attributes::find_attribute_by_id(tx, id)?
-                    } else {
-                        attribute.clone()
-                    };
-                    attributes::apply_attribute_delta(
-                        tx,
-                        &self.story_id,
-                        entity_id,
-                        &attribute,
-                        *delta,
-                        cause,
-                        passage_id,
-                        *dramatic,
-                    )?;
-                }
-                PendingOp::Roll(pending) => {
-                    let mut pending = pending.clone();
-                    for factor in &mut pending.factors {
-                        if let Some(id) = canonical_ids.get(&factor.attribute_id) {
-                            let canonical = attributes::find_attribute_by_id(tx, id)?;
-                            if factor.min != canonical.min || factor.max != canonical.max {
-                                return Err(AppError::Invalid(format!(
-                                    "{}'s attribute range changed while rolling; retry this turn",
-                                    factor.entity_name
-                                )));
-                            }
-                            factor.attribute_id = id.clone();
-                            factor.attribute_name = canonical.canonical_name;
-                        }
-                    }
-                    persist_roll(tx, passage_id, &pending)?;
-                }
-                PendingOp::QueryEntities {
-                    entity_ids,
-                    kind_filter,
-                    name_filter,
-                } => {
-                    let wanted = entity_ids.iter().cloned().collect::<HashSet<_>>();
-                    let names = entities::list_entities_sync(tx, &self.story_id, None)?
-                        .into_iter()
-                        .filter(|entity| wanted.contains(&entity.id))
-                        .map(|entity| entity.name)
-                        .collect::<Vec<_>>();
-                    let content = if names.is_empty() {
-                        "Looked up: no matching entities".to_string()
-                    } else {
-                        format!("Looked up: {}", names.join(", "))
-                    };
-                    ledger::repository::append_entry(
-                        tx,
-                        &self.story_id,
-                        ledger::model::kind::ENTITY_QUERIED,
-                        "hidden",
-                        Some(&content),
-                        &json!({
-                            "entity_ids": entity_ids,
-                            "kind_filter": kind_filter,
-                            "name_filter": name_filter,
-                        }),
-                        Some(passage_id),
-                    )?;
-                }
-            }
-        }
-        Ok(())
-    }
-}
+use super::staging::{chance_from_factors, resolve_or_stage_attribute, TurnStaging};
 
 fn to_tool_error(e: AppError) -> ToolExecutionError {
     ToolExecutionError::other(e.to_string())
-}
-
-async fn resolve_or_stage_attribute(
-    staging: &Arc<Mutex<TurnStaging>>,
-    embedding_api_key: &str,
-    proposed_name: &str,
-    entity_kind: &str,
-) -> Result<AttributeRegistryEntry, ToolExecutionError> {
-    let (pool, story_id) = {
-        let staging = staging.lock().await;
-        if let Some(attribute) = staging.staged_attribute(proposed_name) {
-            return Ok(attribute);
-        }
-        (staging.pool.clone(), staging.story_id.clone())
-    };
-
-    // Attribute similarity may require a network request. Never retain the
-    // staging mutex while awaiting it, or unrelated tool reads would block.
-    // This always calls OpenRouter's embedding endpoint regardless of the
-    // active text-model provider (e.g. Nous Portal) — `embedding_api_key` is
-    // resolved separately by the caller, never the narrator's own API key.
-    let resolution = attributes::resolve_attribute(
-        &pool,
-        embedding_api_key,
-        proposed_name,
-        entity_kind,
-        &story_id,
-    )
-    .await
-    .map_err(to_tool_error)?;
-
-    let mut staging = staging.lock().await;
-    if let Some(attribute) = staging.staged_attribute(proposed_name) {
-        return Ok(attribute);
-    }
-    match resolution {
-        attributes::AttributeResolution::Existing(attribute) => Ok(attribute),
-        attributes::AttributeResolution::AddAlias { attribute, alias } => {
-            staging.pending.push(PendingOp::AddAlias {
-                attribute: attribute.clone(),
-                alias,
-            });
-            Ok(attribute)
-        }
-        attributes::AttributeResolution::Mint(attribute) => {
-            staging
-                .pending
-                .push(PendingOp::MintAttribute(attribute.clone()));
-            Ok(attribute)
-        }
-    }
-}
-
-impl TurnStaging {
-    fn staged_attribute(&self, name: &str) -> Option<AttributeRegistryEntry> {
-        let name = name.trim();
-        self.pending.iter().find_map(|op| match op {
-            PendingOp::MintAttribute(attribute)
-                if attribute.canonical_name.eq_ignore_ascii_case(name) =>
-            {
-                Some(attribute.clone())
-            }
-            PendingOp::AddAlias { attribute, alias } if alias.eq_ignore_ascii_case(name) => {
-                Some(attribute.clone())
-            }
-            _ => None,
-        })
-    }
 }
 
 /// `roll_check` + args → a friendly, generic activity label for the frontend
@@ -785,13 +179,12 @@ fn roll_check_tool(staging: Arc<Mutex<TurnStaging>>) -> PortableDynamicTool {
                     }
                     (chance_from_factors(&factors), "attributes")
                 };
-                let output = resolve_roll(chance_percent);
-                staging.pending.push(PendingOp::Roll(PendingRoll {
-                    output,
-                    reason: reason.clone(),
+                let output = staging.stage_roll(
+                    chance_percent,
+                    reason.clone(),
                     chance_source,
-                    factors: factors.clone(),
-                }));
+                    factors.clone(),
+                );
 
                 Ok(ToolOutput::json(json!({
                     "chance_percent": chance_percent, "roll": output.roll,
@@ -837,11 +230,7 @@ fn get_entities_tool(staging: Arc<Mutex<TurnStaging>>) -> PortableDynamicTool {
                 let retention = settings::read_ledger_retention_settings(&staging.pool)
                     .map_err(to_tool_error)?;
                 if retention.tool_call_persistence {
-                    staging.pending.push(PendingOp::QueryEntities {
-                        entity_ids,
-                        kind_filter: kind.map(str::to_string),
-                        name_filter: name.map(str::to_string),
-                    });
+                    staging.stage_entity_query(entity_ids, kind, name);
                 }
                 Ok(ToolOutput::json(json!({"entities": out})))
             })
@@ -915,11 +304,7 @@ fn update_entity_tool(staging: Arc<Mutex<TurnStaging>>) -> PortableDynamicTool {
                         "no such entity: {id}"
                     )));
                 }
-                staging.pending.push(PendingOp::UpdateEntity {
-                    id: id.clone(),
-                    name: name.clone(),
-                    appearance_anchor: appearance_anchor.clone(),
-                });
+                staging.stage_entity_update(id.clone(), name.clone(), appearance_anchor.clone());
                 Ok(ToolOutput::json(
                     json!({"id": id, "name": name, "appearance_anchor": appearance_anchor}),
                 ))
@@ -982,13 +367,14 @@ fn adjust_entity_attribute_tool(
                     &attribute_name,
                     &entity.kind,
                 )
-                .await?;
+                .await
+                .map_err(to_tool_error)?;
 
                 let mut staging = staging.lock().await;
-                let (before, locked) = staging
-                    .effective_attribute_state(&entity.id, &attribute)
+                let (before, after, applied) = staging
+                    .stage_attribute_delta(&entity.id, attribute, delta, reason, dramatic)
                     .map_err(to_tool_error)?;
-                if locked {
+                if !applied {
                     return Ok(ToolOutput::json(json!({
                         "before": before,
                         "after": before,
@@ -996,14 +382,6 @@ fn adjust_entity_attribute_tool(
                         "reason": "locked to a player-set value",
                     })));
                 }
-                let after = clamp_delta(before, delta, dramatic, &attribute);
-                staging.pending.push(PendingOp::AdjustAttribute {
-                    entity_id: entity.id.clone(),
-                    attribute,
-                    delta,
-                    cause: reason,
-                    dramatic,
-                });
                 Ok(ToolOutput::json(
                     json!({"before": before, "after": after, "applied": true}),
                 ))
@@ -1051,9 +429,14 @@ pub fn narrator_tools_for_settings(
 
 #[cfg(test)]
 mod tests {
+    use super::super::staging::PendingOp;
     use super::*;
+    use crate::features::entities::{self, attributes, model::AttributeRegistryEntry};
+    use crate::features::ledger;
     use crate::features::ledger::repository::append_entry;
+    use crate::shared::db::Pool;
     use chrono::Utc;
+    use uuid::Uuid;
 
     fn setup() -> (Pool, String) {
         let pool = crate::shared::db::test_pool();
@@ -1220,227 +603,6 @@ mod tests {
             roll_check: false,
             illustrate_scene: false,
         }
-    }
-
-    #[test]
-    fn staged_entity_is_visible_before_commit_and_not_duplicated() {
-        let (pool, story_id) = setup();
-        let mut staging = TurnStaging::new(pool, story_id);
-
-        let (created, was_new) = staging
-            .resolve_or_stage_entity("character", "Mira", Some("silver hair"))
-            .unwrap();
-        assert!(was_new);
-        assert!(staging
-            .find_effective_entity(&created.id)
-            .unwrap()
-            .is_some());
-
-        // A second lookup by name finds the already-staged entity instead of
-        // creating a duplicate.
-        let (found, was_new_again) = staging
-            .resolve_or_stage_entity("character", "mira", None)
-            .unwrap();
-        assert!(!was_new_again);
-        assert_eq!(found.id, created.id);
-        assert_eq!(staging.pending.len(), 1);
-    }
-
-    #[test]
-    fn staged_attribute_delta_folds_onto_the_registry_midpoint() {
-        let (pool, story_id) = setup();
-        let attribute = find_attribute(&pool.get().unwrap(), "Trust");
-        let mut staging = TurnStaging::new(pool, story_id);
-        let (entity, _) = staging
-            .resolve_or_stage_entity("character", "Mira", None)
-            .unwrap();
-
-        let midpoint = (attribute.min + attribute.max) / 2.0;
-        assert_eq!(
-            staging
-                .effective_attribute_state(&entity.id, &attribute)
-                .unwrap()
-                .0,
-            midpoint
-        );
-
-        staging.pending.push(PendingOp::AdjustAttribute {
-            entity_id: entity.id.clone(),
-            attribute: attribute.clone(),
-            delta: 2.0,
-            cause: "test".into(),
-            dramatic: false,
-        });
-        assert_eq!(
-            staging
-                .effective_attribute_state(&entity.id, &attribute)
-                .unwrap()
-                .0,
-            midpoint + 2.0
-        );
-    }
-
-    #[tokio::test]
-    async fn newly_minted_attributes_are_staged_and_reused_without_leaking() {
-        let (pool, story_id) = setup();
-        let staging = Arc::new(Mutex::new(TurnStaging::new(pool.clone(), story_id)));
-        let embedding_api_key = test_embedding_api_key();
-
-        // This kind has no committed candidates, so resolution mints locally
-        // without making an embedding request.
-        let first =
-            resolve_or_stage_attribute(&staging, &embedding_api_key, "Resonance", "artifact")
-                .await
-                .unwrap();
-        let second =
-            resolve_or_stage_attribute(&staging, &embedding_api_key, "resonance", "artifact")
-                .await
-                .unwrap();
-        assert_eq!(first.id, second.id);
-
-        let registry_count: i64 = pool
-            .get()
-            .unwrap()
-            .query_row(
-                "SELECT COUNT(*) FROM attribute_registry WHERE id = ?1",
-                [&first.id],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(registry_count, 0);
-        let staging = staging.lock().await;
-        assert!(matches!(
-            staging.pending.as_slice(),
-            [PendingOp::MintAttribute(_)]
-        ));
-    }
-
-    #[test]
-    fn aliases_are_staged_until_the_narration_commits() {
-        let (pool, story_id) = setup();
-        let attribute = find_attribute(&pool.get().unwrap(), "Stealth");
-        let alias = "furtive movement";
-        let mut staging = TurnStaging::new(pool.clone(), story_id.clone());
-        staging.pending.push(PendingOp::AddAlias {
-            attribute: attribute.clone(),
-            alias: alias.into(),
-        });
-        assert_eq!(staging.staged_attribute(alias).unwrap().id, attribute.id);
-        assert!(attributes::find_exact_match(&pool.get().unwrap(), alias)
-            .unwrap()
-            .is_none());
-        drop(staging);
-        assert!(attributes::find_exact_match(&pool.get().unwrap(), alias)
-            .unwrap()
-            .is_none());
-
-        let mut successful = TurnStaging::new(pool.clone(), story_id.clone());
-        successful.pending.push(PendingOp::AddAlias {
-            attribute: attribute.clone(),
-            alias: alias.into(),
-        });
-        persist_staging(&pool, &story_id, &successful);
-        assert_eq!(
-            attributes::find_exact_match(&pool.get().unwrap(), alias)
-                .unwrap()
-                .unwrap()
-                .id,
-            attribute.id
-        );
-    }
-
-    #[test]
-    fn commit_applies_every_staged_op_atomically() {
-        let (pool, story_id) = setup();
-        let attribute = find_attribute(&pool.get().unwrap(), "Trust");
-        let mut staging = TurnStaging::new(pool.clone(), story_id.clone());
-        let (entity, _) = staging
-            .resolve_or_stage_entity("character", "Mira", Some("silver hair"))
-            .unwrap();
-        staging.pending.push(PendingOp::AdjustAttribute {
-            entity_id: entity.id.clone(),
-            attribute: attribute.clone(),
-            delta: 3.0,
-            cause: "test".into(),
-            dramatic: false,
-        });
-
-        let mut conn = pool.get().unwrap();
-        let passage = append_entry(
-            &conn,
-            &story_id,
-            "narration",
-            "visible",
-            Some("scene"),
-            &json!({}),
-            None,
-        )
-        .unwrap();
-        let tx = conn.transaction().unwrap();
-        staging.commit(&tx, &passage.id).unwrap();
-        tx.commit().unwrap();
-
-        let conn = pool.get().unwrap();
-        let name: String = conn
-            .query_row(
-                "SELECT name FROM story_entity_state WHERE entity_id = ?1",
-                [&entity.id],
-                |r| r.get(0),
-            )
-            .unwrap();
-        assert_eq!(name, "Mira");
-        let value: f64 = conn
-            .query_row(
-                "SELECT value FROM entity_attributes WHERE entity_id = ?1 AND attribute_id = ?2",
-                rusqlite::params![entity.id, attribute.id],
-                |r| r.get(0),
-            )
-            .unwrap();
-        assert_eq!(value, (attribute.min + attribute.max) / 2.0 + 3.0);
-    }
-
-    #[test]
-    fn query_entities_commit_writes_entity_ids_to_the_ledger() {
-        let (pool, story_id) = setup();
-        let mut staging = TurnStaging::new(pool.clone(), story_id.clone());
-        let (bob, _) = staging
-            .resolve_or_stage_entity("character", "Bob", Some("a weathered coat"))
-            .unwrap();
-        staging.pending.push(PendingOp::QueryEntities {
-            entity_ids: vec![bob.id.clone()],
-            kind_filter: Some("character".into()),
-            name_filter: Some("Bob".into()),
-        });
-
-        let mut conn = pool.get().unwrap();
-        let passage = append_entry(
-            &conn,
-            &story_id,
-            "narration",
-            "visible",
-            Some("scene"),
-            &json!({}),
-            None,
-        )
-        .unwrap();
-        let tx = conn.transaction().unwrap();
-        staging.commit(&tx, &passage.id).unwrap();
-        tx.commit().unwrap();
-
-        let (content, payload_json, target_entry_id): (String, String, String) = conn
-            .query_row(
-                "SELECT content, payload_json, target_entry_id FROM ledger_entries
-                 WHERE kind = ?1",
-                [ledger::model::kind::ENTITY_QUERIED],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-            )
-            .unwrap();
-        let payload: serde_json::Value = serde_json::from_str(&payload_json).unwrap();
-        assert_eq!(content, "Looked up: Bob");
-        assert_eq!(payload["entity_ids"], json!([bob.id]));
-        assert_eq!(payload["kind_filter"], json!("character"));
-        assert_eq!(payload["name_filter"], json!("Bob"));
-        assert_eq!(target_entry_id, passage.id);
     }
 
     #[test]
@@ -1642,32 +804,6 @@ mod tests {
                 .0,
             8.0
         );
-    }
-
-    #[test]
-    fn chance_roll_has_exact_zero_and_hundred_percent_bounds() {
-        for _ in 0..100 {
-            let impossible = resolve_roll(0);
-            assert!((0..100).contains(&impossible.roll));
-            assert_eq!(impossible.needed, 100);
-            assert_eq!(impossible.outcome, "failure");
-
-            let certain = resolve_roll(100);
-            assert!((0..100).contains(&certain.roll));
-            assert_eq!(certain.needed, 0);
-            assert_eq!(certain.outcome, "success");
-        }
-    }
-
-    #[test]
-    fn chance_roll_seed_replays_the_draw() {
-        for chance in [1, 25, 50, 75, 99] {
-            let result = resolve_roll(chance);
-            let mut rng = StdRng::seed_from_u64(result.seed as u64);
-            assert_eq!(rng.gen_range(0..100), result.roll);
-            assert_eq!(result.needed, 100 - i64::from(chance));
-            assert_eq!(result.outcome == "success", result.roll >= result.needed);
-        }
     }
 
     #[tokio::test]

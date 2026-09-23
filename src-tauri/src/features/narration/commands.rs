@@ -32,7 +32,8 @@ use super::context::{self, combine_context_blocks, ContextPlan};
 use super::history::load_history;
 use super::model::ActiveStoryEntry;
 use super::repository::{get_last_story_entry, image_paths_for_entry, insert_story_entry};
-use super::tools::{self, TurnStaging};
+use super::staging::TurnStaging;
+use super::tools;
 
 fn narrator_image_tools(
     enabled: bool,

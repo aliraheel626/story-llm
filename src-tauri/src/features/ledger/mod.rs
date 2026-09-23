@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::State;
 
+use crate::features::narration::staging::RollFactor;
 use crate::shared::db::Pool;
 use crate::shared::error::{AppError, AppResult};
 use model::{kind, LedgerSnapshot};
@@ -22,17 +23,6 @@ pub fn list_ledger_entries(pool: State<Pool>, story_id: String) -> AppResult<Led
             .filter(|entry| entry.visibility == "hidden")
             .collect(),
     })
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RollFactor {
-    pub entity_id: String,
-    pub entity_name: String,
-    pub attribute_id: String,
-    pub attribute_name: String,
-    pub value: f64,
-    pub min: f64,
-    pub max: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
