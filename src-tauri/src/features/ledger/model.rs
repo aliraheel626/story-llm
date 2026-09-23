@@ -14,6 +14,23 @@ pub struct LedgerEntry {
     pub created_at: String,
 }
 
+impl LedgerEntry {
+    pub fn role(&self) -> &str {
+        if self.kind == kind::PLAYER_MESSAGE {
+            "player"
+        } else {
+            "narrator"
+        }
+    }
+
+    pub fn input_mode(&self) -> &str {
+        self.payload
+            .get("input_mode")
+            .and_then(Value::as_str)
+            .unwrap_or("generated")
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LedgerSnapshot {
     pub visible: Vec<LedgerEntry>,
@@ -34,4 +51,34 @@ pub mod kind {
     pub const IMAGE_GENERATED: &str = "image_generated";
     pub const DICEROLL_SETTINGS_CHANGED: &str = "diceroll_settings_changed";
     pub const CONTEXT_SUMMARY: &str = "context_summary";
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn role_and_input_mode_follow_story_entry_defaults() {
+        let mut entry = LedgerEntry {
+            id: "entry".into(),
+            story_id: "story".into(),
+            seq: 0,
+            kind: kind::PLAYER_MESSAGE.into(),
+            visibility: "visible".into(),
+            content: Some("action".into()),
+            payload: json!({"input_mode":"do"}),
+            target_entry_id: None,
+            created_at: "now".into(),
+        };
+        assert_eq!(entry.role(), "player");
+        assert_eq!(entry.input_mode(), "do");
+
+        entry.kind = kind::NARRATION.into();
+        entry.payload = json!({"input_mode":42});
+        assert_eq!(entry.role(), "narrator");
+        assert_eq!(entry.input_mode(), "generated");
+        entry.payload = json!({});
+        assert_eq!(entry.input_mode(), "generated");
+    }
 }

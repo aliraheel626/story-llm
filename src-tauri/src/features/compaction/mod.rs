@@ -2,6 +2,8 @@ mod budget;
 mod compactor;
 mod summary;
 
+use std::collections::HashSet;
+
 use rig_core::{completion::Message, memory::Compactor};
 use rig_memory::{HeuristicTokenCounter, MemoryPolicy, TokenCounter, TokenWindowMemory};
 
@@ -14,6 +16,14 @@ pub(crate) use budget::raw_tail_boundary;
 use budget::{messages, FALLBACK_CONTEXT_WINDOW};
 use compactor::NarratorCompactor;
 use summary::{format_summary, latest_summary_artifact, SummaryArtifact};
+
+pub(crate) fn prune_summaries_covering(
+    tx: &rusqlite::Transaction<'_>,
+    story_id: &str,
+    doomed_ids: &HashSet<String>,
+) -> AppResult<()> {
+    summary::prune_summaries_covering(tx, story_id, doomed_ids)
+}
 
 #[derive(Debug, Clone)]
 pub(crate) struct SummaryBoundary {

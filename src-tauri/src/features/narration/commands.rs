@@ -30,8 +30,6 @@ use crate::shared::error::{AppError, AppResult};
 
 use super::context::{self, combine_context_blocks, ContextPlan};
 use super::history::load_history;
-use super::model::ActiveStoryEntry;
-use super::repository::{get_last_story_entry, image_paths_for_entry, insert_story_entry};
 use super::staging::TurnStaging;
 use super::tools;
 
@@ -93,7 +91,7 @@ async fn append_narration_entry(
     visible: &str,
     thoughts: Option<&str>,
     staging: Option<Arc<Mutex<TurnStaging>>>,
-) -> AppResult<ActiveStoryEntry> {
+) -> AppResult<LedgerEntry> {
     // Acquired before the transaction opens (not held across an `.await`
     // with it live) so the whole rest of this function stays synchronous —
     // a `rusqlite::Transaction` isn't `Send`, so awaiting anything while one
@@ -104,7 +102,9 @@ async fn append_narration_entry(
     };
     let mut conn = pool.get()?;
     let tx = conn.transaction()?;
-    let passage = insert_story_entry(&tx, story_id, "narrator", input_mode, visible, thoughts)?;
+    let passage = ledger_repository::append_story_message(
+        &tx, story_id, "narrator", input_mode, visible, thoughts,
+    )?;
     if let Some(guard) = staging_guard {
         guard.commit(&tx, &passage.id)?;
     }
@@ -487,7 +487,9 @@ pub async fn submit_turn(
 
     let existing_trailing_action = if mode == "continue" {
         let conn = pool.get()?;
-        match get_last_story_entry(&conn, &story_id)?.filter(|entry| entry.role == "player") {
+        match ledger_repository::last_active_entry(&conn, &story_id)?
+            .filter(|entry| entry.role() == "player")
+        {
             Some(entry) => {
                 let has_completed_effect: bool = conn.query_row(
                     "SELECT EXISTS(SELECT 1 FROM ledger_entries
@@ -509,7 +511,9 @@ pub async fn submit_turn(
         }
         None => {
             let conn = pool.get()?;
-            let action = insert_story_entry(&conn, &story_id, "player", &mode, content, None)?;
+            let action = ledger_repository::append_story_message(
+                &conn, &story_id, "player", &mode, content, None,
+            )?;
             ledger_repository::active_entry(&conn, &action.id)?
         }
     };
@@ -589,9 +593,9 @@ fn snapshot_for_retry(pool: &Pool, story_id: &str, entry_id: &str) -> AppResult<
     let (original_entries, original_updated_at, original_settings_json, original_registry_aliases) = {
         let conn = snapshot_pool.get()?;
         let revision = story_revision(&conn, story_id)?;
-        let target = get_last_story_entry(&conn, story_id)?
+        let target = ledger_repository::last_active_entry(&conn, story_id)?
             .ok_or_else(|| AppError::Invalid("no narration to retry".into()))?;
-        if target.id != entry_id || target.role != "narrator" {
+        if target.id != entry_id || target.role() != "narrator" {
             return Err(AppError::Invalid(
                 "only the latest narration can be retried".into(),
             ));
@@ -721,7 +725,7 @@ async fn replace_narration_entry(
         if entries != snapshot.original_entries
             || updated_at != snapshot.original_updated_at
             || settings_json != snapshot.original_settings_json
-            || get_last_story_entry(tx, story_id)?
+            || ledger_repository::last_active_entry(tx, story_id)?
                 .as_ref()
                 .map(|entry| entry.id.as_str())
                 != Some(target_id)
@@ -732,7 +736,14 @@ async fn replace_narration_entry(
         }
         let paths = remove_reply_in_tx(tx, story_id, target_id)?;
         reconcile_attribute_registry(tx, &scratch, &snapshot.original_registry_aliases)?;
-        let passage = insert_story_entry(tx, story_id, "narrator", "generated", visible, thoughts)?;
+        let passage = ledger_repository::append_story_message(
+            tx,
+            story_id,
+            "narrator",
+            "generated",
+            visible,
+            thoughts,
+        )?;
         if let Some(staging) = &guard {
             staging.commit(tx, &passage.id)?;
         }
@@ -748,14 +759,14 @@ fn start_replacement_generation(
 ) -> AppResult<String> {
     let target = {
         let conn = pool.get()?;
-        let last = get_last_story_entry(&conn, &story_id)?
+        let last = ledger_repository::last_active_entry(&conn, &story_id)?
             .ok_or_else(|| AppError::Invalid("no narration to retry".into()))?;
         if last.id != entry_id {
             return Err(AppError::Invalid(
                 "only the latest narration can be retried".into(),
             ));
         }
-        if last.role != "narrator" {
+        if last.role() != "narrator" {
             return Err(AppError::Invalid(
                 "only a narration entry can be retried".into(),
             ));
@@ -830,9 +841,7 @@ fn start_replacement_generation(
                 staging,
             )
             .await?;
-            for path in image_paths {
-                let _ = std::fs::remove_file(path);
-            }
+            images::delete_assets(&image_paths);
             let _ = app.emit(
                 "narration-done",
                 NarrationDonePayload {
@@ -862,8 +871,8 @@ pub async fn retry_narration(
 ) -> AppResult<RetryResult> {
     let trailing_action = {
         let conn = pool.get()?;
-        get_last_story_entry(&conn, &story_id)?
-            .filter(|entry| entry.id == entry_id && entry.role == "player")
+        ledger_repository::last_active_entry(&conn, &story_id)?
+            .filter(|entry| entry.id == entry_id && entry.role() == "player")
     };
     let stream_id = if let Some(action) = trailing_action {
         let history = load_history(pool.inner(), &story_id, Some(action.seq + 1))?;
@@ -871,7 +880,7 @@ pub async fn retry_narration(
             let conn = pool.get()?;
             ledger_repository::active_entry(&conn, &action.id)?
         };
-        let mode = action.input_mode.clone();
+        let mode = action.input_mode().to_string();
         start_action_generation(
             app,
             pool.inner().clone(),
@@ -902,7 +911,7 @@ pub fn edit_ledger_entry(
         return Err(AppError::Invalid("content must not be empty".into()));
     }
     let (image_paths, entry) = with_transaction(pool.inner(), |tx| {
-        let image_paths = image_paths_for_entry(tx, &entry_id)?;
+        let image_paths = images::detach_from_entry(tx, &entry_id)?;
         let target = ledger_repository::get_entry(tx, &entry_id)?;
         ledger_repository::append_entry(
             tx,
@@ -913,38 +922,10 @@ pub fn edit_ledger_entry(
             &serde_json::json!({"reason":"user_edit"}),
             Some(&entry_id),
         )?;
-        tx.execute("DELETE FROM image_assets WHERE entry_id = ?1", [&entry_id])?;
-        tx.execute(
-            "DELETE FROM ledger_entries WHERE kind = ?1 AND target_entry_id = ?2",
-            rusqlite::params![ledger_kind::IMAGE_GENERATED, entry_id],
-        )?;
         Ok((image_paths, ledger_repository::active_entry(tx, &entry_id)?))
     })?;
-
-    for path in image_paths {
-        let _ = std::fs::remove_file(path);
-    }
+    images::delete_assets(&image_paths);
     Ok(entry)
-}
-
-fn cascade_entries(
-    conn: &rusqlite::Connection,
-    root_id: &str,
-) -> AppResult<Vec<(String, String, String)>> {
-    let mut stmt = conn.prepare(
-        "WITH RECURSIVE doomed(id) AS (
-             SELECT ?1
-             UNION
-             SELECT ledger_entries.id FROM ledger_entries
-             JOIN doomed ON ledger_entries.target_entry_id = doomed.id
-         )
-         SELECT ledger_entries.id, ledger_entries.kind, ledger_entries.payload_json
-         FROM ledger_entries JOIN doomed ON doomed.id = ledger_entries.id",
-    )?;
-    let entries = stmt
-        .query_map([root_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
-        .collect::<Result<_, _>>()?;
-    Ok(entries)
 }
 
 fn collect_cascade_effects(
@@ -954,7 +935,9 @@ fn collect_cascade_effects(
     affected_entities: &mut HashSet<String>,
     image_paths: &mut Vec<String>,
 ) -> AppResult<()> {
-    for (id, kind, payload_json) in cascade_entries(conn, root_id)? {
+    for (id, kind, payload_json) in
+        crate::features::ledger::cascade::cascade_entries(conn, root_id)?
+    {
         doomed_ids.insert(id);
         if kind == ledger_kind::IMAGE_GENERATED {
             if let Some(asset_id) = serde_json::from_str::<serde_json::Value>(&payload_json)
@@ -966,19 +949,11 @@ fn collect_cascade_effects(
                         .map(str::to_string)
                 })
             {
-                let path = conn
-                    .query_row(
-                        "SELECT path FROM image_assets WHERE id = ?1",
-                        [&asset_id],
-                        |row| row.get::<_, String>(0),
-                    )
-                    .ok();
-                if let Some(path) = path {
+                if let Some(path) = images::delete_asset_by_id(conn, &asset_id)? {
                     if !image_paths.contains(&path) {
                         image_paths.push(path);
                     }
                 }
-                conn.execute("DELETE FROM image_assets WHERE id = ?1", [&asset_id])?;
             }
         } else if matches!(
             kind.as_str(),
@@ -1009,7 +984,7 @@ fn remove_reply_in_tx(
     story_id: &str,
     reply_id: &str,
 ) -> AppResult<Vec<String>> {
-    let mut image_paths = image_paths_for_entry(tx, reply_id)?;
+    let mut image_paths = images::image_paths_for_entry(tx, reply_id)?;
     let mut doomed_ids = HashSet::new();
     let mut affected_entities = HashSet::new();
     collect_cascade_effects(
@@ -1028,50 +1003,26 @@ fn remove_reply_in_tx(
             "narration to replace no longer exists".into(),
         ));
     }
-    prune_covered_summaries(tx, story_id, &doomed_ids)?;
+    compaction::prune_summaries_covering(tx, story_id, &doomed_ids)?;
     crate::features::ledger::projections::replay_entities(tx, story_id, &affected_entities)?;
     Ok(image_paths)
-}
-
-fn prune_covered_summaries(
-    tx: &rusqlite::Transaction<'_>,
-    story_id: &str,
-    doomed_ids: &HashSet<String>,
-) -> AppResult<()> {
-    let mut stmt = tx
-        .prepare("SELECT id, payload_json FROM ledger_entries WHERE story_id = ?1 AND kind = ?2")?;
-    let summaries: Vec<(String, String)> = stmt
-        .query_map(
-            rusqlite::params![story_id, ledger_kind::CONTEXT_SUMMARY],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )?
-        .collect::<Result<_, _>>()?;
-    for (summary_id, payload_json) in summaries {
-        let through = serde_json::from_str::<serde_json::Value>(&payload_json)
-            .ok()
-            .and_then(|value| value.get("through_entry_id")?.as_str().map(str::to_string));
-        if through.is_some_and(|id| doomed_ids.contains(&id)) {
-            tx.execute("DELETE FROM ledger_entries WHERE id = ?1", [&summary_id])?;
-        }
-    }
-    Ok(())
 }
 
 fn erase_last_exchange_in_tx(
     tx: &rusqlite::Transaction<'_>,
     story_id: &str,
 ) -> AppResult<(Vec<String>, Vec<String>)> {
-    let Some(last) = get_last_story_entry(tx, story_id)? else {
+    let Some(last) = ledger_repository::last_active_entry(tx, story_id)? else {
         return Ok((vec![], vec![]));
     };
     let mut removed = vec![last.id.clone()];
     let mut image_paths = Vec::new();
     let mut doomed_ids = HashSet::new();
     let mut affected_entities = HashSet::new();
-    if last.role == "narrator" {
+    if last.role() == "narrator" {
         image_paths = remove_reply_in_tx(tx, story_id, &last.id)?;
     } else {
-        image_paths.extend(image_paths_for_entry(tx, &last.id)?);
+        image_paths.extend(images::image_paths_for_entry(tx, &last.id)?);
         collect_cascade_effects(
             tx,
             &last.id,
@@ -1082,11 +1033,11 @@ fn erase_last_exchange_in_tx(
         tx.execute("DELETE FROM ledger_entries WHERE id = ?1", [&last.id])?;
     }
 
-    let paired = last.role == "narrator" && last.input_mode == "generated";
+    let paired = last.role() == "narrator" && last.input_mode() == "generated";
     if paired {
-        if let Some(prev) = get_last_story_entry(tx, story_id)? {
-            if prev.role == "player" {
-                image_paths.extend(image_paths_for_entry(tx, &prev.id)?);
+        if let Some(prev) = ledger_repository::last_active_entry(tx, story_id)? {
+            if prev.role() == "player" {
+                image_paths.extend(images::image_paths_for_entry(tx, &prev.id)?);
                 collect_cascade_effects(
                     tx,
                     &prev.id,
@@ -1100,7 +1051,7 @@ fn erase_last_exchange_in_tx(
         }
     }
 
-    prune_covered_summaries(tx, story_id, &doomed_ids)?;
+    compaction::prune_summaries_covering(tx, story_id, &doomed_ids)?;
 
     let now = Utc::now().to_rfc3339();
     crate::features::ledger::projections::replay_entities(tx, story_id, &affected_entities)?;
@@ -1120,9 +1071,7 @@ pub fn erase_last_exchange(pool: State<Pool>, story_id: String) -> AppResult<Vec
     let (removed, image_paths) =
         with_transaction(pool.inner(), |tx| erase_last_exchange_in_tx(tx, &story_id))?;
 
-    for path in image_paths {
-        let _ = std::fs::remove_file(path);
-    }
+    images::delete_assets(&image_paths);
 
     Ok(removed)
 }
@@ -1174,9 +1123,24 @@ mod tests {
             None,
         )
         .unwrap();
-        let action = insert_story_entry(&conn, "s", "player", "do", "Open the door", None).unwrap();
-        let reply =
-            insert_story_entry(&conn, "s", "narrator", "generated", "Original", None).unwrap();
+        let action = ledger_repository::append_story_message(
+            &conn,
+            "s",
+            "player",
+            "do",
+            "Open the door",
+            None,
+        )
+        .unwrap();
+        let reply = ledger_repository::append_story_message(
+            &conn,
+            "s",
+            "narrator",
+            "generated",
+            "Original",
+            None,
+        )
+        .unwrap();
         crate::features::entities::update_entity_sync(
             &conn,
             "s",
@@ -1211,7 +1175,10 @@ mod tests {
             "Mira"
         );
         assert_eq!(
-            get_last_story_entry(&scratch, "s").unwrap().unwrap().id,
+            ledger_repository::last_active_entry(&scratch, "s")
+                .unwrap()
+                .unwrap()
+                .id,
             action
         );
         assert!(!ledger_repository::list_logical_entries(&scratch, "s")
@@ -1229,7 +1196,13 @@ mod tests {
         drop(scratch);
         drop(snapshot);
         let conn = pool.get().unwrap();
-        assert_eq!(get_last_story_entry(&conn, "s").unwrap().unwrap().id, reply);
+        assert_eq!(
+            ledger_repository::last_active_entry(&conn, "s")
+                .unwrap()
+                .unwrap()
+                .id,
+            reply
+        );
         assert_eq!(
             crate::features::entities::list_entities_sync(&conn, "s", None)
                 .unwrap()
@@ -1274,7 +1247,7 @@ mod tests {
         drop(snapshot);
         assert!(!path.exists());
         assert_eq!(
-            get_last_story_entry(&pool.get().unwrap(), "s")
+            ledger_repository::last_active_entry(&pool.get().unwrap(), "s")
                 .unwrap()
                 .unwrap()
                 .id,
@@ -1536,7 +1509,13 @@ mod tests {
                 .is_err()
         );
         let conn = pool.get().unwrap();
-        assert_eq!(get_last_story_entry(&conn, "s").unwrap().unwrap().id, reply);
+        assert_eq!(
+            ledger_repository::last_active_entry(&conn, "s")
+                .unwrap()
+                .unwrap()
+                .id,
+            reply
+        );
         assert!(ledger_repository::list_logical_entries(&conn, "s")
             .unwrap()
             .iter()
@@ -1611,7 +1590,13 @@ mod tests {
                 .is_err()
         );
         let conn = pool.get().unwrap();
-        assert_eq!(get_last_story_entry(&conn, "s").unwrap().unwrap().id, reply);
+        assert_eq!(
+            ledger_repository::last_active_entry(&conn, "s")
+                .unwrap()
+                .unwrap()
+                .id,
+            reply
+        );
         assert!(ledger_repository::list_logical_entries(&conn, "s")
             .unwrap()
             .iter()

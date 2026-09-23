@@ -1,5 +1,6 @@
 pub mod model;
 pub(crate) mod openrouter;
+mod repository;
 
 use chrono::Utc;
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -10,6 +11,38 @@ use crate::features::settings;
 use crate::shared::db::{with_transaction, Pool};
 use crate::shared::error::{AppError, AppResult};
 use model::{ImageRequest, StoryImage};
+
+pub fn image_paths_for_entry(
+    conn: &rusqlite::Connection,
+    entry_id: &str,
+) -> AppResult<Vec<String>> {
+    repository::image_paths_for_entry(conn, entry_id)
+}
+
+pub fn detach_from_entry(tx: &rusqlite::Transaction<'_>, entry_id: &str) -> AppResult<Vec<String>> {
+    let paths = image_paths_for_entry(tx, entry_id)?;
+    repository::delete_for_entry(tx, entry_id)?;
+    tx.execute(
+        "DELETE FROM ledger_entries WHERE kind = ?1 AND target_entry_id = ?2",
+        rusqlite::params![ledger_kind::IMAGE_GENERATED, entry_id],
+    )?;
+    Ok(paths)
+}
+
+/// Call on the transactional connection while collecting cascade effects.
+pub fn delete_asset_by_id(
+    conn: &rusqlite::Connection,
+    asset_id: &str,
+) -> AppResult<Option<String>> {
+    repository::delete_asset_by_id(conn, asset_id)
+}
+
+/// Delete files only after the transaction that detached them has committed.
+pub fn delete_assets(paths: &[String]) {
+    for path in paths {
+        let _ = std::fs::remove_file(path);
+    }
+}
 
 /// Composes the final image prompt: style prefix + the scene description, plus
 /// a literal character-appearance block so the image model can't drift on a
@@ -128,6 +161,13 @@ async fn persist_and_store_image(
     let id = Uuid::new_v4().to_string();
     let now = Utc::now().to_rfc3339();
 
+    let image = StoryImage {
+        id,
+        entry_id: entry_id.to_string(),
+        path: path_str,
+        prompt,
+        created_at: now,
+    };
     let persist_result = with_transaction(pool, |tx| {
         let current_content = ledger_repository::active_entry(tx, entry_id)?
             .content
@@ -137,11 +177,7 @@ async fn persist_and_store_image(
                 "the passage changed while its image was being generated".into(),
             ));
         }
-        tx.execute(
-            "INSERT INTO image_assets (id, entry_id, path, prompt, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
-            rusqlite::params![id, entry_id, path_str, prompt, now],
-        )?;
+        repository::insert_asset(tx, &image)?;
         let base = ledger_repository::get_entry(tx, entry_id)?;
         ledger_repository::append_entry(
             tx,
@@ -151,7 +187,7 @@ async fn persist_and_store_image(
             Some(&format!(
                 "A scene image was generated depicting: {description}"
             )),
-            &serde_json::json!({"asset_id": id, "prompt": prompt}),
+            &serde_json::json!({"asset_id": image.id, "prompt": image.prompt}),
             Some(source_action_id.unwrap_or(entry_id)),
         )?;
         Ok(())
@@ -161,13 +197,7 @@ async fn persist_and_store_image(
         return Err(error);
     }
 
-    Ok(StoryImage {
-        id,
-        entry_id: entry_id.to_string(),
-        path: path_str,
-        prompt,
-        created_at: now,
-    })
+    Ok(image)
 }
 
 /// Starts the slow image work requested by `submit_turn`'s narrator after the
@@ -211,30 +241,58 @@ pub(crate) fn generate_from_narrator_requests(
     });
 }
 
-fn row_to_image(row: &rusqlite::Row) -> rusqlite::Result<StoryImage> {
-    Ok(StoryImage {
-        id: row.get(0)?,
-        entry_id: row.get(1)?,
-        path: row.get(2)?,
-        prompt: row.get(3)?,
-        created_at: row.get(4)?,
-    })
-}
-
 /// All images for every passage in a story, in one call — the frontend
 /// groups them by `entry_id` itself rather than issuing one query per entry.
 #[tauri::command]
 pub fn list_images_for_story(pool: State<Pool>, story_id: String) -> AppResult<Vec<StoryImage>> {
     let conn = pool.get()?;
-    let mut stmt = conn.prepare(
-        "SELECT image_assets.id, image_assets.entry_id, image_assets.path, image_assets.prompt, image_assets.created_at
-         FROM image_assets JOIN ledger_entries ON ledger_entries.id = image_assets.entry_id
-         WHERE ledger_entries.story_id = ?1 ORDER BY image_assets.created_at ASC",
-    )?;
-    let rows = stmt.query_map([story_id], row_to_image)?;
-    let mut out = Vec::new();
-    for r in rows {
-        out.push(r?);
+    repository::list_for_story(&conn, &story_id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn detaching_an_entry_removes_only_its_images_and_events() {
+        let mut conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE image_assets(id TEXT PRIMARY KEY, entry_id TEXT, path TEXT);
+             CREATE TABLE ledger_entries(id TEXT PRIMARY KEY, kind TEXT, target_entry_id TEXT);
+             INSERT INTO image_assets VALUES ('asset-1', 'entry-1', 'first.png');
+             INSERT INTO image_assets VALUES ('asset-2', 'entry-2', 'second.png');
+             INSERT INTO ledger_entries VALUES ('event-1', 'image_generated', 'entry-1');
+             INSERT INTO ledger_entries VALUES ('event-2', 'image_generated', 'entry-2');
+             INSERT INTO ledger_entries VALUES ('event-3', 'content_edited', 'entry-1');",
+        )
+        .unwrap();
+
+        let tx = conn.transaction().unwrap();
+        assert_eq!(
+            detach_from_entry(&tx, "entry-1").unwrap(),
+            vec!["first.png"]
+        );
+        assert_eq!(
+            image_paths_for_entry(&tx, "entry-1").unwrap(),
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            image_paths_for_entry(&tx, "entry-2").unwrap(),
+            vec!["second.png"]
+        );
+        let event_ids: Vec<String> = tx
+            .prepare("SELECT id FROM ledger_entries ORDER BY id")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(event_ids, vec!["event-2", "event-3"]);
+        assert_eq!(
+            delete_asset_by_id(&tx, "asset-2").unwrap(),
+            Some("second.png".into())
+        );
+        assert_eq!(delete_asset_by_id(&tx, "asset-2").unwrap(), None);
+        tx.commit().unwrap();
     }
-    Ok(out)
 }

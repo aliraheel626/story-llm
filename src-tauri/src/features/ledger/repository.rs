@@ -4,7 +4,7 @@ use uuid::Uuid;
 
 use crate::shared::error::{AppError, AppResult};
 
-use super::model::LedgerEntry;
+use super::model::{kind, LedgerEntry};
 
 pub(crate) fn row_to_entry(row: &rusqlite::Row) -> rusqlite::Result<LedgerEntry> {
     let raw: String = row.get(6)?;
@@ -134,15 +134,6 @@ pub fn list_logical_entries_since(
     entries(conn, story_id, Some(since_seq))
 }
 
-pub fn image_paths_for_entry(
-    conn: &rusqlite::Connection,
-    entry_id: &str,
-) -> AppResult<Vec<String>> {
-    let mut stmt = conn.prepare("SELECT path FROM image_assets WHERE entry_id = ?1")?;
-    let rows = stmt.query_map([entry_id], |row| row.get::<_, String>(0))?;
-    Ok(rows.collect::<Result<Vec<_>, _>>()?)
-}
-
 pub fn active_entry(conn: &rusqlite::Connection, entry_id: &str) -> AppResult<LedgerEntry> {
     let base = get_entry(conn, entry_id)?;
     let entries = list_logical_entries(conn, &base.story_id)?;
@@ -152,9 +143,47 @@ pub fn active_entry(conn: &rusqlite::Connection, entry_id: &str) -> AppResult<Le
         .ok_or_else(|| AppError::NotFound(format!("active ledger entry {entry_id} not found")))
 }
 
+pub fn last_active_entry(
+    conn: &rusqlite::Connection,
+    story_id: &str,
+) -> AppResult<Option<LedgerEntry>> {
+    let entries = list_logical_entries(conn, story_id)?;
+    Ok(super::reducer::active_visible_entries(&entries).pop())
+}
+
+pub fn append_story_message(
+    conn: &rusqlite::Connection,
+    story_id: &str,
+    role: &str,
+    input_mode: &str,
+    content: &str,
+    thoughts: Option<&str>,
+) -> AppResult<LedgerEntry> {
+    let event_kind = if role == "player" {
+        kind::PLAYER_MESSAGE
+    } else {
+        kind::NARRATION
+    };
+    let thoughts = thoughts
+        .map(str::trim)
+        .filter(|thoughts| !thoughts.is_empty());
+    let payload = match thoughts {
+        Some(thoughts) => serde_json::json!({ "input_mode": input_mode, "thoughts": thoughts }),
+        None => serde_json::json!({ "input_mode": input_mode }),
+    };
+    append_entry(
+        conn,
+        story_id,
+        event_kind,
+        "visible",
+        Some(content),
+        &payload,
+        None,
+    )
+}
+
 #[cfg(test)]
 mod tests {
-    use super::super::model::kind;
     use super::*;
     use serde_json::json;
 
@@ -305,5 +334,94 @@ mod tests {
                     target.id
                 )
         ));
+    }
+
+    #[test]
+    fn story_messages_preserve_kind_mode_content_and_trimmed_thoughts() {
+        let pool = crate::shared::db::test_pool();
+        let conn = pool.get().unwrap();
+        conn.execute(
+            "INSERT INTO stories (id, title, created_at, updated_at, settings_json)
+             VALUES ('s', 'Story', 'now', 'now', '{}')",
+            [],
+        )
+        .unwrap();
+
+        let action = append_story_message(&conn, "s", "player", "do", " Act ", None).unwrap();
+        let reply = append_story_message(
+            &conn,
+            "s",
+            "narrator",
+            "generated",
+            "Scene",
+            Some("  private reasoning  "),
+        )
+        .unwrap();
+        let empty_thoughts =
+            append_story_message(&conn, "s", "narrator", "generated", "Next", Some(" \n "))
+                .unwrap();
+
+        assert_eq!(action.kind, kind::PLAYER_MESSAGE);
+        assert_eq!(action.role(), "player");
+        assert_eq!(action.input_mode(), "do");
+        assert_eq!(action.content.as_deref(), Some(" Act "));
+        assert_eq!(action.payload, json!({"input_mode":"do"}));
+        assert_eq!(reply.kind, kind::NARRATION);
+        assert_eq!(reply.role(), "narrator");
+        assert_eq!(
+            reply.payload,
+            json!({"input_mode":"generated","thoughts":"private reasoning"})
+        );
+        assert_eq!(empty_thoughts.payload, json!({"input_mode":"generated"}));
+        assert_eq!(reply.visibility, "visible");
+        assert!(reply.target_entry_id.is_none());
+        assert_eq!(get_entry(&conn, &reply.id).unwrap().payload, reply.payload);
+    }
+
+    #[test]
+    fn last_active_entry_ignores_hidden_events_and_folds_later_edits() {
+        let pool = crate::shared::db::test_pool();
+        let conn = pool.get().unwrap();
+        conn.execute(
+            "INSERT INTO stories (id, title, created_at, updated_at, settings_json)
+             VALUES ('s', 'Story', 'now', 'now', '{}'), ('other', 'Other', 'now', 'now', '{}')",
+            [],
+        )
+        .unwrap();
+
+        assert!(last_active_entry(&conn, "s").unwrap().is_none());
+        let action = append_story_message(&conn, "s", "player", "do", "Act", None).unwrap();
+        let reply = append_story_message(&conn, "s", "narrator", "generated", "Old", None).unwrap();
+        append_entry(
+            &conn,
+            "s",
+            kind::CONTENT_EDITED,
+            "hidden",
+            Some("New"),
+            &json!({"reason":"user_edit"}),
+            Some(&reply.id),
+        )
+        .unwrap();
+        append_entry(
+            &conn,
+            "s",
+            kind::DICEROLL,
+            "hidden",
+            None,
+            &json!({}),
+            Some(&reply.id),
+        )
+        .unwrap();
+
+        let last = last_active_entry(&conn, "s").unwrap().unwrap();
+        assert_eq!(last.id, reply.id);
+        assert_eq!(last.content.as_deref(), Some("New"));
+        assert_eq!(last.input_mode(), "generated");
+        assert_eq!(
+            get_entry(&conn, &reply.id).unwrap().content.as_deref(),
+            Some("Old")
+        );
+        assert!(last_active_entry(&conn, "other").unwrap().is_none());
+        assert_ne!(last.id, action.id);
     }
 }
