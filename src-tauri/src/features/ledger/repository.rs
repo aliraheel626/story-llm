@@ -17,7 +17,8 @@ pub(crate) fn row_to_entry(row: &rusqlite::Row) -> rusqlite::Result<LedgerEntry>
         content: row.get(5)?,
         payload: serde_json::from_str(&raw).unwrap_or(Value::Object(Default::default())),
         target_entry_id: row.get(7)?,
-        created_at: row.get(8)?,
+        turn_id: row.get(8)?,
+        created_at: row.get(9)?,
     })
 }
 
@@ -29,6 +30,7 @@ fn next_seq(conn: &rusqlite::Connection, story_id: &str) -> AppResult<i64> {
     )?)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn append_entry(
     conn: &rusqlite::Connection,
     story_id: &str,
@@ -37,6 +39,7 @@ pub fn append_entry(
     content: Option<&str>,
     payload: &Value,
     target_entry_id: Option<&str>,
+    turn_id: Option<&str>,
 ) -> AppResult<LedgerEntry> {
     if visibility != "visible" && visibility != "hidden" {
         return Err(AppError::Invalid(format!(
@@ -56,14 +59,26 @@ pub fn append_entry(
             )));
         }
     }
+    if let Some(turn_id) = turn_id {
+        let turn_belongs_to_story: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM turns WHERE id = ?1 AND story_id = ?2)",
+            rusqlite::params![turn_id, story_id],
+            |row| row.get(0),
+        )?;
+        if !turn_belongs_to_story {
+            return Err(AppError::Invalid(format!(
+                "turn {turn_id} does not belong to story {story_id}"
+            )));
+        }
+    }
     let seq = next_seq(conn, story_id)?;
     let now = Utc::now().to_rfc3339();
     let payload_json = serde_json::to_string(payload)
         .map_err(|e| AppError::Other(format!("ledger payload serialization failed: {e}")))?;
     conn.execute(
         "INSERT INTO ledger_entries
-         (id, story_id, seq, kind, visibility, content, payload_json, target_entry_id, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+         (id, story_id, seq, kind, visibility, content, payload_json, target_entry_id, turn_id, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
         rusqlite::params![
             id,
             story_id,
@@ -73,6 +88,7 @@ pub fn append_entry(
             content,
             payload_json,
             target_entry_id,
+            turn_id,
             now
         ],
     )?;
@@ -89,13 +105,14 @@ pub fn append_entry(
         content: content.map(str::to_string),
         payload: payload.clone(),
         target_entry_id: target_entry_id.map(str::to_string),
+        turn_id: turn_id.map(str::to_string),
         created_at: now,
     })
 }
 
 pub fn get_entry(conn: &rusqlite::Connection, id: &str) -> AppResult<LedgerEntry> {
     conn.query_row(
-        "SELECT id, story_id, seq, kind, visibility, content, payload_json, target_entry_id, created_at
+        "SELECT id, story_id, seq, kind, visibility, content, payload_json, target_entry_id, turn_id, created_at
          FROM ledger_entries WHERE id = ?1",
         [id],
         row_to_entry,
@@ -109,7 +126,7 @@ fn entries(
     since_seq: Option<i64>,
 ) -> AppResult<Vec<LedgerEntry>> {
     let mut stmt = conn.prepare(
-        "SELECT id, story_id, seq, kind, visibility, content, payload_json, target_entry_id, created_at
+        "SELECT id, story_id, seq, kind, visibility, content, payload_json, target_entry_id, turn_id, created_at
          FROM ledger_entries WHERE story_id = ?1 AND seq >= ?2 ORDER BY seq ASC",
     )?;
     let rows = stmt.query_map(
@@ -158,6 +175,7 @@ pub fn append_story_message(
     input_mode: &str,
     content: &str,
     thoughts: Option<&str>,
+    turn_id: Option<&str>,
 ) -> AppResult<LedgerEntry> {
     let event_kind = if role == "player" {
         kind::PLAYER_MESSAGE
@@ -179,6 +197,7 @@ pub fn append_story_message(
         Some(content),
         &payload,
         None,
+        turn_id,
     )
 }
 
@@ -191,7 +210,8 @@ mod tests {
     fn since_seq_includes_boundary_and_excludes_earlier_entries() {
         let conn = rusqlite::Connection::open_in_memory().unwrap();
         conn.execute_batch("CREATE TABLE stories(id TEXT PRIMARY KEY, updated_at TEXT NOT NULL);
-            CREATE TABLE ledger_entries(id TEXT PRIMARY KEY, story_id TEXT NOT NULL, seq INTEGER NOT NULL, kind TEXT NOT NULL, visibility TEXT NOT NULL, content TEXT, payload_json TEXT NOT NULL, target_entry_id TEXT, created_at TEXT NOT NULL, UNIQUE(story_id,seq));").unwrap();
+            CREATE TABLE turns(id TEXT PRIMARY KEY, story_id TEXT NOT NULL);
+            CREATE TABLE ledger_entries(id TEXT PRIMARY KEY, story_id TEXT NOT NULL, seq INTEGER NOT NULL, kind TEXT NOT NULL, visibility TEXT NOT NULL, content TEXT, payload_json TEXT NOT NULL, target_entry_id TEXT, turn_id TEXT, created_at TEXT NOT NULL, UNIQUE(story_id,seq));").unwrap();
         conn.execute("INSERT INTO stories VALUES ('s','now')", [])
             .unwrap();
 
@@ -203,6 +223,7 @@ mod tests {
             Some("one"),
             &json!({}),
             None,
+            None,
         )
         .unwrap();
         append_entry(
@@ -213,6 +234,7 @@ mod tests {
             Some("two"),
             &json!({}),
             None,
+            None,
         )
         .unwrap();
         append_entry(
@@ -222,6 +244,7 @@ mod tests {
             "visible",
             Some("three"),
             &json!({}),
+            None,
             None,
         )
         .unwrap();
@@ -249,7 +272,8 @@ mod tests {
     fn append_assigns_monotonic_sequence_and_decodes_payloads() {
         let conn = rusqlite::Connection::open_in_memory().unwrap();
         conn.execute_batch("CREATE TABLE stories(id TEXT PRIMARY KEY, updated_at TEXT NOT NULL);
-            CREATE TABLE ledger_entries(id TEXT PRIMARY KEY, story_id TEXT NOT NULL, seq INTEGER NOT NULL, kind TEXT NOT NULL, visibility TEXT NOT NULL, content TEXT, payload_json TEXT NOT NULL, target_entry_id TEXT, created_at TEXT NOT NULL, UNIQUE(story_id,seq));").unwrap();
+            CREATE TABLE turns(id TEXT PRIMARY KEY, story_id TEXT NOT NULL);
+            CREATE TABLE ledger_entries(id TEXT PRIMARY KEY, story_id TEXT NOT NULL, seq INTEGER NOT NULL, kind TEXT NOT NULL, visibility TEXT NOT NULL, content TEXT, payload_json TEXT NOT NULL, target_entry_id TEXT, turn_id TEXT, created_at TEXT NOT NULL, UNIQUE(story_id,seq));").unwrap();
         conn.execute("INSERT INTO stories VALUES ('s','now')", [])
             .unwrap();
 
@@ -261,6 +285,7 @@ mod tests {
             Some("first"),
             &json!({"input_mode":"do"}),
             None,
+            None,
         )
         .unwrap();
         append_entry(
@@ -271,6 +296,7 @@ mod tests {
             None,
             &json!({"roll":17,"outcome":"success"}),
             None,
+            None,
         )
         .unwrap();
         append_entry(
@@ -280,6 +306,7 @@ mod tests {
             "visible",
             Some("third"),
             &json!({"input_mode":"generated"}),
+            None,
             None,
         )
         .unwrap();
@@ -298,7 +325,8 @@ mod tests {
     fn append_rejects_a_target_owned_by_another_story() {
         let conn = rusqlite::Connection::open_in_memory().unwrap();
         conn.execute_batch("CREATE TABLE stories(id TEXT PRIMARY KEY, updated_at TEXT NOT NULL);
-            CREATE TABLE ledger_entries(id TEXT PRIMARY KEY, story_id TEXT NOT NULL, seq INTEGER NOT NULL, kind TEXT NOT NULL, visibility TEXT NOT NULL, content TEXT, payload_json TEXT NOT NULL, target_entry_id TEXT, created_at TEXT NOT NULL, UNIQUE(story_id,seq));").unwrap();
+            CREATE TABLE turns(id TEXT PRIMARY KEY, story_id TEXT NOT NULL);
+            CREATE TABLE ledger_entries(id TEXT PRIMARY KEY, story_id TEXT NOT NULL, seq INTEGER NOT NULL, kind TEXT NOT NULL, visibility TEXT NOT NULL, content TEXT, payload_json TEXT NOT NULL, target_entry_id TEXT, turn_id TEXT, created_at TEXT NOT NULL, UNIQUE(story_id,seq));").unwrap();
         conn.execute(
             "INSERT INTO stories VALUES ('first','now'), ('second','now')",
             [],
@@ -312,6 +340,7 @@ mod tests {
             Some("target"),
             &json!({}),
             None,
+            None,
         )
         .unwrap();
 
@@ -323,6 +352,7 @@ mod tests {
             Some("cross-story edit"),
             &json!({}),
             Some(&target.id),
+            None,
         )
         .unwrap_err();
 
@@ -337,6 +367,36 @@ mod tests {
     }
 
     #[test]
+    fn append_rejects_a_turn_owned_by_another_story() {
+        let pool = crate::shared::db::test_pool();
+        let conn = pool.get().unwrap();
+        conn.execute(
+            "INSERT INTO stories (id, title, created_at, updated_at, settings_json)
+             VALUES ('first', 'First', 'now', 'now', '{}'),
+                    ('second', 'Second', 'now', 'now', '{}')",
+            [],
+        )
+        .unwrap();
+        let turn_id = super::super::turns::create_turn(&conn, "first").unwrap();
+        let error = append_entry(
+            &conn,
+            "second",
+            kind::PLAYER_MESSAGE,
+            "visible",
+            Some("wrong story"),
+            &json!({"input_mode":"do"}),
+            None,
+            Some(&turn_id),
+        )
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            AppError::Invalid(message)
+                if message == format!("turn {turn_id} does not belong to story second")
+        ));
+    }
+
+    #[test]
     fn story_messages_preserve_kind_mode_content_and_trimmed_thoughts() {
         let pool = crate::shared::db::test_pool();
         let conn = pool.get().unwrap();
@@ -347,7 +407,7 @@ mod tests {
         )
         .unwrap();
 
-        let action = append_story_message(&conn, "s", "player", "do", " Act ", None).unwrap();
+        let action = append_story_message(&conn, "s", "player", "do", " Act ", None, None).unwrap();
         let reply = append_story_message(
             &conn,
             "s",
@@ -355,11 +415,19 @@ mod tests {
             "generated",
             "Scene",
             Some("  private reasoning  "),
+            None,
         )
         .unwrap();
-        let empty_thoughts =
-            append_story_message(&conn, "s", "narrator", "generated", "Next", Some(" \n "))
-                .unwrap();
+        let empty_thoughts = append_story_message(
+            &conn,
+            "s",
+            "narrator",
+            "generated",
+            "Next",
+            Some(" \n "),
+            None,
+        )
+        .unwrap();
 
         assert_eq!(action.kind, kind::PLAYER_MESSAGE);
         assert_eq!(action.role(), "player");
@@ -390,8 +458,9 @@ mod tests {
         .unwrap();
 
         assert!(last_active_entry(&conn, "s").unwrap().is_none());
-        let action = append_story_message(&conn, "s", "player", "do", "Act", None).unwrap();
-        let reply = append_story_message(&conn, "s", "narrator", "generated", "Old", None).unwrap();
+        let action = append_story_message(&conn, "s", "player", "do", "Act", None, None).unwrap();
+        let reply =
+            append_story_message(&conn, "s", "narrator", "generated", "Old", None, None).unwrap();
         append_entry(
             &conn,
             "s",
@@ -400,6 +469,7 @@ mod tests {
             Some("New"),
             &json!({"reason":"user_edit"}),
             Some(&reply.id),
+            None,
         )
         .unwrap();
         append_entry(
@@ -410,6 +480,7 @@ mod tests {
             None,
             &json!({}),
             Some(&reply.id),
+            None,
         )
         .unwrap();
 

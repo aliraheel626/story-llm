@@ -226,6 +226,7 @@ mod tests {
             content: None,
             payload,
             target_entry_id: None,
+            turn_id: None,
             created_at: "ledger-created-at".into(),
         }
     }

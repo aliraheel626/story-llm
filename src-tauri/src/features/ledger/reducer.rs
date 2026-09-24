@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use super::model::{kind, LedgerEntry, LedgerSnapshot};
+use super::model::{kind, LedgerEntry, LedgerSnapshot, TurnSummary};
 
 fn edits_by_target(entries: &[LedgerEntry]) -> HashMap<String, String> {
     let mut edits = HashMap::new();
@@ -31,13 +31,14 @@ pub fn active_visible_entries(entries: &[LedgerEntry]) -> Vec<LedgerEntry> {
         .collect()
 }
 
-pub fn snapshot(entries: Vec<LedgerEntry>) -> LedgerSnapshot {
+pub fn snapshot(entries: Vec<LedgerEntry>, turns: Vec<TurnSummary>) -> LedgerSnapshot {
     LedgerSnapshot {
         visible: active_visible_entries(&entries),
         hidden: entries
             .into_iter()
             .filter(|entry| entry.visibility == "hidden")
             .collect(),
+        turns,
     }
 }
 
@@ -62,6 +63,7 @@ mod tests {
             content: content.map(str::to_string),
             payload,
             target_entry_id: target.map(str::to_string),
+            turn_id: None,
             created_at: "now".into(),
         }
     }

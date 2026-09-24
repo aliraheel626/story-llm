@@ -10,6 +10,7 @@ import type {
   Story,
   StoryImage,
   LedgerEntry,
+  TurnSummary,
 } from "../../shared/types";
 import { charactersApi } from "../characters/api";
 import { narratorToolsApi } from "../narratorTools/api";
@@ -31,6 +32,7 @@ interface StreamingState {
   thoughts: string;
   mode: "append" | "replace";
   targetEntryId?: string;
+  turnId?: string;
   toolActivity?: ToolActivity | null;
   toolLog: ToolActivity[];
 }
@@ -45,6 +47,7 @@ export interface StoryBundle {
   id: string;
   entries: LedgerEntry[];
   hidden: LedgerEntry[];
+  turns: TurnSummary[];
   ledgerLoading: boolean;
   requestPending: boolean;
   streaming: StreamingState | null;
@@ -117,6 +120,7 @@ const newBundle = (id: string): StoryBundle => ({
   id,
   entries: [],
   hidden: [],
+  turns: [],
   ledgerLoading: false,
   requestPending: false,
   streaming: null,
@@ -160,7 +164,8 @@ const newStream = (
   storyId: string,
   mode: "append" | "replace",
   targetEntryId?: string,
-): StreamingState => ({ streamId, storyId, text: "", thoughts: "", mode, targetEntryId, toolLog: [] });
+  turnId?: string,
+): StreamingState => ({ streamId, storyId, text: "", thoughts: "", mode, targetEntryId, turnId, toolLog: [] });
 
 const findStream = (bundles: Record<string, StoryBundle>, streamId: string): [string, StreamingState] | undefined => {
   for (const [storyId, bundle] of Object.entries(bundles)) {
@@ -285,7 +290,7 @@ export const useStoryStore = create<StoryStoreState>((set, get) => ({
       const snapshot = await ledgerApi.list(storyId);
       if (!isCurrentGeneration(ledgerGenerations, storyId, generation)) return;
       set((state) => ({
-        bundles: patchBundle(state.bundles, storyId, { entries: snapshot.visible, hidden: snapshot.hidden }),
+        bundles: patchBundle(state.bundles, storyId, { entries: snapshot.visible, hidden: snapshot.hidden, turns: snapshot.turns }),
       }));
       if (isCurrentGeneration(ledgerGenerations, storyId, generation)) {
         set((state) => ({ bundles: patchBundle(state.bundles, storyId, { ledgerLoading: false }) }));
@@ -310,7 +315,10 @@ export const useStoryStore = create<StoryStoreState>((set, get) => ({
           entries: bundle.entries.some((entry) => entry.id === result.entry.id)
             ? replaceEntry(bundle.entries, result.entry.id, result.entry)
             : [...bundle.entries, result.entry],
-          streaming: newStream(result.stream_id, storyId, "append"),
+          turns: result.entry.turn_id && !bundle.turns.some((turn) => turn.id === result.entry.turn_id)
+            ? [...bundle.turns, { id: result.entry.turn_id, status: "pending" }]
+            : bundle.turns,
+          streaming: newStream(result.stream_id, storyId, "append", undefined, result.entry.turn_id ?? undefined),
           ledgerLoading: false,
         })),
       }));
@@ -330,7 +338,13 @@ export const useStoryStore = create<StoryStoreState>((set, get) => ({
       const result = await ledgerApi.retry(storyId, entryId);
       set((state) => ({
         bundles: patchBundle(state.bundles, storyId, {
-          streaming: newStream(result.stream_id, storyId, appends ? "append" : "replace", appends ? undefined : entryId),
+          streaming: newStream(
+            result.stream_id,
+            storyId,
+            appends ? "append" : "replace",
+            appends ? undefined : entryId,
+            get().bundles[storyId]?.entries.find((entry) => entry.id === entryId)?.turn_id ?? undefined,
+          ),
         }),
       }));
     } catch (error) {
@@ -348,12 +362,20 @@ export const useStoryStore = create<StoryStoreState>((set, get) => ({
     set((state) => ({
       bundles: patchBundle(state.bundles, storyId, (bundle) => {
         const imagesByEntry = { ...bundle.imagesByEntry };
+        const removedTurnIds = new Set(
+          bundle.entries.filter((entry) => ids.includes(entry.id)).map((entry) => entry.turn_id).filter((id): id is string => !!id),
+        );
         ids.forEach((entryId) => {
           delete imagesByEntry[entryId];
         });
         return {
           entries: bundle.entries.filter((entry) => !ids.includes(entry.id)),
-          hidden: bundle.hidden.filter((entry) => !ids.includes(entry.id) && !ids.includes(entry.target_entry_id ?? "")),
+          hidden: bundle.hidden.filter((entry) =>
+            !ids.includes(entry.id)
+            && !removedTurnIds.has(entry.turn_id ?? "")
+            && !ids.includes(entry.target_entry_id ?? ""),
+          ),
+          turns: bundle.turns.filter((turn) => !removedTurnIds.has(turn.id)),
           imagesByEntry,
           imagePendingFor: bundle.imagePendingFor.filter((entryId) => !ids.includes(entryId)),
           ledgerLoading: false,
@@ -466,6 +488,9 @@ export const useStoryStore = create<StoryStoreState>((set, get) => ({
             : bundle.entries.some((entry) => entry.id === payload.entry.id)
               ? replaceEntry(bundle.entries, payload.entry.id, payload.entry)
               : [...bundle.entries, payload.entry],
+          turns: bundle.turns.map((turn) =>
+            turn.id === payload.entry.turn_id ? { ...turn, status: "complete" as const } : turn,
+          ),
           hidden: oldId ? bundle.hidden.filter((entry) => entry.id !== oldId && entry.target_entry_id !== oldId) : bundle.hidden,
           imagesByEntry,
           imagePendingFor: oldId ? removeOne(bundle.imagePendingFor, oldId) : bundle.imagePendingFor,
@@ -486,13 +511,18 @@ export const useStoryStore = create<StoryStoreState>((set, get) => ({
     if (!found) return;
     const [storyId, current] = found;
     set((state) => ({
-      bundles: patchBundle(state.bundles, storyId, {
+      bundles: patchBundle(state.bundles, storyId, (bundle) => ({
         streaming: null,
         turnActivity: current.mode === "replace" && current.targetEntryId
           ? { entryId: current.targetEntryId, thoughts: "", tools: [] }
           : null,
         turnError: message,
-      }),
+        turns: bundle.turns.map((turn) =>
+          turn.id === current.turnId
+            ? { ...turn, status: current.mode === "replace" ? "complete" as const : "failed" as const }
+            : turn,
+        ),
+      })),
     }));
   },
   _imagePending: (entryId) => {
@@ -529,6 +559,7 @@ export const useStoryStore = create<StoryStoreState>((set, get) => ({
         imagePendingFor: removeOne(bundle.imagePendingFor, entryId),
       })),
     }));
+    get().loadLedger(storyId);
   },
 
   loadCharacters: async (storyId) => {

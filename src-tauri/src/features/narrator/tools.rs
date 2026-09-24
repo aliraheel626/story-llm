@@ -514,6 +514,7 @@ mod tests {
     /// `append_narration_entry` does — one transaction, no model involved.
     fn persist_staging(pool: &Pool, story_id: &str, staging: &TurnStaging) {
         let mut conn = pool.get().unwrap();
+        let turn_id = crate::features::ledger::turns::create_turn(&conn, story_id).unwrap();
         let passage = append_entry(
             &conn,
             story_id,
@@ -522,10 +523,17 @@ mod tests {
             Some("scene"),
             &json!({}),
             None,
+            Some(&turn_id),
         )
         .unwrap();
         let tx = conn.transaction().unwrap();
-        staging.commit(&tx, &passage.id).unwrap();
+        staging.commit(&tx, &passage.id, &turn_id).unwrap();
+        crate::features::ledger::turns::set_status(
+            &tx,
+            &turn_id,
+            crate::features::ledger::turns::COMPLETE,
+        )
+        .unwrap();
         tx.commit().unwrap();
     }
 

@@ -2,61 +2,61 @@ use std::collections::HashSet;
 
 use crate::features::{
     compaction, entities, images,
-    ledger::{model::kind as ledger_kind, repository as ledger_repository},
+    ledger::{
+        model::{kind as ledger_kind, LedgerEntry},
+        repository as ledger_repository, turns,
+    },
 };
 use crate::shared::db::{with_transaction, Pool};
 use crate::shared::error::{AppError, AppResult};
 use chrono::Utc;
 
-fn collect_cascade_effects(
+fn entries_for_turn(conn: &rusqlite::Connection, turn_id: &str) -> AppResult<Vec<LedgerEntry>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, story_id, seq, kind, visibility, content, payload_json,
+                target_entry_id, turn_id, created_at
+         FROM ledger_entries WHERE turn_id = ?1 ORDER BY seq ASC",
+    )?;
+    let rows = stmt.query_map([turn_id], ledger_repository::row_to_entry)?;
+    Ok(rows.collect::<Result<_, _>>()?)
+}
+
+fn touched_entities(entries: &[LedgerEntry]) -> HashSet<String> {
+    entries
+        .iter()
+        .filter_map(entities::events::EntityEvent::from_entry)
+        .map(|event| event.entity_id().to_string())
+        .collect()
+}
+
+fn delete_turn_images(
     conn: &rusqlite::Connection,
-    root_id: &str,
-    doomed_ids: &mut HashSet<String>,
-    affected_entities: &mut HashSet<String>,
-    image_paths: &mut Vec<String>,
-) -> AppResult<()> {
-    for (id, kind, payload_json) in
-        crate::features::ledger::cascade::cascade_entries(conn, root_id)?
-    {
-        doomed_ids.insert(id);
-        if kind == ledger_kind::IMAGE_GENERATED {
-            if let Some(asset_id) = serde_json::from_str::<serde_json::Value>(&payload_json)
-                .ok()
-                .and_then(|payload| {
-                    payload
-                        .get("asset_id")
-                        .and_then(|value| value.as_str())
-                        .map(str::to_string)
-                })
+    entries: &[LedgerEntry],
+) -> AppResult<Vec<String>> {
+    let mut asset_ids = HashSet::new();
+    for entry in entries {
+        let mut stmt = conn.prepare("SELECT id FROM image_assets WHERE entry_id = ?1")?;
+        let rows = stmt.query_map([&entry.id], |row| row.get::<_, String>(0))?;
+        asset_ids.extend(rows.collect::<Result<Vec<_>, _>>()?);
+        if entry.kind == ledger_kind::IMAGE_GENERATED {
+            if let Some(asset_id) = entry
+                .payload
+                .get("asset_id")
+                .and_then(|value| value.as_str())
             {
-                if let Some(path) = images::delete_asset_by_id(conn, &asset_id)? {
-                    if !image_paths.contains(&path) {
-                        image_paths.push(path);
-                    }
-                }
-            }
-        } else if matches!(
-            kind.as_str(),
-            ledger_kind::ENTITY_CREATED
-                | ledger_kind::ENTITY_UPDATED
-                | ledger_kind::ENTITY_DELETED
-                | ledger_kind::ENTITY_ATTRIBUTE_CHANGED
-                | ledger_kind::ENTITY_ATTRIBUTE_REMOVED
-        ) {
-            if let Some(entity_id) = serde_json::from_str::<serde_json::Value>(&payload_json)
-                .ok()
-                .and_then(|payload| {
-                    payload
-                        .get("entity_id")
-                        .and_then(|value| value.as_str())
-                        .map(str::to_string)
-                })
-            {
-                affected_entities.insert(entity_id);
+                asset_ids.insert(asset_id.to_string());
             }
         }
     }
-    Ok(())
+    let mut paths = Vec::new();
+    for asset_id in asset_ids {
+        if let Some(path) = images::delete_asset_by_id(conn, &asset_id)? {
+            if !paths.contains(&path) {
+                paths.push(path);
+            }
+        }
+    }
+    Ok(paths)
 }
 
 pub(super) fn remove_reply_in_tx(
@@ -64,26 +64,30 @@ pub(super) fn remove_reply_in_tx(
     story_id: &str,
     reply_id: &str,
 ) -> AppResult<Vec<String>> {
-    let mut image_paths = images::image_paths_for_entry(tx, reply_id)?;
-    let mut doomed_ids = HashSet::new();
-    let mut affected_entities = HashSet::new();
-    collect_cascade_effects(
-        tx,
-        reply_id,
-        &mut doomed_ids,
-        &mut affected_entities,
-        &mut image_paths,
-    )?;
-    let deleted = tx.execute(
-        "DELETE FROM ledger_entries WHERE id = ?1 AND story_id = ?2 AND kind = ?3",
-        rusqlite::params![reply_id, story_id, ledger_kind::NARRATION],
-    )?;
-    if deleted != 1 {
+    let reply = ledger_repository::get_entry(tx, reply_id)?;
+    if reply.story_id != story_id || reply.kind != ledger_kind::NARRATION {
         return Err(AppError::Invalid(
             "narration to replace no longer exists".into(),
         ));
     }
+    let turn_id = reply
+        .turn_id
+        .ok_or_else(|| AppError::Invalid("narration has no owning turn".into()))?;
+    let doomed = entries_for_turn(tx, &turn_id)?
+        .into_iter()
+        .filter(|entry| entry.kind != ledger_kind::PLAYER_MESSAGE)
+        .collect::<Vec<_>>();
+    let image_paths = delete_turn_images(tx, &doomed)?;
+    let doomed_ids = doomed
+        .iter()
+        .map(|entry| entry.id.clone())
+        .collect::<HashSet<_>>();
+    let affected_entities = touched_entities(&doomed);
     compaction::prune_summaries_covering(tx, story_id, &doomed_ids)?;
+    tx.execute(
+        "DELETE FROM ledger_entries WHERE turn_id = ?1 AND kind != ?2",
+        rusqlite::params![turn_id, ledger_kind::PLAYER_MESSAGE],
+    )?;
     entities::projection::replay(tx, story_id, &affected_entities)?;
     Ok(image_paths)
 }
@@ -92,47 +96,31 @@ fn erase_last_exchange_in_tx(
     tx: &rusqlite::Transaction<'_>,
     story_id: &str,
 ) -> AppResult<(Vec<String>, Vec<String>)> {
-    let Some(last) = ledger_repository::last_active_entry(tx, story_id)? else {
+    let Some(last_turn) = turns::last_turn(tx, story_id)? else {
         return Ok((vec![], vec![]));
     };
-    let mut removed = vec![last.id.clone()];
-    let mut image_paths = Vec::new();
-    let mut doomed_ids = HashSet::new();
-    let mut affected_entities = HashSet::new();
-    if last.role() == "narrator" {
-        image_paths = remove_reply_in_tx(tx, story_id, &last.id)?;
-    } else {
-        image_paths.extend(images::image_paths_for_entry(tx, &last.id)?);
-        collect_cascade_effects(
-            tx,
-            &last.id,
-            &mut doomed_ids,
-            &mut affected_entities,
-            &mut image_paths,
-        )?;
-        tx.execute("DELETE FROM ledger_entries WHERE id = ?1", [&last.id])?;
+    if last_turn.status == turns::PENDING {
+        return Err(AppError::Invalid(
+            "cannot erase a turn while it is generating".into(),
+        ));
     }
-
-    let paired = last.role() == "narrator" && last.input_mode() == "generated";
-    if paired {
-        if let Some(prev) = ledger_repository::last_active_entry(tx, story_id)? {
-            if prev.role() == "player" {
-                image_paths.extend(images::image_paths_for_entry(tx, &prev.id)?);
-                collect_cascade_effects(
-                    tx,
-                    &prev.id,
-                    &mut doomed_ids,
-                    &mut affected_entities,
-                    &mut image_paths,
-                )?;
-                removed.push(prev.id.clone());
-                tx.execute("DELETE FROM ledger_entries WHERE id = ?1", [&prev.id])?;
-            }
-        }
-    }
-
+    let entries = entries_for_turn(tx, &last_turn.id)?;
+    let removed = entries
+        .iter()
+        .filter(|entry| entry.visibility == "visible")
+        .map(|entry| entry.id.clone())
+        .collect::<Vec<_>>();
+    let image_paths = delete_turn_images(tx, &entries)?;
+    let doomed_ids = entries
+        .iter()
+        .map(|entry| entry.id.clone())
+        .collect::<HashSet<_>>();
+    let affected_entities = touched_entities(&entries);
     compaction::prune_summaries_covering(tx, story_id, &doomed_ids)?;
-
+    tx.execute(
+        "DELETE FROM turns WHERE id = ?1 AND story_id = ?2",
+        rusqlite::params![last_turn.id, story_id],
+    )?;
     let now = Utc::now().to_rfc3339();
     entities::projection::replay(tx, story_id, &affected_entities)?;
     tx.execute(
@@ -171,6 +159,7 @@ mod tests {
                 [],
             )
             .unwrap();
+            let turn_id = turns::create_turn(&conn, "s").unwrap();
             let action = append_entry(
                 &conn,
                 "s",
@@ -183,6 +172,7 @@ mod tests {
                 }),
                 &json!({"input_mode":mode}),
                 None,
+                Some(&turn_id),
             )
             .unwrap();
             let response = append_entry(
@@ -193,13 +183,15 @@ mod tests {
                 Some("response"),
                 &json!({"input_mode":"generated"}),
                 None,
+                Some(&turn_id),
             )
             .unwrap();
+            turns::set_status(&conn, &turn_id, turns::COMPLETE).unwrap();
             drop(conn);
 
             let (removed, _) =
                 with_transaction(&pool, |tx| erase_last_exchange_in_tx(tx, "s")).unwrap();
-            assert_eq!(removed, vec![response.id, action.id], "mode {mode}");
+            assert_eq!(removed, vec![action.id, response.id], "mode {mode}");
         }
     }
 
@@ -213,6 +205,7 @@ mod tests {
             [],
         )
         .unwrap();
+        let narration_turn = turns::create_turn(&conn, "s").unwrap();
         let narration = append_entry(
             &conn,
             "s",
@@ -221,8 +214,11 @@ mod tests {
             Some("A moonlit harbor."),
             &json!({"input_mode":"generated"}),
             None,
+            Some(&narration_turn),
         )
         .unwrap();
+        turns::set_status(&conn, &narration_turn, turns::COMPLETE).unwrap();
+        let see_turn = turns::create_turn(&conn, "s").unwrap();
         let see = append_entry(
             &conn,
             "s",
@@ -231,6 +227,7 @@ mod tests {
             Some(""),
             &json!({"input_mode":"see"}),
             None,
+            Some(&see_turn),
         )
         .unwrap();
         conn.execute(
@@ -247,8 +244,10 @@ mod tests {
             Some("image"),
             &json!({"asset_id":"image"}),
             Some(&see.id),
+            Some(&see_turn),
         )
         .unwrap();
+        turns::set_status(&conn, &see_turn, turns::COMPLETE).unwrap();
         drop(conn);
 
         let (removed, paths) =
@@ -292,6 +291,7 @@ mod tests {
             [],
         )
         .unwrap();
+        let baseline_turn = turns::create_turn(&conn, "s").unwrap();
         let baseline = append_entry(
             &conn,
             "s",
@@ -300,8 +300,10 @@ mod tests {
             Some("Earlier scene"),
             &json!({"input_mode":"generated"}),
             None,
+            Some(&baseline_turn),
         )
         .unwrap();
+        turns::set_status(&conn, &baseline_turn, turns::COMPLETE).unwrap();
         crate::features::entities::create_entity_with_id_sync(
             &conn,
             "mira",
@@ -382,9 +384,11 @@ mod tests {
             Some("older summary"),
             &json!({"through_entry_id":baseline.id}),
             None,
+            None,
         )
         .unwrap();
 
+        let turn_id = turns::create_turn(&conn, "s").unwrap();
         let player = append_entry(
             &conn,
             "s",
@@ -393,6 +397,7 @@ mod tests {
             Some("act"),
             &json!({"input_mode":"do"}),
             None,
+            Some(&turn_id),
         )
         .unwrap();
         let narration = append_entry(
@@ -403,9 +408,10 @@ mod tests {
             Some("result"),
             &json!({"input_mode":"generated"}),
             None,
+            Some(&turn_id),
         )
         .unwrap();
-        crate::features::entities::update_entity_sync(
+        crate::features::entities::update_entity_in_turn(
             &conn,
             "s",
             "mira",
@@ -413,9 +419,10 @@ mod tests {
             Some("black armor"),
             "narrator_tool",
             Some(&narration.id),
+            Some(&turn_id),
         )
         .unwrap();
-        crate::features::entities::attributes::apply_attribute_delta(
+        crate::features::entities::attributes::apply_attribute_delta_in_turn(
             &conn,
             "s",
             "mira",
@@ -424,9 +431,10 @@ mod tests {
             "latest event",
             &narration.id,
             false,
+            Some(&turn_id),
         )
         .unwrap();
-        crate::features::entities::create_entity_with_id_sync(
+        crate::features::entities::create_entity_with_id_in_turn(
             &conn,
             "temporary",
             "s",
@@ -435,6 +443,7 @@ mod tests {
             None,
             "narrator_tool",
             Some(&narration.id),
+            Some(&turn_id),
         )
         .unwrap();
         let query = append_entry(
@@ -445,6 +454,7 @@ mod tests {
             Some("Looked up Mira"),
             &json!({"entity_ids":["mira"]}),
             Some(&narration.id),
+            Some(&turn_id),
         )
         .unwrap();
         for kind in [
@@ -460,6 +470,7 @@ mod tests {
                 Some("derivative"),
                 &json!({}),
                 Some(&narration.id),
+                Some(&turn_id),
             )
             .unwrap();
         }
@@ -471,8 +482,10 @@ mod tests {
             Some("summary"),
             &json!({"through_entry_id":query.id}),
             None,
+            None,
         )
         .unwrap();
+        turns::set_status(&conn, &turn_id, turns::COMPLETE).unwrap();
         conn.execute(
             "INSERT INTO image_assets (id, entry_id, path, prompt, created_at)
              VALUES ('image', ?1, 'C:/tmp/image.png', 'prompt', 'now')",
@@ -483,7 +496,7 @@ mod tests {
 
         let (removed, paths) =
             with_transaction(&pool, |tx| erase_last_exchange_in_tx(tx, "s")).unwrap();
-        assert_eq!(removed, vec![narration.id, player.id]);
+        assert_eq!(removed, vec![player.id, narration.id]);
         assert_eq!(paths, vec!["C:/tmp/image.png"]);
         let conn = pool.get().unwrap();
         assert_eq!(
@@ -582,6 +595,7 @@ mod tests {
             [],
         )
         .unwrap();
+        let turn_id = turns::create_turn(&conn, "s").unwrap();
         let action = append_entry(
             &conn,
             "s",
@@ -590,6 +604,7 @@ mod tests {
             Some("act"),
             &json!({"input_mode":"do"}),
             None,
+            Some(&turn_id),
         )
         .unwrap();
         let narration = append_entry(
@@ -600,9 +615,10 @@ mod tests {
             Some("result"),
             &json!({"input_mode":"generated"}),
             None,
+            Some(&turn_id),
         )
         .unwrap();
-        entities::create_entity_with_id_sync(
+        entities::create_entity_with_id_in_turn(
             &conn,
             "temporary",
             "s",
@@ -611,13 +627,15 @@ mod tests {
             None,
             "narrator_tool",
             Some(&narration.id),
+            Some(&turn_id),
         )
         .unwrap();
+        turns::set_status(&conn, &turn_id, turns::COMPLETE).unwrap();
         drop(conn);
 
         let (removed, _) =
             with_transaction(&pool, |tx| erase_last_exchange_in_tx(tx, "s")).unwrap();
-        assert_eq!(removed, vec![narration.id, action.id]);
+        assert_eq!(removed, vec![action.id, narration.id]);
 
         let conn = pool.get().unwrap();
         let counts: (i64, i64) = conn
@@ -630,5 +648,38 @@ mod tests {
             )
             .unwrap();
         assert_eq!(counts, (0, 0));
+    }
+
+    #[test]
+    fn erase_refuses_a_pending_turn_without_deleting_entries() {
+        let pool = crate::shared::db::test_pool();
+        let conn = pool.get().unwrap();
+        conn.execute(
+            "INSERT INTO stories (id, title, created_at, updated_at, settings_json)
+             VALUES ('s', 'story', 'now', 'now', '{}')",
+            [],
+        )
+        .unwrap();
+        let turn_id = turns::create_turn(&conn, "s").unwrap();
+        let action = append_entry(
+            &conn,
+            "s",
+            ledger_kind::PLAYER_MESSAGE,
+            "visible",
+            Some("act"),
+            &json!({"input_mode":"do"}),
+            None,
+            Some(&turn_id),
+        )
+        .unwrap();
+        drop(conn);
+
+        let error = with_transaction(&pool, |tx| erase_last_exchange_in_tx(tx, "s")).unwrap_err();
+        assert!(matches!(
+            error,
+            AppError::Invalid(message)
+                if message == "cannot erase a turn while it is generating"
+        ));
+        assert!(ledger_repository::get_entry(&pool.get().unwrap(), &action.id).is_ok());
     }
 }

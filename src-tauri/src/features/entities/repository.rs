@@ -64,6 +64,31 @@ pub fn create_entity_with_id_sync(
     source: &str,
     target_entry_id: Option<&str>,
 ) -> AppResult<Entity> {
+    create_entity_with_id_in_turn(
+        conn,
+        id,
+        story_id,
+        entity_kind,
+        name,
+        appearance_anchor,
+        source,
+        target_entry_id,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn create_entity_with_id_in_turn(
+    conn: &rusqlite::Connection,
+    id: &str,
+    story_id: &str,
+    entity_kind: &str,
+    name: &str,
+    appearance_anchor: Option<&str>,
+    source: &str,
+    target_entry_id: Option<&str>,
+    turn_id: Option<&str>,
+) -> AppResult<Entity> {
     let name = name.trim();
     if name.is_empty() {
         return Err(AppError::Invalid("name must not be empty".into()));
@@ -84,6 +109,7 @@ pub fn create_entity_with_id_sync(
         target_entry_id,
         &format!("{name} was added as a {entity_kind}."),
         &event,
+        turn_id,
     )?;
     Ok(Entity {
         id: id.to_string(),
@@ -130,6 +156,29 @@ pub fn update_entity_sync(
     source: &str,
     target_entry_id: Option<&str>,
 ) -> AppResult<Entity> {
+    update_entity_in_turn(
+        conn,
+        story_id,
+        entity_id,
+        name,
+        appearance_anchor,
+        source,
+        target_entry_id,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn update_entity_in_turn(
+    conn: &rusqlite::Connection,
+    story_id: &str,
+    entity_id: &str,
+    name: &str,
+    appearance_anchor: Option<&str>,
+    source: &str,
+    target_entry_id: Option<&str>,
+    turn_id: Option<&str>,
+) -> AppResult<Entity> {
     let name = name.trim();
     if name.is_empty() {
         return Err(AppError::Invalid("name must not be empty".into()));
@@ -158,7 +207,7 @@ pub fn update_entity_sync(
         },
         source: source.to_string(),
     };
-    projection::record(conn, story_id, target_entry_id, &content, &event)?;
+    projection::record(conn, story_id, target_entry_id, &content, &event, turn_id)?;
     Ok(Entity {
         name: name.into(),
         appearance_anchor: anchor.map(str::to_string),
@@ -184,6 +233,7 @@ pub(crate) fn delete_entity_sync(
         None,
         &format!("{name} was removed from the authoritative entity state."),
         &event,
+        None,
     )?;
     Ok(())
 }

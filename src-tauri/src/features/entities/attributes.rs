@@ -66,6 +66,7 @@ pub fn clamp_delta(
 /// Applies a proposed delta with clamping and rate-limiting, and logs an
 /// append-only ledger event. Returns `(before, after)`.
 #[allow(clippy::too_many_arguments)]
+#[cfg(test)]
 pub fn apply_attribute_delta(
     conn: &rusqlite::Connection,
     story_id: &str,
@@ -75,6 +76,23 @@ pub fn apply_attribute_delta(
     cause: &str,
     entry_id: &str,
     dramatic: bool,
+) -> AppResult<(f64, f64)> {
+    apply_attribute_delta_in_turn(
+        conn, story_id, entity_id, attribute, delta, cause, entry_id, dramatic, None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn apply_attribute_delta_in_turn(
+    conn: &rusqlite::Connection,
+    story_id: &str,
+    entity_id: &str,
+    attribute: &AttributeRegistryEntry,
+    delta: f64,
+    cause: &str,
+    entry_id: &str,
+    dramatic: bool,
+    turn_id: Option<&str>,
 ) -> AppResult<(f64, f64)> {
     let (before, current_source) = peek_entity_attribute(conn, story_id, entity_id, attribute)?;
     if current_source.as_deref() == Some("user") {
@@ -104,6 +122,7 @@ pub fn apply_attribute_delta(
             attribute.canonical_name, before, after
         ),
         &event,
+        turn_id,
     )?;
     Ok((before, after))
 }
@@ -218,6 +237,7 @@ pub(crate) fn set_entity_attribute_sync(
                 .unwrap_or_else(|| "unset".into())
         ),
         &event,
+        None,
     )?;
     let updated_at = conn.query_row(
         "SELECT updated_at FROM entity_attributes
@@ -263,6 +283,7 @@ pub(crate) fn remove_entity_attribute_sync(
         None,
         &format!("User removed {name} (previously {before})."),
         &event,
+        None,
     )?;
     Ok(())
 }
@@ -415,6 +436,7 @@ mod tests {
             "narrator",
             "generated",
             "Scene",
+            None,
             None,
         )
         .unwrap();

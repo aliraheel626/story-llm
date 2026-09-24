@@ -161,6 +161,7 @@ mod tests {
             content: content.map(str::to_string),
             payload,
             target_entry_id: None,
+            turn_id: None,
             created_at: "now".into(),
         }
     }
@@ -330,6 +331,7 @@ mod tests {
             Some("Stealth succeeded."),
             &json!({}),
             None,
+            None,
         )
         .unwrap();
         drop(conn);
@@ -427,6 +429,7 @@ mod tests {
             Some("Keep the rain relentless."),
             &json!({"input_mode":"guide"}),
             None,
+            None,
         )
         .unwrap();
         let response = repository::append_entry(
@@ -436,6 +439,7 @@ mod tests {
             "visible",
             Some("Rain lashes the roof."),
             &json!({"input_mode":"generated"}),
+            None,
             None,
         )
         .unwrap();
@@ -466,6 +470,7 @@ mod tests {
             Some("Keep this older turn."),
             &json!({"input_mode":"do"}),
             None,
+            None,
         )
         .unwrap();
         let narration = repository::append_entry(
@@ -475,6 +480,7 @@ mod tests {
             "visible",
             Some("Temporary narration."),
             &json!({"input_mode":"generated"}),
+            None,
             None,
         )
         .unwrap();
@@ -486,6 +492,7 @@ mod tests {
             Some("Looked up: Bob"),
             &json!({"entity_ids":["bob"]}),
             Some(&narration.id),
+            None,
         )
         .unwrap();
         repository::append_entry(
@@ -495,6 +502,7 @@ mod tests {
             "hidden",
             Some("Invalid after the query is deleted."),
             &json!({"through_entry_id":query.id,"through_seq":query.seq}),
+            None,
             None,
         )
         .unwrap();
@@ -535,6 +543,7 @@ mod tests {
             Some("The archive was entered."),
             &json!({"input_mode":"generated"}),
             None,
+            None,
         )
         .unwrap();
         repository::append_entry(
@@ -544,6 +553,7 @@ mod tests {
             "hidden",
             Some("The party entered the archive."),
             &json!({"through_entry_id":old_narration.id,"through_seq":old_narration.seq}),
+            None,
             None,
         )
         .unwrap();
@@ -555,6 +565,7 @@ mod tests {
             Some("I inspect the sealed door."),
             &json!({"input_mode":"do"}),
             None,
+            None,
         )
         .unwrap();
         let retry_target = repository::append_entry(
@@ -565,6 +576,7 @@ mod tests {
             Some("The seal begins to glow."),
             &json!({"input_mode":"generated"}),
             None,
+            None,
         )
         .unwrap();
         repository::append_entry(
@@ -574,6 +586,7 @@ mod tests {
             "hidden",
             Some("The party reached the sealed door."),
             &json!({"through_entry_id":retry_target.id,"through_seq":retry_target.seq}),
+            None,
             None,
         )
         .unwrap();
@@ -591,6 +604,7 @@ mod tests {
                 "through_entry_id": intervening_player.id,
                 "through_seq": intervening_player.seq,
             }),
+            None,
             None,
         )
         .unwrap();

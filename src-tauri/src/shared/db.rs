@@ -1,5 +1,6 @@
 use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::OptionalExtension;
+use std::collections::HashMap;
 use std::path::Path;
 use uuid::Uuid;
 
@@ -47,6 +48,17 @@ fn run_migrations(conn: &mut PooledConn) -> AppResult<()> {
             settings_json TEXT NOT NULL DEFAULT '{}'
         );
 
+        CREATE TABLE IF NOT EXISTS turns (
+            id TEXT PRIMARY KEY,
+            story_id TEXT NOT NULL REFERENCES stories(id) ON DELETE CASCADE,
+            seq INTEGER NOT NULL,
+            status TEXT NOT NULL CHECK (status IN ('pending', 'complete', 'failed')),
+            created_at TEXT NOT NULL,
+            UNIQUE(story_id, seq)
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_turns_one_pending
+            ON turns(story_id) WHERE status = 'pending';
+
         CREATE TABLE IF NOT EXISTS ledger_entries (
             id TEXT PRIMARY KEY,
             story_id TEXT NOT NULL REFERENCES stories(id) ON DELETE CASCADE,
@@ -56,6 +68,7 @@ fn run_migrations(conn: &mut PooledConn) -> AppResult<()> {
             content TEXT,
             payload_json TEXT NOT NULL DEFAULT '{}',
             target_entry_id TEXT REFERENCES ledger_entries(id) ON DELETE CASCADE,
+            turn_id TEXT REFERENCES turns(id) ON DELETE CASCADE,
             created_at TEXT NOT NULL,
             UNIQUE(story_id, seq)
         );
@@ -125,10 +138,190 @@ fn run_migrations(conn: &mut PooledConn) -> AppResult<()> {
         );
         "#,
     )?;
+    ensure_ledger_turn_column(conn)?;
     migrate_ledger_retention_settings(conn)?;
     migrate_narrator_memory_settings(conn)?;
     migrate_author_notes(conn)?;
     migrate_narrator_tools(conn)?;
+    migrate_turns_v1(conn)?;
+    conn.execute(
+        "UPDATE turns SET status = 'failed' WHERE status = 'pending'",
+        [],
+    )?;
+    Ok(())
+}
+
+fn ensure_ledger_turn_column(conn: &rusqlite::Connection) -> AppResult<()> {
+    let has_turn_id: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('ledger_entries') WHERE name = 'turn_id')",
+        [],
+        |row| row.get(0),
+    )?;
+    if !has_turn_id {
+        conn.execute(
+            "ALTER TABLE ledger_entries
+             ADD COLUMN turn_id TEXT REFERENCES turns(id) ON DELETE CASCADE",
+            [],
+        )?;
+    }
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_ledger_turn ON ledger_entries(turn_id)",
+        [],
+    )?;
+    Ok(())
+}
+
+fn migrate_turns_v1(conn: &mut rusqlite::Connection) -> AppResult<()> {
+    const MIGRATION_KEY: &str = "migration_turns_v1";
+
+    #[derive(Debug)]
+    struct LegacyEntry {
+        id: String,
+        kind: String,
+        visibility: String,
+        payload: serde_json::Value,
+        target_entry_id: Option<String>,
+        created_at: String,
+    }
+
+    #[derive(Debug)]
+    struct BackfilledTurn {
+        id: String,
+        created_at: String,
+        has_player: bool,
+        has_narration: bool,
+        has_image: bool,
+        visible_count: usize,
+    }
+
+    let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+    let migrated: bool = tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM settings WHERE key = ?1)",
+        [MIGRATION_KEY],
+        |row| row.get(0),
+    )?;
+    if migrated {
+        tx.commit()?;
+        return Ok(());
+    }
+
+    let story_ids = {
+        let mut stmt = tx.prepare("SELECT id FROM stories ORDER BY created_at, id")?;
+        let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+        rows.collect::<Result<Vec<_>, _>>()?
+    };
+    for story_id in story_ids {
+        let entries = {
+            let mut stmt = tx.prepare(
+                "SELECT id, kind, visibility, payload_json, target_entry_id, created_at
+                 FROM ledger_entries WHERE story_id = ?1 ORDER BY seq ASC",
+            )?;
+            let rows = stmt.query_map([&story_id], |row| {
+                let raw: String = row.get(3)?;
+                Ok(LegacyEntry {
+                    id: row.get(0)?,
+                    kind: row.get(1)?,
+                    visibility: row.get(2)?,
+                    payload: serde_json::from_str(&raw)
+                        .unwrap_or(serde_json::Value::Object(Default::default())),
+                    target_entry_id: row.get(4)?,
+                    created_at: row.get(5)?,
+                })
+            })?;
+            rows.collect::<Result<Vec<_>, _>>()?
+        };
+
+        let mut turns = Vec::<BackfilledTurn>::new();
+        let mut mapped = HashMap::<String, usize>::new();
+        let mut open_player = None::<usize>;
+        for entry in entries {
+            let turn_index = if entry.visibility == "visible" && entry.kind == kind::PLAYER_MESSAGE
+            {
+                turns.push(BackfilledTurn {
+                    id: Uuid::new_v4().to_string(),
+                    created_at: entry.created_at.clone(),
+                    has_player: true,
+                    has_narration: false,
+                    has_image: false,
+                    visible_count: 1,
+                });
+                let index = turns.len() - 1;
+                open_player = Some(index);
+                Some(index)
+            } else if entry.visibility == "visible" && entry.kind == kind::NARRATION {
+                let generated = entry
+                    .payload
+                    .get("input_mode")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("generated")
+                    == "generated";
+                let joins = open_player.filter(|index| {
+                    let turn = &turns[*index];
+                    generated
+                        && turn.has_player
+                        && !turn.has_narration
+                        && !turn.has_image
+                        && turn.visible_count == 1
+                });
+                let index = match joins {
+                    Some(index) => index,
+                    None => {
+                        turns.push(BackfilledTurn {
+                            id: Uuid::new_v4().to_string(),
+                            created_at: entry.created_at.clone(),
+                            has_player: false,
+                            has_narration: false,
+                            has_image: false,
+                            visible_count: 0,
+                        });
+                        turns.len() - 1
+                    }
+                };
+                turns[index].has_narration = true;
+                turns[index].visible_count += 1;
+                open_player = None;
+                Some(index)
+            } else if entry.visibility == "hidden" {
+                entry
+                    .target_entry_id
+                    .as_ref()
+                    .and_then(|target| mapped.get(target).copied())
+            } else {
+                None
+            };
+
+            if let Some(index) = turn_index {
+                if entry.kind == kind::IMAGE_GENERATED {
+                    turns[index].has_image = true;
+                }
+                mapped.insert(entry.id, index);
+            }
+        }
+
+        for (seq, turn) in turns.iter().enumerate() {
+            let status = if turn.has_narration || turn.has_image {
+                "complete"
+            } else {
+                "failed"
+            };
+            tx.execute(
+                "INSERT INTO turns (id, story_id, seq, status, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                rusqlite::params![turn.id, story_id, seq as i64, status, turn.created_at],
+            )?;
+        }
+        for (entry_id, turn_index) in mapped {
+            tx.execute(
+                "UPDATE ledger_entries SET turn_id = ?1 WHERE id = ?2",
+                rusqlite::params![turns[turn_index].id, entry_id],
+            )?;
+        }
+    }
+    tx.execute(
+        "INSERT INTO settings (key, value) VALUES (?1, '1')",
+        [MIGRATION_KEY],
+    )?;
+    tx.commit()?;
     Ok(())
 }
 
@@ -837,6 +1030,7 @@ mod tests {
             .unwrap()
         };
         assert!(exists("ledger_entries"));
+        assert!(exists("turns"));
         assert!(!exists("timeline_entries"));
         assert!(exists("story_entity_state"));
         assert!(!exists("branches"));
@@ -852,11 +1046,68 @@ mod tests {
             image_columns,
             ["id", "entry_id", "path", "prompt", "created_at"]
         );
+        let ledger_columns = conn
+            .prepare("PRAGMA table_info(ledger_entries)")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert!(ledger_columns.contains(&"turn_id".to_string()));
+        for index in ["idx_turns_one_pending", "idx_ledger_turn"] {
+            assert!(conn
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?1)",
+                    [index],
+                    |row| row.get::<_, bool>(0),
+                )
+                .unwrap());
+        }
         assert!(!exists("story_cards"));
         assert!(!exists("passages"));
         drop(conn);
         drop(pool);
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn existing_ledger_table_gains_nullable_turn_reference_and_index() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "PRAGMA foreign_keys = ON;
+             CREATE TABLE stories(id TEXT PRIMARY KEY);
+             CREATE TABLE turns(id TEXT PRIMARY KEY, story_id TEXT REFERENCES stories(id));
+             CREATE TABLE ledger_entries(
+                 id TEXT PRIMARY KEY,
+                 story_id TEXT NOT NULL REFERENCES stories(id),
+                 target_entry_id TEXT REFERENCES ledger_entries(id)
+             );",
+        )
+        .unwrap();
+        ensure_ledger_turn_column(&conn).unwrap();
+        let column: (String, i64) = conn
+            .query_row(
+                "SELECT name, \"notnull\" FROM pragma_table_info('ledger_entries') WHERE name = 'turn_id'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(column, ("turn_id".into(), 0));
+        assert!(conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'idx_ledger_turn')",
+                [],
+                |row| row.get::<_, bool>(0),
+            )
+            .unwrap());
+        let referenced_table: String = conn
+            .query_row(
+                "SELECT \"table\" FROM pragma_foreign_key_list('ledger_entries') WHERE \"from\" = 'turn_id'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(referenced_table, "turns");
     }
 
     #[test]
@@ -882,7 +1133,8 @@ mod tests {
              CREATE INDEX idx_timeline_story_seq ON timeline_entries(story_id, seq);
              CREATE INDEX idx_timeline_target ON timeline_entries(target_entry_id);
              CREATE INDEX idx_timeline_kind ON timeline_entries(story_id, kind, seq);
-             INSERT INTO settings (key, value) VALUES ('timeline_retention', '{\"tool_call_persistence\":false}');",
+              INSERT INTO settings (key, value) VALUES ('timeline_retention', '{\"tool_call_persistence\":false}');
+              DELETE FROM settings WHERE key = 'migration_turns_v1';",
         )
         .unwrap();
         let attribute_id: String = conn
@@ -914,6 +1166,19 @@ mod tests {
             )
             .unwrap();
         assert_eq!(migrated, (1, "turn".into(), "{\"roll\":7}".into()));
+        let turn_ownership: (String, String, String) = conn
+            .query_row(
+                "SELECT player.turn_id, roll.turn_id, turns.status
+                 FROM ledger_entries AS player
+                 JOIN ledger_entries AS roll ON roll.id = 'roll'
+                 JOIN turns ON turns.id = player.turn_id
+                 WHERE player.id = 'turn'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(turn_ownership.0, turn_ownership.1);
+        assert_eq!(turn_ownership.2, "failed");
         let count: i64 = conn
             .query_row("SELECT COUNT(*) FROM ledger_entries", [], |row| row.get(0))
             .unwrap();
@@ -1423,6 +1688,138 @@ mod tests {
             [],
         )
         .unwrap();
+    }
+
+    #[test]
+    fn turns_backfill_assigns_exact_ownership_and_status_once() {
+        let pool = test_pool();
+        let mut conn = pool.get().unwrap();
+        conn.execute_batch(
+            r#"INSERT INTO stories (id, title, created_at, updated_at, settings_json)
+                   VALUES ('s', 'Story', 'now', 'now', '{}');
+               DELETE FROM settings WHERE key = 'migration_turns_v1';
+               INSERT INTO ledger_entries
+                   (id, story_id, seq, kind, visibility, content, payload_json, target_entry_id, turn_id, created_at)
+               VALUES
+                   ('p1','s',0,'player_message','visible','Act','{"input_mode":"do"}',NULL,NULL,'t0'),
+                   ('roll1','s',1,'diceroll','hidden',NULL,'{}','p1',NULL,'t1'),
+                   ('n1','s',2,'narration','visible','Result','{}',NULL,NULL,'t2'),
+                   ('p2','s',3,'player_message','visible','','{"input_mode":"see"}',NULL,NULL,'t3'),
+                   ('image2','s',4,'image_generated','hidden',NULL,'{"asset_id":"a"}','p2',NULL,'t4'),
+                   ('n2','s',5,'narration','visible','Separate','{}',NULL,NULL,'t5'),
+                   ('p3','s',6,'player_message','visible','','{"input_mode":"see"}',NULL,NULL,'t6'),
+                   ('n3','s',7,'narration','visible','Authored','{"input_mode":"story"}',NULL,NULL,'t7'),
+                   ('edit3','s',8,'content_edited','hidden','Edit','{}','n3',NULL,'t8'),
+                   ('untargeted','s',9,'entity_updated','hidden','UI edit','{"entity_id":"entity","before":{"name":"Before"},"after":{"name":"After"},"source":"user"}',NULL,NULL,'t9'),
+                   ('note','s',10,'context_note_updated','hidden',NULL,'{}',NULL,NULL,'t10'),
+                   ('p4','s',11,'player_message','visible','Act','{"input_mode":"do"}',NULL,NULL,'t11'),
+                   ('n4','s',12,'narration','visible','Default generated','{}',NULL,NULL,'t12');"#,
+        )
+        .unwrap();
+
+        migrate_turns_v1(&mut conn).unwrap();
+        let rows = {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT ledger_entries.id, ledger_entries.turn_id, turns.seq, turns.status
+                     FROM ledger_entries LEFT JOIN turns ON turns.id = ledger_entries.turn_id
+                     WHERE ledger_entries.story_id = 's' ORDER BY ledger_entries.seq",
+                )
+                .unwrap();
+            stmt.query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, Option<i64>>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                ))
+            })
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap()
+        };
+        let by_id = rows
+            .iter()
+            .map(|(id, turn, seq, status)| {
+                (id.as_str(), (turn.as_deref(), *seq, status.as_deref()))
+            })
+            .collect::<HashMap<_, _>>();
+        assert_eq!(by_id["p1"].0, by_id["roll1"].0);
+        assert_eq!(by_id["p1"].0, by_id["n1"].0);
+        assert_eq!(by_id["p1"].1, Some(0));
+        assert_eq!(by_id["p1"].2, Some("complete"));
+        assert_eq!(by_id["p2"].0, by_id["image2"].0);
+        assert_eq!(by_id["p2"].1, Some(1));
+        assert_eq!(by_id["p2"].2, Some("complete"));
+        assert_ne!(by_id["p2"].0, by_id["n2"].0);
+        assert_eq!(by_id["n2"].1, Some(2));
+        assert_eq!(by_id["p3"].1, Some(3));
+        assert_eq!(by_id["p3"].2, Some("failed"));
+        assert_ne!(by_id["p3"].0, by_id["n3"].0);
+        assert_eq!(by_id["n3"].0, by_id["edit3"].0);
+        assert_eq!(by_id["n3"].1, Some(4));
+        assert_eq!(by_id["untargeted"], (None, None, None));
+        assert_eq!(by_id["note"], (None, None, None));
+        assert_eq!(by_id["p4"].0, by_id["n4"].0);
+        assert_eq!(by_id["p4"].1, Some(5));
+
+        let before: Vec<(String, Option<String>)> = rows
+            .iter()
+            .map(|(id, turn, _, _)| (id.clone(), turn.clone()))
+            .collect();
+        migrate_turns_v1(&mut conn).unwrap();
+        let after = conn
+            .prepare("SELECT id, turn_id FROM ledger_entries WHERE story_id = 's' ORDER BY seq")
+            .unwrap()
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap()
+            .collect::<Result<Vec<(String, Option<String>)>, _>>()
+            .unwrap();
+        assert_eq!(after, before);
+        assert!(conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM settings WHERE key = 'migration_turns_v1')",
+                [],
+                |row| row.get::<_, bool>(0),
+            )
+            .unwrap());
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM turns WHERE story_id = 's'",
+                [],
+                |row| row.get::<_, i64>(0)
+            )
+            .unwrap(),
+            6
+        );
+    }
+
+    #[test]
+    fn startup_recovers_pending_turns_as_failed() {
+        let dir = std::env::temp_dir().join(format!("story-llm-recovery-{}", Uuid::new_v4()));
+        let pool = init_pool(&dir).unwrap();
+        let conn = pool.get().unwrap();
+        conn.execute(
+            "INSERT INTO stories (id, title, created_at, updated_at, settings_json)
+             VALUES ('s', 'Story', 'now', 'now', '{}')",
+            [],
+        )
+        .unwrap();
+        let turn_id = crate::features::ledger::turns::create_turn(&conn, "s").unwrap();
+        drop(conn);
+        drop(pool);
+
+        let pool = init_pool(&dir).unwrap();
+        let status: String = pool
+            .get()
+            .unwrap()
+            .query_row("SELECT status FROM turns WHERE id = ?1", [turn_id], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(status, "failed");
+        drop(pool);
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

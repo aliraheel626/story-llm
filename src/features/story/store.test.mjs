@@ -22,7 +22,7 @@ let groupRollsByEntry;
 
 const rollEvent = (id, target_entry_id, payload) => ({
   id, story_id: "story", seq: 1, kind: "diceroll", visibility: "hidden",
-  content: null, target_entry_id, created_at: "2026-09-23T12:00:00Z", payload,
+  content: null, target_entry_id, turn_id: null, created_at: "2026-09-23T12:00:00Z", payload,
 });
 
 const renderedReply = (storyId) => {
@@ -55,7 +55,10 @@ globalThis.__storyTestInvoke = async (command, args = {}) => {
       return;
     case "get_story_reasoning_effort": return story.reasoning_effort ?? "";
     case "save_story_reasoning_effort": story.reasoning_effort = args.reasoningEffort; return;
-    case "list_ledger_entries": return { visible: entries.get(args.storyId) ?? [], hidden: hiddenEntries.get(args.storyId) ?? [] };
+    case "list_ledger_entries": return {
+      visible: entries.get(args.storyId) ?? [], hidden: hiddenEntries.get(args.storyId) ?? [],
+      turns: (entries.get(args.storyId) ?? []).filter((entry) => entry.turn_id).map((entry) => ({ id: entry.turn_id, status: entry.turn_status ?? "complete" })),
+    };
     case "list_images_for_story":
       if (nextImageLoad) {
         const load = nextImageLoad;
@@ -73,7 +76,7 @@ globalThis.__storyTestInvoke = async (command, args = {}) => {
       return { entry_id: args.entryId, stream_id: `stream-${calls.length}` };
     case "erase_last_exchange": images.set(args.storyId, []); return ["see-action"];
     case "submit_turn": return {
-      entry: { id: `action-${calls.length}`, story_id: args.storyId, kind: "player_message", payload: { input_mode: args.mode }, content: args.content },
+      entry: { id: `action-${calls.length}`, story_id: args.storyId, kind: "player_message", payload: { input_mode: args.mode }, content: args.content, turn_id: `turn-${calls.length}` },
       stream_id: `stream-${calls.length}`,
     };
     default: throw new Error(`Unmocked command: ${command}`);
@@ -126,7 +129,7 @@ test("rapid independent toggles remain isolated by story and failed saves roll b
 
 test("replacement keeps original through streaming and failure, then clears old caches on success", async () => {
   const storyId = store.getState().activeStoryId;
-  const original = { id: "original", story_id: storyId, kind: "narration", payload: { input_mode: "generated" }, content: "Original" };
+  const original = { id: "original", story_id: storyId, kind: "narration", payload: { input_mode: "generated" }, content: "Original", turn_id: "turn-original" };
   const replacement = { ...original, id: "replacement", content: "Replacement" };
   entries.set(storyId, [original]);
   hiddenEntries.set(storyId, [rollEvent("old-roll", original.id, { chance_percent: 50, roll: 90, outcome: "success", seed: 1, reason: "Old roll" })]);
@@ -159,6 +162,21 @@ test("replacement keeps original through streaming and failure, then clears old 
   assert.doesNotMatch(html, /Old roll/);
   assert.equal(calls.some(({ command }) => command.startsWith("list_") && command.includes("roll")), false);
   assert.ok(calls.some(({ command }) => command === "list_entities"));
+});
+
+test("failed last turns render a status beside Retry", async () => {
+  const storyId = store.getState().activeStoryId;
+  const failed = { id: "failed-action", story_id: storyId, kind: "player_message", payload: { input_mode: "do" }, content: "Try", turn_id: "failed-turn", turn_status: "failed" };
+  entries.set(storyId, [failed]);
+  await store.getState().loadLedger(storyId);
+  assert.deepEqual(store.getState().bundles[storyId].turns, [{ id: "failed-turn", status: "failed" }]);
+  const html = renderToStaticMarkup(createElement(LedgerEntryView, {
+    entry: failed, storyId, isLast: true, retryEntryId: failed.id, turnFailed: true,
+  }));
+  assert.match(html, /Retry/);
+  assert.match(html, /Failed/);
+  entries.set(storyId, [{ id: "replacement", story_id: storyId, kind: "narration", payload: { input_mode: "generated" }, content: "Replacement", turn_id: "turn-original" }]);
+  await store.getState().loadLedger(storyId);
 });
 
 test("image events arriving during refresh survive an older list response", async () => {

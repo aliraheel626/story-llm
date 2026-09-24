@@ -11,6 +11,7 @@ pub struct LedgerEntry {
     pub content: Option<String>,
     pub payload: Value,
     pub target_entry_id: Option<String>,
+    pub turn_id: Option<String>,
     pub created_at: String,
 }
 
@@ -23,6 +24,7 @@ impl LedgerEntry {
         }
     }
 
+    #[cfg(test)]
     pub fn input_mode(&self) -> &str {
         self.payload
             .get("input_mode")
@@ -35,6 +37,13 @@ impl LedgerEntry {
 pub struct LedgerSnapshot {
     pub visible: Vec<LedgerEntry>,
     pub hidden: Vec<LedgerEntry>,
+    pub turns: Vec<TurnSummary>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TurnSummary {
+    pub id: String,
+    pub status: String,
 }
 
 pub mod kind {
@@ -69,6 +78,7 @@ mod tests {
             content: Some("action".into()),
             payload: json!({"input_mode":"do"}),
             target_entry_id: None,
+            turn_id: None,
             created_at: "now".into(),
         };
         assert_eq!(entry.role(), "player");

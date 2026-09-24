@@ -301,6 +301,7 @@ mod tests {
             Some("Looked up: Bob"),
             &json!({"entity_ids":["bob"]}),
             None,
+            None,
         )
         .unwrap();
         conn.execute(

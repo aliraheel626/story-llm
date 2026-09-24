@@ -19,8 +19,20 @@ pub(super) fn edit_ledger_entry(
         return Err(AppError::Invalid("content must not be empty".into()));
     }
     let (image_paths, entry) = with_transaction(pool, |tx| {
-        let image_paths = images::detach_from_entry(tx, &entry_id)?;
         let target = ledger_repository::get_entry(tx, &entry_id)?;
+        if let Some(turn_id) = &target.turn_id {
+            let pending: bool = tx.query_row(
+                "SELECT status = 'pending' FROM turns WHERE id = ?1",
+                [turn_id],
+                |row| row.get(0),
+            )?;
+            if pending {
+                return Err(AppError::Invalid(
+                    "cannot edit an entry while its turn is generating".into(),
+                ));
+            }
+        }
+        let image_paths = images::detach_from_entry(tx, &entry_id)?;
         ledger_repository::append_entry(
             tx,
             &target.story_id,
@@ -29,6 +41,7 @@ pub(super) fn edit_ledger_entry(
             Some(content),
             &serde_json::json!({"reason":"user_edit"}),
             Some(&entry_id),
+            target.turn_id.as_deref(),
         )?;
         Ok((image_paths, ledger_repository::active_entry(tx, &entry_id)?))
     })?;

@@ -11,11 +11,12 @@ interface LedgerEntryViewProps {
   isLast: boolean;
   retryEntryId: string;
   canRetry?: boolean;
+  turnFailed?: boolean;
   images?: StoryImage[];
   rolls?: Roll[];
 }
 
-export function LedgerEntryView({ entry, storyId, isLast, retryEntryId, canRetry = true, images, rolls }: LedgerEntryViewProps) {
+export function LedgerEntryView({ entry, storyId, isLast, retryEntryId, canRetry = true, turnFailed = false, images, rolls }: LedgerEntryViewProps) {
   const streaming = useStoryStore((s) => s.bundles[storyId]?.streaming);
   const requestPending = useStoryStore((s) => s.bundles[storyId]?.requestPending ?? false);
   const retryNarration = useStoryStore((s) => s.retryNarration);
@@ -98,6 +99,7 @@ export function LedgerEntryView({ entry, storyId, isLast, retryEntryId, canRetry
             {isLast && !anyStreamBusy && (
               <>
                 {canRetry && <button onClick={() => runAction(() => retryNarration(storyId, retryEntryId))} disabled={actionBusy} className="rounded border border-border bg-bg px-2 py-0.5 text-[11px] text-muted hover:text-text disabled:opacity-40">Retry</button>}
+                {turnFailed && <span className="px-1 py-0.5 text-[11px] text-danger">Failed</span>}
                 <button onClick={() => runAction(() => eraseLastExchange(storyId))} disabled={actionBusy} className="rounded border border-border bg-bg px-2 py-0.5 text-[11px] text-danger hover:opacity-80 disabled:opacity-40">Erase</button>
               </>
             )}
@@ -128,6 +130,7 @@ export function LedgerEntryView({ entry, storyId, isLast, retryEntryId, canRetry
           {isLast && !anyStreamBusy && (
             <>
               {canRetry && <button onClick={() => runAction(() => retryNarration(storyId, retryEntryId))} disabled={actionBusy} className="rounded border border-border bg-bg px-2 py-0.5 text-[11px] text-muted hover:text-text disabled:opacity-40">Retry</button>}
+              {turnFailed && <span className="px-1 py-0.5 text-[11px] text-danger">Failed</span>}
               <button onClick={() => runAction(() => eraseLastExchange(storyId))} disabled={actionBusy} className="rounded border border-border bg-bg px-2 py-0.5 text-[11px] text-danger hover:opacity-80 disabled:opacity-40">Erase</button>
             </>
           )}
@@ -179,6 +182,7 @@ export function LedgerEntryView({ entry, storyId, isLast, retryEntryId, canRetry
                 >
                   Retry
                 </button>}
+                {turnFailed && <span className="px-1 py-0.5 text-[11px] text-danger">Failed</span>}
                 <button
                   onClick={() => runAction(() => eraseLastExchange(storyId))}
                   disabled={actionBusy}

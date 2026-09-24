@@ -124,6 +124,7 @@ where
                             "entity_notes": artifact.0.entity_notes, "open_threads": artifact.0.open_threads,
                             "unresolved_mechanics": artifact.0.unresolved_mechanics}),
                         None,
+                        None,
                     )?;
                 }
                 Ok(())

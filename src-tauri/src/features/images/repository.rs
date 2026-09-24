@@ -75,14 +75,29 @@ fn delete_for_entry(tx: &rusqlite::Transaction<'_>, entry_id: &str) -> AppResult
 
 pub fn detach_from_entry(tx: &rusqlite::Transaction<'_>, entry_id: &str) -> AppResult<Vec<String>> {
     let paths = image_paths_for_entry(tx, entry_id)?;
-    tx.execute(
-        "DELETE FROM ledger_entries WHERE kind = ?1 AND (
-             target_entry_id = ?2 OR
-             CASE WHEN json_valid(payload_json) THEN json_extract(payload_json, '$.asset_id') END
-                 IN (SELECT id FROM image_assets WHERE entry_id = ?2)
-         )",
-        rusqlite::params![ledger_kind::IMAGE_GENERATED, entry_id],
-    )?;
+    let asset_ids = {
+        let mut stmt = tx.prepare("SELECT id FROM image_assets WHERE entry_id = ?1")?;
+        let rows = stmt.query_map([entry_id], |row| row.get::<_, String>(0))?;
+        rows.collect::<Result<Vec<_>, _>>()?
+    };
+    if !asset_ids.is_empty() {
+        let events = {
+            let mut stmt =
+                tx.prepare("SELECT id, payload_json FROM ledger_entries WHERE kind = ?1")?;
+            let rows = stmt.query_map([ledger_kind::IMAGE_GENERATED], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })?;
+            rows.collect::<Result<Vec<_>, _>>()?
+        };
+        for (event_id, payload) in events {
+            let asset_id = serde_json::from_str::<serde_json::Value>(&payload)
+                .ok()
+                .and_then(|value| value.get("asset_id")?.as_str().map(str::to_string));
+            if asset_id.is_some_and(|asset_id| asset_ids.contains(&asset_id)) {
+                tx.execute("DELETE FROM ledger_entries WHERE id = ?1", [event_id])?;
+            }
+        }
+    }
     delete_for_entry(tx, entry_id)?;
     Ok(paths)
 }

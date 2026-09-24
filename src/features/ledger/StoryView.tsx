@@ -25,6 +25,7 @@ export function StoryView() {
   const imagesByEntry = useStoryStore((s) => activeStoryId ? s.bundles[activeStoryId]?.imagesByEntry : undefined);
   const streaming = useStoryStore((s) => activeStoryId ? s.bundles[activeStoryId]?.streaming : undefined);
   const hidden = useStoryStore((s) => activeStoryId ? s.bundles[activeStoryId]?.hidden : undefined);
+  const turns = useStoryStore((s) => activeStoryId ? s.bundles[activeStoryId]?.turns : undefined);
   const rollsByEntry = useMemo(() => groupRollsByEntry(hidden ?? EMPTY_ENTRIES), [hidden]);
   const lastTurnActivity = useStoryStore((s) => activeStoryId ? s.bundles[activeStoryId]?.turnActivity : undefined);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -117,6 +118,8 @@ export function StoryView() {
               && modeDefinition(ledgerInputMode(actualLastEntry) as ActionMode).display === "hidden"
               ? actualLastEntry
               : undefined;
+            const retryEntryId = hiddenTrailingAction?.id ?? entry.id;
+            const retryTurnId = entries.find((candidate) => candidate.id === retryEntryId)?.turn_id;
             return (
               <div key={entry.id} ref={pinHere ? pinRef : undefined}>
                 {activity && <TurnActivity activity={activity} />}
@@ -124,8 +127,9 @@ export function StoryView() {
                   entry={entry}
                   storyId={activeStoryId!}
                   isLast={isLastEntry}
-                  retryEntryId={hiddenTrailingAction?.id ?? entry.id}
+                  retryEntryId={retryEntryId}
                   canRetry={!(isLastEntry && actualLastEntry?.kind === "player_message" && ledgerInputMode(actualLastEntry) === "see")}
+                  turnFailed={isLastEntry && !!retryTurnId && turns?.some((turn) => turn.id === retryTurnId && turn.status === "failed")}
                   images={imagesByEntry?.[entry.id]}
                   rolls={rollsByEntry?.[entry.id]}
                 />

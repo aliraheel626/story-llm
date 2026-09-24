@@ -8,7 +8,7 @@ use uuid::Uuid;
 
 use crate::features::{
     images,
-    ledger::{model::LedgerEntry, repository as ledger_repository},
+    ledger::{model::LedgerEntry, repository as ledger_repository, turns},
     narrator,
 };
 use crate::shared::db::{with_transaction, Pool};
@@ -210,6 +210,9 @@ async fn replace_narration_entry(
     };
     let scratch = snapshot.pool.get()?;
     with_transaction(live, |tx| {
+        let turn_id = turns::turn_of(tx, target_id)?
+            .ok_or_else(|| AppError::Invalid("narration has no owning turn".into()))?
+            .id;
         let (entries, updated_at, settings_json) = story_revision(tx, story_id)?;
         if entries != snapshot.original_entries
             || updated_at != snapshot.original_updated_at
@@ -232,10 +235,12 @@ async fn replace_narration_entry(
             "generated",
             visible,
             thoughts,
+            Some(&turn_id),
         )?;
         if let Some(staging) = &guard {
-            staging.commit(tx, &passage.id)?;
+            staging.commit(tx, &passage.id, &turn_id)?;
         }
+        turns::set_status(tx, &turn_id, turns::COMPLETE)?;
         Ok((ledger_repository::active_entry(tx, &passage.id)?, paths))
     })
 }
@@ -274,45 +279,67 @@ fn start_replacement_generation(
         before_seq: None,
         purpose: NarratorPurpose::Replacement,
     })?;
+    let turn = {
+        let conn = pool.get()?;
+        turns::turn_of(&conn, &target.id)?
+            .ok_or_else(|| AppError::Invalid("narration has no owning turn".into()))?
+    };
+    with_transaction(pool, |tx| turns::set_status(tx, &turn.id, turns::PENDING))?;
 
     let story_id_bg = story_id.clone();
     let live_pool = pool.clone();
+    let turn_id = turn.id;
     let stream_id = narrator::spawn(prepared, move |app, sid, candidate| async move {
-        let Candidate {
-            visible,
-            thoughts,
-            staging,
-            image_requests,
-        } = candidate;
-        let (entry, image_paths) = replace_narration_entry(
-            &live_pool,
-            &snapshot,
-            &story_id_bg,
-            &target.id,
-            &visible,
-            thoughts.as_deref(),
-            staging,
-        )
-        .await?;
-        images::delete_assets(&image_paths);
-        let _ = app.emit(
-            "narration-done",
-            NarrationDonePayload {
-                stream_id: sid,
-                entry: entry.clone(),
-            },
-        );
-        if !image_requests.is_empty() {
-            images::generate_from_narrator_requests(
-                &app,
-                &live_pool,
-                &entry.id,
-                &visible,
+        let completion = async {
+            let candidate = candidate?;
+            let Candidate {
+                visible,
+                thoughts,
+                staging,
                 image_requests,
-                None,
+            } = candidate;
+            let (entry, image_paths) = replace_narration_entry(
+                &live_pool,
+                &snapshot,
+                &story_id_bg,
+                &target.id,
+                &visible,
+                thoughts.as_deref(),
+                staging,
+            )
+            .await?;
+            images::delete_assets(&image_paths);
+            let _ = app.emit(
+                "narration-done",
+                NarrationDonePayload {
+                    stream_id: sid,
+                    entry: entry.clone(),
+                },
             );
+            if !image_requests.is_empty() {
+                images::generate_from_narrator_requests(
+                    &app,
+                    &live_pool,
+                    images::ImageTarget {
+                        entry_id: entry.id,
+                        expected_content: visible,
+                        source_action_id: None,
+                        turn_id: turn_id.clone(),
+                    },
+                    image_requests,
+                );
+            }
+            Ok(())
         }
-        Ok(())
+        .await;
+        if completion.is_err() {
+            if let Ok(conn) = live_pool.get() {
+                if let Err(error) = turns::set_status(&conn, &turn_id, turns::COMPLETE) {
+                    log::error!("failed to recover retry turn status: {error}");
+                }
+            }
+        }
+        completion
     });
 
     Ok(stream_id)
@@ -335,16 +362,35 @@ pub(super) async fn retry_narration(
             let conn = pool.get()?;
             ledger_repository::active_entry(&conn, &action.id)?
         };
-        let mode = action.input_mode().to_string();
+        let turn = {
+            let conn = pool.get()?;
+            turns::turn_of(&conn, &action.id)?
+                .ok_or_else(|| AppError::Invalid("action has no owning turn".into()))?
+        };
+        if turn.status != turns::FAILED {
+            return Err(AppError::Invalid(
+                "only a failed action turn can be retried".into(),
+            ));
+        }
+        let prepared = narrator::prepare(NarratorInputs {
+            app: &app,
+            settings_pool: pool,
+            world_pool: pool,
+            story_id: &story_id,
+            transcript: history,
+            before_seq: Some(action.seq + 1),
+            purpose: NarratorPurpose::Action,
+        })?;
+        with_transaction(pool, |tx| turns::set_status(tx, &turn.id, turns::PENDING))?;
         start_action_generation(
-            app,
             pool.clone(),
             story_id,
             active_action,
-            mode,
-            history,
-            Some(action.seq + 1),
-        )?
+            turn.id,
+            false,
+            None,
+            prepared,
+        )
     } else {
         start_replacement_generation(app, pool, story_id, entry_id.clone())?
     };
@@ -371,6 +417,7 @@ mod tests {
             [],
         )
         .unwrap();
+        let turn_id = turns::create_turn(&conn, "s").unwrap();
         crate::features::entities::create_entity_with_id_sync(
             &conn,
             "mira",
@@ -400,6 +447,7 @@ mod tests {
             "do",
             "Open the door",
             None,
+            Some(&turn_id),
         )
         .unwrap();
         let reply = ledger_repository::append_story_message(
@@ -409,9 +457,10 @@ mod tests {
             "generated",
             "Original",
             None,
+            Some(&turn_id),
         )
         .unwrap();
-        crate::features::entities::update_entity_sync(
+        crate::features::entities::update_entity_in_turn(
             &conn,
             "s",
             "mira",
@@ -419,6 +468,7 @@ mod tests {
             Some("new cloak"),
             "narrator_tool",
             Some(&reply.id),
+            Some(&turn_id),
         )
         .unwrap();
         append_entry(
@@ -429,8 +479,10 @@ mod tests {
             Some("Old roll"),
             &json!({"roll":99,"chance_percent":50,"seed":123,"outcome":"success"}),
             Some(&reply.id),
+            Some(&turn_id),
         )
         .unwrap();
+        turns::set_status(&conn, &turn_id, turns::COMPLETE).unwrap();
         (pool, action.id, reply.id)
     }
 
@@ -496,6 +548,7 @@ mod tests {
             Some("You was added as a character."),
             &json!({"entity_id":"you","name":"You","source":"story_bootstrap"}),
             None,
+            None,
         )
         .unwrap();
         drop(conn);
@@ -538,7 +591,8 @@ mod tests {
             .unwrap();
         let trust =
             crate::features::entities::attributes::find_attribute_by_id(&conn, &trust_id).unwrap();
-        crate::features::entities::attributes::apply_attribute_delta(
+        let turn_id = turns::turn_of(&conn, &reply).unwrap().unwrap().id;
+        crate::features::entities::attributes::apply_attribute_delta_in_turn(
             &conn,
             "s",
             "you",
@@ -547,6 +601,7 @@ mod tests {
             "original reply",
             &reply,
             false,
+            Some(&turn_id),
         )
         .unwrap();
         drop(conn);
@@ -819,6 +874,7 @@ mod tests {
                 Some("Player edited while retry ran"),
                 &json!({"reason":"user_edit"}),
                 Some(&action),
+                None,
             )?;
             Ok(())
         })

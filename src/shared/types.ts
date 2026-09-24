@@ -39,7 +39,7 @@ export interface ContextSummaryPayload extends LedgerPayloadBase {
 
 interface LedgerEntryBase {
   id: string; story_id: string; seq: number; visibility: LedgerVisibility;
-  content: string | null; target_entry_id: string | null; created_at: string;
+  content: string | null; target_entry_id: string | null; turn_id: string | null; created_at: string;
 }
 export type LedgerEntry =
   | (LedgerEntryBase & { kind: "player_message" | "narration"; payload: NarrativePayload })
@@ -49,7 +49,8 @@ export type LedgerEntry =
   | (LedgerEntryBase & { kind: "image_generated"; payload: ImageGeneratedPayload })
   | (LedgerEntryBase & { kind: "context_summary"; payload: ContextSummaryPayload })
   | (LedgerEntryBase & { kind: "diceroll" | "entity_queried"; payload: LedgerPayloadBase });
-export interface LedgerSnapshot { visible: LedgerEntry[]; hidden: LedgerEntry[] }
+export interface TurnSummary { id: string; status: "pending" | "complete" | "failed" }
+export interface LedgerSnapshot { visible: LedgerEntry[]; hidden: LedgerEntry[]; turns: TurnSummary[] }
 
 export interface SubmitTurnResult { entry: LedgerEntry; stream_id: string }
 export interface RetryResult { entry_id: string; stream_id: string }

@@ -74,6 +74,7 @@ pub(super) fn resolve_roll(chance_percent: u8) -> RollOutcome {
 fn persist_roll(
     conn: &rusqlite::Connection,
     entry_id: &str,
+    turn_id: &str,
     pending: &PendingRoll,
 ) -> AppResult<()> {
     let base = ledger::repository::get_entry(conn, entry_id)?;
@@ -96,6 +97,7 @@ fn persist_roll(
             "seed": pending.output.seed,
         }),
         Some(entry_id),
+        Some(turn_id),
     )?;
     Ok(())
 }
@@ -492,7 +494,12 @@ impl TurnStaging {
     }
 
     /// Replays operations in order inside the narration transaction.
-    pub fn commit(&self, tx: &rusqlite::Transaction, passage_id: &str) -> AppResult<()> {
+    pub fn commit(
+        &self,
+        tx: &rusqlite::Transaction,
+        passage_id: &str,
+        turn_id: &str,
+    ) -> AppResult<()> {
         // Concurrent turns can mint the same name; remap dependent deltas.
         let mut canonical_ids = HashMap::new();
         for op in &self.pending {
@@ -511,7 +518,7 @@ impl TurnStaging {
                     name,
                     appearance_anchor,
                 } => {
-                    entities::create_entity_with_id_sync(
+                    entities::create_entity_with_id_in_turn(
                         tx,
                         id,
                         &self.story_id,
@@ -520,6 +527,7 @@ impl TurnStaging {
                         appearance_anchor.as_deref(),
                         "narrator_tool",
                         Some(passage_id),
+                        Some(turn_id),
                     )?;
                 }
                 PendingOp::UpdateEntity {
@@ -527,7 +535,7 @@ impl TurnStaging {
                     name,
                     appearance_anchor,
                 } => {
-                    entities::update_entity_sync(
+                    entities::update_entity_in_turn(
                         tx,
                         &self.story_id,
                         id,
@@ -535,6 +543,7 @@ impl TurnStaging {
                         appearance_anchor.as_deref(),
                         "narrator_tool",
                         Some(passage_id),
+                        Some(turn_id),
                     )?;
                 }
                 PendingOp::AdjustAttribute {
@@ -549,7 +558,7 @@ impl TurnStaging {
                     } else {
                         attribute.clone()
                     };
-                    attributes::apply_attribute_delta(
+                    attributes::apply_attribute_delta_in_turn(
                         tx,
                         &self.story_id,
                         entity_id,
@@ -558,6 +567,7 @@ impl TurnStaging {
                         cause,
                         passage_id,
                         *dramatic,
+                        Some(turn_id),
                     )?;
                 }
                 PendingOp::Roll(pending) => {
@@ -575,7 +585,7 @@ impl TurnStaging {
                             factor.attribute_name = canonical.canonical_name;
                         }
                     }
-                    persist_roll(tx, passage_id, &pending)?;
+                    persist_roll(tx, passage_id, turn_id, &pending)?;
                 }
                 PendingOp::QueryEntities {
                     entity_ids,
@@ -605,6 +615,7 @@ impl TurnStaging {
                             "name_filter": name_filter,
                         }),
                         Some(passage_id),
+                        Some(turn_id),
                     )?;
                 }
             }
@@ -706,6 +717,7 @@ mod tests {
 
     fn persist_staging(pool: &Pool, story_id: &str, staging: &TurnStaging) {
         let mut conn = pool.get().unwrap();
+        let turn_id = ledger::turns::create_turn(&conn, story_id).unwrap();
         let passage = append_entry(
             &conn,
             story_id,
@@ -714,10 +726,12 @@ mod tests {
             Some("scene"),
             &json!({}),
             None,
+            Some(&turn_id),
         )
         .unwrap();
         let tx = conn.transaction().unwrap();
-        staging.commit(&tx, &passage.id).unwrap();
+        staging.commit(&tx, &passage.id, &turn_id).unwrap();
+        ledger::turns::set_status(&tx, &turn_id, ledger::turns::COMPLETE).unwrap();
         tx.commit().unwrap();
     }
 
@@ -882,6 +896,7 @@ mod tests {
             name_filter: Some("Bob".into()),
         });
         let mut conn = pool.get().unwrap();
+        let turn_id = ledger::turns::create_turn(&conn, &story_id).unwrap();
         let passage = append_entry(
             &conn,
             &story_id,
@@ -890,10 +905,12 @@ mod tests {
             Some("scene"),
             &json!({}),
             None,
+            Some(&turn_id),
         )
         .unwrap();
         let tx = conn.transaction().unwrap();
-        staging.commit(&tx, &passage.id).unwrap();
+        staging.commit(&tx, &passage.id, &turn_id).unwrap();
+        ledger::turns::set_status(&tx, &turn_id, ledger::turns::COMPLETE).unwrap();
         tx.commit().unwrap();
         let (content, payload_json, target): (String, String, String) = conn
             .query_row(

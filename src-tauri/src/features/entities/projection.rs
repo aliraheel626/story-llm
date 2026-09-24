@@ -117,6 +117,7 @@ pub fn record(
     target_entry_id: Option<&str>,
     content: &str,
     event: &EntityEvent,
+    turn_id: Option<&str>,
 ) -> AppResult<LedgerEntry> {
     let entry = repository::append_entry(
         conn,
@@ -126,6 +127,7 @@ pub fn record(
         Some(content),
         &event.payload(),
         target_entry_id,
+        turn_id,
     )?;
     let recorded_event = EntityEvent::from_entry(&entry)
         .ok_or_else(|| AppError::Other("recorded entity event could not be parsed".into()))?;
@@ -253,6 +255,7 @@ mod tests {
             "narrator",
             "generated",
             "A scene",
+            None,
             None,
         )
         .unwrap();

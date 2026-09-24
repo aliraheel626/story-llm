@@ -53,6 +53,7 @@ pub(super) fn write_author_note(pool: &Pool, story_id: &str, note: &str) -> AppR
             Some(&format!("Author's note was updated: {note}")),
             &json!({"author_note": note}),
             None,
+            None,
         )?;
         Ok(())
     })
