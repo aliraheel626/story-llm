@@ -12,6 +12,7 @@ const entries = new Map();
 let failTools = false;
 let nextToolsSave;
 let nextImageLoad;
+let nextLedgerLoad;
 let nextRetry;
 let server;
 let store;
@@ -56,10 +57,18 @@ globalThis.__storyTestInvoke = async (command, args = {}) => {
       return;
     case "get_story_reasoning_effort": return story.reasoning_effort ?? "";
     case "save_story_reasoning_effort": story.reasoning_effort = args.reasoningEffort; return;
-    case "list_ledger_entries": return {
-      visible: entries.get(args.storyId) ?? [], hidden: hiddenEntries.get(args.storyId) ?? [],
-      turns: (entries.get(args.storyId) ?? []).filter((entry) => entry.turn_id).map((entry) => ({ id: entry.turn_id, status: entry.turn_status ?? "complete" })),
-    };
+    case "list_ledger_entries": {
+      const snapshot = {
+        visible: entries.get(args.storyId) ?? [], hidden: hiddenEntries.get(args.storyId) ?? [],
+        turns: (entries.get(args.storyId) ?? []).filter((entry) => entry.turn_id).map((entry) => ({ id: entry.turn_id, status: entry.turn_status ?? "complete" })),
+      };
+      if (nextLedgerLoad) {
+        const wait = nextLedgerLoad;
+        nextLedgerLoad = null;
+        await wait;
+      }
+      return snapshot;
+    }
     case "list_images_for_story":
       if (nextImageLoad) {
         const load = nextImageLoad;
@@ -181,6 +190,78 @@ test("failed last turns render a status beside Retry", async () => {
   await store.getState().loadLedger(storyId);
 });
 
+test("an uncommitted player entry survives refresh during streaming without inventing a turn", async () => {
+  const storyId = "pending-refresh-story";
+  entries.set(storyId, []);
+  await store.getState().loadLedger(storyId);
+  await store.getState().submitTurn(storyId, "say", "Open the gate");
+  const { streaming, entries: optimisticEntries, turns } = store.getState().bundles[storyId];
+  const pending = streaming.pendingEntry;
+  assert.equal(optimisticEntries.length, 1);
+  assert.equal(optimisticEntries[0].id, pending.id);
+  assert.deepEqual(turns, []);
+
+  await store.getState().loadLedger(storyId);
+  assert.deepEqual(store.getState().bundles[storyId].entries, [pending]);
+  entries.set(storyId, [pending]);
+  await store.getState().loadLedger(storyId);
+  assert.deepEqual(store.getState().bundles[storyId].entries, [pending]);
+
+  entries.set(storyId, []);
+  await store.getState().loadLedger(storyId);
+  store.getState()._fail(streaming.streamId, "narration failed");
+  const failed = store.getState().bundles[storyId];
+  assert.deepEqual(failed.entries, []);
+  assert.deepEqual(failed.turns, []);
+  assert.deepEqual(failed.restoreDraft, { mode: "say", content: "Open the gate" });
+  assert.deepEqual(store.getState().consumeRestoreDraft(storyId), { mode: "say", content: "Open the gate" });
+  assert.equal(store.getState().consumeRestoreDraft(storyId), null);
+  assert.equal(store.getState().bundles[storyId].turnError, "narration failed");
+});
+
+test("a refresh in flight cannot reintroduce a player entry after narration fails", async () => {
+  const storyId = "pending-race-story";
+  entries.set(storyId, []);
+  await store.getState().submitTurn(storyId, "do", "Try again");
+  const streamId = store.getState().bundles[storyId].streaming.streamId;
+  let releaseLoad;
+  nextLedgerLoad = new Promise((resolve) => { releaseLoad = resolve; });
+  const refreshing = store.getState().loadLedger(storyId);
+  await Promise.resolve();
+  store.getState()._fail(streamId, "connection lost");
+  releaseLoad();
+  await refreshing;
+  assert.deepEqual(store.getState().bundles[storyId].entries, []);
+  assert.equal(store.getState().bundles[storyId].ledgerLoading, false);
+});
+
+test("a failed legacy action remains visible when the backend snapshot persists it", async () => {
+  const storyId = "persisted-failure-story";
+  entries.set(storyId, []);
+  await store.getState().submitTurn(storyId, "do", "Open the door");
+  const { streaming } = store.getState().bundles[storyId];
+  entries.set(storyId, [{ ...streaming.pendingEntry, turn_status: "failed" }]);
+  store.getState()._fail(streaming.streamId, "provider failed");
+  await new Promise((resolve) => setImmediate(resolve));
+  const bundle = store.getState().bundles[storyId];
+  assert.equal(bundle.entries[0].id, streaming.pendingEntry.id);
+  assert.deepEqual(bundle.turns, [{ id: streaming.pendingEntry.turn_id, status: "failed" }]);
+  assert.deepEqual(bundle.restoreDraft, { mode: "do", content: "Open the door" });
+});
+
+test("retry failure leaves snapshot-provided legacy failed status and does not restore a draft", async () => {
+  const storyId = "legacy-failure-story";
+  const failed = { id: "old-action", story_id: storyId, kind: "player_message", payload: { input_mode: "do" }, content: "Old input", turn_id: "old-turn", turn_status: "failed" };
+  entries.set(storyId, [failed]);
+  await store.getState().loadLedger(storyId);
+  await store.getState().retryNarration(storyId, failed.id);
+  const streamId = store.getState().bundles[storyId].streaming.streamId;
+  store.getState()._fail(streamId, "retry failed");
+  assert.deepEqual(store.getState().bundles[storyId].entries, [failed]);
+  assert.deepEqual(store.getState().bundles[storyId].turns, [{ id: "old-turn", status: "failed" }]);
+  assert.equal(store.getState().bundles[storyId].restoreDraft, null);
+});
+
 test("image events arriving during refresh survive an older list response", async () => {
   const storyId = store.getState().activeStoryId;
   let resolveLoad;
@@ -195,16 +276,17 @@ test("image events arriving during refresh survive an older list response", asyn
 
 test("a new turn waits for in-flight tool saves", async () => {
   const storyId = store.getState().activeStoryId;
+  const submitsBefore = calls.filter(({ command }) => command === "submit_turn").length;
   let releaseSave;
   nextToolsSave = new Promise((resolve) => { releaseSave = resolve; });
   const save = store.getState().saveNarratorTools(storyId, { roll_check: true });
   const submitted = store.getState().submitTurn(storyId, "do", "Try the door");
   await Promise.resolve();
-  assert.equal(calls.filter(({ command }) => command === "submit_turn").length, 0);
+  assert.equal(calls.filter(({ command }) => command === "submit_turn").length, submitsBefore);
   releaseSave();
   await Promise.all([save, submitted]);
   assert.equal(stories.get(storyId).narrator_tools.roll_check, true);
-  assert.equal(calls.filter(({ command }) => command === "submit_turn").length, 1);
+  assert.equal(calls.filter(({ command }) => command === "submit_turn").length, submitsBefore + 1);
   store.getState()._fail(store.getState().bundles[storyId].streaming.streamId, "test cleanup");
 });
 

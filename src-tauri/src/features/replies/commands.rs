@@ -1,6 +1,7 @@
 use tauri::{AppHandle, State};
 
 use crate::features::ledger::model::LedgerEntry;
+use crate::features::ledger::turn_tx::TurnGate;
 use crate::shared::db::Pool;
 use crate::shared::error::AppResult;
 
@@ -14,11 +15,12 @@ use super::{
 pub async fn submit_turn(
     app: AppHandle,
     pool: State<'_, Pool>,
+    gate: State<'_, TurnGate>,
     story_id: String,
     mode: String,
     content: String,
 ) -> AppResult<SubmitTurnResult> {
-    submit::submit_turn(app, pool.inner(), story_id, mode, content).await
+    submit::submit_turn(app, pool.inner(), gate.inner(), story_id, mode, content).await
 }
 
 #[tauri::command]
@@ -34,13 +36,19 @@ pub async fn retry_narration(
 #[tauri::command]
 pub fn edit_ledger_entry(
     pool: State<Pool>,
+    gate: State<TurnGate>,
     entry_id: String,
     content: String,
 ) -> AppResult<LedgerEntry> {
-    edit::edit_ledger_entry(pool.inner(), entry_id, content)
+    edit::edit_ledger_entry(pool.inner(), gate.inner(), entry_id, content)
 }
 
 #[tauri::command]
-pub fn erase_last_exchange(pool: State<Pool>, story_id: String) -> AppResult<Vec<String>> {
+pub fn erase_last_exchange(
+    pool: State<Pool>,
+    gate: State<TurnGate>,
+    story_id: String,
+) -> AppResult<Vec<String>> {
+    gate.check_idle(&story_id)?;
     erase::erase_last_exchange(pool.inner(), story_id)
 }

@@ -33,6 +33,8 @@ interface StreamingState {
   mode: "append" | "replace";
   targetEntryId?: string;
   turnId?: string;
+  pendingEntry?: LedgerEntry;
+  submittedDraft?: { mode: ActionMode; content: string };
   toolActivity?: ToolActivity | null;
   toolLog: ToolActivity[];
 }
@@ -52,6 +54,7 @@ export interface StoryBundle {
   requestPending: boolean;
   streaming: StreamingState | null;
   turnError: string | null;
+  restoreDraft: { mode: ActionMode; content: string } | null;
   turnActivity: TurnActivity | null;
   imagesByEntry: Record<string, StoryImage[]>;
   imagePendingFor: string[];
@@ -89,6 +92,7 @@ interface StoryStoreState {
 
   loadLedger: (storyId: string) => Promise<void>;
   submitTurn: (storyId: string, mode: ActionMode, content: string) => Promise<void>;
+  consumeRestoreDraft: (storyId: string) => { mode: ActionMode; content: string } | null;
   retryNarration: (storyId: string, entryId: string) => Promise<void>;
   eraseLastExchange: (storyId: string) => Promise<void>;
   editEntry: (storyId: string, entryId: string, content: string) => Promise<void>;
@@ -125,6 +129,7 @@ const newBundle = (id: string): StoryBundle => ({
   requestPending: false,
   streaming: null,
   turnError: null,
+  restoreDraft: null,
   turnActivity: null,
   imagesByEntry: {},
   imagePendingFor: [],
@@ -290,7 +295,16 @@ export const useStoryStore = create<StoryStoreState>((set, get) => ({
       const snapshot = await ledgerApi.list(storyId);
       if (!isCurrentGeneration(ledgerGenerations, storyId, generation)) return;
       set((state) => ({
-        bundles: patchBundle(state.bundles, storyId, { entries: snapshot.visible, hidden: snapshot.hidden, turns: snapshot.turns }),
+        bundles: patchBundle(state.bundles, storyId, (bundle) => {
+          const pendingEntry = bundle.streaming?.pendingEntry;
+          return {
+            entries: pendingEntry && !snapshot.visible.some((entry) => entry.id === pendingEntry.id)
+              ? [...snapshot.visible, pendingEntry]
+              : snapshot.visible,
+            hidden: snapshot.hidden,
+            turns: snapshot.turns,
+          };
+        }),
       }));
       if (isCurrentGeneration(ledgerGenerations, storyId, generation)) {
         set((state) => ({ bundles: patchBundle(state.bundles, storyId, { ledgerLoading: false }) }));
@@ -306,7 +320,7 @@ export const useStoryStore = create<StoryStoreState>((set, get) => ({
     if (get().bundles[storyId]?.requestPending || get().bundles[storyId]?.streaming) throw new Error("A narration request is already in progress");
     set((state) => ({ bundles: patchBundle(state.bundles, storyId, { requestPending: true }) }));
     advanceGeneration(ledgerGenerations, storyId);
-    set((state) => ({ bundles: patchBundle(state.bundles, storyId, { turnError: null, ledgerLoading: false }) }));
+    set((state) => ({ bundles: patchBundle(state.bundles, storyId, { turnError: null, restoreDraft: null, ledgerLoading: false }) }));
     try {
       await Promise.all([settingsQueues.get(storyId), reasoningQueues.get(storyId)]);
       const result = await ledgerApi.submitTurn(storyId, mode, content);
@@ -315,10 +329,11 @@ export const useStoryStore = create<StoryStoreState>((set, get) => ({
           entries: bundle.entries.some((entry) => entry.id === result.entry.id)
             ? replaceEntry(bundle.entries, result.entry.id, result.entry)
             : [...bundle.entries, result.entry],
-          turns: result.entry.turn_id && !bundle.turns.some((turn) => turn.id === result.entry.turn_id)
-            ? [...bundle.turns, { id: result.entry.turn_id, status: "pending" }]
-            : bundle.turns,
-          streaming: newStream(result.stream_id, storyId, "append", undefined, result.entry.turn_id ?? undefined),
+          streaming: {
+            ...newStream(result.stream_id, storyId, "append", undefined, result.entry.turn_id ?? undefined),
+            pendingEntry: result.entry,
+            submittedDraft: { mode, content },
+          },
           ledgerLoading: false,
         })),
       }));
@@ -328,6 +343,11 @@ export const useStoryStore = create<StoryStoreState>((set, get) => ({
     } finally {
       set((state) => ({ bundles: patchBundle(state.bundles, storyId, { requestPending: false }) }));
     }
+  },
+  consumeRestoreDraft: (storyId) => {
+    const draft = get().bundles[storyId]?.restoreDraft ?? null;
+    if (draft) set((state) => ({ bundles: patchBundle(state.bundles, storyId, { restoreDraft: null }) }));
+    return draft;
   },
   retryNarration: async (storyId, entryId) => {
     if (get().bundles[storyId]?.requestPending || get().bundles[storyId]?.streaming) throw new Error("A narration request is already in progress");
@@ -488,9 +508,6 @@ export const useStoryStore = create<StoryStoreState>((set, get) => ({
             : bundle.entries.some((entry) => entry.id === payload.entry.id)
               ? replaceEntry(bundle.entries, payload.entry.id, payload.entry)
               : [...bundle.entries, payload.entry],
-          turns: bundle.turns.map((turn) =>
-            turn.id === payload.entry.turn_id ? { ...turn, status: "complete" as const } : turn,
-          ),
           hidden: oldId ? bundle.hidden.filter((entry) => entry.id !== oldId && entry.target_entry_id !== oldId) : bundle.hidden,
           imagesByEntry,
           imagePendingFor: oldId ? removeOne(bundle.imagePendingFor, oldId) : bundle.imagePendingFor,
@@ -510,20 +527,23 @@ export const useStoryStore = create<StoryStoreState>((set, get) => ({
     const found = findStream(get().bundles, streamId);
     if (!found) return;
     const [storyId, current] = found;
+    const pendingEntry = current.pendingEntry;
+    advanceGeneration(ledgerGenerations, storyId);
     set((state) => ({
       bundles: patchBundle(state.bundles, storyId, (bundle) => ({
+        entries: pendingEntry
+          ? bundle.entries.filter((entry) => entry.id !== pendingEntry.id)
+          : bundle.entries,
         streaming: null,
         turnActivity: current.mode === "replace" && current.targetEntryId
           ? { entryId: current.targetEntryId, thoughts: "", tools: [] }
           : null,
         turnError: message,
-        turns: bundle.turns.map((turn) =>
-          turn.id === current.turnId
-            ? { ...turn, status: current.mode === "replace" ? "complete" as const : "failed" as const }
-            : turn,
-        ),
+        restoreDraft: current.mode === "append" ? current.submittedDraft ?? null : null,
+        ledgerLoading: false,
       })),
     }));
+    get().loadLedger(storyId);
   },
   _imagePending: (entryId) => {
     const storyId = findStoryForEntry(get().bundles, entryId);

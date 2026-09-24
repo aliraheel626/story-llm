@@ -38,10 +38,12 @@ export function Composer({ storyId }: { storyId: string | null }) {
 
   const createStory = useStoryStore((s) => s.createStory);
   const submitTurn = useStoryStore((s) => s.submitTurn);
+  const consumeRestoreDraft = useStoryStore((s) => s.consumeRestoreDraft);
   const streaming = useStoryStore((s) => storyId ? s.bundles[storyId]?.streaming : undefined);
   const requestPending = useStoryStore((s) => storyId ? (s.bundles[storyId]?.requestPending ?? false) : false);
   const ledgerLoading = useStoryStore((s) => storyId ? (s.bundles[storyId]?.ledgerLoading ?? false) : false);
   const turnError = useStoryStore((s) => storyId ? s.bundles[storyId]?.turnError : null);
+  const restoreDraft = useStoryStore((s) => storyId ? s.bundles[storyId]?.restoreDraft : null);
   const entries = useStoryStore((s) => storyId ? s.bundles[storyId]?.entries : undefined);
   const imagePendingFor = useStoryStore((s) => storyId ? s.bundles[storyId]?.imagePendingFor : undefined);
   const imageSettings = useImageModelStore((s) => s.settings);
@@ -78,6 +80,15 @@ export function Composer({ storyId }: { storyId: string | null }) {
       loadReasoningEffort(storyId);
     }
   }, [storyId, loadNarratorTools, loadReasoningEffort]);
+
+  useEffect(() => {
+    if (!storyId || !restoreDraft) return;
+    const draft = consumeRestoreDraft(storyId);
+    if (draft) {
+      setMode(draft.mode);
+      setText(draft.content);
+    }
+  }, [storyId, restoreDraft, consumeRestoreDraft]);
 
   useEffect(() => {
     const el = textareaRef.current;

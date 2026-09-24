@@ -1,6 +1,7 @@
 use tauri::State;
 
 use super::{author_note, model::Story, repository, settings};
+use crate::features::ledger::turn_tx::TurnGate;
 use crate::shared::db::Pool;
 use crate::shared::error::AppResult;
 
@@ -24,7 +25,8 @@ pub fn rename_story(pool: State<Pool>, story_id: String, title: String) -> AppRe
 }
 
 #[tauri::command]
-pub fn delete_story(pool: State<Pool>, story_id: String) -> AppResult<()> {
+pub fn delete_story(pool: State<Pool>, gate: State<TurnGate>, story_id: String) -> AppResult<()> {
+    gate.check_idle(&story_id)?;
     repository::delete_story(pool.inner(), &story_id)
 }
 

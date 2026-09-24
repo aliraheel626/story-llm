@@ -7,7 +7,9 @@ use crate::features::{
     images,
     ledger::{
         model::{kind as ledger_kind, LedgerEntry},
-        reducer, repository as ledger_repository, turns,
+        reducer, repository as ledger_repository,
+        turn_tx::{GateGuard, TurnGate},
+        turns,
     },
     narrator, stories,
 };
@@ -70,7 +72,7 @@ fn kick_auto_title(app: &AppHandle, pool: &Pool, story_id: &str) {
 
 pub(super) fn start_action_generation(
     pool: Pool,
-    story_id: String,
+    gate_guard: GateGuard,
     action: LedgerEntry,
     turn: (String, i64),
     is_see: bool,
@@ -78,12 +80,13 @@ pub(super) fn start_action_generation(
     prepared: narrator::Prepared,
 ) -> String {
     let (turn_id, attempt) = turn;
-    let story_id_bg = story_id.clone();
+    let story_id_bg = action.story_id.clone();
     let action_for_done = action.clone();
     let source_action_id = action.id.clone();
     let turn_id_for_done = turn_id.clone();
 
     narrator::spawn(prepared, move |app, sid, candidate| async move {
+        let _gate_guard = gate_guard;
         let completion = async {
             let candidate = candidate?;
             let Candidate {
@@ -193,10 +196,12 @@ pub(super) fn start_action_generation(
 pub(super) async fn submit_turn(
     app: AppHandle,
     pool: &Pool,
+    gate: &TurnGate,
     story_id: String,
     mode: String,
     content: String,
 ) -> AppResult<SubmitTurnResult> {
+    let gate_guard = gate.acquire(&story_id)?;
     if !prompts::TURN_MODES.contains(&mode.as_str()) {
         return Err(AppError::Invalid(format!("invalid turn mode: {mode}")));
     }
@@ -288,7 +293,7 @@ pub(super) async fn submit_turn(
 
     let stream_id = start_action_generation(
         pool.clone(),
-        story_id,
+        gate_guard,
         action.clone(),
         (turn_id, attempt),
         generation_mode == "see",
