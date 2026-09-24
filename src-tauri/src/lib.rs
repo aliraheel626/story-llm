@@ -64,10 +64,10 @@ pub fn run() {
             features::entities::create_entity,
             features::entities::update_entity,
             features::entities::delete_entity,
-            features::entities::attributes::list_entity_attributes,
-            features::entities::attributes::list_attribute_registry,
-            features::entities::attributes::set_entity_attribute,
-            features::entities::attributes::remove_entity_attribute,
+            features::entities::list_entity_attributes,
+            features::entities::list_attribute_registry,
+            features::entities::set_entity_attribute,
+            features::entities::remove_entity_attribute,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
