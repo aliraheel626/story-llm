@@ -75,11 +75,15 @@ fn delete_for_entry(tx: &rusqlite::Transaction<'_>, entry_id: &str) -> AppResult
 
 pub fn detach_from_entry(tx: &rusqlite::Transaction<'_>, entry_id: &str) -> AppResult<Vec<String>> {
     let paths = image_paths_for_entry(tx, entry_id)?;
-    delete_for_entry(tx, entry_id)?;
     tx.execute(
-        "DELETE FROM ledger_entries WHERE kind = ?1 AND target_entry_id = ?2",
+        "DELETE FROM ledger_entries WHERE kind = ?1 AND (
+             target_entry_id = ?2 OR
+             CASE WHEN json_valid(payload_json) THEN json_extract(payload_json, '$.asset_id') END
+                 IN (SELECT id FROM image_assets WHERE entry_id = ?2)
+         )",
         rusqlite::params![ledger_kind::IMAGE_GENERATED, entry_id],
     )?;
+    delete_for_entry(tx, entry_id)?;
     Ok(paths)
 }
 
@@ -114,13 +118,15 @@ mod tests {
     fn detaching_an_entry_removes_only_its_images_and_events() {
         let mut conn = rusqlite::Connection::open_in_memory().unwrap();
         conn.execute_batch(
-            "CREATE TABLE image_assets(id TEXT PRIMARY KEY, entry_id TEXT, path TEXT);
-             CREATE TABLE ledger_entries(id TEXT PRIMARY KEY, kind TEXT, target_entry_id TEXT);
+            r#"CREATE TABLE image_assets(id TEXT PRIMARY KEY, entry_id TEXT, path TEXT);
+             CREATE TABLE ledger_entries(id TEXT PRIMARY KEY, kind TEXT, target_entry_id TEXT, payload_json TEXT);
              INSERT INTO image_assets VALUES ('asset-1', 'entry-1', 'first.png');
              INSERT INTO image_assets VALUES ('asset-2', 'entry-2', 'second.png');
-             INSERT INTO ledger_entries VALUES ('event-1', 'image_generated', 'entry-1');
-             INSERT INTO ledger_entries VALUES ('event-2', 'image_generated', 'entry-2');
-             INSERT INTO ledger_entries VALUES ('event-3', 'content_edited', 'entry-1');",
+             INSERT INTO ledger_entries VALUES ('event-1', 'image_generated', 'entry-1', '{"asset_id":"asset-1"}');
+             INSERT INTO ledger_entries VALUES ('event-2', 'image_generated', 'entry-2', '{"asset_id":"asset-2"}');
+             INSERT INTO ledger_entries VALUES ('event-3', 'content_edited', 'entry-1', '{}');
+             INSERT INTO ledger_entries VALUES ('event-4', 'image_generated', 'see-action', '{"asset_id":"asset-1"}');
+             INSERT INTO ledger_entries VALUES ('event-5', 'image_generated', 'other-see-action', '{"asset_id":"asset-2"}');"#,
         )
         .unwrap();
 
@@ -144,7 +150,7 @@ mod tests {
             .unwrap()
             .collect::<Result<_, _>>()
             .unwrap();
-        assert_eq!(event_ids, vec!["event-2", "event-3"]);
+        assert_eq!(event_ids, vec!["event-2", "event-3", "event-5"]);
         assert_eq!(
             delete_asset_by_id(&tx, "asset-2").unwrap(),
             Some("second.png".into())
