@@ -1,12 +1,14 @@
 use chrono::Utc;
 use rusqlite::OptionalExtension;
-use serde_json::json;
 use uuid::Uuid;
 
-use crate::features::ledger::{model::kind, repository::append_entry};
 use crate::shared::error::{AppError, AppResult};
 
-use super::model::Entity;
+use super::{
+    events::{EntityEvent, NameAnchor},
+    model::Entity,
+    projection,
+};
 
 fn row_to_entity(row: &rusqlite::Row) -> rusqlite::Result<Entity> {
     Ok(Entity {
@@ -68,25 +70,20 @@ pub fn create_entity_with_id_sync(
     }
     let now = Utc::now().to_rfc3339();
     let anchor = appearance_anchor.map(str::trim).filter(|s| !s.is_empty());
-    conn.execute(
-        "INSERT INTO entities (id, story_id, kind, created_at) VALUES (?1, ?2, ?3, ?4)",
-        rusqlite::params![id, story_id, entity_kind, now],
-    )?;
-    let event = append_entry(
+    let event = EntityEvent::Created {
+        entity_id: id.to_string(),
+        kind: entity_kind.to_string(),
+        name: name.to_string(),
+        appearance_anchor: anchor.map(str::to_string),
+        source: source.to_string(),
+        created_at: now.clone(),
+    };
+    let entry = projection::record(
         conn,
         story_id,
-        kind::ENTITY_CREATED,
-        "hidden",
-        Some(&format!("{name} was added as a {entity_kind}.")),
-        &json!({
-            "entity_id": id, "kind": entity_kind, "name": name, "appearance_anchor": anchor, "source": source
-        }),
         target_entry_id,
-    )?;
-    conn.execute(
-        "INSERT INTO story_entity_state (story_id, entity_id, name, appearance_anchor, is_present, updated_at, last_event_id)
-         VALUES (?1, ?2, ?3, ?4, 1, ?5, ?6)",
-        rusqlite::params![story_id, id, name, anchor, now, event.id],
+        &format!("{name} was added as a {entity_kind}."),
+        &event,
     )?;
     Ok(Entity {
         id: id.to_string(),
@@ -94,7 +91,7 @@ pub fn create_entity_with_id_sync(
         kind: entity_kind.into(),
         name: name.into(),
         appearance_anchor: anchor.map(str::to_string),
-        created_at: now,
+        created_at: entry.created_at,
     })
 }
 
@@ -145,24 +142,23 @@ pub fn update_entity_sync(
         rusqlite::params![entity_id, story_id], row_to_entity,
     ).optional()?.ok_or_else(|| AppError::NotFound(format!("entity {entity_id} not found")))?;
     let anchor = appearance_anchor.map(str::trim).filter(|s| !s.is_empty());
-    let event = append_entry(
-        conn,
-        story_id,
-        kind::ENTITY_UPDATED,
-        "hidden",
-        Some(&format!(
-            "{} is now named {name}; appearance details were updated.",
-            before.name
-        )),
-        &json!({
-            "entity_id": entity_id, "before": {"name": before.name, "appearance_anchor": before.appearance_anchor},
-            "after": {"name": name, "appearance_anchor": anchor}, "source": source
-        }),
-        target_entry_id,
-    )?;
-    let now = Utc::now().to_rfc3339();
-    conn.execute("UPDATE story_entity_state SET name = ?1, appearance_anchor = ?2, updated_at = ?3, last_event_id = ?4 WHERE story_id = ?5 AND entity_id = ?6",
-        rusqlite::params![name, anchor, now, event.id, story_id, entity_id])?;
+    let content = format!(
+        "{} is now named {name}; appearance details were updated.",
+        before.name
+    );
+    let event = EntityEvent::Updated {
+        entity_id: entity_id.to_string(),
+        before: NameAnchor {
+            name: before.name.clone(),
+            appearance_anchor: before.appearance_anchor.clone(),
+        },
+        after: NameAnchor {
+            name: name.to_string(),
+            appearance_anchor: anchor.map(str::to_string),
+        },
+        source: source.to_string(),
+    };
+    projection::record(conn, story_id, target_entry_id, &content, &event)?;
     Ok(Entity {
         name: name.into(),
         appearance_anchor: anchor.map(str::to_string),
@@ -177,17 +173,17 @@ pub(crate) fn delete_entity_sync(
 ) -> AppResult<()> {
     let name: String = conn.query_row("SELECT name FROM story_entity_state WHERE story_id = ?1 AND entity_id = ?2 AND is_present = 1", rusqlite::params![story_id, entity_id], |r| r.get(0))
         .map_err(|_| AppError::NotFound(format!("entity {entity_id} not found")))?;
-    let event = append_entry(
+    let event = EntityEvent::Deleted {
+        entity_id: entity_id.to_string(),
+        name: name.clone(),
+        source: "user".into(),
+    };
+    projection::record(
         conn,
         story_id,
-        kind::ENTITY_DELETED,
-        "hidden",
-        Some(&format!(
-            "{name} was removed from the authoritative entity state."
-        )),
-        &json!({"entity_id": entity_id, "name": name, "source": "user"}),
         None,
+        &format!("{name} was removed from the authoritative entity state."),
+        &event,
     )?;
-    conn.execute("UPDATE story_entity_state SET is_present = 0, updated_at = ?1, last_event_id = ?2 WHERE story_id = ?3 AND entity_id = ?4", rusqlite::params![Utc::now().to_rfc3339(), event.id, story_id, entity_id])?;
     Ok(())
 }

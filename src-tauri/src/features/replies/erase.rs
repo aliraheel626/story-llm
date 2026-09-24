@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
 use crate::features::{
-    compaction, images,
+    compaction, entities, images,
     ledger::{model::kind as ledger_kind, repository as ledger_repository},
 };
 use crate::shared::db::{with_transaction, Pool};
@@ -84,7 +84,7 @@ pub(super) fn remove_reply_in_tx(
         ));
     }
     compaction::prune_summaries_covering(tx, story_id, &doomed_ids)?;
-    crate::features::ledger::projections::replay_entities(tx, story_id, &affected_entities)?;
+    entities::projection::replay(tx, story_id, &affected_entities)?;
     Ok(image_paths)
 }
 
@@ -134,7 +134,7 @@ fn erase_last_exchange_in_tx(
     compaction::prune_summaries_covering(tx, story_id, &doomed_ids)?;
 
     let now = Utc::now().to_rfc3339();
-    crate::features::ledger::projections::replay_entities(tx, story_id, &affected_entities)?;
+    entities::projection::replay(tx, story_id, &affected_entities)?;
     tx.execute(
         "UPDATE stories SET updated_at = ?1 WHERE id = ?2",
         rusqlite::params![now, story_id],
@@ -562,7 +562,7 @@ mod tests {
                 |row| row.get::<_, i64>(0)
             )
             .unwrap(),
-            1
+            0
         );
         assert_eq!(
             conn.query_row("SELECT COUNT(*) FROM image_assets", [], |row| row
@@ -570,5 +570,65 @@ mod tests {
                 .unwrap(),
             0
         );
+    }
+
+    #[test]
+    fn erasing_a_created_event_removes_the_entities_row() {
+        let pool = crate::shared::db::test_pool();
+        let conn = pool.get().unwrap();
+        conn.execute(
+            "INSERT INTO stories (id, title, created_at, updated_at, settings_json)
+             VALUES ('s', 'story', 'now', 'now', '{}')",
+            [],
+        )
+        .unwrap();
+        let action = append_entry(
+            &conn,
+            "s",
+            ledger_kind::PLAYER_MESSAGE,
+            "visible",
+            Some("act"),
+            &json!({"input_mode":"do"}),
+            None,
+        )
+        .unwrap();
+        let narration = append_entry(
+            &conn,
+            "s",
+            ledger_kind::NARRATION,
+            "visible",
+            Some("result"),
+            &json!({"input_mode":"generated"}),
+            None,
+        )
+        .unwrap();
+        entities::create_entity_with_id_sync(
+            &conn,
+            "temporary",
+            "s",
+            "character",
+            "Temporary",
+            None,
+            "narrator_tool",
+            Some(&narration.id),
+        )
+        .unwrap();
+        drop(conn);
+
+        let (removed, _) =
+            with_transaction(&pool, |tx| erase_last_exchange_in_tx(tx, "s")).unwrap();
+        assert_eq!(removed, vec![narration.id, action.id]);
+
+        let conn = pool.get().unwrap();
+        let counts: (i64, i64) = conn
+            .query_row(
+                "SELECT
+                    (SELECT COUNT(*) FROM entities WHERE id = 'temporary'),
+                    (SELECT COUNT(*) FROM story_entity_state WHERE entity_id = 'temporary')",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(counts, (0, 0));
     }
 }

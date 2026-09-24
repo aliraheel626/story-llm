@@ -2,25 +2,23 @@
 
 use std::collections::HashMap;
 
-use chrono::Utc;
 use rusqlite::OptionalExtension;
-use serde_json::json;
 
-use crate::features::ledger::{model::kind as ledger_kind, repository::append_entry};
 use crate::shared::error::{AppError, AppResult};
 
-use super::model::{AttributeRegistryEntry, EntityAttributeValue};
 pub(crate) use super::registry::{
     add_alias, find_attribute_by_id, find_exact_match, insert_minted_attribute, resolve_attribute,
     AttributeResolution,
 };
+use super::{
+    events::EntityEvent,
+    model::{AttributeRegistryEntry, EntityAttributeValue},
+    projection,
+};
 
-/// Reads an entity's current value for an attribute without writing
-/// anything — unlike `get_or_init_entity_attribute`, a "just checking" read
-/// (e.g. a narrator tool call previewing state mid-turn, before anything is
-/// committed) must not persist an init event as a side effect. The optional
-/// source is `None` for the implicit midpoint and identifies player-locked
-/// rows without a second write-oriented lookup.
+/// Reads an entity's current value for an attribute without writing anything.
+/// The optional source is `None` for the implicit midpoint and identifies
+/// player-locked rows without a second lookup.
 pub fn peek_entity_attribute(
     conn: &rusqlite::Connection,
     story_id: &str,
@@ -38,49 +36,6 @@ pub fn peek_entity_attribute(
         Some((value, source)) => (value, Some(source)),
         None => ((attribute.min + attribute.max) / 2.0, None),
     })
-}
-
-/// Reads an entity's current value for an attribute, initializing it to the
-/// attribute's midpoint on first use (a fresh entity has no story yet — it
-/// shouldn't start maxed or bottomed on a stat nobody's set).
-pub fn get_or_init_entity_attribute(
-    conn: &rusqlite::Connection,
-    story_id: &str,
-    entity_id: &str,
-    attribute: &AttributeRegistryEntry,
-    source_entry_id: &str,
-) -> AppResult<f64> {
-    let existing: Option<f64> = conn
-        .query_row(
-            "SELECT value FROM entity_attributes WHERE story_id = ?1 AND entity_id = ?2 AND attribute_id = ?3",
-            rusqlite::params![story_id, entity_id, attribute.id],
-            |r| r.get(0),
-        )
-        .optional()?;
-    if let Some(v) = existing {
-        return Ok(v);
-    }
-    let midpoint = (attribute.min + attribute.max) / 2.0;
-    let now = Utc::now().to_rfc3339();
-    let event = append_entry(
-        conn,
-        story_id,
-        ledger_kind::ENTITY_ATTRIBUTE_CHANGED,
-        "hidden",
-        Some(&format!(
-            "{} was initialized to {}.",
-            attribute.canonical_name, midpoint
-        )),
-        &serde_json::json!({"entity_id": entity_id, "attribute_id": attribute.id, "attribute_name": attribute.canonical_name,
-            "before": null, "after": midpoint, "source": "default"}),
-        Some(source_entry_id),
-    )?;
-    conn.execute(
-        "INSERT INTO entity_attributes (story_id, entity_id, attribute_id, value, source, updated_at, last_event_id)
-         VALUES (?1, ?2, ?3, ?4, 'default', ?5, ?6)",
-        rusqlite::params![story_id, entity_id, attribute.id, midpoint, now, event.id],
-    )?;
-    Ok(midpoint)
 }
 
 /// Max magnitude a single non-dramatic update may move an attribute, as a
@@ -121,13 +76,8 @@ pub fn apply_attribute_delta(
     entry_id: &str,
     dramatic: bool,
 ) -> AppResult<(f64, f64)> {
-    let before = get_or_init_entity_attribute(conn, story_id, entity_id, attribute, entry_id)?;
-    let current_source: String = conn.query_row(
-        "SELECT source FROM entity_attributes WHERE story_id = ?1 AND entity_id = ?2 AND attribute_id = ?3",
-        rusqlite::params![story_id, entity_id, attribute.id],
-        |r| r.get(0),
-    )?;
-    if current_source == "user" {
+    let (before, current_source) = peek_entity_attribute(conn, story_id, entity_id, attribute)?;
+    if current_source.as_deref() == Some("user") {
         // The narrator context tells the model user overrides take
         // precedence over inferred updates; honor that here rather than
         // silently overwriting a value the player explicitly set.
@@ -135,24 +85,25 @@ pub fn apply_attribute_delta(
     }
     let after = clamp_delta(before, delta, dramatic, attribute);
 
-    let now = Utc::now().to_rfc3339();
-    let event = append_entry(
+    let event = EntityEvent::AttributeChanged {
+        entity_id: entity_id.to_string(),
+        attribute_id: attribute.id.clone(),
+        attribute_name: attribute.canonical_name.clone(),
+        before: Some(before),
+        after,
+        source: "inferred".into(),
+        delta: Some(after - before),
+        cause: Some(cause.to_string()),
+    };
+    projection::record(
         conn,
         story_id,
-        ledger_kind::ENTITY_ATTRIBUTE_CHANGED,
-        "hidden",
-        Some(&format!(
+        Some(entry_id),
+        &format!(
             "{} changed from {} to {}: {cause}",
             attribute.canonical_name, before, after
-        )),
-        &serde_json::json!({"entity_id": entity_id, "attribute_id": attribute.id, "attribute_name": attribute.canonical_name,
-            "before": before, "after": after, "delta": after - before, "cause": cause, "source": "inferred"}),
-        Some(entry_id),
-    )?;
-    conn.execute(
-        "UPDATE entity_attributes SET value = ?1, source = 'inferred', updated_at = ?2, last_event_id = ?3
-         WHERE story_id = ?4 AND entity_id = ?5 AND attribute_id = ?6",
-        rusqlite::params![after, now, event.id, story_id, entity_id, attribute.id],
+        ),
+        &event,
     )?;
     Ok((before, after))
 }
@@ -246,25 +197,34 @@ pub(crate) fn set_entity_attribute_sync(
     conn.query_row("SELECT 1 FROM story_entity_state WHERE story_id = ?1 AND entity_id = ?2 AND is_present = 1", rusqlite::params![story_id, entity_id], |_| Ok(()))
         .map_err(|_| AppError::NotFound(format!("entity {entity_id} not found")))?;
     let before: Option<f64> = conn.query_row("SELECT value FROM entity_attributes WHERE story_id = ?1 AND entity_id = ?2 AND attribute_id = ?3", rusqlite::params![story_id, entity_id, attribute_id], |r| r.get(0)).optional()?;
-    let event = append_entry(
+    let event = EntityEvent::AttributeChanged {
+        entity_id: entity_id.to_string(),
+        attribute_id: attribute_id.to_string(),
+        attribute_name: name.clone(),
+        before,
+        after: value,
+        source: "user".into(),
+        delta: None,
+        cause: None,
+    };
+    projection::record(
         conn,
         story_id,
-        ledger_kind::ENTITY_ATTRIBUTE_CHANGED,
-        "hidden",
-        Some(&format!(
+        None,
+        &format!(
             "User changed {name} from {} to {value}.",
             before
                 .map(|v| v.to_string())
                 .unwrap_or_else(|| "unset".into())
-        )),
-        &json!({"entity_id": entity_id, "attribute_id": attribute_id, "attribute_name": name, "before": before, "after": value, "source": "user"}),
-        None,
+        ),
+        &event,
     )?;
-    let now = Utc::now().to_rfc3339();
-    conn.execute("INSERT INTO entity_attributes (story_id, entity_id, attribute_id, value, source, updated_at, last_event_id)
-                VALUES (?1, ?2, ?3, ?4, 'user', ?5, ?6)
-                ON CONFLICT(story_id, entity_id, attribute_id) DO UPDATE SET value=excluded.value, source='user', updated_at=excluded.updated_at, last_event_id=excluded.last_event_id",
-        rusqlite::params![story_id, entity_id, attribute_id, value, now, event.id])?;
+    let updated_at = conn.query_row(
+        "SELECT updated_at FROM entity_attributes
+         WHERE story_id = ?1 AND entity_id = ?2 AND attribute_id = ?3",
+        rusqlite::params![story_id, entity_id, attribute_id],
+        |row| row.get(0),
+    )?;
     Ok(EntityAttributeValue {
         story_id: story_id.to_string(),
         entity_id: entity_id.to_string(),
@@ -273,7 +233,7 @@ pub(crate) fn set_entity_attribute_sync(
         value,
         min,
         max,
-        updated_at: now,
+        updated_at,
         source: "user".into(),
     })
 }
@@ -290,23 +250,29 @@ pub(crate) fn remove_entity_attribute_sync(
     let Some((before, name)) = prior else {
         return Ok(());
     };
-    append_entry(
+    let event = EntityEvent::AttributeRemoved {
+        entity_id: entity_id.to_string(),
+        attribute_id: attribute_id.to_string(),
+        attribute_name: name.clone(),
+        before,
+        source: "user".into(),
+    };
+    projection::record(
         conn,
         story_id,
-        ledger_kind::ENTITY_ATTRIBUTE_REMOVED,
-        "hidden",
-        Some(&format!("User removed {name} (previously {before}).")),
-        &json!({"entity_id": entity_id, "attribute_id": attribute_id, "attribute_name": name, "before": before, "source": "user"}),
         None,
+        &format!("User removed {name} (previously {before})."),
+        &event,
     )?;
-    conn.execute("DELETE FROM entity_attributes WHERE story_id = ?1 AND entity_id = ?2 AND attribute_id = ?3", rusqlite::params![story_id, entity_id, attribute_id])?;
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::features::ledger::model::kind as ledger_kind;
     use crate::shared::db::Pool;
+    use serde_json::json;
 
     fn attribute_helper_fixture() -> (Pool, String) {
         let pool = crate::shared::db::test_pool();
@@ -437,6 +403,46 @@ mod tests {
             )
             .unwrap();
         assert_eq!(changed_events, 0);
+    }
+
+    #[test]
+    fn first_inferred_delta_records_one_event_from_the_midpoint() {
+        let (pool, attribute_id) = attribute_helper_fixture();
+        let conn = pool.get().unwrap();
+        let passage = crate::features::ledger::repository::append_story_message(
+            &conn,
+            "story",
+            "narrator",
+            "generated",
+            "Scene",
+            None,
+        )
+        .unwrap();
+        let attribute = find_attribute_by_id(&conn, &attribute_id).unwrap();
+
+        let (before, after) = apply_attribute_delta(
+            &conn,
+            "story",
+            "entity",
+            &attribute,
+            2.0,
+            "first change",
+            &passage.id,
+            false,
+        )
+        .unwrap();
+
+        let entries = crate::features::ledger::repository::list_logical_entries(&conn, "story")
+            .unwrap()
+            .into_iter()
+            .filter(|entry| entry.kind == ledger_kind::ENTITY_ATTRIBUTE_CHANGED)
+            .collect::<Vec<_>>();
+        assert_eq!((before, after), (5.0, 7.0));
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].payload["before"], json!(5.0));
+        assert_eq!(entries[0].payload["after"], json!(7.0));
+        assert_eq!(entries[0].payload["delta"], json!(2.0));
+        assert_eq!(entries[0].payload["cause"], json!("first change"));
     }
 
     #[test]

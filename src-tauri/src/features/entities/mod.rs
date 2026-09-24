@@ -1,6 +1,8 @@
 pub mod attributes;
 mod commands;
+pub mod events;
 pub mod model;
+pub mod projection;
 pub mod registry;
 pub mod repository;
 
