@@ -392,71 +392,94 @@ fn migrate_narrator_tools(conn: &mut rusqlite::Connection) -> AppResult<()> {
     Ok(())
 }
 
-fn migrate_narrator_memory_settings(conn: &rusqlite::Connection) -> AppResult<()> {
-    let legacy: Option<String> = conn
+fn migrate_narrator_memory_settings(conn: &mut rusqlite::Connection) -> AppResult<()> {
+    const MIGRATION_KEY: &str = "migration_narrator_memory_split";
+    let tx = conn.transaction()?;
+    let migrated: bool = tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM settings WHERE key = ?1)",
+        [MIGRATION_KEY],
+        |row| row.get(0),
+    )?;
+    if migrated {
+        tx.execute("DELETE FROM settings WHERE key = 'narrator_memory'", [])?;
+        tx.commit()?;
+        return Ok(());
+    }
+
+    let legacy: Option<String> = tx
         .query_row(
             "SELECT value FROM settings WHERE key = 'narrator_memory'",
             [],
             |row| row.get(0),
         )
         .optional()?;
-    let Some(legacy) = legacy else {
-        return Ok(());
-    };
-    let legacy = serde_json::from_str::<serde_json::Value>(&legacy)
-        .unwrap_or_else(|_| serde_json::json!({}));
-    let entity_context_mode = legacy
-        .get("entity_context_mode")
-        .and_then(serde_json::Value::as_str)
-        .filter(|mode| matches!(*mode, "all" | "scoped" | "none"))
-        .unwrap_or("all");
-    let tool_call_persistence = legacy
-        .get("tool_call_persistence")
-        .and_then(serde_json::Value::as_bool)
-        .unwrap_or(true);
-    let context: Option<String> = conn
-        .query_row(
-            "SELECT value FROM settings WHERE key = 'context_injection'",
-            [],
-            |row| row.get(0),
-        )
-        .optional()?;
-    let mut context = context
-        .and_then(|value| serde_json::from_str::<serde_json::Value>(&value).ok())
-        .unwrap_or_else(|| serde_json::json!({}));
-    if context
-        .get("entity_context_mode")
-        .and_then(serde_json::Value::as_str)
-        != Some(entity_context_mode)
-    {
-        context["entity_context_mode"] = serde_json::json!(entity_context_mode);
-        conn.execute(
-            "INSERT INTO settings (key, value) VALUES ('context_injection', ?1)
-             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-            [context.to_string()],
-        )?;
+    if let Some(legacy) = legacy {
+        let legacy = serde_json::from_str::<serde_json::Value>(&legacy)
+            .unwrap_or_else(|_| serde_json::json!({}));
+        if let Some(entity_context_mode) = legacy
+            .get("entity_context_mode")
+            .and_then(serde_json::Value::as_str)
+            .filter(|mode| matches!(*mode, "all" | "scoped" | "none"))
+        {
+            let context: Option<String> = tx
+                .query_row(
+                    "SELECT value FROM settings WHERE key = 'context_injection'",
+                    [],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            let mut context = context
+                .and_then(|value| serde_json::from_str::<serde_json::Value>(&value).ok())
+                .unwrap_or_else(|| serde_json::json!({}));
+            if context
+                .get("entity_context_mode")
+                .and_then(serde_json::Value::as_str)
+                != Some(entity_context_mode)
+            {
+                context["entity_context_mode"] = serde_json::json!(entity_context_mode);
+                tx.execute(
+                    "INSERT INTO settings (key, value) VALUES ('context_injection', ?1)
+                     ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                    [context.to_string()],
+                )?;
+            }
+        }
+        if let Some(tool_call_persistence) = legacy
+            .get("tool_call_persistence")
+            .and_then(serde_json::Value::as_bool)
+        {
+            let retention: Option<String> = tx
+                .query_row(
+                    "SELECT value FROM settings WHERE key = 'ledger_retention'",
+                    [],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            let retention =
+                retention.and_then(|value| serde_json::from_str::<serde_json::Value>(&value).ok());
+            if retention
+                .as_ref()
+                .and_then(|value| value.get("tool_call_persistence"))
+                .and_then(serde_json::Value::as_bool)
+                != Some(tool_call_persistence)
+            {
+                tx.execute(
+                    "INSERT INTO settings (key, value) VALUES ('ledger_retention', ?1)
+                     ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                    [
+                        serde_json::json!({"tool_call_persistence": tool_call_persistence})
+                            .to_string(),
+                    ],
+                )?;
+            }
+        }
     }
-    let retention: Option<String> = conn
-        .query_row(
-            "SELECT value FROM settings WHERE key = 'ledger_retention'",
-            [],
-            |row| row.get(0),
-        )
-        .optional()?;
-    let retention =
-        retention.and_then(|value| serde_json::from_str::<serde_json::Value>(&value).ok());
-    if retention
-        .as_ref()
-        .and_then(|value| value.get("tool_call_persistence"))
-        .and_then(serde_json::Value::as_bool)
-        != Some(tool_call_persistence)
-    {
-        conn.execute(
-            "INSERT INTO settings (key, value) VALUES ('ledger_retention', ?1)
-             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-            [serde_json::json!({"tool_call_persistence": tool_call_persistence}).to_string()],
-        )?;
-    }
+    tx.execute("DELETE FROM settings WHERE key = 'narrator_memory'", [])?;
+    tx.execute(
+        "INSERT INTO settings (key, value) VALUES (?1, 'true')",
+        [MIGRATION_KEY],
+    )?;
+    tx.commit()?;
     Ok(())
 }
 
@@ -1068,6 +1091,11 @@ mod tests {
         )
         .unwrap();
         conn.execute(
+            "DELETE FROM settings WHERE key = 'migration_narrator_memory_split'",
+            [],
+        )
+        .unwrap();
+        conn.execute(
             "INSERT INTO stories (id, title, created_at, updated_at, settings_json)
              VALUES ('s', 'Story', 'now', 'now', '{\"dice_mode\":\"never\"}')",
             [],
@@ -1125,16 +1153,22 @@ mod tests {
             serde_json::from_str::<serde_json::Value>(&retention).unwrap()["tool_call_persistence"],
             false
         );
-        let legacy: String = conn
+        let legacy_exists: bool = conn
             .query_row(
-                "SELECT value FROM settings WHERE key = 'narrator_memory'",
+                "SELECT EXISTS(SELECT 1 FROM settings WHERE key = 'narrator_memory')",
                 [],
                 |row| row.get(0),
             )
             .unwrap();
-        let legacy: serde_json::Value = serde_json::from_str(&legacy).unwrap();
-        assert_eq!(legacy["entity_context_mode"], "none");
-        assert_eq!(legacy["tool_call_persistence"], false);
+        assert!(!legacy_exists);
+        let migrated: bool = conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM settings WHERE key = 'migration_narrator_memory_split')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(migrated);
 
         conn.execute("UPDATE stories SET settings_json = '{}' WHERE id = 's'", [])
             .unwrap();
@@ -1150,6 +1184,35 @@ mod tests {
             .unwrap()
             .get("author_note")
             .is_none());
+        assert!(!conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM settings WHERE key = 'narrator_memory')",
+                [],
+                |row| row.get::<_, bool>(0),
+            )
+            .unwrap());
+    }
+
+    #[test]
+    fn empty_narrator_memory_migration_is_recorded() {
+        let pool = test_pool();
+        let mut conn = pool.get().unwrap();
+        let has_marker = |conn: &PooledConn| -> bool {
+            conn.query_row(
+                "SELECT EXISTS(SELECT 1 FROM settings WHERE key = 'migration_narrator_memory_split')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap()
+        };
+        assert!(has_marker(&conn));
+        conn.execute(
+            "DELETE FROM settings WHERE key = 'migration_narrator_memory_split'",
+            [],
+        )
+        .unwrap();
+        run_migrations(&mut conn).unwrap();
+        assert!(has_marker(&conn));
     }
 
     #[test]
@@ -1173,9 +1236,14 @@ mod tests {
     }
 
     #[test]
-    fn reupgrade_imports_preferences_changed_by_older_app() {
+    fn legacy_memory_imports_once_without_overwriting_newer_preferences() {
         let pool = test_pool();
         let mut conn = pool.get().unwrap();
+        conn.execute(
+            "DELETE FROM settings WHERE key = 'migration_narrator_memory_split'",
+            [],
+        )
+        .unwrap();
         conn.execute(
             "INSERT INTO settings (key, value) VALUES ('context_injection', ?1)",
             [r#"{"entity_context_mode":"scoped","dice_rolls_in_context":false}"#],
@@ -1213,6 +1281,59 @@ mod tests {
             serde_json::from_str::<serde_json::Value>(&retention).unwrap()["tool_call_persistence"],
             false
         );
+        assert!(!conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM settings WHERE key = 'narrator_memory')",
+                [],
+                |row| row.get::<_, bool>(0),
+            )
+            .unwrap());
+
+        conn.execute(
+            "UPDATE settings SET value = '{\"entity_context_mode\":\"scoped\",\"dice_rolls_in_context\":false}' WHERE key = 'context_injection'",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "UPDATE settings SET value = '{\"tool_call_persistence\":true}' WHERE key = 'ledger_retention'",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES ('narrator_memory', '{\"entity_context_mode\":\"none\",\"tool_call_persistence\":false}')",
+            [],
+        )
+        .unwrap();
+        run_migrations(&mut conn).unwrap();
+        let context: String = conn
+            .query_row(
+                "SELECT value FROM settings WHERE key = 'context_injection'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&context).unwrap(),
+            serde_json::json!({"entity_context_mode": "scoped", "dice_rolls_in_context": false})
+        );
+        let retention: String = conn
+            .query_row(
+                "SELECT value FROM settings WHERE key = 'ledger_retention'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&retention).unwrap()["tool_call_persistence"],
+            true
+        );
+        assert!(!conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM settings WHERE key = 'narrator_memory')",
+                [],
+                |row| row.get::<_, bool>(0),
+            )
+            .unwrap());
     }
 
     #[test]
