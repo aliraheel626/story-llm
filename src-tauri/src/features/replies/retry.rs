@@ -22,6 +22,7 @@ use narrator::{transcript::load_transcript, Candidate, NarratorInputs, NarratorP
 #[derive(Clone)]
 struct RetryTurn {
     id: String,
+    attempt: i64,
     player: LedgerEntry,
     original_narration: Option<LedgerEntry>,
     prior_narration: Option<(String, String)>,
@@ -85,9 +86,10 @@ fn begin_retry(pool: &Pool, story_id: &str, entry_id: &str) -> AppResult<RetryTu
         let before_seq = original_narration
             .as_ref()
             .map_or(player.seq + 1, |reply| reply.seq);
-        turns::set_status(tx, &turn.id, turns::PENDING)?;
+        let attempt = turns::begin_attempt(tx, &turn.id)?;
         Ok(RetryTurn {
             id: turn.id,
+            attempt,
             player,
             original_narration,
             prior_narration,
@@ -108,7 +110,8 @@ fn restore_turn(pool: &Pool, turn: &RetryTurn) {
             None => false,
         };
         tx.execute(
-            "UPDATE turns SET status = ?1 WHERE id = ?2 AND status = ?3",
+            "UPDATE turns SET status = ?1
+             WHERE id = ?2 AND status = ?3 AND attempt = ?4",
             rusqlite::params![
                 if original_exists {
                     turns::COMPLETE
@@ -116,7 +119,8 @@ fn restore_turn(pool: &Pool, turn: &RetryTurn) {
                     turns::FAILED
                 },
                 turn.id,
-                turns::PENDING
+                turns::PENDING,
+                turn.attempt
             ],
         )?;
         Ok(())
@@ -178,7 +182,7 @@ async fn commit_candidate(
 
     let (entry, image_paths) = with_transaction(pool, |tx| {
         let last = turns::last_turn(tx, story_id)?.ok_or_else(changed_during_retry)?;
-        if last.id != turn.id || last.status != turns::PENDING {
+        if last.id != turn.id || last.status != turns::PENDING || last.attempt != turn.attempt {
             return Err(changed_during_retry());
         }
 
@@ -241,6 +245,7 @@ async fn commit_candidate(
             expected_content,
             source_action_id: Some(turn.player.id.clone()),
             turn_id: turn.id.clone(),
+            attempt: turn.attempt,
         })
     } else {
         Some(images::ImageTarget {
@@ -248,6 +253,7 @@ async fn commit_candidate(
             expected_content: visible,
             source_action_id: None,
             turn_id: turn.id.clone(),
+            attempt: turn.attempt,
         })
     };
     Ok(CommittedRetry {
@@ -721,6 +727,42 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_newer_attempt_rejects_stale_retry_commit_and_stays_pending() {
+        let (pool, _, reply, turn_id) = retry_fixture();
+        let turn = begin_retry(&pool, "s", &reply).unwrap();
+        pool.get()
+            .unwrap()
+            .execute(
+                "UPDATE turns SET attempt = attempt + 1 WHERE id = ?1",
+                [&turn_id],
+            )
+            .unwrap();
+
+        let error = match process_candidate(&pool, "s", &turn, Ok(candidate("Stale", None))).await {
+            Err(error) => error,
+            Ok(_) => panic!("a stale retry attempt committed"),
+        };
+
+        assert!(matches!(
+            error,
+            AppError::Invalid(message)
+                if message == "story changed during retry; original narration was preserved"
+        ));
+        let current = turns::last_turn(&pool.get().unwrap(), "s")
+            .unwrap()
+            .unwrap();
+        assert_eq!(current.status, turns::PENDING);
+        assert_eq!(current.attempt, turn.attempt + 1);
+        assert_eq!(
+            ledger_repository::active_entry(&pool.get().unwrap(), &reply)
+                .unwrap()
+                .content
+                .as_deref(),
+            Some("Original")
+        );
+    }
+
+    #[tokio::test]
     async fn erasing_the_turn_mid_retry_rejects_commit() {
         let (pool, _, reply, turn_id) = retry_fixture();
         let turn = begin_retry(&pool, "s", &reply).unwrap();
@@ -1005,6 +1047,7 @@ mod tests {
         assert_eq!(target.expected_content, "Moonlit harbor");
         assert_eq!(target.source_action_id.as_deref(), Some(action.id.as_str()));
         assert_eq!(target.turn_id, see_turn);
+        assert_eq!(target.attempt, 1);
         assert_eq!(
             pool.get()
                 .unwrap()

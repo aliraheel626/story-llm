@@ -53,6 +53,7 @@ fn run_migrations(conn: &mut PooledConn) -> AppResult<()> {
             story_id TEXT NOT NULL REFERENCES stories(id) ON DELETE CASCADE,
             seq INTEGER NOT NULL,
             status TEXT NOT NULL CHECK (status IN ('pending', 'complete', 'failed')),
+            attempt INTEGER NOT NULL DEFAULT 0,
             created_at TEXT NOT NULL,
             UNIQUE(story_id, seq)
         );
@@ -139,6 +140,7 @@ fn run_migrations(conn: &mut PooledConn) -> AppResult<()> {
         "#,
     )?;
     ensure_ledger_turn_column(conn)?;
+    ensure_turn_attempt_column(conn)?;
     migrate_ledger_retention_settings(conn)?;
     migrate_narrator_memory_settings(conn)?;
     migrate_author_notes(conn)?;
@@ -148,6 +150,21 @@ fn run_migrations(conn: &mut PooledConn) -> AppResult<()> {
         "UPDATE turns SET status = 'failed' WHERE status = 'pending'",
         [],
     )?;
+    Ok(())
+}
+
+fn ensure_turn_attempt_column(conn: &rusqlite::Connection) -> AppResult<()> {
+    let has_attempt: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('turns') WHERE name = 'attempt')",
+        [],
+        |row| row.get(0),
+    )?;
+    if !has_attempt {
+        conn.execute(
+            "ALTER TABLE turns ADD COLUMN attempt INTEGER NOT NULL DEFAULT 0",
+            [],
+        )?;
+    }
     Ok(())
 }
 
@@ -1108,6 +1125,42 @@ mod tests {
             )
             .unwrap();
         assert_eq!(referenced_table, "turns");
+    }
+
+    #[test]
+    fn existing_turns_table_gains_attempt_column_with_zero_default() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE turns(
+                 id TEXT PRIMARY KEY,
+                 story_id TEXT NOT NULL,
+                 seq INTEGER NOT NULL,
+                 status TEXT NOT NULL,
+                 created_at TEXT NOT NULL
+             );
+             INSERT INTO turns (id, story_id, seq, status, created_at)
+             VALUES ('turn', 'story', 0, 'complete', 'now');",
+        )
+        .unwrap();
+
+        ensure_turn_attempt_column(&conn).unwrap();
+
+        let column: (String, i64, Option<String>) = conn
+            .query_row(
+                "SELECT name, \"notnull\", dflt_value
+                 FROM pragma_table_info('turns') WHERE name = 'attempt'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(column, ("attempt".into(), 1, Some("0".into())));
+        assert_eq!(
+            conn.query_row("SELECT attempt FROM turns WHERE id = 'turn'", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap(),
+            0
+        );
     }
 
     #[test]

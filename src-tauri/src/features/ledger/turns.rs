@@ -17,6 +17,7 @@ pub struct Turn {
     pub story_id: String,
     pub seq: i64,
     pub status: String,
+    pub attempt: i64,
     pub created_at: String,
 }
 
@@ -26,7 +27,8 @@ fn row_to_turn(row: &rusqlite::Row<'_>) -> rusqlite::Result<Turn> {
         story_id: row.get(1)?,
         seq: row.get(2)?,
         status: row.get(3)?,
-        created_at: row.get(4)?,
+        attempt: row.get(4)?,
+        created_at: row.get(5)?,
     })
 }
 
@@ -66,53 +68,80 @@ pub fn set_status(conn: &rusqlite::Connection, turn_id: &str, status: &str) -> A
         return Err(AppError::Invalid(format!("invalid turn status: {status}")));
     }
     if status == PENDING {
-        let current = conn
-            .query_row("SELECT status FROM turns WHERE id = ?1", [turn_id], |row| {
-                row.get::<_, String>(0)
-            })
-            .optional()?;
-        if current.as_deref() == Some(PENDING) {
-            return Err(AppError::Invalid("a turn is already generating".into()));
-        }
+        begin_attempt(conn, turn_id)?;
+        return Ok(());
     }
     let updated = conn.execute(
         "UPDATE turns SET status = ?1 WHERE id = ?2",
         rusqlite::params![status, turn_id],
-    );
-    let updated = match updated {
-        Ok(updated) => updated,
-        Err(error) if status == PENDING => {
-            return Err(AppError::Invalid(
-                if conn
-                    .query_row(
-                        "SELECT EXISTS(
-                         SELECT 1 FROM turns AS requested
-                         JOIN turns AS pending ON pending.story_id = requested.story_id
-                         WHERE requested.id = ?1 AND pending.status = ?2
-                     )",
-                        rusqlite::params![turn_id, PENDING],
-                        |row| row.get::<_, bool>(0),
-                    )
-                    .unwrap_or(false)
-                {
-                    "a turn is already generating".into()
-                } else {
-                    error.to_string()
-                },
-            ));
-        }
-        Err(error) => return Err(error.into()),
-    };
+    )?;
     if updated != 1 {
         return Err(AppError::NotFound(format!("turn {turn_id} not found")));
     }
     Ok(())
 }
 
+pub fn begin_attempt(conn: &rusqlite::Connection, turn_id: &str) -> AppResult<i64> {
+    let current = conn
+        .query_row("SELECT status FROM turns WHERE id = ?1", [turn_id], |row| {
+            row.get::<_, String>(0)
+        })
+        .optional()?;
+    match current.as_deref() {
+        None => return Err(AppError::NotFound(format!("turn {turn_id} not found"))),
+        Some(PENDING) => return Err(AppError::Invalid("a turn is already generating".into())),
+        Some(_) => {}
+    }
+
+    let updated = conn
+        .query_row(
+            "UPDATE turns SET status = ?1, attempt = attempt + 1
+             WHERE id = ?2 AND status != ?1 RETURNING attempt",
+            rusqlite::params![PENDING, turn_id],
+            |row| row.get(0),
+        )
+        .optional();
+    match updated {
+        Ok(Some(attempt)) => Ok(attempt),
+        Ok(None) => Err(AppError::Invalid("a turn is already generating".into())),
+        Err(error) => {
+            let has_pending = conn
+                .query_row(
+                    "SELECT EXISTS(
+                         SELECT 1 FROM turns AS requested
+                         JOIN turns AS pending ON pending.story_id = requested.story_id
+                         WHERE requested.id = ?1 AND pending.status = ?2
+                     )",
+                    rusqlite::params![turn_id, PENDING],
+                    |row| row.get::<_, bool>(0),
+                )
+                .unwrap_or(false);
+            if has_pending {
+                Err(AppError::Invalid("a turn is already generating".into()))
+            } else {
+                Err(error.into())
+            }
+        }
+    }
+}
+
+pub fn mark_image_failed(
+    conn: &rusqlite::Connection,
+    turn_id: &str,
+    attempt: i64,
+) -> AppResult<()> {
+    conn.execute(
+        "UPDATE turns SET status = ?1
+         WHERE id = ?2 AND attempt = ?3 AND status = ?4",
+        rusqlite::params![FAILED, turn_id, attempt, COMPLETE],
+    )?;
+    Ok(())
+}
+
 pub fn last_turn(conn: &rusqlite::Connection, story_id: &str) -> AppResult<Option<Turn>> {
     Ok(conn
         .query_row(
-            "SELECT id, story_id, seq, status, created_at FROM turns
+            "SELECT id, story_id, seq, status, attempt, created_at FROM turns
              WHERE story_id = ?1 ORDER BY seq DESC LIMIT 1",
             [story_id],
             row_to_turn,
@@ -123,7 +152,7 @@ pub fn last_turn(conn: &rusqlite::Connection, story_id: &str) -> AppResult<Optio
 pub fn turn_of(conn: &rusqlite::Connection, entry_id: &str) -> AppResult<Option<Turn>> {
     Ok(conn
         .query_row(
-            "SELECT turns.id, turns.story_id, turns.seq, turns.status, turns.created_at
+            "SELECT turns.id, turns.story_id, turns.seq, turns.status, turns.attempt, turns.created_at
              FROM ledger_entries JOIN turns ON turns.id = ledger_entries.turn_id
              WHERE ledger_entries.id = ?1",
             [entry_id],
@@ -203,6 +232,29 @@ mod tests {
         let turn_id = create_turn(&conn, "s").unwrap();
 
         let error = set_status(&conn, &turn_id, PENDING).unwrap_err();
+        assert!(matches!(
+            error,
+            AppError::Invalid(message) if message == "a turn is already generating"
+        ));
+    }
+
+    #[test]
+    fn attempts_start_at_zero_and_increment_when_generation_restarts() {
+        let pool = crate::shared::db::test_pool();
+        let conn = pool.get().unwrap();
+        conn.execute(
+            "INSERT INTO stories (id, title, created_at, updated_at, settings_json)
+             VALUES ('s', 'Story', 'now', 'now', '{}')",
+            [],
+        )
+        .unwrap();
+        let turn_id = create_turn(&conn, "s").unwrap();
+        let created = last_turn(&conn, "s").unwrap().unwrap();
+        assert_eq!(created.attempt, 0);
+
+        set_status(&conn, &turn_id, COMPLETE).unwrap();
+        assert_eq!(begin_attempt(&conn, &turn_id).unwrap(), 1);
+        let error = begin_attempt(&conn, &turn_id).unwrap_err();
         assert!(matches!(
             error,
             AppError::Invalid(message) if message == "a turn is already generating"

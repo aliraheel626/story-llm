@@ -72,11 +72,12 @@ pub(super) fn start_action_generation(
     pool: Pool,
     story_id: String,
     action: LedgerEntry,
-    turn_id: String,
+    turn: (String, i64),
     is_see: bool,
     prior_narration: Option<(String, String)>,
     prepared: narrator::Prepared,
 ) -> String {
+    let (turn_id, attempt) = turn;
     let story_id_bg = story_id.clone();
     let action_for_done = action.clone();
     let source_action_id = action.id.clone();
@@ -128,6 +129,7 @@ pub(super) fn start_action_generation(
                         expected_content: target_content,
                         source_action_id: Some(source_action_id),
                         turn_id: turn_id_for_done.clone(),
+                        attempt,
                     },
                     vec![request],
                 );
@@ -169,6 +171,7 @@ pub(super) fn start_action_generation(
                         expected_content: visible,
                         source_action_id: None,
                         turn_id: turn_id_for_done.clone(),
+                        attempt,
                     },
                     image_requests,
                 );
@@ -265,10 +268,10 @@ pub(super) async fn submit_turn(
         },
     })?;
 
-    let (turn_id, action) = with_transaction(pool, |tx| {
+    let (turn_id, attempt, action) = with_transaction(pool, |tx| {
         if let (Some(turn), Some(action)) = (&failed_turn, &existing_action) {
-            turns::set_status(tx, &turn.id, turns::PENDING)?;
-            return Ok((turn.id.clone(), action.clone()));
+            let attempt = turns::begin_attempt(tx, &turn.id)?;
+            return Ok((turn.id.clone(), attempt, action.clone()));
         }
         let turn_id = turns::create_turn(tx, &story_id)?;
         let action = ledger_repository::append_story_message(
@@ -280,14 +283,14 @@ pub(super) async fn submit_turn(
             None,
             Some(&turn_id),
         )?;
-        Ok((turn_id, action))
+        Ok((turn_id, 0, action))
     })?;
 
     let stream_id = start_action_generation(
         pool.clone(),
         story_id,
         action.clone(),
-        turn_id,
+        (turn_id, attempt),
         generation_mode == "see",
         prior_narration,
         prepared,

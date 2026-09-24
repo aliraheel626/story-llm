@@ -1,4 +1,5 @@
 use chrono::Utc;
+use rusqlite::OptionalExtension;
 use tauri::{AppHandle, Emitter, Manager};
 use uuid::Uuid;
 
@@ -16,6 +17,7 @@ pub(crate) struct ImageTarget {
     pub expected_content: String,
     pub source_action_id: Option<String>,
     pub turn_id: String,
+    pub attempt: i64,
 }
 
 /// Composes the final image prompt: style prefix + the scene description, plus
@@ -130,7 +132,34 @@ async fn persist_and_store_image(
         prompt,
         created_at: now,
     };
-    let persist_result = with_transaction(pool, |tx| {
+    let persist_result = persist_image_record(pool, target, description, &image);
+    if let Err(error) = persist_result {
+        let _ = std::fs::remove_file(&file_path);
+        return Err(error);
+    }
+
+    Ok(image)
+}
+
+fn persist_image_record(
+    pool: &Pool,
+    target: &ImageTarget,
+    description: &str,
+    image: &StoryImage,
+) -> AppResult<()> {
+    with_transaction(pool, |tx| {
+        let current_attempt = tx
+            .query_row(
+                "SELECT attempt FROM turns WHERE id = ?1",
+                [&target.turn_id],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()?;
+        if current_attempt != Some(target.attempt) {
+            return Err(AppError::Other(
+                "the turn was regenerated while its image was being generated".into(),
+            ));
+        }
         let current_content = ledger_repository::active_entry(tx, &target.entry_id)?
             .content
             .unwrap_or_default();
@@ -139,7 +168,7 @@ async fn persist_and_store_image(
                 "the passage changed while its image was being generated".into(),
             ));
         }
-        repository::insert_asset(tx, &image)?;
+        repository::insert_asset(tx, image)?;
         let base = ledger_repository::get_entry(tx, &target.entry_id)?;
         ledger_repository::append_entry(
             tx,
@@ -159,13 +188,15 @@ async fn persist_and_store_image(
             Some(&target.turn_id),
         )?;
         Ok(())
-    });
-    if let Err(error) = persist_result {
-        let _ = std::fs::remove_file(&file_path);
-        return Err(error);
-    }
+    })
+}
 
-    Ok(image)
+fn mark_source_action_image_failed(pool: &Pool, target: &ImageTarget) -> AppResult<()> {
+    if target.source_action_id.is_some() {
+        let conn = pool.get()?;
+        crate::features::ledger::turns::mark_image_failed(&conn, &target.turn_id, target.attempt)?;
+    }
+    Ok(())
 }
 
 /// Starts the slow image work requested by `submit_turn`'s narrator after the
@@ -199,20 +230,141 @@ pub(crate) fn generate_from_narrator_requests(
                         "scene image generation failed for entry {}: {error}",
                         target.entry_id
                     );
-                    if target.source_action_id.is_some() {
-                        if let Ok(conn) = pool.get() {
-                            if let Err(status_error) = crate::features::ledger::turns::set_status(
-                                &conn,
-                                &target.turn_id,
-                                crate::features::ledger::turns::FAILED,
-                            ) {
-                                log::error!("failed to mark image turn failed: {status_error}");
-                            }
-                        }
+                    if let Err(status_error) = mark_source_action_image_failed(&pool, &target) {
+                        log::error!("failed to mark image turn failed: {status_error}");
                     }
                     let _ = app.emit("scene-image-failed", &target.entry_id);
                 }
             }
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::features::ledger::{repository as ledger_repository, turns};
+
+    fn turn_fixture() -> (Pool, String) {
+        let pool = crate::shared::db::test_pool();
+        let conn = pool.get().unwrap();
+        conn.execute(
+            "INSERT INTO stories (id, title, created_at, updated_at, settings_json)
+             VALUES ('s', 'Story', 'now', 'now', '{}')",
+            [],
+        )
+        .unwrap();
+        let turn_id = turns::create_turn(&conn, "s").unwrap();
+        turns::set_status(&conn, &turn_id, turns::COMPLETE).unwrap();
+        drop(conn);
+        (pool, turn_id)
+    }
+
+    fn see_target(turn_id: &str, attempt: i64) -> ImageTarget {
+        ImageTarget {
+            entry_id: "scene".into(),
+            expected_content: "Scene".into(),
+            source_action_id: Some("see-action".into()),
+            turn_id: turn_id.into(),
+            attempt,
+        }
+    }
+
+    #[test]
+    fn stale_see_failure_leaves_the_pending_retry_pending() {
+        let (pool, turn_id) = turn_fixture();
+        assert_eq!(
+            turns::begin_attempt(&pool.get().unwrap(), &turn_id).unwrap(),
+            1
+        );
+
+        mark_source_action_image_failed(&pool, &see_target(&turn_id, 0)).unwrap();
+
+        let turn = turns::last_turn(&pool.get().unwrap(), "s")
+            .unwrap()
+            .unwrap();
+        assert_eq!(turn.status, turns::PENDING);
+        assert_eq!(turn.attempt, 1);
+    }
+
+    #[test]
+    fn current_see_failure_marks_the_completed_turn_failed() {
+        let (pool, turn_id) = turn_fixture();
+
+        mark_source_action_image_failed(&pool, &see_target(&turn_id, 0)).unwrap();
+
+        assert_eq!(
+            turns::last_turn(&pool.get().unwrap(), "s")
+                .unwrap()
+                .unwrap()
+                .status,
+            turns::FAILED
+        );
+    }
+
+    #[test]
+    fn stale_success_writes_no_asset_or_event() {
+        let pool = crate::shared::db::test_pool();
+        let conn = pool.get().unwrap();
+        conn.execute(
+            "INSERT INTO stories (id, title, created_at, updated_at, settings_json)
+             VALUES ('s', 'Story', 'now', 'now', '{}')",
+            [],
+        )
+        .unwrap();
+        let turn_id = turns::create_turn(&conn, "s").unwrap();
+        let entry = ledger_repository::append_story_message(
+            &conn,
+            "s",
+            "narrator",
+            "generated",
+            "A moonlit harbor",
+            None,
+            Some(&turn_id),
+        )
+        .unwrap();
+        turns::set_status(&conn, &turn_id, turns::COMPLETE).unwrap();
+        let stale_target = ImageTarget {
+            entry_id: entry.id.clone(),
+            expected_content: "A moonlit harbor".into(),
+            source_action_id: None,
+            turn_id: turn_id.clone(),
+            attempt: 0,
+        };
+        assert_eq!(turns::begin_attempt(&conn, &turn_id).unwrap(), 1);
+        drop(conn);
+        let image = StoryImage {
+            id: "stale-image".into(),
+            entry_id: entry.id,
+            path: "stale.png".into(),
+            prompt: "moonlit harbor".into(),
+            created_at: "now".into(),
+        };
+
+        let error =
+            persist_image_record(&pool, &stale_target, "moonlit harbor", &image).unwrap_err();
+
+        assert!(matches!(
+            error,
+            AppError::Other(message)
+                if message == "the turn was regenerated while its image was being generated"
+        ));
+        let conn = pool.get().unwrap();
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM image_assets", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap(),
+            0
+        );
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM ledger_entries WHERE kind = ?1",
+                [ledger_kind::IMAGE_GENERATED],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+            0
+        );
+    }
 }
