@@ -18,7 +18,7 @@ pub(super) fn edit_ledger_entry(
     if content.is_empty() {
         return Err(AppError::Invalid("content must not be empty".into()));
     }
-    let (image_paths, entry) = with_transaction(pool, |tx| {
+    with_transaction(pool, |tx| {
         let target = ledger_repository::get_entry(tx, &entry_id)?;
         if let Some(turn_id) = &target.turn_id {
             let pending: bool = tx.query_row(
@@ -32,7 +32,7 @@ pub(super) fn edit_ledger_entry(
                 ));
             }
         }
-        let image_paths = images::detach_from_entry(tx, &entry_id)?;
+        images::detach_from_entry(tx, &entry_id)?;
         ledger_repository::append_entry(
             tx,
             &target.story_id,
@@ -43,8 +43,6 @@ pub(super) fn edit_ledger_entry(
             Some(&entry_id),
             target.turn_id.as_deref(),
         )?;
-        Ok((image_paths, ledger_repository::active_entry(tx, &entry_id)?))
-    })?;
-    images::delete_assets(&image_paths);
-    Ok(entry)
+        ledger_repository::active_entry(tx, &entry_id)
+    })
 }

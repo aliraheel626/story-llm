@@ -32,10 +32,10 @@ pub(super) fn touched_entities(entries: &[LedgerEntry]) -> HashSet<String> {
         .collect()
 }
 
-pub(super) fn delete_turn_images(
+pub(super) fn delete_turn_assets(
     conn: &rusqlite::Connection,
     entries: &[LedgerEntry],
-) -> AppResult<Vec<String>> {
+) -> AppResult<()> {
     let mut asset_ids = HashSet::new();
     for entry in entries {
         let mut stmt = conn.prepare("SELECT id FROM image_assets WHERE entry_id = ?1")?;
@@ -51,23 +51,18 @@ pub(super) fn delete_turn_images(
             }
         }
     }
-    let mut paths = Vec::new();
     for asset_id in asset_ids {
-        if let Some(path) = images::delete_asset_by_id(conn, &asset_id)? {
-            if !paths.contains(&path) {
-                paths.push(path);
-            }
-        }
+        images::delete_asset_by_id(conn, &asset_id)?;
     }
-    Ok(paths)
+    Ok(())
 }
 
 fn erase_last_exchange_in_tx(
     tx: &rusqlite::Transaction<'_>,
     story_id: &str,
-) -> AppResult<(Vec<String>, Vec<String>)> {
+) -> AppResult<Vec<String>> {
     let Some(last_turn) = turns::last_turn(tx, story_id)? else {
-        return Ok((vec![], vec![]));
+        return Ok(vec![]);
     };
     if last_turn.status == turns::PENDING {
         return Err(AppError::Invalid(
@@ -80,7 +75,7 @@ fn erase_last_exchange_in_tx(
         .filter(|entry| entry.visibility == "visible")
         .map(|entry| entry.id.clone())
         .collect::<Vec<_>>();
-    let image_paths = delete_turn_images(tx, &entries)?;
+    delete_turn_assets(tx, &entries)?;
     let doomed_ids = entries
         .iter()
         .map(|entry| entry.id.clone())
@@ -98,19 +93,14 @@ fn erase_last_exchange_in_tx(
         rusqlite::params![now, story_id],
     )?;
 
-    Ok((removed, image_paths))
+    Ok(removed)
 }
 
 /// "Erase": removes the most recent exchange — the latest narration plus the
 /// player message (or story draft) that triggered it. Returns the IDs removed
 /// so the frontend can splice locally.
 pub(super) fn erase_last_exchange(pool: &Pool, story_id: String) -> AppResult<Vec<String>> {
-    let (removed, image_paths) =
-        with_transaction(pool, |tx| erase_last_exchange_in_tx(tx, &story_id))?;
-
-    images::delete_assets(&image_paths);
-
-    Ok(removed)
+    with_transaction(pool, |tx| erase_last_exchange_in_tx(tx, &story_id))
 }
 
 #[cfg(test)]
@@ -159,7 +149,7 @@ mod tests {
             turns::set_status(&conn, &turn_id, turns::COMPLETE).unwrap();
             drop(conn);
 
-            let (removed, _) =
+            let removed =
                 with_transaction(&pool, |tx| erase_last_exchange_in_tx(tx, "s")).unwrap();
             assert_eq!(removed, vec![action.id, response.id], "mode {mode}");
         }
@@ -220,10 +210,9 @@ mod tests {
         turns::set_status(&conn, &see_turn, turns::COMPLETE).unwrap();
         drop(conn);
 
-        let (removed, paths) =
+        let removed =
             with_transaction(&pool, |tx| erase_last_exchange_in_tx(tx, "s")).unwrap();
         assert_eq!(removed, vec![see.id]);
-        assert_eq!(paths, vec!["C:/tmp/see.png"]);
         let conn = pool.get().unwrap();
         assert_eq!(
             conn.query_row("SELECT COUNT(*) FROM image_assets", [], |row| row
@@ -467,10 +456,9 @@ mod tests {
         .unwrap();
         drop(conn);
 
-        let (removed, paths) =
+        let removed =
             with_transaction(&pool, |tx| erase_last_exchange_in_tx(tx, "s")).unwrap();
         assert_eq!(removed, vec![player.id, narration.id]);
-        assert_eq!(paths, vec!["C:/tmp/image.png"]);
         let conn = pool.get().unwrap();
         assert_eq!(
             conn.query_row(
@@ -615,7 +603,7 @@ mod tests {
             .unwrap();
         drop(conn);
 
-        let (removed, _) =
+        let removed =
             with_transaction(&pool, |tx| erase_last_exchange_in_tx(tx, "s")).unwrap();
         assert_eq!(removed, vec![action.id, narration.id]);
 

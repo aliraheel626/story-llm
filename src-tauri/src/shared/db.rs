@@ -388,6 +388,12 @@ fn run_migrations(conn: &mut PooledConn) -> AppResult<()> {
         );
         CREATE INDEX IF NOT EXISTS idx_image_assets_entry ON image_assets(entry_id);
 
+        CREATE TABLE IF NOT EXISTS image_blobs (
+            asset_id TEXT PRIMARY KEY REFERENCES image_assets(id) ON DELETE CASCADE,
+            media_type TEXT NOT NULL,
+            bytes BLOB NOT NULL
+        );
+
         CREATE TABLE IF NOT EXISTS settings (
             key TEXT PRIMARY KEY,
             value TEXT NOT NULL
@@ -395,6 +401,7 @@ fn run_migrations(conn: &mut PooledConn) -> AppResult<()> {
         "#,
     )?;
     migrate_roll_needed_v1(conn)?;
+    migrate_image_blobs_v1(conn)?;
     ensure_ledger_turn_column(conn)?;
     ensure_turn_attempt_column(conn)?;
     migrate_ledger_retention_settings(conn)?;
@@ -406,6 +413,63 @@ fn run_migrations(conn: &mut PooledConn) -> AppResult<()> {
         "UPDATE turns SET status = 'failed' WHERE status = 'pending'",
         [],
     )?;
+    let auto_vacuum: i64 = conn.query_row("PRAGMA auto_vacuum", [], |row| row.get(0))?;
+    if auto_vacuum != 2 {
+        conn.execute_batch("PRAGMA auto_vacuum = INCREMENTAL; VACUUM;")?;
+    }
+    conn.execute_batch("PRAGMA incremental_vacuum;")?;
+    Ok(())
+}
+
+fn migrate_image_blobs_v1(conn: &mut rusqlite::Connection) -> AppResult<()> {
+    const MIGRATION_KEY: &str = "migration_image_blobs_v1";
+    let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+    if tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM settings WHERE key = ?1)",
+        [MIGRATION_KEY],
+        |row| row.get::<_, bool>(0),
+    )? {
+        tx.commit()?;
+        return Ok(());
+    }
+    let assets = {
+        let mut stmt = tx.prepare(
+            "SELECT id, path FROM image_assets
+             WHERE NOT EXISTS (SELECT 1 FROM image_blobs WHERE asset_id = image_assets.id)",
+        )?;
+        let rows = stmt.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))?;
+        rows.collect::<Result<Vec<_>, _>>()?
+    };
+    for (id, path) in assets {
+        let bytes = match fs::read(&path) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                log::warn!("image asset {id} has no file at {path}");
+                continue;
+            }
+            Err(error) => return Err(error.into()),
+        };
+        let media_type = match Path::new(&path)
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .map(|extension| extension.to_ascii_lowercase())
+            .as_deref()
+        {
+            Some("jpg" | "jpeg") => "image/jpeg",
+            Some("webp") => "image/webp",
+            Some("gif") => "image/gif",
+            _ => "image/png",
+        };
+        tx.execute(
+            "INSERT INTO image_blobs (asset_id, media_type, bytes) VALUES (?1, ?2, ?3)",
+            rusqlite::params![id, media_type, bytes],
+        )?;
+    }
+    tx.execute(
+        "INSERT INTO settings (key, value) VALUES (?1, '1')",
+        [MIGRATION_KEY],
+    )?;
+    tx.commit()?;
     Ok(())
 }
 
@@ -1101,6 +1165,39 @@ pub fn test_pool() -> Pool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn image_migration_imports_files_once_and_keeps_backups() {
+        let pool = test_pool();
+        let mut conn = pool.get().unwrap();
+        let db_path: String = conn.query_row("PRAGMA database_list", [], |row| row.get(2)).unwrap();
+        let image_path = Path::new(&db_path).with_extension("webp");
+        fs::write(&image_path, b"original image").unwrap();
+        conn.execute_batch(
+            "INSERT INTO stories (id, title, created_at, updated_at) VALUES ('s', 'Story', 'now', 'now');
+             INSERT INTO ledger_entries (id, story_id, seq, kind, visibility, payload_json, created_at)
+               VALUES ('entry', 's', 1, 'narration', 'visible', '{}', 'now');
+             DELETE FROM settings WHERE key = 'migration_image_blobs_v1';",
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO image_assets (id, entry_id, path, prompt, created_at) VALUES ('asset', 'entry', ?1, 'prompt', 'now')",
+            [image_path.to_string_lossy().as_ref()],
+        ).unwrap();
+
+        migrate_image_blobs_v1(&mut conn).unwrap();
+        fs::write(&image_path, b"changed image").unwrap();
+        migrate_image_blobs_v1(&mut conn).unwrap();
+
+        let (media_type, bytes): (String, Vec<u8>) = conn.query_row(
+            "SELECT media_type, bytes FROM image_blobs WHERE asset_id = 'asset'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        ).unwrap();
+        assert_eq!(media_type, "image/webp");
+        assert_eq!(bytes, b"original image");
+        assert!(image_path.exists());
+        assert_eq!(conn.query_row("SELECT value FROM settings WHERE key = 'migration_image_blobs_v1'", [], |row| row.get::<_, String>(0)).unwrap(), "1");
+    }
 
     fn legacy_app_db(parent: &Path) -> rusqlite::Connection {
         let legacy_dir = parent.join("com.dungeon.app");

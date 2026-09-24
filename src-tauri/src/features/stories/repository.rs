@@ -4,7 +4,6 @@ use uuid::Uuid;
 
 use super::model::Story;
 use super::settings::{normalize_reasoning_effort, NarratorToolSettings};
-use crate::features::images;
 use crate::shared::db::{seed_player_entity, with_transaction, Pool};
 use crate::shared::error::{AppError, AppResult};
 
@@ -122,22 +121,14 @@ pub(super) fn rename_story(pool: &Pool, story_id: &str, title: &str) -> AppResul
     Ok(())
 }
 
-/// Collects image file paths before the cascade delete removes their rows
-/// (SQLite FK cascade cleans up every table, but can't touch files on disk).
 pub(super) fn delete_story(pool: &Pool, story_id: &str) -> AppResult<()> {
-    let paths = with_transaction(pool, |tx| {
-        let paths = images::image_paths_for_story(tx, story_id)?;
-
+    with_transaction(pool, |tx| {
         let deleted = tx.execute("DELETE FROM stories WHERE id = ?1", [story_id])?;
         if deleted == 0 {
             return Err(AppError::NotFound(format!("story {story_id} not found")));
         }
-        Ok(paths)
-    })?;
-
-    images::delete_assets(&paths);
-
-    Ok(())
+        Ok(())
+    })
 }
 
 #[cfg(test)]

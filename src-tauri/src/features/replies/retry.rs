@@ -14,7 +14,7 @@ use crate::shared::db::{with_transaction, Pool};
 use crate::shared::error::{AppError, AppResult};
 
 use super::{
-    erase::{delete_turn_images, entries_for_turn, touched_entities},
+    erase::{delete_turn_assets, entries_for_turn, touched_entities},
     model::{NarrationDonePayload, RetryResult},
 };
 use narrator::{transcript::load_transcript, Candidate, NarratorInputs, NarratorPurpose};
@@ -32,7 +32,6 @@ struct RetryTurn {
 
 struct CommittedRetry {
     entry: LedgerEntry,
-    image_paths: Vec<String>,
     image_target: Option<images::ImageTarget>,
     image_requests: Vec<images::model::ImageRequest>,
 }
@@ -180,7 +179,7 @@ async fn commit_candidate(
         None => None,
     };
 
-    let (entry, image_paths) = with_transaction(pool, |tx| {
+    let entry = with_transaction(pool, |tx| {
         let last = turns::last_turn(tx, story_id)?.ok_or_else(changed_during_retry)?;
         if last.id != turn.id || last.status != turns::PENDING || last.attempt != turn.attempt {
             return Err(changed_during_retry());
@@ -195,7 +194,7 @@ async fn commit_candidate(
                         && entry.target_entry_id.as_deref() == Some(&turn.player.id))
             })
             .collect::<Vec<_>>();
-        let image_paths = delete_turn_images(tx, &doomed)?;
+        delete_turn_assets(tx, &doomed)?;
         let doomed_ids = doomed
             .iter()
             .map(|entry| entry.id.clone())
@@ -232,7 +231,7 @@ async fn commit_candidate(
             ledger_repository::active_entry(tx, &passage.id)?
         };
         turns::set_status(tx, &turn.id, turns::COMPLETE)?;
-        Ok((entry, image_paths))
+        Ok(entry)
     })?;
 
     let image_target = if image_requests.is_empty() {
@@ -258,7 +257,6 @@ async fn commit_candidate(
     };
     Ok(CommittedRetry {
         entry,
-        image_paths,
         image_target,
         image_requests,
     })
@@ -326,7 +324,6 @@ pub(super) async fn retry_narration(
     let turn_bg = turn.clone();
     let stream_id = narrator::spawn(prepared, move |app, sid, candidate| async move {
         let committed = process_candidate(&live_pool, &story_id_bg, &turn_bg, candidate).await?;
-        images::delete_assets(&committed.image_paths);
         let _ = app.emit(
             "narration-done",
             NarrationDonePayload {
@@ -513,7 +510,6 @@ mod tests {
         let committed = process_candidate(&pool, "s", &turn, Ok(candidate("New outcome", None)))
             .await
             .unwrap();
-        assert_eq!(committed.image_paths, vec!["old-image.png"]);
         assert_ne!(committed.entry.id, reply);
         let conn = pool.get().unwrap();
         let entries = ledger_repository::list_logical_entries(&conn, "s").unwrap();
@@ -1058,7 +1054,6 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(committed.entry.id, action.id);
-        assert_eq!(committed.image_paths, vec!["old-see.png"]);
         let target = committed.image_target.unwrap();
         assert_eq!(target.entry_id, scene.id);
         assert_eq!(target.expected_content, "Moonlit harbor");

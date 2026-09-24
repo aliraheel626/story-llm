@@ -27,6 +27,31 @@ pub fn run() {
     }
 
     builder
+        .register_asynchronous_uri_scheme_protocol("storyimg", |ctx, request, responder| {
+            let id = request.uri().path().rsplit('/').next().unwrap_or_default().to_string();
+            let pool = ctx.app_handle().state::<shared::db::Pool>().inner().clone();
+            tauri::async_runtime::spawn_blocking(move || {
+                let image = pool.get().ok().and_then(|conn| {
+                    conn.query_row(
+                        "SELECT media_type, bytes FROM image_blobs WHERE asset_id = ?1",
+                        [&id],
+                        |row| Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?)),
+                    )
+                    .ok()
+                });
+                let response = match image {
+                    Some((media_type, bytes)) => http::Response::builder()
+                        .header(http::header::CONTENT_TYPE, media_type)
+                        .body(bytes)
+                        .expect("valid image response"),
+                    None => http::Response::builder()
+                        .status(http::StatusCode::NOT_FOUND)
+                        .body(Vec::new())
+                        .expect("valid not-found response"),
+                };
+                responder.respond(response);
+            });
+        })
         .setup(|app| {
             let app_data_dir = app.path().app_data_dir()?;
             let pool = shared::db::init_pool(&app_data_dir)?;

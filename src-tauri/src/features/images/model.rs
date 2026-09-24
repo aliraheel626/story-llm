@@ -10,7 +10,6 @@ pub struct ImageRequest {
 pub struct StoryImage {
     pub id: String,
     pub entry_id: String,
-    pub path: String,
     pub prompt: String,
     pub created_at: String,
 }

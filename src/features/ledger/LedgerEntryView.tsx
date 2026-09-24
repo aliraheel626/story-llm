@@ -157,7 +157,7 @@ export function LedgerEntryView({ entry, storyId, isLast, retryEntryId, canRetry
 
       {images?.map((image) => (
         <div key={image.id} className="flex flex-col gap-1">
-          <img src={convertFileSrc(image.path)} alt={image.prompt} className="w-full rounded border border-border object-cover" />
+          <img src={convertFileSrc(image.id, "storyimg")} alt={image.prompt} className="w-full rounded border border-border object-cover" />
           <ImageCaption prompt={image.prompt} />
         </div>
       ))}

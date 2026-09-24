@@ -90,13 +90,3 @@ pub async fn generate_image(api_key: &str, model: &str, prompt: &str) -> AppResu
 
     Ok(GeneratedImage { bytes, media_type })
 }
-
-pub fn extension_for(media_type: &str) -> &'static str {
-    match media_type {
-        "image/jpeg" => "jpg",
-        "image/webp" => "webp",
-        "image/gif" => "gif",
-        "image/svg+xml" => "svg",
-        _ => "png",
-    }
-}

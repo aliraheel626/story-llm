@@ -1,6 +1,6 @@
 use chrono::Utc;
 use rusqlite::OptionalExtension;
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter};
 use uuid::Uuid;
 
 use crate::features::ledger::{model::kind as ledger_kind, repository as ledger_repository};
@@ -96,48 +96,26 @@ async fn generate_from_description(
     let matched: Vec<&(String, String)> = characters.iter().collect();
     let prompt = compose_image_prompt(&settings.style, description, &matched);
     let generated = openrouter::generate_image(&api_key, &settings.model, &prompt).await?;
-    persist_and_store_image(app, pool, target, description, prompt, generated).await
+    persist_and_store_image(pool, target, description, prompt, generated)
 }
 
-async fn persist_and_store_image(
-    app: &AppHandle,
+fn persist_and_store_image(
     pool: &Pool,
     target: &ImageTarget,
     description: &str,
     prompt: String,
     generated: openrouter::GeneratedImage,
 ) -> AppResult<StoryImage> {
-    let app_data_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| AppError::Other(e.to_string()))?;
-    let images_dir = app_data_dir.join("images");
-    std::fs::create_dir_all(&images_dir)?;
-    let file_name = format!(
-        "{}.{}",
-        Uuid::new_v4(),
-        openrouter::extension_for(&generated.media_type)
-    );
-    let file_path = images_dir.join(&file_name);
-    std::fs::write(&file_path, &generated.bytes)?;
-
-    let path_str = file_path.to_string_lossy().to_string();
     let id = Uuid::new_v4().to_string();
     let now = Utc::now().to_rfc3339();
 
     let image = StoryImage {
         id,
         entry_id: target.entry_id.clone(),
-        path: path_str,
         prompt,
         created_at: now,
     };
-    let persist_result = persist_image_record(pool, target, description, &image);
-    if let Err(error) = persist_result {
-        let _ = std::fs::remove_file(&file_path);
-        return Err(error);
-    }
-
+    persist_image_record(pool, target, description, &image, &generated)?;
     Ok(image)
 }
 
@@ -146,6 +124,7 @@ fn persist_image_record(
     target: &ImageTarget,
     description: &str,
     image: &StoryImage,
+    generated: &openrouter::GeneratedImage,
 ) -> AppResult<()> {
     with_transaction(pool, |tx| {
         let current_attempt = tx
@@ -168,7 +147,7 @@ fn persist_image_record(
                 "the passage changed while its image was being generated".into(),
             ));
         }
-        repository::insert_asset(tx, image)?;
+        repository::insert_asset(tx, image, &generated.media_type, &generated.bytes)?;
         let base = ledger_repository::get_entry(tx, &target.entry_id)?;
         ledger_repository::append_entry(
             tx,
@@ -336,13 +315,12 @@ mod tests {
         let image = StoryImage {
             id: "stale-image".into(),
             entry_id: entry.id,
-            path: "stale.png".into(),
             prompt: "moonlit harbor".into(),
             created_at: "now".into(),
         };
 
-        let error =
-            persist_image_record(&pool, &stale_target, "moonlit harbor", &image).unwrap_err();
+        let generated = openrouter::GeneratedImage { bytes: vec![1, 2, 3], media_type: "image/png".into() };
+        let error = persist_image_record(&pool, &stale_target, "moonlit harbor", &image, &generated).unwrap_err();
 
         assert!(matches!(
             error,
@@ -366,5 +344,45 @@ mod tests {
             .unwrap(),
             0
         );
+    }
+
+    #[test]
+    fn persisted_image_has_blob_and_empty_legacy_path() {
+        let (pool, turn_id) = turn_fixture();
+        let conn = pool.get().unwrap();
+        let entry = ledger_repository::append_story_message(
+            &conn, "s", "narrator", "generated", "Scene", None, Some(&turn_id),
+        ).unwrap();
+        drop(conn);
+        let image = StoryImage {
+            id: "new-image".into(),
+            entry_id: entry.id.clone(),
+            prompt: "the scene".into(),
+            created_at: "now".into(),
+        };
+        let generated = openrouter::GeneratedImage {
+            bytes: vec![1, 2, 3], media_type: "image/webp".into(),
+        };
+        persist_image_record(
+            &pool,
+            &ImageTarget {
+                entry_id: entry.id,
+                expected_content: "Scene".into(),
+                source_action_id: None,
+                turn_id,
+                attempt: 0,
+            },
+            "the scene", &image, &generated,
+        ).unwrap();
+        let conn = pool.get().unwrap();
+        let (path, media_type, bytes): (String, String, Vec<u8>) = conn.query_row(
+            "SELECT image_assets.path, image_blobs.media_type, image_blobs.bytes
+             FROM image_assets JOIN image_blobs ON image_blobs.asset_id = image_assets.id
+             WHERE image_assets.id = 'new-image'",
+            [], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        ).unwrap();
+        assert_eq!(path, "");
+        assert_eq!(media_type, "image/webp");
+        assert_eq!(bytes, generated.bytes);
     }
 }
