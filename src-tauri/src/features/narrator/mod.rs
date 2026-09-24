@@ -1,3 +1,4 @@
+pub mod catalog;
 pub mod dice;
 mod generation;
 mod injection;

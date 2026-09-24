@@ -4,14 +4,13 @@ use std::collections::{HashMap, HashSet};
 
 use crate::ai::{HistoryTurn, TextModelConfig};
 use crate::features::{
-    compaction, entities,
-    ledger::model::kind as ledger_kind,
-    settings,
-    stories::{author_note, settings::NarratorToolSettings},
+    compaction, entities, ledger::model::kind as ledger_kind, settings, stories::author_note,
 };
 use crate::prompts;
 use crate::shared::db::Pool;
 use crate::shared::error::{AppError, AppResult};
+
+use super::catalog::ToolSpec;
 
 struct EntityContextData {
     entities: Vec<entities::model::Entity>,
@@ -24,9 +23,7 @@ pub(super) struct Inputs<'a> {
     pub story_id: &'a str,
     pub history: &'a [HistoryTurn],
     pub config: &'a TextModelConfig,
-    /// Effective per-turn permissions, with non-applicable tools turned off.
-    pub tool_settings: Option<&'a NarratorToolSettings>,
-    pub image_enabled: bool,
+    pub tool_specs: &'a [&'static ToolSpec],
 }
 
 pub(super) struct ContextPlan {
@@ -194,39 +191,24 @@ fn entities_full(pool: &Pool, settings_pool: &Pool, story_id: &str) -> AppResult
     })
 }
 
-fn tool_context(settings: Option<&NarratorToolSettings>, image_enabled: bool) -> String {
-    let mut available = Vec::new();
-    if settings.is_some_and(|settings| settings.get_entities) {
-        available.push(prompts::GET_ENTITIES_TOOL_NAME);
-    }
-    if settings.is_some_and(|settings| settings.create_entity) {
-        available.push(prompts::CREATE_ENTITY_TOOL_NAME);
-    }
-    if settings.is_some_and(|settings| settings.update_entity) {
-        available.push(prompts::UPDATE_ENTITY_TOOL_NAME);
-    }
-    if settings.is_some_and(|settings| settings.adjust_entity_attribute) {
-        available.push(prompts::ADJUST_ENTITY_ATTRIBUTE_TOOL_NAME);
-    }
-    if settings.is_some_and(|settings| settings.roll_check) {
-        available.push(prompts::ROLL_CHECK_TOOL_NAME);
-    }
-    if image_enabled {
-        available.push(prompts::ILLUSTRATE_SCENE_TOOL_NAME);
-    }
-    if available.is_empty() {
+fn tool_context(specs: &[&ToolSpec]) -> String {
+    if specs.is_empty() {
         return String::new();
     }
     let mut lines = vec![format!(
         "Available narrator tools for this turn: {}.",
-        available.join(", ")
+        specs
+            .iter()
+            .map(|spec| spec.name)
+            .collect::<Vec<_>>()
+            .join(", ")
     )];
-    if settings.is_some_and(|settings| settings.roll_check) {
-        lines.push(prompts::ROLL_CHECK_AVAILABLE_INSTRUCTION.to_string());
-    }
-    if image_enabled {
-        lines.push(prompts::IMAGE_TOOL_AVAILABLE_INSTRUCTION.to_string());
-    }
+    lines.extend(
+        specs
+            .iter()
+            .filter_map(|spec| spec.instruction)
+            .map(str::to_string),
+    );
     format!(
         "<additional_instructions>\n{}\n</additional_instructions>",
         lines.join("\n")
@@ -245,7 +227,7 @@ pub(super) fn combine_context_blocks(parts: &[String]) -> String {
 pub(super) fn build_message_context(inputs: &Inputs<'_>) -> AppResult<ContextPlan> {
     let entities = entities_full(inputs.pool, inputs.settings_pool, inputs.story_id)?;
     let author_note = author_note::context_block(inputs.pool, inputs.story_id)?;
-    let tools = tool_context(inputs.tool_settings, inputs.image_enabled);
+    let tools = tool_context(inputs.tool_specs);
 
     let full = combine_context_blocks(&[
         entities.full().to_string(),
@@ -261,8 +243,19 @@ pub(super) fn build_message_context(inputs: &Inputs<'_>) -> AppResult<ContextPla
 mod tests {
     use super::*;
     use crate::ai::HistoryTurnMarker;
-    use crate::features::ledger::repository::append_entry;
+    use crate::features::{
+        images::model::ImageRequest,
+        ledger::repository::append_entry,
+        narrator::{
+            catalog::{self, ToolAvailability, ToolDeps},
+            staging::TurnStaging,
+        },
+        stories::settings::NarratorToolSettings,
+    };
+    use rig_agent::tool::PortableDynamicTool;
     use serde_json::json;
+    use std::sync::Arc;
+    use tokio::sync::Mutex;
 
     fn config() -> TextModelConfig {
         TextModelConfig {
@@ -327,15 +320,19 @@ mod tests {
         let (pool, history_turn) = story_with_entity_query();
         let history = vec![history_turn];
         let config = config();
-        let tools = NarratorToolSettings::default();
+        let settings = NarratorToolSettings::default();
+        let tools = catalog::enabled(&ToolAvailability {
+            settings: &settings,
+            image_enabled: true,
+            illustrate: false,
+        });
         let plan = build_message_context(&Inputs {
             pool: &pool,
             settings_pool: &pool,
             story_id: "s",
             history: &history,
             config: &config,
-            tool_settings: Some(&tools),
-            image_enabled: true,
+            tool_specs: &tools,
         })
         .unwrap();
 
@@ -346,8 +343,8 @@ mod tests {
         let note = plan.live.find("<author_note>").unwrap();
         let tools_position = plan.live.find("<additional_instructions>").unwrap();
         assert!(entities < note && note < tools_position);
-        assert!(plan.live.contains(&tool_context(Some(&tools), true)));
-        assert!(plan.full.contains(&tool_context(Some(&tools), true)));
+        assert!(plan.live.contains(&tool_context(&tools)));
+        assert!(plan.full.contains(&tool_context(&tools)));
         assert!(plan.full.contains("<entities>"));
     }
 
@@ -361,16 +358,110 @@ mod tests {
             roll_check: false,
             ..NarratorToolSettings::default()
         };
-        assert_eq!(tool_context(Some(&settings), false), "");
-        let image = tool_context(None, true);
-        assert!(image.starts_with("<additional_instructions>\n"));
-        assert!(image.contains("illustrate_scene"));
-        assert!(!image.contains("roll_check"));
-        assert!(!image.contains("get_entities"));
+        let none = catalog::enabled(&ToolAvailability {
+            settings: &settings,
+            image_enabled: false,
+            illustrate: false,
+        });
+        assert_eq!(tool_context(&none), "");
+
+        let image = catalog::enabled(&ToolAvailability {
+            settings: &settings,
+            image_enabled: true,
+            illustrate: true,
+        });
+        assert_eq!(
+            tool_context(&image),
+            format!(
+                "<additional_instructions>\nAvailable narrator tools for this turn: {}.\n{}\n</additional_instructions>",
+                prompts::ILLUSTRATE_SCENE_TOOL_NAME,
+                prompts::IMAGE_TOOL_AVAILABLE_INSTRUCTION
+            )
+        );
 
         settings.roll_check = true;
-        let roll = tool_context(Some(&settings), false);
-        assert!(roll.contains("roll_check"));
-        assert!(!roll.contains("illustrate_scene"));
+        let roll = catalog::enabled(&ToolAvailability {
+            settings: &settings,
+            image_enabled: false,
+            illustrate: false,
+        });
+        assert_eq!(
+            tool_context(&roll),
+            format!(
+                "<additional_instructions>\nAvailable narrator tools for this turn: {}.\n{}\n</additional_instructions>",
+                prompts::ROLL_CHECK_TOOL_NAME,
+                prompts::ROLL_CHECK_AVAILABLE_INSTRUCTION
+            )
+        );
+    }
+
+    fn names_from_tool_context(context: &str) -> Vec<String> {
+        if context.is_empty() {
+            return Vec::new();
+        }
+        context
+            .lines()
+            .nth(1)
+            .unwrap()
+            .strip_prefix("Available narrator tools for this turn: ")
+            .unwrap()
+            .strip_suffix('.')
+            .unwrap()
+            .split(", ")
+            .map(str::to_string)
+            .collect()
+    }
+
+    #[test]
+    fn built_tool_names_match_injected_names_across_availability_combinations() {
+        let disabled = NarratorToolSettings {
+            get_entities: false,
+            create_entity: false,
+            update_entity: false,
+            adjust_entity_attribute: false,
+            roll_check: false,
+            illustrate_scene: false,
+        };
+        let cases = [
+            (disabled, false, false),
+            (
+                NarratorToolSettings {
+                    roll_check: true,
+                    update_entity: true,
+                    ..disabled
+                },
+                false,
+                false,
+            ),
+            (NarratorToolSettings::default(), true, false),
+            (NarratorToolSettings::default(), true, true),
+            (NarratorToolSettings::default(), false, true),
+        ];
+
+        for (settings, image_enabled, illustrate) in cases {
+            let specs = catalog::enabled(&ToolAvailability {
+                settings: &settings,
+                image_enabled,
+                illustrate,
+            });
+            let deps = ToolDeps {
+                staging: Some(Arc::new(Mutex::new(TurnStaging::new(
+                    crate::shared::db::test_pool(),
+                    "s".into(),
+                )))),
+                embedding_api_key: String::new(),
+                image_requests: Arc::new(Mutex::new(Vec::<ImageRequest>::new())),
+            };
+            let built = specs
+                .iter()
+                .map(|spec| (spec.build)(&deps))
+                .collect::<Vec<PortableDynamicTool>>();
+            let built_names = built
+                .iter()
+                .map(|tool| tool.name().to_string())
+                .collect::<Vec<_>>();
+
+            assert_eq!(built_names, names_from_tool_context(&tool_context(&specs)));
+        }
     }
 }

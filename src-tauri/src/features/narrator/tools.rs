@@ -2,16 +2,15 @@
 
 use std::sync::Arc;
 
-use rig_agent::tool::{DynamicTool, PortableDynamicTool, ToolExecutionError, ToolOutput};
+use rig_agent::tool::{PortableDynamicTool, ToolExecutionError, ToolOutput};
 use serde_json::json;
 use tokio::sync::Mutex;
 
 use crate::features::images::model::ImageRequest;
-use crate::features::stories::settings::NarratorToolSettings;
 use crate::prompts;
 use crate::shared::error::AppError;
 
-use super::dice;
+use super::catalog;
 use super::staging::{resolve_or_stage_attribute, TurnStaging};
 
 fn to_tool_error(e: AppError) -> ToolExecutionError {
@@ -22,27 +21,46 @@ fn to_tool_error(e: AppError) -> ToolExecutionError {
 pub fn friendly_tool_label(tool_name: &str, args_json: &str) -> String {
     let args: serde_json::Value =
         serde_json::from_str(args_json).unwrap_or(serde_json::Value::Null);
-    let str_arg = |key: &str| args.get(key).and_then(|v| v.as_str()).map(str::to_string);
-    match tool_name {
-        "roll_check" => dice::roll_check_label(&args),
-        "get_entities" => "Checking who's here…".to_string(),
-        "create_entity" => format!(
-            "Introducing {}…",
-            str_arg("name").unwrap_or_else(|| "someone new".into())
-        ),
-        "update_entity" => "Updating an entity…".to_string(),
-        "adjust_entity_attribute" => {
-            format!(
-                "Adjusting {}…",
-                str_arg("attribute").unwrap_or_else(|| "an attribute".into())
-            )
-        }
-        "illustrate_scene" => "Sketching the scene…".to_string(),
-        other => format!("Running {other}…"),
-    }
+    catalog::TOOLS
+        .iter()
+        .find(|spec| spec.name == tool_name)
+        .map_or_else(
+            || format!("Running {tool_name}…"),
+            |spec| (spec.label)(&args),
+        )
 }
 
-pub fn illustrate_scene_tool(image_requests: Arc<Mutex<Vec<ImageRequest>>>) -> PortableDynamicTool {
+pub(super) fn get_entities_label(_args: &serde_json::Value) -> String {
+    "Checking who's here…".to_string()
+}
+
+pub(super) fn create_entity_label(args: &serde_json::Value) -> String {
+    let name = args
+        .get("name")
+        .and_then(|value| value.as_str())
+        .unwrap_or("someone new");
+    format!("Introducing {name}…")
+}
+
+pub(super) fn update_entity_label(_args: &serde_json::Value) -> String {
+    "Updating an entity…".to_string()
+}
+
+pub(super) fn adjust_entity_attribute_label(args: &serde_json::Value) -> String {
+    let attribute = args
+        .get("attribute")
+        .and_then(|value| value.as_str())
+        .unwrap_or("an attribute");
+    format!("Adjusting {attribute}…")
+}
+
+pub(super) fn illustrate_scene_label(_args: &serde_json::Value) -> String {
+    "Sketching the scene…".to_string()
+}
+
+pub(super) fn illustrate_scene_tool(
+    image_requests: Arc<Mutex<Vec<ImageRequest>>>,
+) -> PortableDynamicTool {
     PortableDynamicTool::new(
         prompts::ILLUSTRATE_SCENE_TOOL_NAME,
         prompts::ILLUSTRATE_SCENE_DESCRIPTION,
@@ -85,19 +103,7 @@ pub fn illustrate_scene_tool(image_requests: Arc<Mutex<Vec<ImageRequest>>>) -> P
     )
 }
 
-pub fn narrator_image_tools(enabled: bool) -> (Vec<DynamicTool>, Arc<Mutex<Vec<ImageRequest>>>) {
-    let requests = Arc::new(Mutex::new(Vec::new()));
-    let tools = if enabled {
-        vec![DynamicTool::from_portable(illustrate_scene_tool(
-            requests.clone(),
-        ))]
-    } else {
-        Vec::new()
-    };
-    (tools, requests)
-}
-
-fn get_entities_tool(staging: Arc<Mutex<TurnStaging>>) -> PortableDynamicTool {
+pub(super) fn get_entities_tool(staging: Arc<Mutex<TurnStaging>>) -> PortableDynamicTool {
     PortableDynamicTool::new(
         prompts::GET_ENTITIES_TOOL_NAME,
         prompts::GET_ENTITIES_DESCRIPTION,
@@ -133,7 +139,7 @@ fn get_entities_tool(staging: Arc<Mutex<TurnStaging>>) -> PortableDynamicTool {
     )
 }
 
-fn create_entity_tool(staging: Arc<Mutex<TurnStaging>>) -> PortableDynamicTool {
+pub(super) fn create_entity_tool(staging: Arc<Mutex<TurnStaging>>) -> PortableDynamicTool {
     PortableDynamicTool::new(
         prompts::CREATE_ENTITY_TOOL_NAME,
         prompts::CREATE_ENTITY_DESCRIPTION,
@@ -165,7 +171,7 @@ fn create_entity_tool(staging: Arc<Mutex<TurnStaging>>) -> PortableDynamicTool {
     )
 }
 
-fn update_entity_tool(staging: Arc<Mutex<TurnStaging>>) -> PortableDynamicTool {
+pub(super) fn update_entity_tool(staging: Arc<Mutex<TurnStaging>>) -> PortableDynamicTool {
     PortableDynamicTool::new(
         prompts::UPDATE_ENTITY_TOOL_NAME,
         prompts::UPDATE_ENTITY_DESCRIPTION,
@@ -208,7 +214,7 @@ fn update_entity_tool(staging: Arc<Mutex<TurnStaging>>) -> PortableDynamicTool {
     )
 }
 
-fn adjust_entity_attribute_tool(
+pub(super) fn adjust_entity_attribute_tool(
     staging: Arc<Mutex<TurnStaging>>,
     embedding_api_key: String,
 ) -> PortableDynamicTool {
@@ -285,49 +291,14 @@ fn adjust_entity_attribute_tool(
     )
 }
 
-/// The enabled tools for one turn. Illustration is built separately because
-/// it also requires a configured global image service and API key.
-pub fn narrator_portable_tools_for_settings(
-    staging: Arc<Mutex<TurnStaging>>,
-    embedding_api_key: String,
-    settings: &NarratorToolSettings,
-) -> Vec<PortableDynamicTool> {
-    let mut tools = Vec::new();
-    if settings.roll_check {
-        tools.push(dice::roll_check_tool(staging.clone()));
-    }
-    if settings.get_entities {
-        tools.push(get_entities_tool(staging.clone()));
-    }
-    if settings.create_entity {
-        tools.push(create_entity_tool(staging.clone()));
-    }
-    if settings.update_entity {
-        tools.push(update_entity_tool(staging.clone()));
-    }
-    if settings.adjust_entity_attribute {
-        tools.push(adjust_entity_attribute_tool(staging, embedding_api_key));
-    }
-    tools
-}
-
-pub fn narrator_tools_for_settings(
-    staging: Arc<Mutex<TurnStaging>>,
-    embedding_api_key: String,
-    settings: &NarratorToolSettings,
-) -> Vec<DynamicTool> {
-    narrator_portable_tools_for_settings(staging, embedding_api_key, settings)
-        .into_iter()
-        .map(DynamicTool::from_portable)
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
+    use super::super::catalog::{self, ToolAvailability, ToolDeps};
     use super::super::staging::PendingOp;
     use super::*;
     use crate::features::entities::model::AttributeRegistryEntry;
     use crate::features::ledger::repository::append_entry;
+    use crate::features::stories::settings::NarratorToolSettings;
     use crate::shared::db::Pool;
     use chrono::Utc;
     use uuid::Uuid;
@@ -378,11 +349,26 @@ mod tests {
     /// The portable tool set, so each tool's real body (arg parsing, error
     /// mapping, staging) can be executed without Rig's private dispatch.
     fn portable_tools(staging: Arc<Mutex<TurnStaging>>) -> Vec<PortableDynamicTool> {
-        narrator_portable_tools_for_settings(
-            staging,
-            test_embedding_api_key(),
-            &NarratorToolSettings::default(),
-        )
+        portable_tools_for_availability(staging, &NarratorToolSettings::default(), false, false)
+    }
+
+    fn portable_tools_for_availability(
+        staging: Arc<Mutex<TurnStaging>>,
+        settings: &NarratorToolSettings,
+        image_enabled: bool,
+        illustrate: bool,
+    ) -> Vec<PortableDynamicTool> {
+        let specs = catalog::enabled(&ToolAvailability {
+            settings,
+            image_enabled,
+            illustrate,
+        });
+        let deps = ToolDeps {
+            staging: Some(staging),
+            embedding_api_key: test_embedding_api_key(),
+            image_requests: Arc::new(Mutex::new(Vec::new())),
+        };
+        specs.iter().map(|spec| (spec.build)(&deps)).collect()
     }
 
     fn tool_named<'a>(tools: &'a [PortableDynamicTool], name: &str) -> &'a PortableDynamicTool {
@@ -421,8 +407,16 @@ mod tests {
 
     #[test]
     fn image_tools_include_only_illustration_when_enabled() {
-        let (enabled, _) = narrator_image_tools(true);
-        let (disabled, _) = narrator_image_tools(false);
+        let (pool, story_id) = setup();
+        let staging = Arc::new(Mutex::new(TurnStaging::new(pool, story_id)));
+        let enabled = portable_tools_for_availability(
+            staging.clone(),
+            &NarratorToolSettings::default(),
+            true,
+            true,
+        );
+        let disabled =
+            portable_tools_for_availability(staging, &NarratorToolSettings::default(), false, true);
 
         assert_eq!(enabled.len(), 1);
         assert_eq!(enabled[0].name(), "illustrate_scene");
@@ -471,36 +465,27 @@ mod tests {
             ),
         ];
         for (expected, settings) in cases {
-            let tools = narrator_portable_tools_for_settings(
-                staging.clone(),
-                test_embedding_api_key(),
-                &settings,
-            );
+            let tools = portable_tools_for_availability(staging.clone(), &settings, false, false);
             assert_eq!(
                 tools.iter().map(|tool| tool.name()).collect::<Vec<_>>(),
                 vec![expected]
             );
         }
-        assert!(narrator_portable_tools_for_settings(
-            staging.clone(),
-            test_embedding_api_key(),
-            &none()
-        )
-        .is_empty());
+        assert!(
+            portable_tools_for_availability(staging.clone(), &none(), false, false,).is_empty()
+        );
         let image_only = NarratorToolSettings {
             illustrate_scene: true,
             ..none()
         };
-        assert!(narrator_portable_tools_for_settings(
-            staging.clone(),
-            test_embedding_api_key(),
-            &image_only
-        )
-        .is_empty());
-        let tools = narrator_portable_tools_for_settings(
+        assert!(
+            portable_tools_for_availability(staging.clone(), &image_only, false, false,).is_empty()
+        );
+        let tools = portable_tools_for_availability(
             staging,
-            test_embedding_api_key(),
             &NarratorToolSettings::default(),
+            false,
+            false,
         );
         assert_eq!(tools.len(), 5);
         assert_eq!(tools[0].name(), "roll_check");

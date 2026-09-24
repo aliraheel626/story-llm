@@ -354,10 +354,33 @@ pub(super) async fn retry_narration(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::features::{narrator::staging::TurnStaging, narrator::tools, stories};
+    use crate::features::{
+        narrator::{
+            catalog::{self, ToolAvailability, ToolDeps},
+            staging::TurnStaging,
+        },
+        stories,
+    };
     use serde_json::json;
     use std::sync::Arc;
     use tokio::sync::Mutex;
+
+    fn narrator_tools(
+        staging: Arc<Mutex<TurnStaging>>,
+    ) -> Vec<rig_agent::tool::PortableDynamicTool> {
+        let settings = stories::settings::NarratorToolSettings::default();
+        let specs = catalog::enabled(&ToolAvailability {
+            settings: &settings,
+            image_enabled: false,
+            illustrate: false,
+        });
+        let deps = ToolDeps {
+            staging: Some(staging),
+            embedding_api_key: String::new(),
+            image_requests: Arc::new(Mutex::new(Vec::new())),
+        };
+        specs.iter().map(|spec| (spec.build)(&deps)).collect()
+    }
 
     fn retry_fixture() -> (Pool, String, String, String) {
         let pool = crate::shared::db::test_pool();
@@ -827,11 +850,7 @@ mod tests {
         let turn = begin_retry(&pool, "s", &reply).unwrap();
         let world = entities::view::excluding_turn(&pool, "s", &turn.id).unwrap();
         let staging = Arc::new(Mutex::new(TurnStaging::new(world, "s".into())));
-        let tool_set = tools::narrator_portable_tools_for_settings(
-            staging.clone(),
-            String::new(),
-            &stories::settings::NarratorToolSettings::default(),
-        );
+        let tool_set = narrator_tools(staging.clone());
         let named = |name: &str| tool_set.iter().find(|tool| tool.name() == name).unwrap();
         let found = named("get_entities")
             .execute(json!({"name":"Mira"}))
@@ -899,11 +918,7 @@ mod tests {
         let turn = begin_retry(&pool, "s", &reply).unwrap();
         let world = entities::view::excluding_turn(&pool, "s", &turn.id).unwrap();
         let staging = Arc::new(Mutex::new(TurnStaging::new(world, "s".into())));
-        let tool_set = tools::narrator_portable_tools_for_settings(
-            staging.clone(),
-            String::new(),
-            &stories::settings::NarratorToolSettings::default(),
-        );
+        let tool_set = narrator_tools(staging.clone());
         tool_set
             .iter()
             .find(|tool| tool.name() == "adjust_entity_attribute")

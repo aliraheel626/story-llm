@@ -9,10 +9,10 @@ use crate::features::{images, settings, stories};
 use crate::shared::db::Pool;
 use crate::shared::error::{AppError, AppResult};
 
+use super::catalog::{self, ToolAvailability, ToolDeps};
 use super::injection::{self, ContextPlan};
 use super::model::NarratorPurpose;
 use super::staging::TurnStaging;
-use super::tools;
 
 pub struct NarratorInputs<'a> {
     pub app: &'a AppHandle,
@@ -69,42 +69,42 @@ pub fn prepare(inputs: NarratorInputs<'_>) -> AppResult<Prepared> {
             "image generation is disabled or has no API key".into(),
         ));
     }
-    let (image_tools, image_requests) = tools::narrator_image_tools(image_enabled);
-    let world_tools_enabled = !illustrate
-        && (tool_settings.get_entities
-            || tool_settings.create_entity
-            || tool_settings.update_entity
-            || tool_settings.adjust_entity_attribute
-            || tool_settings.roll_check);
-    let staging = if world_tools_enabled || !image_tools.is_empty() {
+    let enabled_tools = catalog::enabled(&ToolAvailability {
+        settings: &tool_settings,
+        image_enabled,
+        illustrate,
+    });
+    let world_tools_enabled = enabled_tools.iter().any(|spec| spec.needs_staging);
+    let staging = if enabled_tools.is_empty() {
+        None
+    } else {
         Some(Arc::new(Mutex::new(TurnStaging::new(
             inputs.world_pool.clone(),
             inputs.story_id.to_string(),
         ))))
-    } else {
-        None
     };
-    let mut tools = if world_tools_enabled {
-        let staging = staging.as_ref().expect("world tools require staging");
-        let embedding_api_key =
-            settings::read_api_key(inputs.app, "openrouter").unwrap_or_default();
-        tools::narrator_tools_for_settings(staging.clone(), embedding_api_key, &tool_settings)
+    let embedding_api_key = if world_tools_enabled {
+        settings::read_api_key(inputs.app, "openrouter").unwrap_or_default()
     } else {
-        Vec::new()
+        String::new()
     };
-    tools.extend(image_tools);
+    let image_requests = Arc::new(Mutex::new(Vec::new()));
+    let deps = ToolDeps {
+        staging: staging.clone(),
+        embedding_api_key,
+        image_requests: image_requests.clone(),
+    };
+    let tools = enabled_tools
+        .iter()
+        .map(|spec| DynamicTool::from_portable((spec.build)(&deps)))
+        .collect();
     let context = injection::build_message_context(&injection::Inputs {
         pool: inputs.world_pool,
         settings_pool: inputs.settings_pool,
         story_id: inputs.story_id,
         history: &inputs.transcript,
         config: &config,
-        tool_settings: if illustrate {
-            None
-        } else {
-            Some(&tool_settings)
-        },
-        image_enabled,
+        tool_specs: &enabled_tools,
     })?;
     Ok(Prepared {
         app: inputs.app.clone(),
