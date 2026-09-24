@@ -160,6 +160,7 @@ pub fn active_entry(conn: &rusqlite::Connection, entry_id: &str) -> AppResult<Le
         .ok_or_else(|| AppError::NotFound(format!("active ledger entry {entry_id} not found")))
 }
 
+#[allow(dead_code)]
 pub fn last_active_entry(
     conn: &rusqlite::Connection,
     story_id: &str,

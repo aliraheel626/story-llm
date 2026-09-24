@@ -16,6 +16,7 @@ pub struct LedgerEntry {
 }
 
 impl LedgerEntry {
+    #[allow(dead_code)]
     pub fn role(&self) -> &str {
         if self.kind == kind::PLAYER_MESSAGE {
             "player"

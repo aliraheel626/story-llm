@@ -1,348 +1,266 @@
-use std::{collections::HashMap, path::PathBuf, sync::Arc};
+use std::collections::HashSet;
 
-use r2d2_sqlite::SqliteConnectionManager;
-use rusqlite::OptionalExtension;
 use tauri::{AppHandle, Emitter};
-use tokio::sync::Mutex;
-use uuid::Uuid;
 
 use crate::features::{
-    images,
-    ledger::{model::LedgerEntry, repository as ledger_repository, turns},
+    compaction, entities, images,
+    ledger::{
+        model::{kind as ledger_kind, LedgerEntry},
+        reducer, repository as ledger_repository, turns,
+    },
     narrator,
 };
 use crate::shared::db::{with_transaction, Pool};
 use crate::shared::error::{AppError, AppResult};
 
 use super::{
-    erase::remove_reply_in_tx,
+    erase::{delete_turn_images, entries_for_turn, touched_entities},
     model::{NarrationDonePayload, RetryResult},
-    submit::start_action_generation,
 };
-use narrator::{
-    staging::TurnStaging, transcript::load_transcript, Candidate, NarratorInputs, NarratorPurpose,
-};
+use narrator::{transcript::load_transcript, Candidate, NarratorInputs, NarratorPurpose};
 
-struct RetrySnapshot {
-    pool: Pool,
-    _path: SnapshotPath,
-    /// Exact story ledger at snapshot time, including hidden events. A new
-    /// image, edit, tool effect, or action must reject the replacement.
-    original_entries: Vec<LedgerEntry>,
-    original_updated_at: String,
-    original_settings_json: String,
-    original_registry_aliases: HashMap<String, String>,
+#[derive(Clone)]
+struct RetryTurn {
+    id: String,
+    player: LedgerEntry,
+    original_narration: Option<LedgerEntry>,
+    prior_narration: Option<(String, String)>,
+    before_seq: i64,
+    illustrate: bool,
 }
 
-struct SnapshotPath(PathBuf);
-
-impl Drop for SnapshotPath {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.0);
-    }
+struct CommittedRetry {
+    entry: LedgerEntry,
+    image_paths: Vec<String>,
+    image_target: Option<images::ImageTarget>,
+    image_requests: Vec<images::model::ImageRequest>,
 }
 
-fn story_revision(
-    conn: &rusqlite::Connection,
-    story_id: &str,
-) -> AppResult<(Vec<LedgerEntry>, String, String)> {
-    let (updated_at, settings_json) = conn.query_row(
-        "SELECT updated_at, settings_json FROM stories WHERE id = ?1",
-        [story_id],
-        |row| Ok((row.get(0)?, row.get(1)?)),
-    )?;
-    Ok((
-        ledger_repository::list_logical_entries(conn, story_id)?,
-        updated_at,
-        settings_json,
-    ))
+fn begin_retry(pool: &Pool, story_id: &str, entry_id: &str) -> AppResult<RetryTurn> {
+    with_transaction(pool, |tx| {
+        let turn = turns::turn_of(tx, entry_id)?
+            .ok_or_else(|| AppError::Invalid("entry has no owning turn".into()))?;
+        if turn.story_id != story_id {
+            return Err(AppError::Invalid(
+                "entry does not belong to the requested story".into(),
+            ));
+        }
+        let last = turns::last_turn(tx, story_id)?
+            .ok_or_else(|| AppError::Invalid("story has no turn to retry".into()))?;
+        if last.id != turn.id {
+            return Err(AppError::Invalid(
+                "only the latest turn can be retried".into(),
+            ));
+        }
+        if turn.status == turns::PENDING {
+            return Err(AppError::Invalid("a turn is already generating".into()));
+        }
+
+        let entries = entries_for_turn(tx, &turn.id)?;
+        let player_id = entries
+            .iter()
+            .find(|entry| entry.kind == ledger_kind::PLAYER_MESSAGE)
+            .map(|entry| entry.id.clone())
+            .ok_or_else(|| AppError::Invalid("turn has no player action".into()))?;
+        let player = ledger_repository::active_entry(tx, &player_id)?;
+        let original_narration = entries
+            .iter()
+            .find(|entry| entry.kind == ledger_kind::NARRATION)
+            .map(|entry| ledger_repository::active_entry(tx, &entry.id))
+            .transpose()?;
+        let illustrate = player
+            .payload
+            .get("input_mode")
+            .and_then(serde_json::Value::as_str)
+            == Some("see");
+        let prior_narration = if illustrate {
+            reducer::active_visible_entries(&ledger_repository::list_logical_entries(tx, story_id)?)
+                .into_iter()
+                .rev()
+                .find(|entry| entry.kind == ledger_kind::NARRATION && entry.seq < player.seq)
+                .map(|entry| (entry.id, entry.content.unwrap_or_default()))
+        } else {
+            None
+        };
+        let before_seq = original_narration
+            .as_ref()
+            .map_or(player.seq + 1, |reply| reply.seq);
+        turns::set_status(tx, &turn.id, turns::PENDING)?;
+        Ok(RetryTurn {
+            id: turn.id,
+            player,
+            original_narration,
+            prior_narration,
+            before_seq,
+            illustrate,
+        })
+    })
 }
 
-fn registry_aliases(conn: &rusqlite::Connection) -> AppResult<HashMap<String, String>> {
-    let mut stmt = conn.prepare("SELECT id, aliases_json FROM attribute_registry")?;
-    let rows = stmt.query_map([], |row| {
-        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-    })?;
-    Ok(rows.collect::<Result<HashMap<_, _>, _>>()?)
-}
-
-fn snapshot_for_retry(pool: &Pool, story_id: &str, entry_id: &str) -> AppResult<RetrySnapshot> {
-    let path = SnapshotPath(
-        std::env::temp_dir().join(format!("story-llm-retry-{}.sqlite3", Uuid::new_v4())),
-    );
-    {
-        let conn = pool.get()?;
-        conn.execute("VACUUM INTO ?1", [path.0.to_string_lossy().as_ref()])?;
-    }
-    let manager = SqliteConnectionManager::file(&path.0).with_init(|conn| {
-        conn.execute_batch("PRAGMA foreign_keys = ON")?;
+fn restore_turn(pool: &Pool, turn: &RetryTurn) {
+    let result = with_transaction(pool, |tx| {
+        let original_exists = match &turn.original_narration {
+            Some(reply) => tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM ledger_entries WHERE id = ?1 AND turn_id = ?2)",
+                rusqlite::params![reply.id, turn.id],
+                |row| row.get::<_, bool>(0),
+            )?,
+            None => false,
+        };
+        tx.execute(
+            "UPDATE turns SET status = ?1 WHERE id = ?2 AND status = ?3",
+            rusqlite::params![
+                if original_exists {
+                    turns::COMPLETE
+                } else {
+                    turns::FAILED
+                },
+                turn.id,
+                turns::PENDING
+            ],
+        )?;
         Ok(())
     });
-    let snapshot_pool = r2d2::Pool::new(manager)?;
-    let (original_entries, original_updated_at, original_settings_json, original_registry_aliases) = {
-        let conn = snapshot_pool.get()?;
-        let revision = story_revision(&conn, story_id)?;
-        let target = ledger_repository::last_active_entry(&conn, story_id)?
-            .ok_or_else(|| AppError::Invalid("no narration to retry".into()))?;
-        if target.id != entry_id || target.role() != "narrator" {
-            return Err(AppError::Invalid(
-                "only the latest narration can be retried".into(),
-            ));
-        }
-        (revision.0, revision.1, revision.2, registry_aliases(&conn)?)
-    };
-    with_transaction(&snapshot_pool, |tx| {
-        remove_reply_in_tx(tx, story_id, entry_id)?;
-        Ok(())
-    })?;
-    Ok(RetrySnapshot {
-        pool: snapshot_pool,
-        _path: path,
-        original_entries,
-        original_updated_at,
-        original_settings_json,
-        original_registry_aliases,
-    })
-}
-
-fn reconcile_attribute_registry(
-    tx: &rusqlite::Transaction<'_>,
-    scratch: &rusqlite::Connection,
-    original_aliases: &HashMap<String, String>,
-) -> AppResult<()> {
-    let mut stmt = scratch.prepare(
-        "SELECT id, canonical_name, aliases_json, entity_kinds_json, min, max, category,
-                is_user_created, created_in_story_id, created_at FROM attribute_registry",
-    )?;
-    let rows = stmt.query_map([], |row| {
-        Ok((
-            row.get::<_, String>(0)?,
-            row.get::<_, String>(1)?,
-            row.get::<_, String>(2)?,
-            row.get::<_, String>(3)?,
-            row.get::<_, f64>(4)?,
-            row.get::<_, f64>(5)?,
-            row.get::<_, String>(6)?,
-            row.get::<_, i64>(7)?,
-            row.get::<_, Option<String>>(8)?,
-            row.get::<_, String>(9)?,
-        ))
-    })?;
-    for row in rows {
-        let (id, name, aliases, kinds, min, max, category, user_created, story, created_at) = row?;
-        if original_aliases
-            .get(&id)
-            .is_some_and(|original| original == &aliases)
-        {
-            continue;
-        }
-        let live_aliases: Option<String> = tx
-            .query_row(
-                "SELECT aliases_json FROM attribute_registry WHERE id = ?1",
-                [&id],
-                |row| row.get(0),
-            )
-            .optional()?;
-        if let Some(live_aliases) = live_aliases {
-            if live_aliases != aliases {
-                let mut combined: Vec<String> = serde_json::from_str(&live_aliases)
-                    .map_err(|e| AppError::Other(format!("invalid attribute aliases: {e}")))?;
-                for alias in serde_json::from_str::<Vec<String>>(&aliases)
-                    .map_err(|e| AppError::Other(format!("invalid attribute aliases: {e}")))?
-                {
-                    if !combined
-                        .iter()
-                        .any(|existing| existing.eq_ignore_ascii_case(&alias))
-                    {
-                        combined.push(alias);
-                    }
-                }
-                tx.execute(
-                    "UPDATE attribute_registry SET aliases_json = ?1 WHERE id = ?2",
-                    rusqlite::params![
-                        serde_json::to_string(&combined)
-                            .map_err(|e| AppError::Other(e.to_string()))?,
-                        id
-                    ],
-                )?;
-            }
-        } else {
-            tx.execute(
-                "INSERT INTO attribute_registry
-                (id, canonical_name, aliases_json, entity_kinds_json, min, max, category,
-                 is_user_created, created_in_story_id, created_at)
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
-                rusqlite::params![
-                    id,
-                    name,
-                    aliases,
-                    kinds,
-                    min,
-                    max,
-                    category,
-                    user_created,
-                    story,
-                    created_at
-                ],
-            )?;
-        }
+    if let Err(error) = result {
+        log::error!("failed to recover retry turn status: {error}");
     }
-    Ok(())
 }
 
-async fn replace_narration_entry(
-    live: &Pool,
-    snapshot: &RetrySnapshot,
-    story_id: &str,
-    target_id: &str,
-    visible: &str,
-    thoughts: Option<&str>,
-    staging: Option<Arc<Mutex<TurnStaging>>>,
-) -> AppResult<(LedgerEntry, Vec<String>)> {
-    if visible.trim().is_empty() {
-        return Err(AppError::Invalid(
-            "retry generated no narration; original was preserved".into(),
-        ));
-    }
-    let guard = match &staging {
-        Some(staging) => Some(staging.lock().await),
-        None => None,
-    };
-    let scratch = snapshot.pool.get()?;
-    with_transaction(live, |tx| {
-        let turn_id = turns::turn_of(tx, target_id)?
-            .ok_or_else(|| AppError::Invalid("narration has no owning turn".into()))?
-            .id;
-        let (entries, updated_at, settings_json) = story_revision(tx, story_id)?;
-        if entries != snapshot.original_entries
-            || updated_at != snapshot.original_updated_at
-            || settings_json != snapshot.original_settings_json
-            || ledger_repository::last_active_entry(tx, story_id)?
-                .as_ref()
-                .map(|entry| entry.id.as_str())
-                != Some(target_id)
-        {
-            return Err(AppError::Invalid(
-                "story changed during retry; original narration was preserved".into(),
-            ));
-        }
-        let paths = remove_reply_in_tx(tx, story_id, target_id)?;
-        reconcile_attribute_registry(tx, &scratch, &snapshot.original_registry_aliases)?;
-        let passage = ledger_repository::append_story_message(
-            tx,
-            story_id,
-            "narrator",
-            "generated",
-            visible,
-            thoughts,
-            Some(&turn_id),
-        )?;
-        if let Some(staging) = &guard {
-            staging.commit(tx, &passage.id, &turn_id)?;
-        }
-        turns::set_status(tx, &turn_id, turns::COMPLETE)?;
-        Ok((ledger_repository::active_entry(tx, &passage.id)?, paths))
-    })
+fn changed_during_retry() -> AppError {
+    AppError::Invalid("story changed during retry; original narration was preserved".into())
 }
 
-fn start_replacement_generation(
-    app: AppHandle,
+async fn commit_candidate(
     pool: &Pool,
-    story_id: String,
-    entry_id: String,
-) -> AppResult<String> {
-    let target = {
-        let conn = pool.get()?;
-        let last = ledger_repository::last_active_entry(&conn, &story_id)?
-            .ok_or_else(|| AppError::Invalid("no narration to retry".into()))?;
-        if last.id != entry_id {
+    story_id: &str,
+    turn: &RetryTurn,
+    candidate: Candidate,
+) -> AppResult<CommittedRetry> {
+    let Candidate {
+        visible,
+        thoughts,
+        staging,
+        image_requests,
+    } = candidate;
+    let image_requests = if turn.illustrate {
+        vec![image_requests.into_iter().next().ok_or_else(|| {
+            AppError::Other("the narrator did not request an illustration".into())
+        })?]
+    } else {
+        if visible.trim().is_empty() {
             return Err(AppError::Invalid(
-                "only the latest narration can be retried".into(),
+                "retry generated no narration; original was preserved".into(),
             ));
         }
-        if last.role() != "narrator" {
-            return Err(AppError::Invalid(
-                "only a narration entry can be retried".into(),
-            ));
+        image_requests
+    };
+    let illustrate_target = if turn.illustrate {
+        Some(
+            turn.prior_narration
+                .clone()
+                .ok_or_else(|| AppError::Invalid("no narration to illustrate".into()))?,
+        )
+    } else {
+        None
+    };
+    let staging_guard = if turn.illustrate {
+        None
+    } else {
+        match &staging {
+            Some(staging) => Some(staging.lock().await),
+            None => None,
         }
-        last
     };
 
-    let snapshot = snapshot_for_retry(pool, &story_id, &target.id)?;
-    let transcript = load_transcript(&snapshot.pool, &story_id, None)?;
-    let prepared = narrator::prepare(NarratorInputs {
-        app: &app,
-        settings_pool: pool,
-        world_pool: &snapshot.pool,
-        story_id: &story_id,
-        transcript,
-        before_seq: None,
-        purpose: NarratorPurpose::Replacement,
-    })?;
-    let turn = {
-        let conn = pool.get()?;
-        turns::turn_of(&conn, &target.id)?
-            .ok_or_else(|| AppError::Invalid("narration has no owning turn".into()))?
-    };
-    with_transaction(pool, |tx| turns::set_status(tx, &turn.id, turns::PENDING))?;
+    let (entry, image_paths) = with_transaction(pool, |tx| {
+        let last = turns::last_turn(tx, story_id)?.ok_or_else(changed_during_retry)?;
+        if last.id != turn.id || last.status != turns::PENDING {
+            return Err(changed_during_retry());
+        }
 
-    let story_id_bg = story_id.clone();
-    let live_pool = pool.clone();
-    let turn_id = turn.id;
-    let stream_id = narrator::spawn(prepared, move |app, sid, candidate| async move {
-        let completion = async {
-            let candidate = candidate?;
-            let Candidate {
-                visible,
-                thoughts,
-                staging,
-                image_requests,
-            } = candidate;
-            let (entry, image_paths) = replace_narration_entry(
-                &live_pool,
-                &snapshot,
-                &story_id_bg,
-                &target.id,
+        let entries = entries_for_turn(tx, &turn.id)?;
+        let doomed = entries
+            .into_iter()
+            .filter(|entry| {
+                entry.id != turn.player.id
+                    && !(entry.kind == ledger_kind::CONTENT_EDITED
+                        && entry.target_entry_id.as_deref() == Some(&turn.player.id))
+            })
+            .collect::<Vec<_>>();
+        let image_paths = delete_turn_images(tx, &doomed)?;
+        let doomed_ids = doomed
+            .iter()
+            .map(|entry| entry.id.clone())
+            .collect::<HashSet<_>>();
+        let affected_entities = touched_entities(&doomed);
+        compaction::prune_summaries_covering(tx, story_id, &doomed_ids)?;
+        for entry in &doomed {
+            tx.execute("DELETE FROM ledger_entries WHERE id = ?1", [&entry.id])?;
+        }
+        entities::projection::replay(tx, story_id, &affected_entities, None)?;
+
+        let entry = if turn.illustrate {
+            ledger_repository::active_entry(tx, &turn.player.id)?
+        } else {
+            let passage = ledger_repository::append_story_message(
+                tx,
+                story_id,
+                "narrator",
+                "generated",
                 &visible,
                 thoughts.as_deref(),
-                staging,
-            )
-            .await?;
-            images::delete_assets(&image_paths);
-            let _ = app.emit(
-                "narration-done",
-                NarrationDonePayload {
-                    stream_id: sid,
-                    entry: entry.clone(),
-                },
-            );
-            if !image_requests.is_empty() {
-                images::generate_from_narrator_requests(
-                    &app,
-                    &live_pool,
-                    images::ImageTarget {
-                        entry_id: entry.id,
-                        expected_content: visible,
-                        source_action_id: None,
-                        turn_id: turn_id.clone(),
-                    },
-                    image_requests,
-                );
+                Some(&turn.id),
+            )?;
+            if let Some(staging) = &staging_guard {
+                staging.commit(tx, &passage.id, &turn.id)?;
             }
-            Ok(())
-        }
-        .await;
-        if completion.is_err() {
-            if let Ok(conn) = live_pool.get() {
-                if let Err(error) = turns::set_status(&conn, &turn_id, turns::COMPLETE) {
-                    log::error!("failed to recover retry turn status: {error}");
-                }
-            }
-        }
-        completion
-    });
+            ledger_repository::active_entry(tx, &passage.id)?
+        };
+        turns::set_status(tx, &turn.id, turns::COMPLETE)?;
+        Ok((entry, image_paths))
+    })?;
 
-    Ok(stream_id)
+    let image_target = if image_requests.is_empty() {
+        None
+    } else if turn.illustrate {
+        let (entry_id, expected_content) =
+            illustrate_target.expect("validated illustration target");
+        Some(images::ImageTarget {
+            entry_id,
+            expected_content,
+            source_action_id: Some(turn.player.id.clone()),
+            turn_id: turn.id.clone(),
+        })
+    } else {
+        Some(images::ImageTarget {
+            entry_id: entry.id.clone(),
+            expected_content: visible,
+            source_action_id: None,
+            turn_id: turn.id.clone(),
+        })
+    };
+    Ok(CommittedRetry {
+        entry,
+        image_paths,
+        image_target,
+        image_requests,
+    })
+}
+
+async fn process_candidate(
+    pool: &Pool,
+    story_id: &str,
+    turn: &RetryTurn,
+    candidate: AppResult<Candidate>,
+) -> AppResult<CommittedRetry> {
+    let result = match candidate {
+        Ok(candidate) => commit_candidate(pool, story_id, turn, candidate).await,
+        Err(error) => Err(error),
+    };
+    if result.is_err() {
+        restore_turn(pool, turn);
+    }
+    result
 }
 
 pub(super) async fn retry_narration(
@@ -351,49 +269,65 @@ pub(super) async fn retry_narration(
     story_id: String,
     entry_id: String,
 ) -> AppResult<RetryResult> {
-    let trailing_action = {
-        let conn = pool.get()?;
-        ledger_repository::last_active_entry(&conn, &story_id)?
-            .filter(|entry| entry.id == entry_id && entry.role() == "player")
-    };
-    let stream_id = if let Some(action) = trailing_action {
-        let history = load_transcript(pool, &story_id, Some(action.seq + 1))?;
-        let active_action = {
-            let conn = pool.get()?;
-            ledger_repository::active_entry(&conn, &action.id)?
-        };
-        let turn = {
-            let conn = pool.get()?;
-            turns::turn_of(&conn, &action.id)?
-                .ok_or_else(|| AppError::Invalid("action has no owning turn".into()))?
-        };
-        if turn.status != turns::FAILED {
+    let turn = begin_retry(pool, &story_id, &entry_id)?;
+    let prepared = (|| {
+        if turn.illustrate && turn.prior_narration.is_none() {
             return Err(AppError::Invalid(
-                "only a failed action turn can be retried".into(),
+                "there is no narrated scene to illustrate".into(),
             ));
         }
-        let prepared = narrator::prepare(NarratorInputs {
+        let world_pool = if turn.original_narration.is_some() {
+            entities::view::excluding_turn(pool, &story_id, &turn.id)?
+        } else {
+            pool.clone()
+        };
+        let transcript = load_transcript(pool, &story_id, Some(turn.before_seq))?;
+        narrator::prepare(NarratorInputs {
             app: &app,
             settings_pool: pool,
-            world_pool: pool,
+            world_pool: &world_pool,
             story_id: &story_id,
-            transcript: history,
-            before_seq: Some(action.seq + 1),
-            purpose: NarratorPurpose::Action,
-        })?;
-        with_transaction(pool, |tx| turns::set_status(tx, &turn.id, turns::PENDING))?;
-        start_action_generation(
-            pool.clone(),
-            story_id,
-            active_action,
-            turn.id,
-            false,
-            None,
-            prepared,
-        )
-    } else {
-        start_replacement_generation(app, pool, story_id, entry_id.clone())?
+            transcript,
+            before_seq: Some(turn.before_seq),
+            purpose: if turn.illustrate {
+                NarratorPurpose::Illustrate
+            } else {
+                NarratorPurpose::Action
+            },
+        })
+    })();
+    let prepared = match prepared {
+        Ok(prepared) => prepared,
+        Err(error) => {
+            restore_turn(pool, &turn);
+            return Err(error);
+        }
     };
+
+    let live_pool = pool.clone();
+    let story_id_bg = story_id.clone();
+    let turn_bg = turn.clone();
+    let stream_id = narrator::spawn(prepared, move |app, sid, candidate| async move {
+        let committed = process_candidate(&live_pool, &story_id_bg, &turn_bg, candidate).await?;
+        images::delete_assets(&committed.image_paths);
+        let _ = app.emit(
+            "narration-done",
+            NarrationDonePayload {
+                stream_id: sid,
+                entry: committed.entry,
+            },
+        );
+        if let Some(target) = committed.image_target {
+            images::generate_from_narrator_requests(
+                &app,
+                &live_pool,
+                target,
+                committed.image_requests,
+            );
+        }
+        Ok(())
+    });
+
     Ok(RetryResult {
         entry_id,
         stream_id,
@@ -403,21 +337,20 @@ pub(super) async fn retry_narration(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::features::ledger::model::kind as ledger_kind;
-    use crate::features::ledger::repository::append_entry;
-    use crate::features::narrator::tools;
-    use crate::features::stories;
+    use crate::features::{narrator::staging::TurnStaging, narrator::tools, stories};
     use serde_json::json;
-    fn retry_fixture() -> (Pool, String, String) {
+    use std::sync::Arc;
+    use tokio::sync::Mutex;
+
+    fn retry_fixture() -> (Pool, String, String, String) {
         let pool = crate::shared::db::test_pool();
         let conn = pool.get().unwrap();
         conn.execute(
             "INSERT INTO stories (id, title, created_at, updated_at, settings_json)
-            VALUES ('s', 'story', 'now', 'now', '{}')",
+             VALUES ('s', 'story', 'now', 'now', '{}')",
             [],
         )
         .unwrap();
-        let turn_id = turns::create_turn(&conn, "s").unwrap();
         crate::features::entities::create_entity_with_id_sync(
             &conn,
             "mira",
@@ -429,17 +362,7 @@ mod tests {
             None,
         )
         .unwrap();
-        crate::features::entities::create_entity_with_id_sync(
-            &conn,
-            "you",
-            "s",
-            "character",
-            "You",
-            None,
-            "test",
-            None,
-        )
-        .unwrap();
+        let turn_id = turns::create_turn(&conn, "s").unwrap();
         let action = ledger_repository::append_story_message(
             &conn,
             "s",
@@ -471,7 +394,7 @@ mod tests {
             Some(&turn_id),
         )
         .unwrap();
-        append_entry(
+        ledger_repository::append_entry(
             &conn,
             "s",
             ledger_kind::DICEROLL,
@@ -483,198 +406,70 @@ mod tests {
         )
         .unwrap();
         turns::set_status(&conn, &turn_id, turns::COMPLETE).unwrap();
-        (pool, action.id, reply.id)
+        (pool, action.id, reply.id, turn_id)
     }
 
-    #[test]
-    fn retry_snapshot_reads_pre_turn_state_without_damaging_live_reply() {
-        let (pool, action, reply) = retry_fixture();
-        let snapshot = snapshot_for_retry(&pool, "s", &reply).unwrap();
-        let scratch = snapshot.pool.get().unwrap();
-        let entities = crate::features::entities::list_entities_sync(&scratch, "s", None).unwrap();
-        assert_eq!(
-            entities.iter().find(|e| e.id == "mira").unwrap().name,
-            "Mira"
-        );
-        assert_eq!(
-            ledger_repository::last_active_entry(&scratch, "s")
-                .unwrap()
-                .unwrap()
-                .id,
-            action
-        );
-        assert!(!ledger_repository::list_logical_entries(&scratch, "s")
-            .unwrap()
-            .iter()
-            .any(|entry| entry.kind == ledger_kind::DICEROLL));
-        let history = load_transcript(&snapshot.pool, "s", None).unwrap();
-        assert_eq!(
-            history.last().and_then(|turn| turn.entry_id.as_deref()),
-            Some(action.as_str())
-        );
-        assert!(!history
-            .iter()
-            .any(|turn| turn.content.contains("Original") || turn.content.contains("Old roll")));
-        drop(scratch);
-        drop(snapshot);
-        let conn = pool.get().unwrap();
-        assert_eq!(
-            ledger_repository::last_active_entry(&conn, "s")
-                .unwrap()
-                .unwrap()
-                .id,
-            reply
-        );
-        assert_eq!(
-            crate::features::entities::list_entities_sync(&conn, "s", None)
-                .unwrap()
-                .iter()
-                .find(|e| e.id == "mira")
-                .unwrap()
-                .name,
-            "Mira Changed"
-        );
-    }
-
-    #[test]
-    fn migrated_player_bootstrap_after_reply_does_not_block_retry() {
-        let (pool, action, reply) = retry_fixture();
-        let conn = pool.get().unwrap();
-        append_entry(
-            &conn,
-            "s",
-            ledger_kind::ENTITY_CREATED,
-            "hidden",
-            Some("You was added as a character."),
-            &json!({"entity_id":"you","name":"You","source":"story_bootstrap"}),
-            None,
-            None,
-        )
-        .unwrap();
-        drop(conn);
-
-        let snapshot = snapshot_for_retry(&pool, "s", &reply).unwrap();
-        let history = load_transcript(&snapshot.pool, "s", None).unwrap();
-        assert_eq!(
-            history.last().and_then(|turn| turn.entry_id.as_deref()),
-            Some(action.as_str())
-        );
-    }
-
-    #[test]
-    fn abandoned_retry_removes_its_temporary_snapshot() {
-        let (pool, _, reply) = retry_fixture();
-        let snapshot = snapshot_for_retry(&pool, "s", &reply).unwrap();
-        let path = snapshot._path.0.clone();
-        assert!(path.exists());
-        drop(snapshot);
-        assert!(!path.exists());
-        assert_eq!(
-            ledger_repository::last_active_entry(&pool.get().unwrap(), "s")
-                .unwrap()
-                .unwrap()
-                .id,
-            reply
-        );
-    }
-
-    #[tokio::test]
-    async fn retry_replays_you_creation_without_losing_canonical_player() {
-        let (pool, _, reply) = retry_fixture();
-        let conn = pool.get().unwrap();
-        let trust_id: String = conn
-            .query_row(
-                "SELECT id FROM attribute_registry WHERE canonical_name = 'Trust'",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        let trust =
-            crate::features::entities::attributes::find_attribute_by_id(&conn, &trust_id).unwrap();
-        let turn_id = turns::turn_of(&conn, &reply).unwrap().unwrap().id;
-        crate::features::entities::attributes::apply_attribute_delta_in_turn(
-            &conn,
-            "s",
-            "you",
-            &trust,
-            2.0,
-            "original reply",
-            &reply,
-            false,
-            Some(&turn_id),
-        )
-        .unwrap();
-        drop(conn);
-        let snapshot = snapshot_for_retry(&pool, "s", &reply).unwrap();
-        let scratch = snapshot.pool.get().unwrap();
-        assert!(
-            crate::features::entities::list_entities_sync(&scratch, "s", None)
-                .unwrap()
-                .iter()
-                .any(|entity| entity.id == "you" && entity.name == "You")
-        );
-        assert_eq!(
-            scratch
-                .query_row(
-                    "SELECT COUNT(*) FROM entity_attributes WHERE story_id='s' AND entity_id='you'",
-                    [],
-                    |row| row.get::<_, i64>(0)
-                )
-                .unwrap(),
-            0
-        );
-        drop(scratch);
-        replace_narration_entry(&pool, &snapshot, "s", &reply, "New", None, None)
-            .await
-            .unwrap();
-        let conn = pool.get().unwrap();
-        assert!(
-            crate::features::entities::list_entities_sync(&conn, "s", None)
-                .unwrap()
-                .iter()
-                .any(|entity| entity.id == "you" && entity.name == "You")
-        );
-        assert_eq!(
-            conn.query_row(
-                "SELECT COUNT(*) FROM entity_attributes WHERE story_id='s' AND entity_id='you'",
-                [],
-                |row| row.get::<_, i64>(0)
-            )
-            .unwrap(),
-            0
-        );
+    fn candidate(visible: &str, staging: Option<Arc<Mutex<TurnStaging>>>) -> Candidate {
+        Candidate {
+            visible: visible.into(),
+            thoughts: None,
+            staging,
+            image_requests: Vec::new(),
+        }
     }
 
     #[tokio::test]
     async fn replacement_removes_old_roll_and_effects_but_keeps_action() {
-        let (pool, action, reply) = retry_fixture();
+        let (pool, action, reply, turn_id) = retry_fixture();
         let conn = pool.get().unwrap();
+        ledger_repository::append_entry(
+            &conn,
+            "s",
+            ledger_kind::CONTENT_EDITED,
+            "hidden",
+            Some("Open the iron door"),
+            &json!({"reason":"user_edit"}),
+            Some(&action),
+            Some(&turn_id),
+        )
+        .unwrap();
         conn.execute(
             "INSERT INTO image_assets (id, entry_id, path, prompt, created_at)
-            VALUES ('old-image', ?1, 'old-image.png', 'prompt', 'now')",
+             VALUES ('old-image', ?1, 'old-image.png', 'prompt', 'now')",
             [&reply],
         )
         .unwrap();
         drop(conn);
-        let snapshot = snapshot_for_retry(&pool, "s", &reply).unwrap();
-        let (new_reply, paths) =
-            replace_narration_entry(&pool, &snapshot, "s", &reply, "New outcome", None, None)
-                .await
-                .unwrap();
-        assert_eq!(paths, vec!["old-image.png"]);
-        assert_ne!(new_reply.id, reply);
+
+        let turn = begin_retry(&pool, "s", &reply).unwrap();
+        let committed = process_candidate(&pool, "s", &turn, Ok(candidate("New outcome", None)))
+            .await
+            .unwrap();
+        assert_eq!(committed.image_paths, vec!["old-image.png"]);
+        assert_ne!(committed.entry.id, reply);
         let conn = pool.get().unwrap();
         let entries = ledger_repository::list_logical_entries(&conn, "s").unwrap();
         assert!(entries.iter().any(|entry| entry.id == action));
+        assert!(entries.iter().any(|entry| {
+            entry.kind == ledger_kind::CONTENT_EDITED
+                && entry.target_entry_id.as_deref() == Some(&action)
+        }));
         assert!(!entries
             .iter()
             .any(|entry| entry.id == reply || entry.kind == ledger_kind::DICEROLL));
-        assert_eq!(new_reply.content.as_deref(), Some("New outcome"));
+        assert_eq!(
+            ledger_repository::active_entry(&conn, &action)
+                .unwrap()
+                .content
+                .as_deref(),
+            Some("Open the iron door")
+        );
+        assert_eq!(committed.entry.content.as_deref(), Some("New outcome"));
         assert_eq!(
             crate::features::entities::list_entities_sync(&conn, "s", None)
                 .unwrap()
                 .iter()
-                .find(|e| e.id == "mira")
+                .find(|entity| entity.id == "mira")
                 .unwrap()
                 .name,
             "Mira"
@@ -688,32 +483,193 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn retry_can_stage_fresh_roll_and_entity_changes_against_pre_turn_world() {
-        let (pool, _, reply) = retry_fixture();
-        let snapshot = snapshot_for_retry(&pool, "s", &reply).unwrap();
-        let staging = Arc::new(Mutex::new(TurnStaging::new(
-            snapshot.pool.clone(),
-            "s".into(),
-        )));
+    async fn empty_generation_keeps_the_original_outcome() {
+        let (pool, _, reply, turn_id) = retry_fixture();
+        let turn = begin_retry(&pool, "s", &reply).unwrap();
+        assert!(
+            process_candidate(&pool, "s", &turn, Ok(candidate("  ", None)))
+                .await
+                .is_err()
+        );
+        let conn = pool.get().unwrap();
+        assert_eq!(
+            ledger_repository::active_entry(&conn, &reply)
+                .unwrap()
+                .content
+                .as_deref(),
+            Some("Original")
+        );
+        assert!(ledger_repository::list_logical_entries(&conn, "s")
+            .unwrap()
+            .iter()
+            .any(|entry| entry.kind == ledger_kind::DICEROLL));
+        assert_eq!(
+            turns::turn_of(&conn, &reply).unwrap().unwrap().status,
+            turns::COMPLETE
+        );
+        assert_eq!(turn.id, turn_id);
+    }
+
+    #[tokio::test]
+    async fn candidate_error_keeps_the_original_outcome() {
+        let (pool, _, reply, _) = retry_fixture();
+        let turn = begin_retry(&pool, "s", &reply).unwrap();
+        assert!(process_candidate(
+            &pool,
+            "s",
+            &turn,
+            Err(AppError::Other("generation failed".into())),
+        )
+        .await
+        .is_err());
+        let conn = pool.get().unwrap();
+        assert_eq!(
+            ledger_repository::active_entry(&conn, &reply)
+                .unwrap()
+                .content
+                .as_deref(),
+            Some("Original")
+        );
+        assert_eq!(
+            turns::turn_of(&conn, &reply).unwrap().unwrap().status,
+            turns::COMPLETE
+        );
+    }
+
+    #[test]
+    fn duplicate_pending_retry_is_rejected() {
+        let (pool, _, reply, _) = retry_fixture();
+        let turn = begin_retry(&pool, "s", &reply).unwrap();
+        let error = match begin_retry(&pool, "s", &reply) {
+            Err(error) => error,
+            Ok(_) => panic!("a pending turn started a duplicate retry"),
+        };
+        assert!(matches!(
+            error,
+            AppError::Invalid(message) if message == "a turn is already generating"
+        ));
+        restore_turn(&pool, &turn);
+    }
+
+    #[tokio::test]
+    async fn adding_a_turn_mid_retry_rejects_commit_and_preserves_the_original() {
+        let (pool, _, reply, turn_id) = retry_fixture();
+        let turn = begin_retry(&pool, "s", &reply).unwrap();
+        pool.get()
+            .unwrap()
+            .execute(
+                "INSERT INTO turns (id, story_id, seq, status, created_at)
+                 VALUES ('later', 's', 1, 'complete', 'now')",
+                [],
+            )
+            .unwrap();
+        let error = match process_candidate(&pool, "s", &turn, Ok(candidate("New", None))).await {
+            Err(error) => error,
+            Ok(_) => panic!("a changed story accepted a retry candidate"),
+        };
+        assert!(matches!(
+            error,
+            AppError::Invalid(message)
+                if message == "story changed during retry; original narration was preserved"
+        ));
+        let conn = pool.get().unwrap();
+        assert_eq!(
+            ledger_repository::active_entry(&conn, &reply)
+                .unwrap()
+                .content
+                .as_deref(),
+            Some("Original")
+        );
+        assert_eq!(
+            turns::turn_of(&conn, &reply).unwrap().unwrap().status,
+            turns::COMPLETE
+        );
+        assert_eq!(turn.id, turn_id);
+    }
+
+    #[tokio::test]
+    async fn erasing_the_turn_mid_retry_rejects_commit() {
+        let (pool, _, reply, turn_id) = retry_fixture();
+        let turn = begin_retry(&pool, "s", &reply).unwrap();
+        pool.get()
+            .unwrap()
+            .execute("DELETE FROM turns WHERE id = ?1", [&turn_id])
+            .unwrap();
+        let error = match process_candidate(&pool, "s", &turn, Ok(candidate("New", None))).await {
+            Err(error) => error,
+            Ok(_) => panic!("an erased turn accepted a retry candidate"),
+        };
+        assert!(matches!(
+            error,
+            AppError::Invalid(message)
+                if message == "story changed during retry; original narration was preserved"
+        ));
+        assert!(ledger_repository::get_entry(&pool.get().unwrap(), &reply).is_err());
+    }
+
+    #[tokio::test]
+    async fn failed_unanswered_turn_uses_the_same_commit_path() {
+        let pool = crate::shared::db::test_pool();
+        let conn = pool.get().unwrap();
+        conn.execute(
+            "INSERT INTO stories (id, title, created_at, updated_at, settings_json)
+             VALUES ('s', 'story', 'now', 'now', '{}')",
+            [],
+        )
+        .unwrap();
+        let turn_id = turns::create_turn(&conn, "s").unwrap();
+        let action = ledger_repository::append_story_message(
+            &conn,
+            "s",
+            "player",
+            "continue",
+            "",
+            None,
+            Some(&turn_id),
+        )
+        .unwrap();
+        turns::set_status(&conn, &turn_id, turns::FAILED).unwrap();
+        drop(conn);
+
+        let turn = begin_retry(&pool, "s", &action.id).unwrap();
+        assert!(turn.original_narration.is_none());
+        let committed = process_candidate(&pool, "s", &turn, Ok(candidate("Continued", None)))
+            .await
+            .unwrap();
+        assert_eq!(committed.entry.content.as_deref(), Some("Continued"));
+        assert_eq!(
+            turns::turn_of(&pool.get().unwrap(), &action.id)
+                .unwrap()
+                .unwrap()
+                .status,
+            turns::COMPLETE
+        );
+    }
+
+    #[tokio::test]
+    async fn retry_stages_fresh_roll_and_entity_changes_against_the_pre_turn_view() {
+        let (pool, _, reply, _) = retry_fixture();
+        let turn = begin_retry(&pool, "s", &reply).unwrap();
+        let world = entities::view::excluding_turn(&pool, "s", &turn.id).unwrap();
+        let staging = Arc::new(Mutex::new(TurnStaging::new(world, "s".into())));
         let tool_set = tools::narrator_portable_tools_for_settings(
             staging.clone(),
             String::new(),
             &stories::settings::NarratorToolSettings::default(),
         );
         let named = |name: &str| tool_set.iter().find(|tool| tool.name() == name).unwrap();
-        let entities = named("get_entities")
+        let found = named("get_entities")
             .execute(json!({"name":"Mira"}))
             .await
             .unwrap();
         assert_eq!(
-            entities.as_json().unwrap()["entities"][0]["name"],
+            found.as_json().unwrap()["entities"][0]["name"],
             json!("Mira")
         );
-        let roll = named("roll_check")
+        named("roll_check")
             .execute(json!({"chance_percent":100,"reason":"retry"}))
             .await
             .unwrap();
-        assert_eq!(roll.as_json().unwrap()["outcome"], json!("success"));
         named("update_entity")
             .execute(json!({"id":"mira", "name":"Mira Retried"}))
             .await
@@ -722,210 +678,202 @@ mod tests {
             .execute(json!({"kind":"location", "name":"New chamber"}))
             .await
             .unwrap();
-        let (entry, _) = replace_narration_entry(
-            &pool,
-            &snapshot,
-            "s",
-            &reply,
-            "Retried",
-            None,
-            Some(staging),
-        )
-        .await
-        .unwrap();
+
+        let committed =
+            process_candidate(&pool, "s", &turn, Ok(candidate("Retried", Some(staging))))
+                .await
+                .unwrap();
         let conn = pool.get().unwrap();
-        let entries = ledger_repository::list_logical_entries(&conn, "s").unwrap();
-        let rolls = entries
-            .iter()
-            .filter(|e| e.kind == ledger_kind::DICEROLL)
+        let rolls = ledger_repository::list_logical_entries(&conn, "s")
+            .unwrap()
+            .into_iter()
+            .filter(|entry| entry.kind == ledger_kind::DICEROLL)
             .collect::<Vec<_>>();
         assert_eq!(rolls.len(), 1);
-        assert_eq!(rolls[0].target_entry_id.as_deref(), Some(entry.id.as_str()));
+        assert_eq!(
+            rolls[0].target_entry_id.as_deref(),
+            Some(committed.entry.id.as_str())
+        );
         assert_eq!(rolls[0].payload["chance_percent"], json!(100));
         let entities = crate::features::entities::list_entities_sync(&conn, "s", None).unwrap();
         assert_eq!(
-            entities.iter().find(|e| e.id == "mira").unwrap().name,
-            "Mira Retried"
-        );
-        assert!(entities.iter().any(|e| e.name == "New chamber"));
-    }
-
-    #[tokio::test]
-    async fn scratch_registry_changes_commit_only_with_a_successful_replacement() {
-        let (pool, _, reply) = retry_fixture();
-        let snapshot = snapshot_for_retry(&pool, "s", &reply).unwrap();
-        let scratch = snapshot.pool.get().unwrap();
-        let id: String = scratch
-            .query_row(
-                "SELECT id FROM attribute_registry WHERE canonical_name = 'Trust'",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        crate::features::entities::attributes::add_alias(&scratch, &id, "Confidence").unwrap();
-        scratch.execute("INSERT INTO attribute_registry
-            (id, canonical_name, aliases_json, entity_kinds_json, min, max, category,
-             is_user_created, created_in_story_id, created_at)
-            VALUES ('new-attribute', 'Aethercraft', '[]', '[\"character\"]', 0, 10, 'user', 1, 's', 'now')", []).unwrap();
-        drop(scratch);
-        let live = pool.get().unwrap();
-        let before: String = live
-            .query_row(
-                "SELECT aliases_json FROM attribute_registry WHERE id = ?1",
-                [&id],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert!(!before.contains("Confidence"));
-        assert_eq!(
-            live.query_row(
-                "SELECT COUNT(*) FROM attribute_registry WHERE canonical_name = 'Aethercraft'",
-                [],
-                |row| row.get::<_, i64>(0)
-            )
-            .unwrap(),
-            0
-        );
-        drop(live);
-        replace_narration_entry(&pool, &snapshot, "s", &reply, "New", None, None)
-            .await
-            .unwrap();
-        let live = pool.get().unwrap();
-        let after: String = live
-            .query_row(
-                "SELECT aliases_json FROM attribute_registry WHERE id = ?1",
-                [&id],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert!(after.contains("Confidence"));
-        assert_eq!(
-            live.query_row(
-                "SELECT id FROM attribute_registry WHERE canonical_name = 'Aethercraft'",
-                [],
-                |row| row.get::<_, String>(0)
-            )
-            .unwrap(),
-            "new-attribute"
-        );
-    }
-
-    #[tokio::test]
-    async fn registry_collision_rolls_back_reply_removal_and_entity_replay() {
-        let (pool, _, reply) = retry_fixture();
-        let snapshot = snapshot_for_retry(&pool, "s", &reply).unwrap();
-        let insert_registry = "INSERT INTO attribute_registry
-            (id, canonical_name, aliases_json, entity_kinds_json, min, max, category,
-             is_user_created, created_in_story_id, created_at)
-            VALUES (?1, 'Aethercraft', '[]', '[\"character\"]', 0, 10, 'user', 1, 's', 'now')";
-        snapshot
-            .pool
-            .get()
-            .unwrap()
-            .execute(insert_registry, ["scratch-id"])
-            .unwrap();
-        pool.get()
-            .unwrap()
-            .execute(insert_registry, ["live-id"])
-            .unwrap();
-        assert!(
-            replace_narration_entry(&pool, &snapshot, "s", &reply, "New", None, None)
-                .await
-                .is_err()
-        );
-        let conn = pool.get().unwrap();
-        assert_eq!(
-            ledger_repository::last_active_entry(&conn, "s")
-                .unwrap()
-                .unwrap()
-                .id,
-            reply
-        );
-        assert!(ledger_repository::list_logical_entries(&conn, "s")
-            .unwrap()
-            .iter()
-            .any(|entry| entry.kind == ledger_kind::DICEROLL));
-        assert_eq!(
-            crate::features::entities::list_entities_sync(&conn, "s", None)
-                .unwrap()
+            entities
                 .iter()
                 .find(|entity| entity.id == "mira")
                 .unwrap()
                 .name,
-            "Mira Changed"
+            "Mira Retried"
         );
+        assert!(entities.iter().any(|entity| entity.name == "New chamber"));
     }
 
     #[tokio::test]
-    async fn empty_generation_and_concurrent_edit_preserve_original_and_roll() {
-        let (pool, action, reply) = retry_fixture();
-        let snapshot = snapshot_for_retry(&pool, "s", &reply).unwrap();
-        assert!(
-            replace_narration_entry(&pool, &snapshot, "s", &reply, " ", None, None)
-                .await
-                .is_err()
-        );
-        with_transaction(&pool, |tx| {
-            ledger_repository::append_entry(
-                tx,
-                "s",
-                ledger_kind::CONTENT_EDITED,
-                "hidden",
-                Some("Player edited while retry ran"),
-                &json!({"reason":"user_edit"}),
-                Some(&action),
-                None,
-            )?;
-            Ok(())
-        })
+    async fn retry_minted_attribute_commits_to_the_live_registry() {
+        let (pool, _, reply, _) = retry_fixture();
+        crate::features::entities::create_entity_with_id_sync(
+            &pool.get().unwrap(),
+            "storm",
+            "s",
+            "weather",
+            "Storm",
+            None,
+            "test",
+            None,
+        )
         .unwrap();
-        assert!(
-            replace_narration_entry(&pool, &snapshot, "s", &reply, "New", None, None)
-                .await
-                .is_err()
+        let turn = begin_retry(&pool, "s", &reply).unwrap();
+        let world = entities::view::excluding_turn(&pool, "s", &turn.id).unwrap();
+        let staging = Arc::new(Mutex::new(TurnStaging::new(world, "s".into())));
+        let tool_set = tools::narrator_portable_tools_for_settings(
+            staging.clone(),
+            String::new(),
+            &stories::settings::NarratorToolSettings::default(),
         );
+        tool_set
+            .iter()
+            .find(|tool| tool.name() == "adjust_entity_attribute")
+            .unwrap()
+            .execute(json!({
+                "entity_id":"storm",
+                "attribute":"Barometric Whim",
+                "delta":2.0,
+                "reason":"the storm intensifies"
+            }))
+            .await
+            .unwrap();
+
+        process_candidate(
+            &pool,
+            "s",
+            &turn,
+            Ok(candidate("The storm intensifies.", Some(staging))),
+        )
+        .await
+        .unwrap();
         let conn = pool.get().unwrap();
-        let entries = ledger_repository::list_logical_entries(&conn, "s").unwrap();
-        assert!(entries
-            .iter()
-            .any(|entry| entry.id == reply && entry.content.as_deref() == Some("Original")));
-        assert!(entries
-            .iter()
-            .any(|entry| entry.kind == ledger_kind::DICEROLL));
+        let attribute_id: String = conn
+            .query_row(
+                "SELECT id FROM attribute_registry WHERE canonical_name = 'Barometric Whim'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
         assert_eq!(
-            crate::features::entities::list_entities_sync(&conn, "s", None)
-                .unwrap()
-                .iter()
-                .find(|e| e.id == "mira")
-                .unwrap()
-                .name,
-            "Mira Changed"
+            conn.query_row(
+                "SELECT COUNT(*) FROM entity_attributes
+                 WHERE story_id = 's' AND entity_id = 'storm' AND attribute_id = ?1",
+                [&attribute_id],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+            1
         );
     }
 
     #[tokio::test]
-    async fn changed_story_settings_reject_retry_even_when_timestamp_is_unchanged() {
-        let (pool, _, reply) = retry_fixture();
-        let snapshot = snapshot_for_retry(&pool, "s", &reply).unwrap();
-        pool.get().unwrap().execute(
-            "UPDATE stories SET settings_json = '{\"author_note\":\"new guidance\"}' WHERE id = 's'", [],
-        ).unwrap();
-        assert!(
-            replace_narration_entry(&pool, &snapshot, "s", &reply, "New", None, None)
-                .await
-                .is_err()
-        );
-        let conn = pool.get().unwrap();
-        assert_eq!(
-            ledger_repository::last_active_entry(&conn, "s")
-                .unwrap()
-                .unwrap()
-                .id,
-            reply
-        );
-        assert!(ledger_repository::list_logical_entries(&conn, "s")
+    async fn story_settings_changes_do_not_block_retry_commit() {
+        let (pool, _, reply, _) = retry_fixture();
+        let turn = begin_retry(&pool, "s", &reply).unwrap();
+        pool.get()
             .unwrap()
-            .iter()
-            .any(|entry| entry.kind == ledger_kind::DICEROLL));
+            .execute(
+                "UPDATE stories SET settings_json = '{\"author_note\":\"new guidance\"}' WHERE id = 's'",
+                [],
+            )
+            .unwrap();
+        let committed = process_candidate(&pool, "s", &turn, Ok(candidate("New", None)))
+            .await
+            .unwrap();
+        assert_eq!(committed.entry.content.as_deref(), Some("New"));
+    }
+
+    #[tokio::test]
+    async fn see_retry_reuses_the_prior_narration_target_without_adding_narration() {
+        let pool = crate::shared::db::test_pool();
+        let conn = pool.get().unwrap();
+        conn.execute(
+            "INSERT INTO stories (id, title, created_at, updated_at, settings_json)
+             VALUES ('s', 'story', 'now', 'now', '{}')",
+            [],
+        )
+        .unwrap();
+        let scene_turn = turns::create_turn(&conn, "s").unwrap();
+        let scene = ledger_repository::append_story_message(
+            &conn,
+            "s",
+            "narrator",
+            "generated",
+            "Moonlit harbor",
+            None,
+            Some(&scene_turn),
+        )
+        .unwrap();
+        turns::set_status(&conn, &scene_turn, turns::COMPLETE).unwrap();
+        let see_turn = turns::create_turn(&conn, "s").unwrap();
+        let action = ledger_repository::append_story_message(
+            &conn,
+            "s",
+            "player",
+            "see",
+            "",
+            None,
+            Some(&see_turn),
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO image_assets (id, entry_id, path, prompt, created_at)
+             VALUES ('old-image', ?1, 'old-see.png', 'prompt', 'now')",
+            [&scene.id],
+        )
+        .unwrap();
+        ledger_repository::append_entry(
+            &conn,
+            "s",
+            ledger_kind::IMAGE_GENERATED,
+            "hidden",
+            Some("old image"),
+            &json!({"asset_id":"old-image","prompt":"prompt"}),
+            Some(&action.id),
+            Some(&see_turn),
+        )
+        .unwrap();
+        turns::set_status(&conn, &see_turn, turns::COMPLETE).unwrap();
+        drop(conn);
+
+        let turn = begin_retry(&pool, "s", &action.id).unwrap();
+        let committed = process_candidate(
+            &pool,
+            "s",
+            &turn,
+            Ok(Candidate {
+                visible: String::new(),
+                thoughts: None,
+                staging: None,
+                image_requests: vec![images::model::ImageRequest {
+                    description: "A moonlit harbor".into(),
+                    character_ids: Vec::new(),
+                }],
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(committed.entry.id, action.id);
+        assert_eq!(committed.image_paths, vec!["old-see.png"]);
+        let target = committed.image_target.unwrap();
+        assert_eq!(target.entry_id, scene.id);
+        assert_eq!(target.expected_content, "Moonlit harbor");
+        assert_eq!(target.source_action_id.as_deref(), Some(action.id.as_str()));
+        assert_eq!(target.turn_id, see_turn);
+        assert_eq!(
+            pool.get()
+                .unwrap()
+                .query_row(
+                    "SELECT COUNT(*) FROM ledger_entries WHERE story_id = 's' AND kind = 'narration'",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+            1
+        );
     }
 }

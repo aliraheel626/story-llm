@@ -139,6 +139,7 @@ pub fn replay(
     conn: &rusqlite::Connection,
     story_id: &str,
     entity_ids: &HashSet<String>,
+    exclude_turn: Option<&str>,
 ) -> AppResult<()> {
     if entity_ids.is_empty() {
         return Ok(());
@@ -158,6 +159,9 @@ pub fn replay(
         )?;
     }
     for entry in repository::list_logical_entries(conn, story_id)? {
+        if exclude_turn.is_some_and(|turn_id| entry.turn_id.as_deref() == Some(turn_id)) {
+            continue;
+        }
         let Some(event) = EntityEvent::from_entry(&entry) else {
             continue;
         };
@@ -168,8 +172,11 @@ pub fn replay(
     Ok(())
 }
 
-#[allow(dead_code)] // Step 3 consumes this when building turn-excluded entity views.
-pub fn rebuild_story(conn: &rusqlite::Connection, story_id: &str) -> AppResult<()> {
+pub fn rebuild_story(
+    conn: &rusqlite::Connection,
+    story_id: &str,
+    exclude_turn: Option<&str>,
+) -> AppResult<()> {
     let mut entity_ids = {
         let mut stmt = conn.prepare("SELECT id FROM entities WHERE story_id = ?1")?;
         let rows = stmt.query_map([story_id], |row| row.get::<_, String>(0))?;
@@ -180,7 +187,7 @@ pub fn rebuild_story(conn: &rusqlite::Connection, story_id: &str) -> AppResult<(
             entity_ids.insert(event.entity_id().to_string());
         }
     }
-    replay(conn, story_id, &entity_ids)
+    replay(conn, story_id, &entity_ids, exclude_turn)
 }
 
 #[cfg(test)]
@@ -365,7 +372,7 @@ mod tests {
         entity_repository::delete_entity_sync(&conn, "story", "temporary").unwrap();
 
         let before = snapshots(&conn);
-        rebuild_story(&conn, "story").unwrap();
+        rebuild_story(&conn, "story", None).unwrap();
         assert_eq!(snapshots(&conn), before);
     }
 }

@@ -11,7 +11,10 @@ use crate::shared::db::{with_transaction, Pool};
 use crate::shared::error::{AppError, AppResult};
 use chrono::Utc;
 
-fn entries_for_turn(conn: &rusqlite::Connection, turn_id: &str) -> AppResult<Vec<LedgerEntry>> {
+pub(super) fn entries_for_turn(
+    conn: &rusqlite::Connection,
+    turn_id: &str,
+) -> AppResult<Vec<LedgerEntry>> {
     let mut stmt = conn.prepare(
         "SELECT id, story_id, seq, kind, visibility, content, payload_json,
                 target_entry_id, turn_id, created_at
@@ -21,7 +24,7 @@ fn entries_for_turn(conn: &rusqlite::Connection, turn_id: &str) -> AppResult<Vec
     Ok(rows.collect::<Result<_, _>>()?)
 }
 
-fn touched_entities(entries: &[LedgerEntry]) -> HashSet<String> {
+pub(super) fn touched_entities(entries: &[LedgerEntry]) -> HashSet<String> {
     entries
         .iter()
         .filter_map(entities::events::EntityEvent::from_entry)
@@ -29,7 +32,7 @@ fn touched_entities(entries: &[LedgerEntry]) -> HashSet<String> {
         .collect()
 }
 
-fn delete_turn_images(
+pub(super) fn delete_turn_images(
     conn: &rusqlite::Connection,
     entries: &[LedgerEntry],
 ) -> AppResult<Vec<String>> {
@@ -57,39 +60,6 @@ fn delete_turn_images(
         }
     }
     Ok(paths)
-}
-
-pub(super) fn remove_reply_in_tx(
-    tx: &rusqlite::Transaction<'_>,
-    story_id: &str,
-    reply_id: &str,
-) -> AppResult<Vec<String>> {
-    let reply = ledger_repository::get_entry(tx, reply_id)?;
-    if reply.story_id != story_id || reply.kind != ledger_kind::NARRATION {
-        return Err(AppError::Invalid(
-            "narration to replace no longer exists".into(),
-        ));
-    }
-    let turn_id = reply
-        .turn_id
-        .ok_or_else(|| AppError::Invalid("narration has no owning turn".into()))?;
-    let doomed = entries_for_turn(tx, &turn_id)?
-        .into_iter()
-        .filter(|entry| entry.kind != ledger_kind::PLAYER_MESSAGE)
-        .collect::<Vec<_>>();
-    let image_paths = delete_turn_images(tx, &doomed)?;
-    let doomed_ids = doomed
-        .iter()
-        .map(|entry| entry.id.clone())
-        .collect::<HashSet<_>>();
-    let affected_entities = touched_entities(&doomed);
-    compaction::prune_summaries_covering(tx, story_id, &doomed_ids)?;
-    tx.execute(
-        "DELETE FROM ledger_entries WHERE turn_id = ?1 AND kind != ?2",
-        rusqlite::params![turn_id, ledger_kind::PLAYER_MESSAGE],
-    )?;
-    entities::projection::replay(tx, story_id, &affected_entities)?;
-    Ok(image_paths)
 }
 
 fn erase_last_exchange_in_tx(
@@ -122,7 +92,7 @@ fn erase_last_exchange_in_tx(
         rusqlite::params![last_turn.id, story_id],
     )?;
     let now = Utc::now().to_rfc3339();
-    entities::projection::replay(tx, story_id, &affected_entities)?;
+    entities::projection::replay(tx, story_id, &affected_entities, None)?;
     tx.execute(
         "UPDATE stories SET updated_at = ?1 WHERE id = ?2",
         rusqlite::params![now, story_id],

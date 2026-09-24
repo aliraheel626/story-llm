@@ -10,7 +10,6 @@ use super::staging::TurnStaging;
 pub enum NarratorPurpose {
     Action,
     Illustrate,
-    Replacement,
 }
 
 pub struct Candidate {
