@@ -130,6 +130,14 @@ fn changed_during_retry() -> AppError {
     AppError::Invalid("story changed during retry; original narration was preserved".into())
 }
 
+fn transcript_for_retry(
+    pool: &Pool,
+    story_id: &str,
+    turn: &RetryTurn,
+) -> AppResult<Vec<crate::ai::HistoryTurn>> {
+    load_transcript(pool, story_id, Some(turn.before_seq))
+}
+
 async fn commit_candidate(
     pool: &Pool,
     story_id: &str,
@@ -284,7 +292,7 @@ pub(super) async fn retry_narration(
         } else {
             pool.clone()
         };
-        let transcript = load_transcript(pool, &story_id, Some(turn.before_seq))?;
+        let transcript = transcript_for_retry(pool, &story_id, &turn)?;
         narrator::prepare(NarratorInputs {
             app: &app,
             settings_pool: pool,
@@ -419,6 +427,33 @@ mod tests {
             staging,
             image_requests: Vec::new(),
         }
+    }
+
+    #[test]
+    fn retry_transcript_uses_player_edit_appended_after_reply() {
+        let (pool, action, reply, _) = retry_fixture();
+        let conn = pool.get().unwrap();
+        ledger_repository::append_entry(
+            &conn,
+            "s",
+            ledger_kind::CONTENT_EDITED,
+            "hidden",
+            Some("I kick the door open"),
+            &json!({"reason":"user_edit"}),
+            Some(&action),
+            None,
+        )
+        .unwrap();
+        drop(conn);
+
+        let turn = begin_retry(&pool, "s", &reply).unwrap();
+        let transcript = transcript_for_retry(&pool, "s", &turn).unwrap();
+
+        assert_eq!(
+            transcript.last().map(|entry| entry.content.as_str()),
+            Some("<do>I kick the door open</do>")
+        );
+        restore_turn(&pool, &turn);
     }
 
     #[tokio::test]

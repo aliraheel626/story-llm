@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::ai::{HistoryTurn, HistoryTurnMarker};
 use crate::features::compaction;
@@ -27,8 +27,20 @@ pub fn load_transcript(
         Some(seq) => repository::list_logical_entries_since(&conn, story_id, seq)?,
         None => repository::list_logical_entries(&conn, story_id)?,
     };
-    if let Some(seq) = before_seq {
-        raw.retain(|entry| entry.seq < seq);
+    if let Some(cut) = before_seq {
+        let kept = raw
+            .iter()
+            .filter(|entry| entry.seq < cut)
+            .map(|entry| entry.id.clone())
+            .collect::<HashSet<_>>();
+        raw.retain(|entry| {
+            entry.seq < cut
+                || (entry.kind == kind::CONTENT_EDITED
+                    && entry
+                        .target_entry_id
+                        .as_ref()
+                        .is_some_and(|target| kept.contains(target)))
+        });
     }
     Ok(history_from_entries(&raw, dice_rolls_in_context))
 }
@@ -458,6 +470,58 @@ mod tests {
         assert_eq!(
             history.last().map(|turn| turn.content.as_str()),
             Some("<guide>Keep the rain relentless.</guide>")
+        );
+    }
+
+    #[test]
+    fn retry_cut_applies_player_edit_appended_after_narration() {
+        let pool = crate::shared::db::test_pool();
+        let conn = pool.get().unwrap();
+        conn.execute(
+            "INSERT INTO stories (id, title, created_at, updated_at, settings_json)
+             VALUES ('s', 'story', 'now', 'now', '{}')",
+            [],
+        )
+        .unwrap();
+        let player = repository::append_entry(
+            &conn,
+            "s",
+            kind::PLAYER_MESSAGE,
+            "visible",
+            Some("I open the door"),
+            &json!({"input_mode":"do"}),
+            None,
+            None,
+        )
+        .unwrap();
+        let narration = repository::append_entry(
+            &conn,
+            "s",
+            kind::NARRATION,
+            "visible",
+            Some("The door opens."),
+            &json!({"input_mode":"generated"}),
+            None,
+            None,
+        )
+        .unwrap();
+        repository::append_entry(
+            &conn,
+            "s",
+            kind::CONTENT_EDITED,
+            "hidden",
+            Some("I kick the door open"),
+            &json!({"reason":"user_edit"}),
+            Some(&player.id),
+            None,
+        )
+        .unwrap();
+        drop(conn);
+
+        let history = load_transcript(&pool, "s", Some(narration.seq)).unwrap();
+        assert_eq!(
+            history.last().map(|turn| turn.content.as_str()),
+            Some("<do>I kick the door open</do>")
         );
     }
 
