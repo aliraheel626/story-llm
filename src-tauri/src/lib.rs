@@ -56,6 +56,7 @@ pub fn run() {
             let app_data_dir = app.path().app_data_dir()?;
             let pool = shared::db::init_pool(&app_data_dir)?;
             app.manage(pool);
+            app.manage(features::ledger::turn_tx::TurnGate::default());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

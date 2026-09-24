@@ -1,25 +1,12 @@
-use std::path::PathBuf;
-
 use r2d2_sqlite::SqliteConnectionManager;
 
-use crate::shared::db::Pool;
-use crate::shared::error::{AppError, AppResult};
+use crate::shared::db::{database_path, Pool};
+use crate::shared::error::AppResult;
 
 use super::projection;
 
 pub fn excluding_turn(live: &Pool, story_id: &str, turn_id: &str) -> AppResult<Pool> {
-    let path = {
-        let conn = live.get()?;
-        let mut stmt = conn.prepare("PRAGMA database_list")?;
-        let rows = stmt.query_map([], |row| {
-            Ok((row.get::<_, String>(1)?, row.get::<_, String>(2)?))
-        })?;
-        rows.collect::<Result<Vec<_>, _>>()?
-            .into_iter()
-            .find_map(|(name, path)| (name == "main").then(|| PathBuf::from(path)))
-            .filter(|path| !path.as_os_str().is_empty())
-            .ok_or_else(|| AppError::Other("live database has no file path".into()))?
-    };
+    let path = database_path(live)?;
     let story_id = story_id.to_string();
     let turn_id = turn_id.to_string();
     let manager = SqliteConnectionManager::file(path).with_init(move |conn| {

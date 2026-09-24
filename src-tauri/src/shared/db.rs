@@ -5,7 +5,7 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
-use std::path::{Component, Path};
+use std::path::{Component, Path, PathBuf};
 use uuid::Uuid;
 
 use crate::features::ledger::{model::kind, repository};
@@ -26,6 +26,25 @@ pub fn with_transaction<T>(
     Ok(result)
 }
 
+pub fn database_path(pool: &Pool) -> AppResult<PathBuf> {
+    let conn = pool.get()?;
+    let mut stmt = conn.prepare("PRAGMA database_list")?;
+    let rows = stmt.query_map([], |row| {
+        Ok((row.get::<_, String>(1)?, row.get::<_, String>(2)?))
+    })?;
+    rows.collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .find_map(|(name, path)| (name == "main").then(|| PathBuf::from(path)))
+        .filter(|path| !path.as_os_str().is_empty())
+        .ok_or_else(|| AppError::Other("live database has no file path".into()))
+}
+
+pub fn open_connection(pool: &Pool) -> AppResult<rusqlite::Connection> {
+    let conn = rusqlite::Connection::open(database_path(pool)?)?;
+    conn.execute_batch("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 300000;")?;
+    Ok(conn)
+}
+
 pub fn init_pool(app_data_dir: &Path) -> AppResult<Pool> {
     fs::create_dir_all(app_data_dir)?;
     let db_path = app_data_dir.join("story-llm.sqlite3");
@@ -44,7 +63,8 @@ pub fn init_pool(app_data_dir: &Path) -> AppResult<Pool> {
         }
     }
     let manager = SqliteConnectionManager::file(db_path).with_init(|conn| {
-        conn.execute_batch("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;")?;
+        // Other writes wait for the generating turn's SQLite write lock.
+        conn.execute_batch("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 300000;")?;
         Ok(())
     });
     let pool = r2d2::Pool::new(manager).map_err(AppError::Pool)?;
