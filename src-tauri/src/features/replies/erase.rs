@@ -57,6 +57,38 @@ pub(super) fn delete_turn_assets(
     Ok(())
 }
 
+pub(super) fn remove_turn(
+    conn: &rusqlite::Connection,
+    story_id: &str,
+    turn_id: &str,
+) -> AppResult<Vec<String>> {
+    let entries = entries_for_turn(conn, turn_id)?;
+    let removed = entries
+        .iter()
+        .filter(|entry| entry.visibility == "visible")
+        .map(|entry| entry.id.clone())
+        .collect::<Vec<_>>();
+    delete_turn_assets(conn, &entries)?;
+    let doomed_ids = entries
+        .iter()
+        .map(|entry| entry.id.clone())
+        .collect::<HashSet<_>>();
+    let affected_entities = touched_entities(&entries);
+    compaction::prune_summaries_covering(conn, story_id, &doomed_ids)?;
+    conn.execute(
+        "DELETE FROM turns WHERE id = ?1 AND story_id = ?2",
+        rusqlite::params![turn_id, story_id],
+    )?;
+    let now = Utc::now().to_rfc3339();
+    entities::projection::replay(conn, story_id, &affected_entities, None)?;
+    conn.execute(
+        "UPDATE stories SET updated_at = ?1 WHERE id = ?2",
+        rusqlite::params![now, story_id],
+    )?;
+
+    Ok(removed)
+}
+
 fn erase_last_exchange_in_tx(
     tx: &rusqlite::Transaction<'_>,
     story_id: &str,
@@ -69,31 +101,7 @@ fn erase_last_exchange_in_tx(
             "cannot erase a turn while it is generating".into(),
         ));
     }
-    let entries = entries_for_turn(tx, &last_turn.id)?;
-    let removed = entries
-        .iter()
-        .filter(|entry| entry.visibility == "visible")
-        .map(|entry| entry.id.clone())
-        .collect::<Vec<_>>();
-    delete_turn_assets(tx, &entries)?;
-    let doomed_ids = entries
-        .iter()
-        .map(|entry| entry.id.clone())
-        .collect::<HashSet<_>>();
-    let affected_entities = touched_entities(&entries);
-    compaction::prune_summaries_covering(tx, story_id, &doomed_ids)?;
-    tx.execute(
-        "DELETE FROM turns WHERE id = ?1 AND story_id = ?2",
-        rusqlite::params![last_turn.id, story_id],
-    )?;
-    let now = Utc::now().to_rfc3339();
-    entities::projection::replay(tx, story_id, &affected_entities, None)?;
-    tx.execute(
-        "UPDATE stories SET updated_at = ?1 WHERE id = ?2",
-        rusqlite::params![now, story_id],
-    )?;
-
-    Ok(removed)
+    remove_turn(tx, story_id, &last_turn.id)
 }
 
 /// "Erase": removes the most recent exchange — the latest narration plus the

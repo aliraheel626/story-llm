@@ -115,11 +115,11 @@ pub(super) fn latest_summary_artifact(
 }
 
 pub(crate) fn prune_summaries_covering(
-    tx: &rusqlite::Transaction<'_>,
+    conn: &rusqlite::Connection,
     story_id: &str,
     doomed_ids: &HashSet<String>,
 ) -> AppResult<()> {
-    let mut stmt = tx
+    let mut stmt = conn
         .prepare("SELECT id, payload_json FROM ledger_entries WHERE story_id = ?1 AND kind = ?2")?;
     let summaries: Vec<(String, String)> = stmt
         .query_map(
@@ -132,7 +132,7 @@ pub(crate) fn prune_summaries_covering(
             .ok()
             .and_then(|value| value.get("through_entry_id")?.as_str().map(str::to_string));
         if through.is_some_and(|id| doomed_ids.contains(&id)) {
-            tx.execute("DELETE FROM ledger_entries WHERE id = ?1", [&summary_id])?;
+            conn.execute("DELETE FROM ledger_entries WHERE id = ?1", [&summary_id])?;
         }
     }
     Ok(())
