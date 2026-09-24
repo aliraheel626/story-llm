@@ -556,7 +556,7 @@ mod tests {
     }
 
     #[test]
-    fn erasing_a_created_event_removes_the_entities_row() {
+    fn erasing_entity_creation_skips_a_later_player_attribute_event() {
         let pool = crate::shared::db::test_pool();
         let conn = pool.get().unwrap();
         conn.execute(
@@ -601,6 +601,15 @@ mod tests {
         )
         .unwrap();
         turns::set_status(&conn, &turn_id, turns::COMPLETE).unwrap();
+        let health_id: String = conn
+            .query_row(
+                "SELECT id FROM attribute_registry WHERE canonical_name = 'Health'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        entities::attributes::set_entity_attribute_sync(&conn, "s", "temporary", &health_id, 7.0)
+            .unwrap();
         drop(conn);
 
         let (removed, _) =
@@ -608,16 +617,26 @@ mod tests {
         assert_eq!(removed, vec![action.id, narration.id]);
 
         let conn = pool.get().unwrap();
-        let counts: (i64, i64) = conn
+        let counts: (i64, i64, i64) = conn
             .query_row(
                 "SELECT
                     (SELECT COUNT(*) FROM entities WHERE id = 'temporary'),
-                    (SELECT COUNT(*) FROM story_entity_state WHERE entity_id = 'temporary')",
+                    (SELECT COUNT(*) FROM story_entity_state WHERE entity_id = 'temporary'),
+                    (SELECT COUNT(*) FROM entity_attributes WHERE entity_id = 'temporary')",
                 [],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
             .unwrap();
-        assert_eq!(counts, (0, 0));
+        assert_eq!(counts, (0, 0, 0));
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM ledger_entries WHERE kind = ?1",
+                [ledger_kind::ENTITY_ATTRIBUTE_CHANGED],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+            1
+        );
     }
 
     #[test]

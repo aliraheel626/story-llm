@@ -486,6 +486,101 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn retry_skips_player_attribute_event_for_entity_created_by_replaced_turn() {
+        let pool = crate::shared::db::test_pool();
+        let conn = pool.get().unwrap();
+        conn.execute(
+            "INSERT INTO stories (id, title, created_at, updated_at, settings_json)
+             VALUES ('s', 'story', 'now', 'now', '{}')",
+            [],
+        )
+        .unwrap();
+        let turn_id = turns::create_turn(&conn, "s").unwrap();
+        ledger_repository::append_story_message(
+            &conn,
+            "s",
+            "player",
+            "do",
+            "Enter the room",
+            None,
+            Some(&turn_id),
+        )
+        .unwrap();
+        let reply = ledger_repository::append_story_message(
+            &conn,
+            "s",
+            "narrator",
+            "generated",
+            "A guard appears.",
+            None,
+            Some(&turn_id),
+        )
+        .unwrap();
+        entities::create_entity_with_id_in_turn(
+            &conn,
+            "guard",
+            "s",
+            "character",
+            "Guard",
+            None,
+            "narrator_tool",
+            Some(&reply.id),
+            Some(&turn_id),
+        )
+        .unwrap();
+        turns::set_status(&conn, &turn_id, turns::COMPLETE).unwrap();
+        let health_id: String = conn
+            .query_row(
+                "SELECT id FROM attribute_registry WHERE canonical_name = 'Health'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        entities::attributes::set_entity_attribute_sync(&conn, "s", "guard", &health_id, 7.0)
+            .unwrap();
+        drop(conn);
+
+        let turn = begin_retry(&pool, "s", &reply.id).unwrap();
+        let committed =
+            process_candidate(&pool, "s", &turn, Ok(candidate("The room is empty.", None)))
+                .await
+                .unwrap();
+
+        assert_eq!(
+            committed.entry.content.as_deref(),
+            Some("The room is empty.")
+        );
+        let conn = pool.get().unwrap();
+        let counts: (i64, i64, i64) = conn
+            .query_row(
+                "SELECT
+                    (SELECT COUNT(*) FROM entities WHERE id = 'guard'),
+                    (SELECT COUNT(*) FROM story_entity_state WHERE entity_id = 'guard'),
+                    (SELECT COUNT(*) FROM entity_attributes WHERE entity_id = 'guard')",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(counts, (0, 0, 0));
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM ledger_entries WHERE kind = ?1",
+                [ledger_kind::ENTITY_ATTRIBUTE_CHANGED],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+            1
+        );
+        assert_eq!(
+            turns::turn_of(&conn, &committed.entry.id)
+                .unwrap()
+                .unwrap()
+                .status,
+            turns::COMPLETE
+        );
+    }
+
+    #[tokio::test]
     async fn empty_generation_keeps_the_original_outcome() {
         let (pool, _, reply, turn_id) = retry_fixture();
         let turn = begin_retry(&pool, "s", &reply).unwrap();

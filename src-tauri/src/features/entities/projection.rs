@@ -158,6 +158,7 @@ pub fn replay(
             rusqlite::params![story_id, entity_id],
         )?;
     }
+    let mut created = HashSet::new();
     for entry in repository::list_logical_entries(conn, story_id)? {
         if exclude_turn.is_some_and(|turn_id| entry.turn_id.as_deref() == Some(turn_id)) {
             continue;
@@ -165,8 +166,18 @@ pub fn replay(
         let Some(event) = EntityEvent::from_entry(&entry) else {
             continue;
         };
-        if entity_ids.contains(event.entity_id()) {
-            apply(conn, story_id, &entry.id, &event)?;
+        if !entity_ids.contains(event.entity_id()) {
+            continue;
+        }
+        match &event {
+            EntityEvent::Created { entity_id, .. } => {
+                apply(conn, story_id, &entry.id, &event)?;
+                created.insert(entity_id.clone());
+            }
+            _ if created.contains(event.entity_id()) => {
+                apply(conn, story_id, &entry.id, &event)?;
+            }
+            _ => {}
         }
     }
     Ok(())

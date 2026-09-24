@@ -65,7 +65,7 @@ mod tests {
     use super::*;
     use crate::features::{
         entities::{attributes, events::EntityEvent},
-        ledger::turns,
+        ledger::{model::kind as ledger_kind, turns},
     };
 
     fn health(
@@ -190,6 +190,57 @@ mod tests {
                 )
                 .unwrap(),
             2.0
+        );
+    }
+
+    #[test]
+    fn view_skips_player_attribute_event_when_entity_creation_is_excluded() {
+        let live = crate::shared::db::test_pool();
+        let conn = live.get().unwrap();
+        conn.execute(
+            "INSERT INTO stories (id, title, created_at, updated_at, settings_json)
+             VALUES ('story', 'Story', 'now', 'now', '{}')",
+            [],
+        )
+        .unwrap();
+        let health = health(&conn);
+        let turn_id = turns::create_turn(&conn, "story").unwrap();
+        crate::features::entities::create_entity_with_id_in_turn(
+            &conn,
+            "guard",
+            "story",
+            "character",
+            "Guard",
+            None,
+            "narrator_tool",
+            None,
+            Some(&turn_id),
+        )
+        .unwrap();
+        turns::set_status(&conn, &turn_id, turns::COMPLETE).unwrap();
+        attributes::set_entity_attribute_sync(&conn, "story", "guard", &health.id, 7.0).unwrap();
+        drop(conn);
+
+        let view = excluding_turn(&live, "story", &turn_id).unwrap();
+        let conn = view.get().unwrap();
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM entity_attributes
+                 WHERE story_id = 'story' AND entity_id = 'guard'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+            0
+        );
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM ledger_entries WHERE kind = ?1",
+                [ledger_kind::ENTITY_ATTRIBUTE_CHANGED],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+            1
         );
     }
 }
