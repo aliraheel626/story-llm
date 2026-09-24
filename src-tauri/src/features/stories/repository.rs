@@ -4,6 +4,7 @@ use uuid::Uuid;
 
 use super::model::Story;
 use super::settings::{normalize_reasoning_effort, NarratorToolSettings};
+use crate::features::images;
 use crate::shared::db::{seed_player_entity, with_transaction, Pool};
 use crate::shared::error::{AppError, AppResult};
 
@@ -125,18 +126,7 @@ pub(super) fn rename_story(pool: &Pool, story_id: &str, title: &str) -> AppResul
 /// (SQLite FK cascade cleans up every table, but can't touch files on disk).
 pub(super) fn delete_story(pool: &Pool, story_id: &str) -> AppResult<()> {
     let paths = with_transaction(pool, |tx| {
-        let paths: Vec<String> = {
-            let mut stmt = tx.prepare(
-                "SELECT image_assets.path FROM image_assets
-                 JOIN ledger_entries ON ledger_entries.id = image_assets.entry_id
-                 WHERE ledger_entries.story_id = ?1",
-            )?;
-            let paths = stmt
-                .query_map([story_id], |row| row.get(0))?
-                .filter_map(Result::ok)
-                .collect();
-            paths
-        };
+        let paths = images::image_paths_for_story(tx, story_id)?;
 
         let deleted = tx.execute("DELETE FROM stories WHERE id = ?1", [story_id])?;
         if deleted == 0 {
@@ -145,9 +135,7 @@ pub(super) fn delete_story(pool: &Pool, story_id: &str) -> AppResult<()> {
         Ok(paths)
     })?;
 
-    for path in paths {
-        let _ = std::fs::remove_file(path); // best-effort; a missing file shouldn't fail the delete
-    }
+    images::delete_assets(&paths);
 
     Ok(())
 }

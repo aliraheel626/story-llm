@@ -1,5 +1,6 @@
 use rusqlite::OptionalExtension;
 
+use crate::features::ledger::model::kind as ledger_kind;
 use crate::shared::error::AppResult;
 
 use super::model::StoryImage;
@@ -42,7 +43,7 @@ pub(super) fn insert_asset(conn: &rusqlite::Connection, image: &StoryImage) -> A
     Ok(())
 }
 
-pub(super) fn image_paths_for_entry(
+pub fn image_paths_for_entry(
     conn: &rusqlite::Connection,
     entry_id: &str,
 ) -> AppResult<Vec<String>> {
@@ -51,12 +52,39 @@ pub(super) fn image_paths_for_entry(
     Ok(rows.collect::<Result<Vec<_>, _>>()?)
 }
 
-pub(super) fn delete_for_entry(tx: &rusqlite::Transaction<'_>, entry_id: &str) -> AppResult<()> {
+pub fn image_paths_for_story(
+    conn: &rusqlite::Connection,
+    story_id: &str,
+) -> AppResult<Vec<String>> {
+    let mut stmt = conn.prepare(
+        "SELECT image_assets.path FROM image_assets
+         JOIN ledger_entries ON ledger_entries.id = image_assets.entry_id
+         WHERE ledger_entries.story_id = ?1",
+    )?;
+    let paths = stmt
+        .query_map([story_id], |row| row.get(0))?
+        .filter_map(Result::ok)
+        .collect();
+    Ok(paths)
+}
+
+fn delete_for_entry(tx: &rusqlite::Transaction<'_>, entry_id: &str) -> AppResult<()> {
     tx.execute("DELETE FROM image_assets WHERE entry_id = ?1", [entry_id])?;
     Ok(())
 }
 
-pub(super) fn delete_asset_by_id(
+pub fn detach_from_entry(tx: &rusqlite::Transaction<'_>, entry_id: &str) -> AppResult<Vec<String>> {
+    let paths = image_paths_for_entry(tx, entry_id)?;
+    delete_for_entry(tx, entry_id)?;
+    tx.execute(
+        "DELETE FROM ledger_entries WHERE kind = ?1 AND target_entry_id = ?2",
+        rusqlite::params![ledger_kind::IMAGE_GENERATED, entry_id],
+    )?;
+    Ok(paths)
+}
+
+/// Call on the transactional connection while collecting cascade effects.
+pub fn delete_asset_by_id(
     conn: &rusqlite::Connection,
     asset_id: &str,
 ) -> AppResult<Option<String>> {
@@ -69,4 +97,59 @@ pub(super) fn delete_asset_by_id(
         .optional()?;
     conn.execute("DELETE FROM image_assets WHERE id = ?1", [asset_id])?;
     Ok(path)
+}
+
+/// Delete files only after the transaction that detached them has committed.
+pub fn delete_assets(paths: &[String]) {
+    for path in paths {
+        let _ = std::fs::remove_file(path);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn detaching_an_entry_removes_only_its_images_and_events() {
+        let mut conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE image_assets(id TEXT PRIMARY KEY, entry_id TEXT, path TEXT);
+             CREATE TABLE ledger_entries(id TEXT PRIMARY KEY, kind TEXT, target_entry_id TEXT);
+             INSERT INTO image_assets VALUES ('asset-1', 'entry-1', 'first.png');
+             INSERT INTO image_assets VALUES ('asset-2', 'entry-2', 'second.png');
+             INSERT INTO ledger_entries VALUES ('event-1', 'image_generated', 'entry-1');
+             INSERT INTO ledger_entries VALUES ('event-2', 'image_generated', 'entry-2');
+             INSERT INTO ledger_entries VALUES ('event-3', 'content_edited', 'entry-1');",
+        )
+        .unwrap();
+
+        let tx = conn.transaction().unwrap();
+        assert_eq!(
+            detach_from_entry(&tx, "entry-1").unwrap(),
+            vec!["first.png"]
+        );
+        assert_eq!(
+            image_paths_for_entry(&tx, "entry-1").unwrap(),
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            image_paths_for_entry(&tx, "entry-2").unwrap(),
+            vec!["second.png"]
+        );
+        let event_ids: Vec<String> = tx
+            .prepare("SELECT id FROM ledger_entries ORDER BY id")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(event_ids, vec!["event-2", "event-3"]);
+        assert_eq!(
+            delete_asset_by_id(&tx, "asset-2").unwrap(),
+            Some("second.png".into())
+        );
+        assert_eq!(delete_asset_by_id(&tx, "asset-2").unwrap(), None);
+        tx.commit().unwrap();
+    }
 }
