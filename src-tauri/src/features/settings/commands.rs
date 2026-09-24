@@ -49,11 +49,6 @@ pub fn get_context_injection_settings(pool: State<Pool>) -> AppResult<ContextInj
 pub fn save_context_injection_settings(
     pool: State<Pool>,
     entity_context_mode: String,
-    dice_rolls_in_context: bool,
 ) -> AppResult<()> {
-    repository::write_context_injection_settings(
-        pool.inner(),
-        entity_context_mode,
-        dice_rolls_in_context,
-    )
+    repository::write_context_injection_settings(pool.inner(), entity_context_mode)
 }

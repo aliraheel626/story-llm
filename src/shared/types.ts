@@ -66,7 +66,7 @@ export interface NarrationToolActivityPayload { stream_id: string; call_id: stri
 export interface TextModelSettings { provider: string; model: string; has_api_key: boolean; context_window: number }
 export interface ImageModelSettings { model: string; enabled: boolean; style: string; has_api_key: boolean }
 export type EntityContextMode = "all" | "scoped" | "none";
-export interface ContextInjectionSettings { entity_context_mode: EntityContextMode; dice_rolls_in_context: boolean }
+export interface ContextInjectionSettings { entity_context_mode: EntityContextMode }
 export interface StoryImage { id: string; entry_id: string; path: string; prompt: string; created_at: string }
 
 export type EntityKind = "character" | "object" | "location" | "relationship" | "campaign";

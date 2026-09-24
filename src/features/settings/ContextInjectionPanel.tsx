@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { EntityContextMode } from "../../shared/types";
 import { useStoryStore } from "../story/store";
 import { writingStyleApi } from "../writingStyle/api";
-import { useContextInjectionStore, useDiceRollsContextDraft } from "./contextInjectionStore";
+import { useContextInjectionStore } from "./contextInjectionStore";
 import { useSettingsForm } from "./useSettingsForm";
 
 type EnabledEntityContextMode = Exclude<EntityContextMode, "none">;
@@ -11,8 +11,6 @@ export function ContextInjectionPanel() {
   const activeStoryId = useStoryStore((state) => state.activeStoryId);
   const [entityContextMode, setEntityContextMode] = useState<EntityContextMode>("all");
   const [lastEnabledMode, setLastEnabledMode] = useState<EnabledEntityContextMode>("all");
-  const diceRollsInContext = useDiceRollsContextDraft((state) => state.enabled);
-  const setDiceRollsInContext = useDiceRollsContextDraft((state) => state.setEnabled);
   const lastPersistedEntityMode = useRef<EntityContextMode | null>(null);
   const [authorNoteEnabled, setAuthorNoteEnabled] = useState(true);
   const [authorNoteLoading, setAuthorNoteLoading] = useState(false);
@@ -24,7 +22,6 @@ export function ContextInjectionPanel() {
       if (next.entity_context_mode !== "none") setLastEnabledMode(next.entity_context_mode);
       lastPersistedEntityMode.current = next.entity_context_mode;
     }
-    useDiceRollsContextDraft.getState().sync(next);
   }, true);
 
   useEffect(() => {
@@ -137,19 +134,6 @@ export function ContextInjectionPanel() {
       <label className="flex items-start gap-2 text-xs text-muted">
         <input
           type="checkbox"
-          checked={diceRollsInContext}
-          onChange={(event) => setDiceRollsInContext(event.target.checked)}
-          className="mt-0.5 accent-accent"
-        />
-        <span>
-          Include dice rolls in context
-          <span className="mt-0.5 block text-[11px]">Replays past roll outcomes into later turns. Retry rolls remain available either way.</span>
-        </span>
-      </label>
-
-      <label className="flex items-start gap-2 text-xs text-muted">
-        <input
-          type="checkbox"
           checked={!authorNoteEnabled}
           onChange={(event) => setAuthorNoteMuted(event.target.checked)}
           disabled={!activeStoryId || authorNoteLoading || authorNoteSaving}
@@ -164,7 +148,7 @@ export function ContextInjectionPanel() {
       </label>
 
       <button
-        onClick={() => save(entityContextMode, diceRollsInContext)}
+        onClick={() => save(entityContextMode)}
         disabled={saving}
         className="rounded bg-accent px-2 py-1.5 text-xs font-medium text-bg hover:bg-accent-hover disabled:opacity-40 transition-colors"
       >

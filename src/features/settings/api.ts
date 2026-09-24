@@ -20,6 +20,6 @@ export const imageModelApi = {
 
 export const contextInjectionApi = {
   get: () => invoke<ContextInjectionSettings>("get_context_injection_settings"),
-  save: (entityContextMode: EntityContextMode, diceRollsInContext: boolean) =>
-    invoke<void>("save_context_injection_settings", { entityContextMode, diceRollsInContext }),
+  save: (entityContextMode: EntityContextMode) =>
+    invoke<void>("save_context_injection_settings", { entityContextMode }),
 };

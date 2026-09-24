@@ -166,7 +166,6 @@ pub fn read_context_injection_settings(pool: &Pool) -> AppResult<ContextInjectio
 pub(super) fn write_context_injection_settings(
     pool: &Pool,
     entity_context_mode: String,
-    dice_rolls_in_context: bool,
 ) -> AppResult<()> {
     if !matches!(entity_context_mode.as_str(), "all" | "scoped" | "none") {
         return Err(AppError::Invalid(format!(
@@ -174,10 +173,17 @@ pub(super) fn write_context_injection_settings(
         )));
     }
     let conn = pool.get()?;
-    let context = ContextInjectionSettings {
-        entity_context_mode,
-        dice_rolls_in_context,
-    };
+    let mut context = conn
+        .query_row(
+            "SELECT value FROM settings WHERE key = ?1",
+            [SETTINGS_KEY_CONTEXT_INJECTION],
+            |row| row.get::<_, String>(0),
+        )
+        .ok()
+        .and_then(|value| serde_json::from_str::<serde_json::Value>(&value).ok())
+        .filter(serde_json::Value::is_object)
+        .unwrap_or_else(|| json!({}));
+    context["entity_context_mode"] = json!(entity_context_mode);
     let value = serde_json::to_string(&context).map_err(|error| {
         AppError::Other(format!(
             "failed to serialize context injection settings: {error}"
@@ -200,27 +206,25 @@ mod tests {
         let pool = crate::shared::db::test_pool();
         let defaults = read_context_injection_settings(&pool).unwrap();
         assert_eq!(defaults.entity_context_mode, "all");
-        assert!(defaults.dice_rolls_in_context);
 
         let conn = pool.get().unwrap();
         conn.execute(
             "INSERT INTO settings (key, value) VALUES (?1, ?2)",
             rusqlite::params![
                 SETTINGS_KEY_CONTEXT_INJECTION,
-                r#"{"entity_context_mode":"scoped"}"#
+                r#"{"entity_context_mode":"scoped","dice_rolls_in_context":false}"#
             ],
         )
         .unwrap();
         drop(conn);
         let legacy = read_context_injection_settings(&pool).unwrap();
         assert_eq!(legacy.entity_context_mode, "scoped");
-        assert!(legacy.dice_rolls_in_context);
     }
 
     #[test]
     fn context_settings_survive_restart_without_recreating_legacy_memory() {
         let pool = crate::shared::db::test_pool();
-        write_context_injection_settings(&pool, "scoped".to_string(), false).unwrap();
+        write_context_injection_settings(&pool, "scoped".to_string()).unwrap();
         let conn = pool.get().unwrap();
         let path: String = conn
             .query_row("PRAGMA database_list", [], |row| row.get(2))
@@ -240,7 +244,6 @@ mod tests {
         let restarted = crate::shared::db::init_pool(&dir).unwrap();
         let context = read_context_injection_settings(&restarted).unwrap();
         assert_eq!(context.entity_context_mode, "scoped");
-        assert!(!context.dice_rolls_in_context);
         let conn = restarted.get().unwrap();
         let context: String = conn
             .query_row(
@@ -251,7 +254,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(&context).unwrap(),
-            json!({"entity_context_mode": "scoped", "dice_rolls_in_context": false})
+            json!({"entity_context_mode": "scoped"})
         );
         let legacy_exists: bool = conn
             .query_row(
@@ -261,5 +264,35 @@ mod tests {
             )
             .unwrap();
         assert!(!legacy_exists);
+    }
+
+    #[test]
+    fn writing_context_settings_preserves_unrelated_json() {
+        let pool = crate::shared::db::test_pool();
+        let conn = pool.get().unwrap();
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES (?1, ?2)",
+            rusqlite::params![
+                SETTINGS_KEY_CONTEXT_INJECTION,
+                r#"{"entity_context_mode":"all","future_option":{"enabled":true}}"#
+            ],
+        )
+        .unwrap();
+        drop(conn);
+
+        write_context_injection_settings(&pool, "none".to_string()).unwrap();
+
+        let conn = pool.get().unwrap();
+        let context: String = conn
+            .query_row(
+                "SELECT value FROM settings WHERE key = ?1",
+                [SETTINGS_KEY_CONTEXT_INJECTION],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&context).unwrap(),
+            json!({"entity_context_mode": "none", "future_option": {"enabled": true}})
+        );
     }
 }

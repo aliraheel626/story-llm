@@ -3,7 +3,6 @@ use std::collections::{HashMap, HashSet};
 use crate::ai::{HistoryTurn, HistoryTurnMarker};
 use crate::features::compaction;
 use crate::features::ledger::{model::kind, reducer, repository};
-use crate::features::settings;
 use crate::shared::db::Pool;
 use crate::shared::error::AppResult;
 
@@ -19,8 +18,6 @@ pub fn load_transcript(
     before_seq: Option<i64>,
 ) -> AppResult<Vec<HistoryTurn>> {
     let conn = pool.get()?;
-    let dice_rolls_in_context =
-        settings::read_context_injection_settings(pool)?.dice_rolls_in_context;
     let since_seq =
         compaction::boundary_for(&conn, story_id, before_seq)?.map(|boundary| boundary.through_seq);
     let mut raw = match since_seq {
@@ -42,13 +39,10 @@ pub fn load_transcript(
                         .is_some_and(|target| kept.contains(target)))
         });
     }
-    Ok(history_from_entries(&raw, dice_rolls_in_context))
+    Ok(history_from_entries(&raw))
 }
 
-fn history_from_entries(
-    raw: &[crate::features::ledger::model::LedgerEntry],
-    dice_rolls_in_context: bool,
-) -> Vec<HistoryTurn> {
+fn history_from_entries(raw: &[crate::features::ledger::model::LedgerEntry]) -> Vec<HistoryTurn> {
     let active: HashMap<String, _> = reducer::active_visible_entries(raw)
         .into_iter()
         .map(|entry| (entry.id.clone(), entry))
@@ -126,7 +120,8 @@ fn history_from_entries(
                 | kind::ENTITY_ATTRIBUTE_CHANGED
                 | kind::ENTITY_ATTRIBUTE_REMOVED
                 | kind::IMAGE_GENERATED
-        ) || (dice_rolls_in_context && entry.kind == kind::DICEROLL);
+                | kind::DICEROLL
+        );
         if !contextual {
             continue;
         }
@@ -188,7 +183,7 @@ mod tests {
             json!({"author_note":"old direction"}),
         );
 
-        assert!(history_from_entries(&[note], true).is_empty());
+        assert!(history_from_entries(&[note]).is_empty());
     }
 
     #[test]
@@ -210,7 +205,7 @@ mod tests {
                 json!({"name":"You","source":"story_bootstrap"}),
             ),
         ];
-        let history = history_from_entries(&rows, true);
+        let history = history_from_entries(&rows);
         assert_eq!(history.len(), 2);
         assert_eq!(history.last().unwrap().entry_id.as_deref(), Some("n1"));
     }
@@ -234,7 +229,7 @@ mod tests {
         edited.target_entry_id = Some("n1".into());
         narration.target_entry_id = None;
 
-        let history = history_from_entries(&[narration, edited], true);
+        let history = history_from_entries(&[narration, edited]);
         assert_eq!(history.len(), 1);
         assert_eq!(history[0].content, "edited text");
     }
@@ -279,7 +274,7 @@ mod tests {
             ),
         ];
 
-        let history = history_from_entries(&rows, true);
+        let history = history_from_entries(&rows);
         assert_eq!(history.len(), 3);
         assert!(history[0].content.contains("The archive was entered."));
         assert!(history[1].content.contains("Stealth succeeded."));
@@ -290,7 +285,7 @@ mod tests {
     }
 
     #[test]
-    fn dice_rolls_excluded_from_history_when_setting_is_off() {
+    fn dice_rolls_are_always_contextual() {
         let rows = vec![
             entry("n1", 0, kind::NARRATION, Some("The door opens."), json!({})),
             entry(
@@ -316,18 +311,17 @@ mod tests {
             ),
         ];
 
-        let history = history_from_entries(&rows, false);
-        assert_eq!(history.len(), 3);
+        let history = history_from_entries(&rows);
+        assert_eq!(history.len(), 4);
         assert_eq!(history[0].content, "The door opens.");
-        assert!(history[1].content.contains("Looked up: Bob"));
-        assert_eq!(history[2].content, "<do>I take the key.</do>");
-        assert!(!history
-            .iter()
-            .any(|turn| turn.entry_id.as_deref() == Some("diceroll")));
+        assert_eq!(history[1].entry_id.as_deref(), Some("diceroll"));
+        assert!(history[1].content.contains("Stealth succeeded."));
+        assert!(history[2].content.contains("Looked up: Bob"));
+        assert_eq!(history[3].content, "<do>I take the key.</do>");
     }
 
     #[test]
-    fn load_transcript_respects_saved_dice_roll_preference() {
+    fn load_transcript_ignores_legacy_dice_roll_preference() {
         let pool = crate::shared::db::test_pool();
         let conn = pool.get().unwrap();
         conn.execute(
@@ -335,7 +329,7 @@ mod tests {
             [],
         )
         .unwrap();
-        repository::append_entry(
+        let roll = repository::append_entry(
             &conn,
             "s",
             kind::DICEROLL,
@@ -346,17 +340,15 @@ mod tests {
             None,
         )
         .unwrap();
-        drop(conn);
-        assert_eq!(load_transcript(&pool, "s", None).unwrap().len(), 1);
-
-        let conn = pool.get().unwrap();
         conn.execute(
             "INSERT INTO settings (key, value) VALUES ('context_injection', ?1)",
             [r#"{"entity_context_mode":"scoped","dice_rolls_in_context":false}"#],
         )
         .unwrap();
         drop(conn);
-        assert!(load_transcript(&pool, "s", None).unwrap().is_empty());
+        let history = load_transcript(&pool, "s", None).unwrap();
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].entry_id.as_deref(), Some(roll.id.as_str()));
     }
 
     #[test]
@@ -377,7 +369,7 @@ mod tests {
                 json!({"through_entry_id":"missing"}),
             ),
         ];
-        let history = history_from_entries(&rows, true);
+        let history = history_from_entries(&rows);
         assert_eq!(history.len(), 1);
         assert_eq!(history[0].content, "<do>keep me</do>");
     }
@@ -401,7 +393,7 @@ mod tests {
             ),
         ];
 
-        let history = history_from_entries(&rows, true);
+        let history = history_from_entries(&rows);
         assert_eq!(history.len(), 1);
         assert_eq!(
             history[0].content,
@@ -424,7 +416,7 @@ mod tests {
                 Some(content),
                 json!({"input_mode": mode}),
             );
-            let history = history_from_entries(&[row], true);
+            let history = history_from_entries(&[row]);
             assert_eq!(
                 history[0].content,
                 prompts::render_turn(mode, content).unwrap()

@@ -25,19 +25,12 @@ pub struct ImageModelSettings {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContextInjectionSettings {
     pub entity_context_mode: String,
-    #[serde(default = "default_dice_rolls_in_context")]
-    pub dice_rolls_in_context: bool,
-}
-
-fn default_dice_rolls_in_context() -> bool {
-    true
 }
 
 impl Default for ContextInjectionSettings {
     fn default() -> Self {
         Self {
             entity_context_mode: "all".to_string(),
-            dice_rolls_in_context: true,
         }
     }
 }
