@@ -13,6 +13,7 @@ use futures::StreamExt;
 use rig_agent::agent::{ToolCall, ToolResultEvent};
 use rig_agent::prelude::*;
 use rig_agent::tool::{DynamicTool, ToolOutput, ToolResult};
+use rig_core::message::ToolChoice;
 use rig_core::providers::{openai, openrouter};
 use rig_core::streaming::StreamedAssistantContent;
 
@@ -316,6 +317,11 @@ where
     let completed = Arc::new(Mutex::new(ToolCallCapture::default()));
     let mut runner = agent.runner(req.prompt).history(history);
     if has_tools {
+    if req.stop_after_tool_result {
+        // Explicit decision-only runs (currently See) advertise one tool and
+        // must not be allowed to answer with prose instead of calling it.
+        runner = runner.tool_choice(ToolChoice::Required);
+    }
         runner = runner.add_hook(ActivityHook {
             buffer: activity_buffer.clone(),
             completed: completed.clone(),
