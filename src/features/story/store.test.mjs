@@ -244,9 +244,20 @@ test("snapshot selector drops malformed chance, factor, source, and target rows"
   events.push({ ...rollEvent("not-a-roll", "narration", base), kind: "entity_queried" });
   events.push(rollEvent("null-payload", "narration", null));
   events.push(rollEvent("array-payload", "narration", []));
-  assert.deepEqual(groupRollsByEntry(events), {});
+  assert.deepEqual(Object.keys(groupRollsByEntry(events)), []);
   assert.equal(rollFromEntry(rollEvent("good", "narration", { ...base, chance_source: "default" })).chance_source, "default");
   assert.equal(rollFromEntry(rollEvent("good", "narration", { ...base, chance_source: "narrator" })).chance_source, "narrator");
+});
+
+test("snapshot roll grouping safely handles inherited-property target IDs", () => {
+  const payload = { chance_percent: 50, roll: 50, outcome: "success", seed: 42 };
+  const grouped = groupRollsByEntry([
+    rollEvent("prototype-roll", "__proto__", payload),
+    rollEvent("constructor-roll", "constructor", payload),
+  ]);
+  assert.equal(Object.getPrototypeOf(grouped), null);
+  assert.equal(grouped.__proto__[0].id, "prototype-roll");
+  assert.equal(grouped.constructor[0].id, "constructor-roll");
 });
 
 test("default chance rolls show their source and no factors alongside threshold, draw, and seed", () => {

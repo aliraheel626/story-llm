@@ -159,7 +159,7 @@ export function rollFromEntry(entry: LedgerEntry): Roll | null {
 }
 
 export function groupRollsByEntry(hidden: readonly LedgerEntry[]): Record<string, Roll[]> {
-  const grouped: Record<string, Roll[]> = {};
+  const grouped: Record<string, Roll[]> = Object.create(null);
   for (const entry of hidden) {
     if (entry.kind !== "diceroll") continue;
     const roll = rollFromEntry(entry);
