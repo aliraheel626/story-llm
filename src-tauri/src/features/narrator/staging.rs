@@ -2,9 +2,6 @@
 
 use std::{collections::HashMap, sync::Arc};
 
-use rand::rngs::StdRng;
-use rand::{Rng, SeedableRng};
-use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tokio::sync::Mutex;
 use uuid::Uuid;
@@ -18,8 +15,8 @@ use crate::features::ledger;
 use crate::shared::db::Pool;
 use crate::shared::error::{AppError, AppResult};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RollFactor {
+#[derive(Debug, Clone)]
+pub(super) struct AttributeReading {
     pub entity_id: String,
     pub entity_name: String,
     pub attribute_id: String,
@@ -27,23 +24,6 @@ pub struct RollFactor {
     pub value: f64,
     pub min: f64,
     pub max: f64,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub(super) struct RollOutcome {
-    pub chance_percent: u8,
-    pub seed: i64,
-    pub roll: i64,
-    pub needed: i64,
-    pub outcome: &'static str,
-}
-
-#[derive(Debug, Clone)]
-pub(super) struct PendingRoll {
-    pub output: RollOutcome,
-    pub reason: Option<String>,
-    pub chance_source: &'static str,
-    pub factors: Vec<RollFactor>,
 }
 
 #[derive(Debug, Clone)]
@@ -55,62 +35,20 @@ struct PendingToolCall {
     label: String,
 }
 
-pub(super) fn chance_from_factors(factors: &[RollFactor]) -> u8 {
-    let normalized = |factor: &RollFactor| (factor.value - factor.min) / (factor.max - factor.min);
-    let actor = normalized(&factors[0]);
-    let opponent = factors.get(1).map(normalized).unwrap_or(0.5);
-    (50.0 + 50.0 * (actor - opponent)).round().clamp(0.0, 100.0) as u8
-}
-
-pub(super) fn resolve_roll(chance_percent: u8) -> RollOutcome {
-    assert!(chance_percent <= 100, "chance must be between 0 and 100");
-    let seed = rand::random::<u32>() as i64;
-    let mut rng = StdRng::seed_from_u64(seed as u64);
-    let roll = rng.gen_range(0..100);
-    let needed = 100 - i64::from(chance_percent);
-    RollOutcome {
-        chance_percent,
-        seed,
-        roll,
-        needed,
-        outcome: if roll >= needed { "success" } else { "failure" },
-    }
-}
-
-fn persist_roll(
-    conn: &rusqlite::Connection,
-    entry_id: &str,
-    turn_id: &str,
-    pending: &PendingRoll,
-) -> AppResult<()> {
-    let base = ledger::repository::get_entry(conn, entry_id)?;
-    ledger::repository::append_entry(
-        conn,
-        &base.story_id,
-        ledger::model::kind::DICEROLL,
-        "hidden",
-        Some(&format!(
-            "Dice-roll outcome: rolled {} with {}% chance and got {}.",
-            pending.output.roll, pending.output.chance_percent, pending.output.outcome
-        )),
-        &json!({
-            "chance_percent": pending.output.chance_percent,
-            "roll": pending.output.roll,
-            "needed": pending.output.needed,
-            "outcome": pending.output.outcome,
-            "reason": pending.reason,
-            "chance_source": pending.chance_source,
-            "factors": pending.factors,
-            "seed": pending.output.seed,
-        }),
-        Some(entry_id),
-        Some(turn_id),
-    )?;
-    Ok(())
+pub(super) trait StagedRecord: Send + Sync + std::fmt::Debug {
+    /// Called at commit with a resolver from staged attribute ids to their committed registry entries.
+    fn finalize(
+        &self,
+        remap: &dyn Fn(&str) -> AppResult<Option<AttributeRegistryEntry>>,
+    ) -> AppResult<(
+        &'static str,      /*kind*/
+        String,            /*content*/
+        serde_json::Value, /*payload*/
+    )>;
 }
 
 /// One staged write, replayed in call order at commit.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub(super) enum PendingOp {
     MintAttribute(AttributeRegistryEntry),
     AddAlias {
@@ -136,7 +74,7 @@ pub(super) enum PendingOp {
         cause: String,
         dramatic: bool,
     },
-    Roll(PendingRoll),
+    Record(Box<dyn StagedRecord>),
 }
 
 fn fold_pending_delta(
@@ -336,28 +274,15 @@ impl TurnStaging {
         });
     }
 
-    pub(super) fn stage_roll(
-        &mut self,
-        chance_percent: u8,
-        reason: Option<String>,
-        chance_source: &'static str,
-        factors: Vec<RollFactor>,
-    ) -> RollOutcome {
-        let output = resolve_roll(chance_percent);
-        self.pending.push(PendingOp::Roll(PendingRoll {
-            output,
-            reason,
-            chance_source,
-            factors,
-        }));
-        output
+    pub(super) fn stage_record(&mut self, record: impl StagedRecord + 'static) {
+        self.pending.push(PendingOp::Record(Box::new(record)));
     }
 
-    pub(super) fn roll_factor(
+    pub(super) fn attribute_reading(
         &self,
         entity_id: &str,
         attribute_name: &str,
-    ) -> AppResult<RollFactor> {
+    ) -> AppResult<AttributeReading> {
         let entity = self.find_effective_entity(entity_id)?.ok_or_else(|| {
             AppError::NotFound(format!("entity {entity_id} not found in this story"))
         })?;
@@ -452,7 +377,7 @@ impl TurnStaging {
                 entity.name
             )));
         }
-        Ok(RollFactor {
+        Ok(AttributeReading {
             entity_id: entity.id,
             entity_name: entity.name,
             attribute_id,
@@ -578,22 +503,23 @@ impl TurnStaging {
                         Some(turn_id),
                     )?;
                 }
-                PendingOp::Roll(pending) => {
-                    let mut pending = pending.clone();
-                    for factor in &mut pending.factors {
-                        if let Some(id) = canonical_ids.get(&factor.attribute_id) {
-                            let canonical = attributes::find_attribute_by_id(tx, id)?;
-                            if factor.min != canonical.min || factor.max != canonical.max {
-                                return Err(AppError::Invalid(format!(
-                                    "{}'s attribute range changed while rolling; retry this turn",
-                                    factor.entity_name
-                                )));
-                            }
-                            factor.attribute_id = id.clone();
-                            factor.attribute_name = canonical.canonical_name;
-                        }
-                    }
-                    persist_roll(tx, passage_id, turn_id, &pending)?;
+                PendingOp::Record(record) => {
+                    let (kind, content, payload) = record.finalize(&|attribute_id| {
+                        canonical_ids
+                            .get(attribute_id)
+                            .map(|id| attributes::find_attribute_by_id(tx, id))
+                            .transpose()
+                    })?;
+                    ledger::repository::append_entry(
+                        tx,
+                        &self.story_id,
+                        kind,
+                        "hidden",
+                        Some(&content),
+                        &payload,
+                        Some(passage_id),
+                        Some(turn_id),
+                    )?;
                 }
             }
         }
@@ -970,30 +896,5 @@ mod tests {
         assert_eq!(payloads[1]["ok"], json!(true));
         assert_eq!(payloads[2]["result"], json!("database unavailable"));
         assert_eq!(payloads[2]["ok"], json!(false));
-    }
-
-    #[test]
-    fn chance_roll_has_exact_zero_and_hundred_percent_bounds() {
-        for _ in 0..100 {
-            let impossible = resolve_roll(0);
-            assert!((0..100).contains(&impossible.roll));
-            assert_eq!(impossible.needed, 100);
-            assert_eq!(impossible.outcome, "failure");
-            let certain = resolve_roll(100);
-            assert!((0..100).contains(&certain.roll));
-            assert_eq!(certain.needed, 0);
-            assert_eq!(certain.outcome, "success");
-        }
-    }
-
-    #[test]
-    fn chance_roll_seed_replays_the_draw() {
-        for chance in [1, 25, 50, 75, 99] {
-            let result = resolve_roll(chance);
-            let mut rng = StdRng::seed_from_u64(result.seed as u64);
-            assert_eq!(rng.gen_range(0..100), result.roll);
-            assert_eq!(result.needed, 100 - i64::from(chance));
-            assert_eq!(result.outcome == "success", result.roll >= result.needed);
-        }
     }
 }

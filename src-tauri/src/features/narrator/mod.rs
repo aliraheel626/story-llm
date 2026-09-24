@@ -1,3 +1,4 @@
+pub mod dice;
 mod generation;
 mod injection;
 pub mod model;
