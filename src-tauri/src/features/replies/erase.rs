@@ -283,6 +283,7 @@ mod tests {
             Some("silver hair"),
             "test",
             None,
+            None,
         )
         .unwrap();
         crate::features::entities::create_entity_with_id_sync(
@@ -293,6 +294,7 @@ mod tests {
             "Tomas",
             None,
             "test",
+            None,
             None,
         )
         .unwrap();
@@ -314,6 +316,7 @@ mod tests {
             "earlier event",
             &baseline.id,
             false,
+            None,
         )
         .unwrap();
         let mira_last_event_id: String = conn
@@ -381,7 +384,7 @@ mod tests {
             Some(&turn_id),
         )
         .unwrap();
-        crate::features::entities::update_entity_in_turn(
+        crate::features::entities::update_entity_sync(
             &conn,
             "s",
             "mira",
@@ -392,7 +395,7 @@ mod tests {
             Some(&turn_id),
         )
         .unwrap();
-        crate::features::entities::attributes::apply_attribute_delta_in_turn(
+        crate::features::entities::attributes::apply_attribute_delta(
             &conn,
             "s",
             "mira",
@@ -404,7 +407,7 @@ mod tests {
             Some(&turn_id),
         )
         .unwrap();
-        crate::features::entities::create_entity_with_id_in_turn(
+        crate::features::entities::create_entity_with_id_sync(
             &conn,
             "temporary",
             "s",
@@ -588,7 +591,7 @@ mod tests {
             Some(&turn_id),
         )
         .unwrap();
-        entities::create_entity_with_id_in_turn(
+        entities::create_entity_with_id_sync(
             &conn,
             "temporary",
             "s",

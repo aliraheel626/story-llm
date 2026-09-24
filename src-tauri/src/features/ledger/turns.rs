@@ -32,6 +32,25 @@ fn row_to_turn(row: &rusqlite::Row<'_>) -> rusqlite::Result<Turn> {
     })
 }
 
+fn pending_conflict_or_error(
+    conn: &rusqlite::Connection,
+    story_id: &str,
+    error: rusqlite::Error,
+) -> AppError {
+    let has_pending = conn
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM turns WHERE story_id = ?1 AND status = ?2)",
+            rusqlite::params![story_id, PENDING],
+            |row| row.get::<_, bool>(0),
+        )
+        .unwrap_or(false);
+    if has_pending {
+        AppError::Invalid("a turn is already generating".into())
+    } else {
+        error.into()
+    }
+}
+
 pub fn create_turn(conn: &rusqlite::Connection, story_id: &str) -> AppResult<String> {
     let id = Uuid::new_v4().to_string();
     let seq: i64 = conn.query_row(
@@ -46,20 +65,7 @@ pub fn create_turn(conn: &rusqlite::Connection, story_id: &str) -> AppResult<Str
     );
     match result {
         Ok(_) => Ok(id),
-        Err(error) => {
-            let has_pending = conn
-                .query_row(
-                    "SELECT EXISTS(SELECT 1 FROM turns WHERE story_id = ?1 AND status = ?2)",
-                    rusqlite::params![story_id, PENDING],
-                    |row| row.get::<_, bool>(0),
-                )
-                .unwrap_or(false);
-            if has_pending {
-                Err(AppError::Invalid("a turn is already generating".into()))
-            } else {
-                Err(error.into())
-            }
-        }
+        Err(error) => Err(pending_conflict_or_error(conn, story_id, error)),
     }
 }
 
@@ -82,15 +88,16 @@ pub fn set_status(conn: &rusqlite::Connection, turn_id: &str, status: &str) -> A
 }
 
 pub fn begin_attempt(conn: &rusqlite::Connection, turn_id: &str) -> AppResult<i64> {
-    let current = conn
-        .query_row("SELECT status FROM turns WHERE id = ?1", [turn_id], |row| {
-            row.get::<_, String>(0)
-        })
-        .optional()?;
-    match current.as_deref() {
-        None => return Err(AppError::NotFound(format!("turn {turn_id} not found"))),
-        Some(PENDING) => return Err(AppError::Invalid("a turn is already generating".into())),
-        Some(_) => {}
+    let (story_id, status) = conn
+        .query_row(
+            "SELECT story_id, status FROM turns WHERE id = ?1",
+            [turn_id],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        )
+        .optional()?
+        .ok_or_else(|| AppError::NotFound(format!("turn {turn_id} not found")))?;
+    if status == PENDING {
+        return Err(AppError::Invalid("a turn is already generating".into()));
     }
 
     let updated = conn
@@ -104,24 +111,7 @@ pub fn begin_attempt(conn: &rusqlite::Connection, turn_id: &str) -> AppResult<i6
     match updated {
         Ok(Some(attempt)) => Ok(attempt),
         Ok(None) => Err(AppError::Invalid("a turn is already generating".into())),
-        Err(error) => {
-            let has_pending = conn
-                .query_row(
-                    "SELECT EXISTS(
-                         SELECT 1 FROM turns AS requested
-                         JOIN turns AS pending ON pending.story_id = requested.story_id
-                         WHERE requested.id = ?1 AND pending.status = ?2
-                     )",
-                    rusqlite::params![turn_id, PENDING],
-                    |row| row.get::<_, bool>(0),
-                )
-                .unwrap_or(false);
-            if has_pending {
-                Err(AppError::Invalid("a turn is already generating".into()))
-            } else {
-                Err(error.into())
-            }
-        }
+        Err(error) => Err(pending_conflict_or_error(conn, &story_id, error)),
     }
 }
 

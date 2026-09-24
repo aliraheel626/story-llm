@@ -59,6 +59,7 @@ pub fn update_entity(
             appearance_anchor.as_deref(),
             "user",
             None,
+            None,
         )
     })
 }

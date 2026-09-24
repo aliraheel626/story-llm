@@ -63,30 +63,6 @@ pub fn create_entity_with_id_sync(
     appearance_anchor: Option<&str>,
     source: &str,
     target_entry_id: Option<&str>,
-) -> AppResult<Entity> {
-    create_entity_with_id_in_turn(
-        conn,
-        id,
-        story_id,
-        entity_kind,
-        name,
-        appearance_anchor,
-        source,
-        target_entry_id,
-        None,
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-pub fn create_entity_with_id_in_turn(
-    conn: &rusqlite::Connection,
-    id: &str,
-    story_id: &str,
-    entity_kind: &str,
-    name: &str,
-    appearance_anchor: Option<&str>,
-    source: &str,
-    target_entry_id: Option<&str>,
     turn_id: Option<&str>,
 ) -> AppResult<Entity> {
     let name = name.trim();
@@ -141,35 +117,15 @@ pub fn create_entity_sync(
         appearance_anchor,
         source,
         target_entry_id,
+        None,
     )
 }
 
 /// Renames/updates an entity's appearance, mirroring `create_entity_sync`'s
 /// `source`/`target_entry_id` shape so both the user-facing command and a
 /// narrator tool's staged commit can call it identically.
-pub fn update_entity_sync(
-    conn: &rusqlite::Connection,
-    story_id: &str,
-    entity_id: &str,
-    name: &str,
-    appearance_anchor: Option<&str>,
-    source: &str,
-    target_entry_id: Option<&str>,
-) -> AppResult<Entity> {
-    update_entity_in_turn(
-        conn,
-        story_id,
-        entity_id,
-        name,
-        appearance_anchor,
-        source,
-        target_entry_id,
-        None,
-    )
-}
-
 #[allow(clippy::too_many_arguments)]
-pub fn update_entity_in_turn(
+pub fn update_entity_sync(
     conn: &rusqlite::Connection,
     story_id: &str,
     entity_id: &str,

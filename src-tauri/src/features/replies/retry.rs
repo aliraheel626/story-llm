@@ -400,6 +400,7 @@ mod tests {
             Some("old cloak"),
             "test",
             None,
+            None,
         )
         .unwrap();
         let turn_id = turns::create_turn(&conn, "s").unwrap();
@@ -423,7 +424,7 @@ mod tests {
             Some(&turn_id),
         )
         .unwrap();
-        crate::features::entities::update_entity_in_turn(
+        crate::features::entities::update_entity_sync(
             &conn,
             "s",
             "mira",
@@ -580,7 +581,7 @@ mod tests {
             Some(&turn_id),
         )
         .unwrap();
-        entities::create_entity_with_id_in_turn(
+        entities::create_entity_with_id_sync(
             &conn,
             "guard",
             "s",
@@ -912,6 +913,7 @@ mod tests {
             "Storm",
             None,
             "test",
+            None,
             None,
         )
         .unwrap();

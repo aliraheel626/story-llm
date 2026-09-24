@@ -284,6 +284,7 @@ mod tests {
             Some("a red cloak"),
             "test",
             None,
+            None,
         )
         .unwrap();
         let query = append_entry(

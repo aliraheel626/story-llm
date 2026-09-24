@@ -451,7 +451,7 @@ impl TurnStaging {
                     name,
                     appearance_anchor,
                 } => {
-                    entities::create_entity_with_id_in_turn(
+                    entities::create_entity_with_id_sync(
                         tx,
                         id,
                         &self.story_id,
@@ -468,7 +468,7 @@ impl TurnStaging {
                     name,
                     appearance_anchor,
                 } => {
-                    entities::update_entity_in_turn(
+                    entities::update_entity_sync(
                         tx,
                         &self.story_id,
                         id,
@@ -491,7 +491,7 @@ impl TurnStaging {
                     } else {
                         attribute.clone()
                     };
-                    attributes::apply_attribute_delta_in_turn(
+                    attributes::apply_attribute_delta(
                         tx,
                         &self.story_id,
                         entity_id,

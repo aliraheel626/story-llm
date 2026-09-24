@@ -525,6 +525,7 @@ mod tests {
             None,
             "test",
             None,
+            None,
         )
         .unwrap();
         entities::create_entity_with_id_sync(
@@ -535,6 +536,7 @@ mod tests {
             "Guard",
             None,
             "test",
+            None,
             None,
         )
         .unwrap();
@@ -635,6 +637,7 @@ mod tests {
             "You",
             None,
             "test",
+            None,
             None,
         )
         .unwrap();

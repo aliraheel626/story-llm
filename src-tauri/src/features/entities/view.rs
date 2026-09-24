@@ -93,7 +93,7 @@ mod tests {
         .unwrap();
         let health = health(&conn);
         let turn_one = turns::create_turn(&conn, "story").unwrap();
-        crate::features::entities::create_entity_with_id_in_turn(
+        crate::features::entities::create_entity_with_id_sync(
             &conn,
             "guard",
             "story",
@@ -205,7 +205,7 @@ mod tests {
         .unwrap();
         let health = health(&conn);
         let turn_id = turns::create_turn(&conn, "story").unwrap();
-        crate::features::entities::create_entity_with_id_in_turn(
+        crate::features::entities::create_entity_with_id_sync(
             &conn,
             "guard",
             "story",

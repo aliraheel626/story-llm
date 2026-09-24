@@ -449,6 +449,7 @@ pub(crate) fn seed_player_entity(conn: &rusqlite::Connection, story_id: &str) ->
         None,
         "story_bootstrap",
         None,
+        None,
     )?;
     Ok(())
 }

@@ -160,15 +160,6 @@ pub fn active_entry(conn: &rusqlite::Connection, entry_id: &str) -> AppResult<Le
         .ok_or_else(|| AppError::NotFound(format!("active ledger entry {entry_id} not found")))
 }
 
-#[allow(dead_code)]
-pub fn last_active_entry(
-    conn: &rusqlite::Connection,
-    story_id: &str,
-) -> AppResult<Option<LedgerEntry>> {
-    let entries = list_logical_entries(conn, story_id)?;
-    Ok(super::reducer::active_visible_entries(&entries).pop())
-}
-
 pub fn append_story_message(
     conn: &rusqlite::Connection,
     story_id: &str,
@@ -445,55 +436,5 @@ mod tests {
         assert_eq!(reply.visibility, "visible");
         assert!(reply.target_entry_id.is_none());
         assert_eq!(get_entry(&conn, &reply.id).unwrap().payload, reply.payload);
-    }
-
-    #[test]
-    fn last_active_entry_ignores_hidden_events_and_folds_later_edits() {
-        let pool = crate::shared::db::test_pool();
-        let conn = pool.get().unwrap();
-        conn.execute(
-            "INSERT INTO stories (id, title, created_at, updated_at, settings_json)
-             VALUES ('s', 'Story', 'now', 'now', '{}'), ('other', 'Other', 'now', 'now', '{}')",
-            [],
-        )
-        .unwrap();
-
-        assert!(last_active_entry(&conn, "s").unwrap().is_none());
-        let action = append_story_message(&conn, "s", "player", "do", "Act", None, None).unwrap();
-        let reply =
-            append_story_message(&conn, "s", "narrator", "generated", "Old", None, None).unwrap();
-        append_entry(
-            &conn,
-            "s",
-            kind::CONTENT_EDITED,
-            "hidden",
-            Some("New"),
-            &json!({"reason":"user_edit"}),
-            Some(&reply.id),
-            None,
-        )
-        .unwrap();
-        append_entry(
-            &conn,
-            "s",
-            kind::DICEROLL,
-            "hidden",
-            None,
-            &json!({}),
-            Some(&reply.id),
-            None,
-        )
-        .unwrap();
-
-        let last = last_active_entry(&conn, "s").unwrap().unwrap();
-        assert_eq!(last.id, reply.id);
-        assert_eq!(last.content.as_deref(), Some("New"));
-        assert_eq!(last.input_mode(), "generated");
-        assert_eq!(
-            get_entry(&conn, &reply.id).unwrap().content.as_deref(),
-            Some("Old")
-        );
-        assert!(last_active_entry(&conn, "other").unwrap().is_none());
-        assert_ne!(last.id, action.id);
     }
 }

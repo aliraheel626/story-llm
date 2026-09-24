@@ -295,6 +295,7 @@ mod tests {
             Some("silver hair"),
             "test",
             None,
+            None,
         )
         .unwrap();
         entity_repository::update_entity_sync(
@@ -305,6 +306,7 @@ mod tests {
             Some("silver hair and a red cloak"),
             "narrator_tool",
             Some(&passage.id),
+            None,
         )
         .unwrap();
         attributes::apply_attribute_delta(
@@ -316,6 +318,7 @@ mod tests {
             "first inference",
             &passage.id,
             false,
+            None,
         )
         .unwrap();
         attributes::apply_attribute_delta(
@@ -327,6 +330,7 @@ mod tests {
             "follow-up inference",
             &passage.id,
             false,
+            None,
         )
         .unwrap();
         attributes::apply_attribute_delta(
@@ -338,6 +342,7 @@ mod tests {
             "dramatic inference",
             &passage.id,
             true,
+            None,
         )
         .unwrap();
 
@@ -349,6 +354,7 @@ mod tests {
             "Guard",
             None,
             "test",
+            None,
             None,
         )
         .unwrap();
@@ -363,6 +369,7 @@ mod tests {
                 "locked inference",
                 &passage.id,
                 true,
+                None,
             )
             .unwrap(),
             (7.0, 7.0)
@@ -377,6 +384,7 @@ mod tests {
             "Temporary Camp",
             None,
             "test",
+            None,
             None,
         )
         .unwrap();

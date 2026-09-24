@@ -66,24 +66,7 @@ pub fn clamp_delta(
 /// Applies a proposed delta with clamping and rate-limiting, and logs an
 /// append-only ledger event. Returns `(before, after)`.
 #[allow(clippy::too_many_arguments)]
-#[cfg(test)]
 pub fn apply_attribute_delta(
-    conn: &rusqlite::Connection,
-    story_id: &str,
-    entity_id: &str,
-    attribute: &AttributeRegistryEntry,
-    delta: f64,
-    cause: &str,
-    entry_id: &str,
-    dramatic: bool,
-) -> AppResult<(f64, f64)> {
-    apply_attribute_delta_in_turn(
-        conn, story_id, entity_id, attribute, delta, cause, entry_id, dramatic, None,
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-pub fn apply_attribute_delta_in_turn(
     conn: &rusqlite::Connection,
     story_id: &str,
     entity_id: &str,
@@ -451,6 +434,7 @@ mod tests {
             "first change",
             &passage.id,
             false,
+            None,
         )
         .unwrap();
 
