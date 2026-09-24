@@ -117,7 +117,7 @@ export interface RollFactor {
 export interface Roll {
   id: string; entry_id: string; reason: string | null; chance_percent: number;
   chance_source?: "default" | "narrator" | "attributes"; factors?: RollFactor[];
-  seed: number; roll: number; outcome: string; created_at: string;
+  seed: number; roll: number; needed: number; outcome: string; created_at: string;
 }
 
 export function ledgerInputMode(entry: LedgerEntry): InputMode {
@@ -126,13 +126,13 @@ export function ledgerInputMode(entry: LedgerEntry): InputMode {
 export function rollFromEntry(entry: LedgerEntry): Roll | null {
   if (entry.payload === null || typeof entry.payload !== "object" || Array.isArray(entry.payload)) return null;
   const p = entry.payload as unknown as Record<string, unknown>;
-  const { chance_percent: chance, roll, outcome, seed } = p;
+  const { chance_percent: chance, roll, needed, outcome, seed } = p;
   if (
-    !Number.isInteger(chance) || typeof chance !== "number" || chance < 0 || chance > 100 ||
-    !Number.isInteger(roll) || typeof roll !== "number" || roll < 0 || roll >= 100 ||
-    !Number.isInteger(seed) || typeof seed !== "number" || seed < -(2 ** 63) || seed >= 2 ** 63 ||
-    (outcome !== "success" && outcome !== "failure") ||
-    (outcome === "success") !== (roll >= 100 - chance) ||
+    !Number.isInteger(chance) || typeof chance !== "number" ||
+    !Number.isInteger(roll) || typeof roll !== "number" ||
+    !Number.isInteger(needed) || typeof needed !== "number" ||
+    !Number.isInteger(seed) || typeof seed !== "number" ||
+    typeof outcome !== "string" || outcome.length === 0 ||
     typeof entry.target_entry_id !== "string"
   ) return null;
 
@@ -146,19 +146,14 @@ export function rollFromEntry(entry: LedgerEntry): Roll | null {
       value.min! < value.max! && value.value! >= value.min! && value.value! <= value.max!;
   })) return null;
 
-  let chanceSource: Roll["chance_source"];
-  if (typeof p.chance_source === "string") {
-    if (p.chance_source === "default" && factors.length === 0 && chance === 50) chanceSource = "default";
-    else if (p.chance_source === "narrator" && factors.length === 0) chanceSource = "narrator";
-    else if (p.chance_source === "attributes" && factors.length > 0) chanceSource = "attributes";
-    else return null;
-  }
+  const chanceSource = p.chance_source;
+  if (chanceSource !== undefined && chanceSource !== "default" && chanceSource !== "narrator" && chanceSource !== "attributes") return null;
 
   return {
     id: entry.id, entry_id: entry.target_entry_id, created_at: entry.created_at,
-    chance_percent: chance, roll, outcome, seed,
+    chance_percent: chance, roll, needed, outcome, seed,
     reason: typeof p.reason === "string" ? p.reason : null,
-    chance_source: chanceSource, factors,
+    chance_source: chanceSource as Roll["chance_source"], factors,
   };
 }
 

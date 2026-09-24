@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { LedgerEntry } from "../../shared/types";
+import { rollFromEntry, type LedgerEntry } from "../../shared/types";
 
 export interface ToolCall { key: string; label: string; done: boolean; ok: boolean | null }
 export interface TurnActivityData { thoughts?: string | null; tools: ToolCall[] }
@@ -17,8 +17,11 @@ const TOOL_EVENT_KINDS = new Set([
 ]);
 
 const eventLabel = (entry: LedgerEntry): string => {
-  const text = (entry.content ?? "").replace(/^Dice-roll outcome:\s*/i, "").replace(/\.$/, "");
-  return text || entry.kind.replace(/_/g, " ");
+  if (entry.kind === "diceroll") {
+    const roll = rollFromEntry(entry);
+    if (roll) return `Roll${roll.reason ? ` for ${roll.reason}` : ""}: ${roll.outcome}`;
+  }
+  return entry.content || entry.kind.replace(/_/g, " ");
 };
 
 /** The tool calls committed against one narration revision, in call order. */

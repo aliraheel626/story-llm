@@ -139,6 +139,7 @@ fn run_migrations(conn: &mut PooledConn) -> AppResult<()> {
         );
         "#,
     )?;
+    migrate_roll_needed_v1(conn)?;
     ensure_ledger_turn_column(conn)?;
     ensure_turn_attempt_column(conn)?;
     migrate_ledger_retention_settings(conn)?;
@@ -150,6 +151,38 @@ fn run_migrations(conn: &mut PooledConn) -> AppResult<()> {
         "UPDATE turns SET status = 'failed' WHERE status = 'pending'",
         [],
     )?;
+    Ok(())
+}
+
+fn migrate_roll_needed_v1(conn: &mut rusqlite::Connection) -> AppResult<()> {
+    const MIGRATION_KEY: &str = "migration_roll_needed_v1";
+    let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+    if tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM settings WHERE key = ?1)",
+        [MIGRATION_KEY],
+        |row| row.get::<_, bool>(0),
+    )? {
+        tx.commit()?;
+        return Ok(());
+    }
+
+    tx.execute(
+        "UPDATE ledger_entries
+         SET payload_json = json_set(
+             payload_json,
+             '$.needed',
+             100 - json_extract(payload_json, '$.chance_percent')
+         )
+         WHERE kind = 'diceroll'
+           AND json_extract(payload_json, '$.needed') IS NULL
+           AND json_extract(payload_json, '$.chance_percent') IS NOT NULL",
+        [],
+    )?;
+    tx.execute(
+        "INSERT INTO settings (key, value) VALUES (?1, '1')",
+        [MIGRATION_KEY],
+    )?;
+    tx.commit()?;
     Ok(())
 }
 
@@ -812,6 +845,101 @@ pub fn test_pool() -> Pool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn roll_needed_migration_backfills_once_without_touching_other_payloads() {
+        fn payloads(conn: &rusqlite::Connection) -> Vec<(String, String)> {
+            conn.prepare(
+                "SELECT id, payload_json FROM ledger_entries
+                 WHERE id IN ('old-roll', 'complete-roll', 'unrelated') ORDER BY id",
+            )
+            .unwrap()
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap()
+        }
+
+        let pool = test_pool();
+        let mut conn = pool.get().unwrap();
+        conn.execute(
+            "DELETE FROM settings WHERE key = 'migration_roll_needed_v1'",
+            [],
+        )
+        .unwrap();
+        conn.execute_batch(
+            r#"INSERT INTO stories (id, title, created_at, updated_at)
+               VALUES ('s', 'Story', 'now', 'now');
+               INSERT INTO ledger_entries
+                   (id, story_id, seq, kind, visibility, content, payload_json, target_entry_id, created_at)
+               VALUES
+                   ('base', 's', 0, 'narration', 'visible', 'Base', '{}', NULL, 'now'),
+                   ('old-roll', 's', 1, 'diceroll', 'hidden', NULL,
+                    '{"chance_percent":37,"roll":80,"outcome":"success","seed":1}', 'base', 'now'),
+                   ('complete-roll', 's', 2, 'diceroll', 'hidden', NULL,
+                    '{"chance_percent":60,"roll":10,"needed":7,"outcome":"failure","seed":2}', 'base', 'now'),
+                   ('unrelated', 's', 3, 'entity_queried', 'hidden', NULL,
+                    '{"chance_percent":25,"note":"unchanged"}', 'base', 'now');"#,
+        )
+        .unwrap();
+
+        run_migrations(&mut conn).unwrap();
+
+        let migrated = payloads(&conn);
+        let payload = |id: &str| {
+            serde_json::from_str::<serde_json::Value>(
+                &migrated
+                    .iter()
+                    .find(|(entry_id, _)| entry_id == id)
+                    .unwrap()
+                    .1,
+            )
+            .unwrap()
+        };
+        assert_eq!(payload("old-roll")["needed"], 63);
+        assert_eq!(payload("complete-roll")["needed"], 7);
+        assert_eq!(
+            migrated
+                .iter()
+                .find(|(entry_id, _)| entry_id == "complete-roll")
+                .map(|(_, raw)| raw.as_str()),
+            Some(r#"{"chance_percent":60,"roll":10,"needed":7,"outcome":"failure","seed":2}"#)
+        );
+        assert_eq!(
+            payload("unrelated"),
+            serde_json::json!({"chance_percent": 25, "note": "unchanged"})
+        );
+        assert_eq!(
+            migrated
+                .iter()
+                .find(|(entry_id, _)| entry_id == "unrelated")
+                .map(|(_, raw)| raw.as_str()),
+            Some(r#"{"chance_percent":25,"note":"unchanged"}"#)
+        );
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM settings WHERE key = 'migration_roll_needed_v1'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+            1
+        );
+
+        run_migrations(&mut conn).unwrap();
+        assert_eq!(payloads(&conn), migrated);
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM settings WHERE key = 'migration_roll_needed_v1'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+            1
+        );
+    }
 
     #[test]
     fn legacy_stories_reset_tools_once_and_new_stories_default_on() {

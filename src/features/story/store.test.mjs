@@ -134,7 +134,7 @@ test("replacement keeps original through streaming and failure, then clears old 
   const original = { id: "original", story_id: storyId, kind: "narration", payload: { input_mode: "generated" }, content: "Original", turn_id: "turn-original" };
   const replacement = { ...original, id: "replacement", content: "Replacement" };
   entries.set(storyId, [original]);
-  hiddenEntries.set(storyId, [rollEvent("old-roll", original.id, { chance_percent: 50, roll: 90, outcome: "success", seed: 1, reason: "Old roll" })]);
+  hiddenEntries.set(storyId, [rollEvent("old-roll", original.id, { chance_percent: 50, roll: 90, needed: 50, outcome: "success", seed: 1, reason: "Old roll" })]);
   images.set(storyId, [{ id: "old-image", entry_id: original.id, path: "old.png" }]);
   await Promise.all([store.getState().loadLedger(storyId), store.getState().loadImagesForStory(storyId)]);
   await store.getState().retryNarration(storyId, original.id);
@@ -150,7 +150,7 @@ test("replacement keeps original through streaming and failure, then clears old 
   await store.getState().retryNarration(storyId, original.id);
   stream = store.getState().bundles[storyId].streaming.streamId;
   entries.set(storyId, [replacement]);
-  hiddenEntries.set(storyId, [rollEvent("new-roll", replacement.id, { chance_percent: 40, roll: 72, outcome: "success", seed: 2, reason: "New roll" })]);
+  hiddenEntries.set(storyId, [rollEvent("new-roll", replacement.id, { chance_percent: 40, roll: 72, needed: 60, outcome: "success", seed: 2, reason: "New roll" })]);
   images.set(storyId, []);
   store.getState()._finalize({ stream_id: stream, entry: replacement });
   assert.equal(store.getState().bundles[storyId].entries[0].id, replacement.id);
@@ -233,31 +233,30 @@ test("snapshot roll selector preserves both factor snapshots and optional fields
     { entity_id: "player", entity_name: "You", attribute_id: "stealth", attribute_name: "Stealth", value: 8, min: 0, max: 10 },
     { entity_id: "guard", entity_name: "Guard", attribute_id: "perception", attribute_name: "Perception", value: 6, min: 0, max: 10 },
   ];
-  const payload = { chance_percent: 60, roll: 70, outcome: "success", reason: "Sneak", chance_source: "attributes", factors, seed: 42 };
+  const payload = { chance_percent: 60, roll: 70, needed: 40, outcome: "success", reason: "Sneak", chance_source: "attributes", factors, seed: 42 };
   const event = rollEvent("factored", "narration", payload);
-  const grouped = groupRollsByEntry([rollEvent("earlier", "other", { chance_percent: 50, roll: 50, outcome: "success", seed: 1 }), event]);
+  const grouped = groupRollsByEntry([rollEvent("earlier", "other", { chance_percent: 50, roll: 50, needed: 50, outcome: "success", seed: 1 }), event]);
   assert.deepEqual(grouped.narration, [{
     id: "factored", entry_id: "narration", created_at: event.created_at,
-    reason: "Sneak", chance_percent: 60, roll: 70, outcome: "success", seed: 42,
+    reason: "Sneak", chance_percent: 60, roll: 70, needed: 40, outcome: "success", seed: 42,
     chance_source: "attributes", factors,
   }]);
   assert.equal(grouped.other[0].chance_source, undefined);
   assert.equal(grouped.other[0].reason, null);
   assert.deepEqual(grouped.other[0].factors, []);
-  assert.equal(rollFromEntry(rollEvent("legacy", "narration", { ...payload, chance_source: 7, reason: false, factors: undefined })).chance_source, undefined);
+  assert.equal(rollFromEntry(rollEvent("legacy", "narration", { ...payload, chance_source: undefined, reason: false, factors: undefined })).chance_source, undefined);
 });
 
-test("snapshot selector drops malformed chance, factor, source, and target rows", () => {
-  const base = { chance_percent: 50, roll: 50, outcome: "success", seed: 42 };
+test("snapshot selector validates roll shapes without interpreting outcomes", () => {
+  const base = { chance_percent: 50, roll: 50, needed: 50, outcome: "success", seed: 42 };
   const factor = { entity_id: "p", entity_name: "You", attribute_id: "a", attribute_name: "Agility", value: 5, min: 0, max: 10 };
   const invalid = [
-    { chance_percent: 50.5 }, { chance_percent: -1 }, { chance_percent: 101 }, { roll: 100 },
-    { roll: 1.5 }, { outcome: "failure" }, { seed: "42" }, { seed: 1.5 },
+    { chance_percent: 50.5 }, { roll: 1.5 }, { needed: 49.5 }, { outcome: "" },
+    { seed: "42" }, { seed: 1.5 },
     { factors: null }, { factors: {} }, { factors: [factor, factor, factor] },
     { factors: [{ ...factor, entity_name: null }] }, { factors: [{ ...factor, min: 10 }] },
     { factors: [{ ...factor, value: 11 }] }, { factors: [{ ...factor, value: Infinity }] },
-    { chance_source: "unknown" }, { chance_source: "default", chance_percent: 40 },
-    { chance_source: "narrator", factors: [factor] }, { chance_source: "attributes" },
+    { chance_source: "unknown" }, { chance_source: 7 },
   ];
   const events = invalid.map((patch, index) => rollEvent(`invalid-${index}`, "narration", { ...base, ...patch }));
   events.push(rollEvent("untargeted", null, base));
@@ -266,11 +265,18 @@ test("snapshot selector drops malformed chance, factor, source, and target rows"
   events.push(rollEvent("array-payload", "narration", []));
   assert.deepEqual(Object.keys(groupRollsByEntry(events)), []);
   assert.equal(rollFromEntry(rollEvent("good", "narration", { ...base, chance_source: "default" })).chance_source, "default");
-  assert.equal(rollFromEntry(rollEvent("good", "narration", { ...base, chance_source: "narrator" })).chance_source, "narrator");
+  const permissive = rollFromEntry(rollEvent("permissive", "narration", {
+    ...base, chance_percent: 101, roll: -1, needed: 900, outcome: "critical", chance_source: "attributes",
+  }));
+  assert.equal(permissive.outcome, "critical");
+  assert.equal(permissive.needed, 900);
+  assert.equal(rollFromEntry(rollEvent("disagreement", "narration", {
+    ...base, roll: 99, outcome: "failure",
+  })).outcome, "failure");
 });
 
 test("snapshot roll grouping safely handles inherited-property target IDs", () => {
-  const payload = { chance_percent: 50, roll: 50, outcome: "success", seed: 42 };
+  const payload = { chance_percent: 50, roll: 50, needed: 50, outcome: "success", seed: 42 };
   const grouped = groupRollsByEntry([
     rollEvent("prototype-roll", "__proto__", payload),
     rollEvent("constructor-roll", "constructor", payload),
@@ -298,15 +304,22 @@ test("turn activity prefers captured tool calls and preserves false outcomes", (
   assert.deepEqual(toolCallsFromEvents("narration", [hidden[0]]), [
     { key: "effect", label: "Legacy effect", done: true, ok: true },
   ]);
+  const roll = rollEvent("roll", "narration", {
+    chance_percent: 50, roll: 12, needed: 50, outcome: "complication", seed: 7, reason: "opening the vault",
+  });
+  roll.content = "Resultado de dados heredado";
+  assert.deepEqual(toolCallsFromEvents("narration", [roll]), [
+    { key: "roll", label: "Roll for opening the vault: complication", done: true, ok: true },
+  ]);
 });
 
 test("default chance rolls show their source and no factors alongside threshold, draw, and seed", () => {
-  const roll = { id: "r", entry_id: "replacement", reason: "Leap across the gap", chance_percent: 50, chance_source: "default", factors: [], roll: 72, outcome: "success", seed: 42 };
+  const roll = { id: "r", entry_id: "replacement", reason: "Leap across the gap", chance_percent: 50, chance_source: "default", factors: [], roll: 72, needed: 47, outcome: "success", seed: 42 };
   const html = renderToStaticMarkup(createElement(RollDisclosure, { roll }));
   assert.match(html, /Leap across the gap/);
   assert.match(html, /Chance source: Default/);
   assert.match(html, /No attribute factors/);
-  assert.match(html, /needed 50\+/);
+  assert.match(html, /needed 47\+/);
   assert.match(html, /rolled 72/);
   assert.match(html, /Seed: 42/);
   assert.match(html, /success/);
@@ -316,7 +329,7 @@ test("default chance rolls show their source and no factors alongside threshold,
 test("attribute chance rolls show both factor snapshot names, values, and ranges", () => {
   const roll = {
     id: "r2", entry_id: "replacement", reason: "Outrun the guard", chance_percent: 65,
-    chance_source: "attributes", roll: 80, outcome: "success", seed: 123,
+    chance_source: "attributes", roll: 80, needed: 31, outcome: "success", seed: 123,
     factors: [
       { entity_id: "hero", entity_name: "Mira", attribute_id: "speed", attribute_name: "Speed", value: 8, min: 0, max: 10 },
       { entity_id: "guard", entity_name: "Guard", attribute_id: "awareness", attribute_name: "Awareness", value: 3, min: 1, max: 12 },
@@ -326,13 +339,13 @@ test("attribute chance rolls show both factor snapshot names, values, and ranges
   assert.match(html, /Chance source: Attributes/);
   assert.match(html, /Mira: Speed 8 \(range 0-10\)/);
   assert.match(html, /Guard: Awareness 3 \(range 1-12\)/);
-  assert.match(html, /needed 35\+/);
+  assert.match(html, /needed 31\+/);
   assert.match(html, /rolled 80/);
   assert.match(html, /Seed: 123/);
 });
 
 test("chance-only legacy rolls do not claim a default or attribute source", () => {
-  const roll = { id: "old", entry_id: "replacement", reason: null, chance_percent: 40, roll: 72, outcome: "success", seed: 9 };
+  const roll = { id: "old", entry_id: "replacement", reason: null, chance_percent: 40, roll: 72, needed: 60, outcome: "success", seed: 9 };
   const html = renderToStaticMarkup(createElement(RollDisclosure, { roll }));
   assert.match(html, /Chance source: Unspecified/);
 });

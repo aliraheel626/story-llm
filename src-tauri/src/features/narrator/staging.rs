@@ -96,6 +96,7 @@ fn persist_roll(
         &json!({
             "chance_percent": pending.output.chance_percent,
             "roll": pending.output.roll,
+            "needed": pending.output.needed,
             "outcome": pending.output.outcome,
             "reason": pending.reason,
             "chance_source": pending.chance_source,

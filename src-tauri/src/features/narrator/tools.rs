@@ -877,9 +877,10 @@ mod tests {
             )
             .unwrap();
         let payload: serde_json::Value = serde_json::from_str(&payload_json).unwrap();
-        assert_eq!(payload.as_object().unwrap().len(), 7);
+        assert_eq!(payload.as_object().unwrap().len(), 8);
         assert_eq!(payload["chance_percent"], json!(35));
         assert_eq!(payload["roll"], out["roll"]);
+        assert_eq!(payload["needed"], out["needed"]);
         assert_eq!(payload["outcome"], out["outcome"]);
         assert_eq!(payload["reason"], out["reason"]);
         assert_eq!(payload["chance_source"], out["chance_source"]);
