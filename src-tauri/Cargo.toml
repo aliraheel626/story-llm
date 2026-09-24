@@ -70,6 +70,9 @@ rig-memory = { version = "=0.42.0" }
 # consider a Cargo feature instead if release binary size becomes a concern.
 tauri-plugin-pilot = { git = "https://github.com/mpiton/tauri-pilot" }
 
+[dev-dependencies]
+ts-rs = "=12.0.1"
+
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
 [profile.release]
 codegen-units = 1

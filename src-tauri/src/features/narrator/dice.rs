@@ -17,6 +17,7 @@ use crate::shared::error::{AppError, AppResult};
 use super::staging::{AttributeReading, StagedRecord, TurnStaging};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 pub struct RollFactor {
     pub entity_id: String,
     pub entity_name: String,
@@ -25,6 +26,25 @@ pub struct RollFactor {
     pub value: f64,
     pub min: f64,
     pub max: f64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export_to = "../../src/shared/generated/Roll.ts"))]
+pub struct RollPayload {
+    pub chance_percent: u8,
+    #[cfg_attr(test, ts(type = "number"))]
+    pub roll: i64,
+    #[cfg_attr(test, ts(type = "number"))]
+    pub needed: i64,
+    pub outcome: &'static str,
+    pub reason: Option<String>,
+    #[cfg_attr(test, ts(type = "\"default\" | \"narrator\" | \"attributes\" | null"))]
+    pub chance_source: Option<&'static str>,
+    #[cfg_attr(test, ts(inline))]
+    pub factors: Vec<RollFactor>,
+    #[cfg_attr(test, ts(type = "number"))]
+    pub seed: i64,
 }
 
 impl From<AttributeReading> for RollFactor {
@@ -98,23 +118,22 @@ impl StagedRecord for PendingRoll {
                 factor.attribute_name = canonical.canonical_name;
             }
         }
-        Ok((
-            ledger::model::kind::DICEROLL,
-            format!(
-                "Dice-roll outcome: rolled {} with {}% chance and got {}.",
-                pending.output.roll, pending.output.chance_percent, pending.output.outcome
-            ),
-            json!({
-                "chance_percent": pending.output.chance_percent,
-                "roll": pending.output.roll,
-                "needed": pending.output.needed,
-                "outcome": pending.output.outcome,
-                "reason": pending.reason,
-                "chance_source": pending.chance_source,
-                "factors": pending.factors,
-                "seed": pending.output.seed,
-            }),
-        ))
+        let content = format!(
+            "Dice-roll outcome: rolled {} with {}% chance and got {}.",
+            pending.output.roll, pending.output.chance_percent, pending.output.outcome
+        );
+        let payload = serde_json::to_value(RollPayload {
+            chance_percent: pending.output.chance_percent,
+            roll: pending.output.roll,
+            needed: pending.output.needed,
+            outcome: pending.output.outcome,
+            reason: pending.reason,
+            chance_source: Some(pending.chance_source),
+            factors: pending.factors,
+            seed: pending.output.seed,
+        })
+        .map_err(|error| AppError::Other(error.to_string()))?;
+        Ok((ledger::model::kind::DICEROLL, content, payload))
     }
 }
 
@@ -282,6 +301,59 @@ mod tests {
             },
         )
         .unwrap()
+    }
+
+    #[test]
+    fn export_bindings() {
+        use ts_rs::{Config, TS};
+
+        RollPayload::export_all(&Config::new()).expect("failed to export roll bindings");
+    }
+
+    #[test]
+    fn roll_payload_serializes_with_exact_current_shape() {
+        let payload = serde_json::to_value(RollPayload {
+            chance_percent: 60,
+            roll: 72,
+            needed: 40,
+            outcome: "success",
+            reason: Some("Sneak past the guard".into()),
+            chance_source: Some("attributes"),
+            factors: vec![RollFactor {
+                entity_id: "player".into(),
+                entity_name: "You".into(),
+                attribute_id: "stealth".into(),
+                attribute_name: "Stealth".into(),
+                value: 8.0,
+                min: 0.0,
+                max: 10.0,
+            }],
+            seed: 42,
+        })
+        .unwrap();
+
+        assert_eq!(
+            payload,
+            json!({
+                "chance_percent": 60,
+                "roll": 72,
+                "needed": 40,
+                "outcome": "success",
+                "reason": "Sneak past the guard",
+                "chance_source": "attributes",
+                "factors": [{
+                    "entity_id": "player",
+                    "entity_name": "You",
+                    "attribute_id": "stealth",
+                    "attribute_name": "Stealth",
+                    "value": 8.0,
+                    "min": 0.0,
+                    "max": 10.0,
+                }],
+                "seed": 42,
+            })
+        );
+        assert_eq!(payload.as_object().unwrap().len(), 8);
     }
 
     fn persist_staging(pool: &Pool, story_id: &str, staging: &TurnStaging) {

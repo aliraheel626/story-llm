@@ -1,3 +1,5 @@
+import type { RollPayload } from "./generated/Roll";
+
 export interface Story {
   id: string; title: string; created_at: string; updated_at: string;
   settings_json: string;
@@ -110,15 +112,8 @@ export interface EntityAttributeValue {
   story_id: string; entity_id: string; attribute_id: string; canonical_name: string;
   value: number; min: number; max: number; updated_at: string; source: string;
 }
-export interface RollFactor {
-  entity_id: string; entity_name: string; attribute_id: string; attribute_name: string;
-  value: number; min: number; max: number;
-}
-export interface Roll {
-  id: string; entry_id: string; reason: string | null; chance_percent: number;
-  chance_source?: "default" | "narrator" | "attributes"; factors?: RollFactor[];
-  seed: number; roll: number; needed: number; outcome: string; created_at: string;
-}
+export type RollFactor = RollPayload["factors"][number];
+export type Roll = RollPayload & { id: string; entry_id: string; created_at: string };
 
 export function ledgerInputMode(entry: LedgerEntry): InputMode {
   return ("input_mode" in entry.payload ? entry.payload.input_mode as InputMode | undefined : undefined) ?? "generated";
@@ -146,14 +141,14 @@ export function rollFromEntry(entry: LedgerEntry): Roll | null {
       value.min! < value.max! && value.value! >= value.min! && value.value! <= value.max!;
   })) return null;
 
-  const chanceSource = p.chance_source;
-  if (chanceSource !== undefined && chanceSource !== "default" && chanceSource !== "narrator" && chanceSource !== "attributes") return null;
+  const chanceSource = p.chance_source ?? null;
+  if (chanceSource !== null && chanceSource !== "default" && chanceSource !== "narrator" && chanceSource !== "attributes") return null;
 
   return {
     id: entry.id, entry_id: entry.target_entry_id, created_at: entry.created_at,
     chance_percent: chance, roll, needed, outcome, seed,
     reason: typeof p.reason === "string" ? p.reason : null,
-    chance_source: chanceSource as Roll["chance_source"], factors,
+    chance_source: chanceSource, factors,
   };
 }
 

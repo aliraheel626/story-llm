@@ -241,10 +241,10 @@ test("snapshot roll selector preserves both factor snapshots and optional fields
     reason: "Sneak", chance_percent: 60, roll: 70, needed: 40, outcome: "success", seed: 42,
     chance_source: "attributes", factors,
   }]);
-  assert.equal(grouped.other[0].chance_source, undefined);
+  assert.equal(grouped.other[0].chance_source, null);
   assert.equal(grouped.other[0].reason, null);
   assert.deepEqual(grouped.other[0].factors, []);
-  assert.equal(rollFromEntry(rollEvent("legacy", "narration", { ...payload, chance_source: undefined, reason: false, factors: undefined })).chance_source, undefined);
+  assert.equal(rollFromEntry(rollEvent("legacy", "narration", { ...payload, chance_source: undefined, reason: false, factors: undefined })).chance_source, null);
 });
 
 test("snapshot selector validates roll shapes without interpreting outcomes", () => {
