@@ -1028,39 +1028,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "92773504d58c093f6de2459af4af33faa518c13451eb8f2b5698ed3d36e7c813"
 
 [[package]]
-name = "dungeon"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "base64 0.22.1",
- "chrono",
- "futures",
- "http",
- "log",
- "r2d2",
- "r2d2_sqlite",
- "rand 0.8.8",
- "reqwest",
- "rig-agent",
- "rig-core",
- "rig-memory",
- "rusqlite",
- "schemars 1.2.2",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "tauri-plugin-log",
- "tauri-plugin-opener",
- "tauri-plugin-pilot",
- "tauri-plugin-store",
- "thiserror 2.0.20",
- "tokio",
- "ts-rs",
- "uuid",
-]
-
-[[package]]
 name = "dyn-clone"
 version = "1.0.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4294,6 +4261,39 @@ name = "stable_deref_trait"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
+
+[[package]]
+name = "story-llm"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "chrono",
+ "futures",
+ "http",
+ "log",
+ "r2d2",
+ "r2d2_sqlite",
+ "rand 0.8.8",
+ "reqwest",
+ "rig-agent",
+ "rig-core",
+ "rig-memory",
+ "rusqlite",
+ "schemars 1.2.2",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-log",
+ "tauri-plugin-opener",
+ "tauri-plugin-pilot",
+ "tauri-plugin-store",
+ "thiserror 2.0.20",
+ "tokio",
+ "ts-rs",
+ "uuid",
+]
 
 [[package]]
 name = "string_cache"

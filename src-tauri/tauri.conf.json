@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Dungeon",
+  "productName": "story-llm",
   "version": "0.1.0",
-  "identifier": "com.dungeon.app",
+  "identifier": "com.story-llm.app",
   "build": {
     "beforeDevCommand": "pnpm dev",
     "devUrl": "http://localhost:1420",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "Dungeon",
+        "title": "story-llm",
         "width": 1280,
         "height": 800,
         "minWidth": 900,

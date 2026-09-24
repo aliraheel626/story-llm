@@ -1,7 +1,11 @@
 use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::OptionalExtension;
 use std::collections::HashMap;
-use std::path::Path;
+use std::fs::{self, File, OpenOptions};
+use std::io::{self, Read};
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+use std::path::{Component, Path};
 use uuid::Uuid;
 
 use crate::features::ledger::{model::kind, repository};
@@ -23,8 +27,22 @@ pub fn with_transaction<T>(
 }
 
 pub fn init_pool(app_data_dir: &Path) -> AppResult<Pool> {
-    std::fs::create_dir_all(app_data_dir)?;
-    let db_path = app_data_dir.join("dungeon.sqlite3");
+    fs::create_dir_all(app_data_dir)?;
+    let db_path = app_data_dir.join("story-llm.sqlite3");
+    if !path_exists(&db_path)?
+        && app_data_dir.file_name() == Some(std::ffi::OsStr::new("com.story-llm.app"))
+    {
+        let legacy_dir = app_data_dir.with_file_name("com.dungeon.app");
+        let legacy_db = legacy_dir.join("dungeon.sqlite3");
+        match fs::metadata(&legacy_db) {
+            Ok(metadata) if metadata.is_file() => {
+                migrate_app_data(&legacy_dir, app_data_dir, &legacy_db, &db_path)?
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
     let manager = SqliteConnectionManager::file(db_path).with_init(|conn| {
         conn.execute_batch("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;")?;
         Ok(())
@@ -34,6 +52,243 @@ pub fn init_pool(app_data_dir: &Path) -> AppResult<Pool> {
     run_migrations(&mut conn)?;
     seed_attribute_registry(&conn)?;
     Ok(pool)
+}
+
+fn path_exists(path: &Path) -> AppResult<bool> {
+    match fs::symlink_metadata(path) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error.into()),
+    }
+}
+
+fn migrate_app_data(
+    legacy_dir: &Path,
+    app_data_dir: &Path,
+    legacy_db: &Path,
+    db_path: &Path,
+) -> AppResult<()> {
+    copy_missing_files(&legacy_dir.join("images"), &app_data_dir.join("images"))?;
+    copy_missing_file(
+        &legacy_dir.join("secrets.json"),
+        &app_data_dir.join("secrets.json"),
+        true,
+    )?;
+
+    // Publish the snapshot only after all other data is in place. A failed
+    // backup leaves the destination DB absent so a later startup can retry.
+    let staged_db = app_data_dir.join(format!(".story-llm-migration-{}.sqlite3", Uuid::new_v4()));
+    let result = (|| {
+        let source = rusqlite::Connection::open_with_flags(
+            legacy_db,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+        )?;
+        let target = staged_db
+            .to_str()
+            .ok_or_else(|| AppError::Other("app data path is not valid UTF-8".into()))?;
+        source.execute("VACUUM INTO ?1", [target])?;
+        drop(source);
+
+        rebase_image_paths(
+            &staged_db,
+            &legacy_dir.join("images"),
+            &app_data_dir.join("images"),
+        )?;
+        OpenOptions::new()
+            .write(true)
+            .open(&staged_db)
+            .map_err(|error| {
+                io::Error::new(
+                    error.kind(),
+                    format!("opening staged database for sync: {error}"),
+                )
+            })?
+            .sync_all()
+            .map_err(|error| {
+                io::Error::new(error.kind(), format!("syncing staged database: {error}"))
+            })?;
+        match fs::hard_link(&staged_db, db_path) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => Ok(()),
+            Err(error) => Err(io::Error::new(
+                error.kind(),
+                format!("publishing database snapshot: {error}"),
+            )
+            .into()),
+        }
+    })();
+    let _ = fs::remove_file(staged_db);
+    result
+}
+
+fn copy_missing_files(source: &Path, destination: &Path) -> AppResult<()> {
+    let metadata = match fs::symlink_metadata(source) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error.into()),
+    };
+    if !metadata.file_type().is_dir() {
+        return Ok(());
+    }
+    fs::create_dir_all(destination)?;
+    for entry in fs::read_dir(source)? {
+        let entry = entry?;
+        let path = entry.path();
+        let target = destination.join(entry.file_name());
+        let file_type = entry.file_type()?;
+        if file_type.is_dir() {
+            copy_missing_files(&path, &target)?;
+        } else if file_type.is_file() {
+            copy_missing_file(&path, &target, false)?;
+        }
+    }
+    Ok(())
+}
+
+fn copy_missing_file(source: &Path, destination: &Path, private: bool) -> AppResult<()> {
+    let metadata = match fs::symlink_metadata(source) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error.into()),
+    };
+    if !metadata.file_type().is_file() || path_exists(destination)? {
+        return Ok(());
+    }
+    let staged = destination.with_file_name(format!(".story-llm-migration-{}.tmp", Uuid::new_v4()));
+    let result = (|| {
+        let mut input = File::open(source)?;
+        let mut output = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&staged)?;
+        #[cfg(unix)]
+        if private {
+            fs::set_permissions(
+                &staged,
+                fs::Permissions::from_mode(metadata.permissions().mode() & 0o600),
+            )?;
+        }
+        #[cfg(not(unix))]
+        let _ = private;
+        io::copy(&mut input, &mut output).map_err(|error| {
+            io::Error::new(error.kind(), format!("copying migrated file: {error}"))
+        })?;
+        output.sync_all().map_err(|error| {
+            io::Error::new(error.kind(), format!("syncing migrated file: {error}"))
+        })?;
+        drop(output);
+        match fs::hard_link(&staged, destination) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => Ok(()),
+            Err(error) => Err(io::Error::new(
+                error.kind(),
+                format!("publishing migrated file: {error}"),
+            )
+            .into()),
+        }
+    })();
+    let _ = fs::remove_file(staged);
+    result
+}
+
+fn files_match(source: &Path, destination: &Path) -> AppResult<bool> {
+    let target = match fs::symlink_metadata(destination) {
+        Ok(target) if target.file_type().is_file() => target,
+        Ok(_) => return Ok(false),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(error.into()),
+    };
+    if fs::metadata(source)?.len() != target.len() {
+        return Ok(false);
+    }
+    let mut source = File::open(source)?;
+    let mut target = File::open(destination)?;
+    let mut source_bytes = [0; 8192];
+    let mut target_bytes = [0; 8192];
+    loop {
+        let read = source.read(&mut source_bytes)?;
+        if read == 0 {
+            return Ok(true);
+        }
+        target.read_exact(&mut target_bytes[..read])?;
+        if source_bytes[..read] != target_bytes[..read] {
+            return Ok(false);
+        }
+    }
+}
+
+fn rebase_image_paths(db_path: &Path, old_images: &Path, new_images: &Path) -> AppResult<()> {
+    let mut conn = rusqlite::Connection::open(db_path)?;
+    let has_images: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'image_assets')",
+        [],
+        |row| row.get(0),
+    )?;
+    if !has_images {
+        return Ok(());
+    }
+    let tx = conn.transaction()?;
+    let paths: Vec<(String, String)> = {
+        let mut stmt = tx.prepare("SELECT id, path FROM image_assets")?;
+        let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+        rows.collect::<Result<_, _>>()?
+    };
+    for (id, path) in paths {
+        if let Ok(relative) = Path::new(&path).strip_prefix(old_images) {
+            if !relative
+                .components()
+                .all(|component| matches!(component, Component::Normal(_)))
+            {
+                continue;
+            }
+            let source = old_images.join(relative);
+            match fs::symlink_metadata(&source) {
+                Ok(metadata) if metadata.file_type().is_file() => {}
+                Ok(_) => continue,
+                Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+                Err(error) => return Err(error.into()),
+            }
+            let mut updated = new_images.join(relative);
+            fs::create_dir_all(updated.parent().unwrap())?;
+            copy_missing_file(&source, &updated, false)?;
+            if !files_match(&source, &updated)? {
+                let name = relative
+                    .file_stem()
+                    .and_then(|stem| stem.to_str())
+                    .unwrap_or("image");
+                let extension = relative.extension().and_then(|ext| ext.to_str());
+                let id_hex: String = id.bytes().map(|byte| format!("{byte:02x}")).collect();
+                let parent = updated.parent().unwrap();
+                let mut matched = None;
+                for suffix in 0..1000 {
+                    let suffix = if suffix == 0 {
+                        String::new()
+                    } else {
+                        format!("-{suffix}")
+                    };
+                    let file_name = match extension {
+                        Some(ext) => format!("{name}.migrated-{id_hex}{suffix}.{ext}"),
+                        None => format!("{name}.migrated-{id_hex}{suffix}"),
+                    };
+                    let candidate = parent.join(file_name);
+                    copy_missing_file(&source, &candidate, false)?;
+                    if files_match(&source, &candidate)? {
+                        matched = Some(candidate);
+                        break;
+                    }
+                }
+                updated = matched.ok_or_else(|| {
+                    AppError::Other("could not find an unused migrated image filename".into())
+                })?;
+            }
+            tx.execute(
+                "UPDATE image_assets SET path = ?1 WHERE id = ?2",
+                rusqlite::params![updated.to_string_lossy(), id],
+            )?;
+        }
+    }
+    tx.commit()?;
+    Ok(())
 }
 
 fn run_migrations(conn: &mut PooledConn) -> AppResult<()> {
@@ -839,13 +1094,317 @@ fn seed_attribute_registry(conn: &PooledConn) -> AppResult<()> {
 /// story rows.
 #[cfg(test)]
 pub fn test_pool() -> Pool {
-    let dir = std::env::temp_dir().join(format!("dungeon-test-{}", Uuid::new_v4()));
+    let dir = std::env::temp_dir().join(format!("story-llm-test-{}", Uuid::new_v4()));
     init_pool(&dir).expect("initialize test schema")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn legacy_app_db(parent: &Path) -> rusqlite::Connection {
+        let legacy_dir = parent.join("com.dungeon.app");
+        fs::create_dir_all(&legacy_dir).unwrap();
+        let conn = rusqlite::Connection::open(legacy_dir.join("dungeon.sqlite3")).unwrap();
+        conn.execute_batch(
+            "PRAGMA journal_mode = WAL;
+             PRAGMA wal_autocheckpoint = 0;
+             CREATE TABLE stories (
+                 id TEXT PRIMARY KEY, title TEXT NOT NULL, created_at TEXT NOT NULL,
+                 updated_at TEXT NOT NULL, settings_json TEXT NOT NULL DEFAULT '{}'
+             );
+             INSERT INTO stories (id, title, created_at, updated_at)
+                 VALUES ('legacy', 'Old story', 'now', 'now');",
+        )
+        .unwrap();
+        conn
+    }
+
+    #[test]
+    fn app_data_migration_preserves_wal_images_and_secrets_without_reimporting() {
+        let parent = std::env::temp_dir().join(format!("story-llm-app-data-{}", Uuid::new_v4()));
+        let legacy_dir = parent.join("com.dungeon.app");
+        let new_dir = parent.join("com.story-llm.app");
+        let legacy = legacy_app_db(&parent);
+        let old_image = legacy_dir.join("images").join("scene.png");
+        fs::create_dir_all(old_image.parent().unwrap()).unwrap();
+        fs::write(&old_image, b"old image").unwrap();
+        let old_collision = legacy_dir.join("images").join("existing.png");
+        fs::write(&old_collision, b"old version").unwrap();
+        let new_collision = new_dir.join("images").join("existing.png");
+        fs::create_dir_all(new_collision.parent().unwrap()).unwrap();
+        fs::write(&new_collision, b"new version").unwrap();
+        let old_store = legacy_dir.join("secrets.json");
+        fs::write(&old_store, b"{\"placeholder\":\"old\"}").unwrap();
+        legacy
+            .execute_batch(
+                "CREATE TABLE image_assets (
+                 id TEXT PRIMARY KEY, entry_id TEXT NOT NULL, path TEXT NOT NULL,
+                 prompt TEXT NOT NULL, created_at TEXT NOT NULL
+             );",
+            )
+            .unwrap();
+        legacy
+            .execute(
+                "INSERT INTO image_assets (id, entry_id, path, prompt, created_at)
+             VALUES ('image', 'entry', ?1, 'scene', 'now')",
+                [old_image.to_str().unwrap()],
+            )
+            .unwrap();
+        legacy
+            .execute(
+                "INSERT INTO image_assets (id, entry_id, path, prompt, created_at)
+             VALUES ('collision', 'entry', ?1, 'scene', 'now')",
+                [old_collision.to_str().unwrap()],
+            )
+            .unwrap();
+        assert!(legacy_dir.join("dungeon.sqlite3-wal").exists());
+
+        let pool = init_pool(&new_dir).unwrap();
+        let conn = pool.get().unwrap();
+        let title: String = conn
+            .query_row("SELECT title FROM stories WHERE id = 'legacy'", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(title, "Old story");
+        let new_image = new_dir.join("images").join("scene.png");
+        let image_path: String = conn
+            .query_row(
+                "SELECT path FROM image_assets WHERE id = 'image'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(Path::new(&image_path), new_image);
+        assert_eq!(fs::read(&new_image).unwrap(), b"old image");
+        assert_eq!(fs::read(&new_collision).unwrap(), b"new version");
+        let collision_path: String = conn
+            .query_row(
+                "SELECT path FROM image_assets WHERE id = 'collision'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let copied_collision = Path::new(&collision_path);
+        assert_ne!(copied_collision, new_collision);
+        assert!(copied_collision.starts_with(new_dir.join("images")));
+        assert!(copied_collision
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .contains("migrated-"));
+        assert_eq!(fs::read(copied_collision).unwrap(), b"old version");
+        let new_store = new_dir.join("secrets.json");
+        assert_eq!(fs::read(&new_store).unwrap(), fs::read(&old_store).unwrap());
+        assert!(new_dir.join("story-llm.sqlite3").exists());
+
+        conn.execute(
+            "UPDATE stories SET title = 'Edited story' WHERE id = 'legacy'",
+            [],
+        )
+        .unwrap();
+        fs::write(&new_image, b"new image").unwrap();
+        fs::write(&new_store, b"{\"placeholder\":\"new\"}").unwrap();
+        drop(conn);
+        drop(pool);
+
+        let pool = init_pool(&new_dir).unwrap();
+        let conn = pool.get().unwrap();
+        let title: String = conn
+            .query_row("SELECT title FROM stories WHERE id = 'legacy'", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(title, "Edited story");
+        assert_eq!(fs::read(&new_image).unwrap(), b"new image");
+        assert_eq!(fs::read(&new_collision).unwrap(), b"new version");
+        assert_eq!(fs::read(&collision_path).unwrap(), b"old version");
+        assert_eq!(fs::read(&new_store).unwrap(), b"{\"placeholder\":\"new\"}");
+        let old_title: String = legacy
+            .query_row("SELECT title FROM stories WHERE id = 'legacy'", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(old_title, "Old story");
+        assert_eq!(fs::read(&old_image).unwrap(), b"old image");
+        assert_eq!(fs::read(&old_collision).unwrap(), b"old version");
+        assert_eq!(fs::read(&old_store).unwrap(), b"{\"placeholder\":\"old\"}");
+        drop(conn);
+        drop(pool);
+        drop(legacy);
+        let _ = fs::remove_dir_all(parent);
+    }
+
+    #[test]
+    fn snapshot_reconciliation_copies_late_image_and_reuses_collision_file_on_retry() {
+        let parent = std::env::temp_dir().join(format!("story-llm-late-image-{}", Uuid::new_v4()));
+        let old_images = parent.join("com.dungeon.app").join("images");
+        let new_images = parent.join("com.story-llm.app").join("images");
+        fs::create_dir_all(&old_images).unwrap();
+        fs::create_dir_all(&new_images).unwrap();
+        let old_image = old_images.join("late.png");
+        let new_image = new_images.join("late.png");
+        fs::write(&new_image, b"new app image").unwrap();
+        let reserved = new_images.join("late.migrated-6c617465.png");
+        fs::write(&reserved, b"reserved new app image").unwrap();
+        copy_missing_files(&old_images, &new_images).unwrap();
+        fs::write(&old_image, b"late legacy image").unwrap();
+
+        let staged_db = parent.join("snapshot.sqlite3");
+        let snapshot = rusqlite::Connection::open(&staged_db).unwrap();
+        snapshot
+            .execute_batch("CREATE TABLE image_assets (id TEXT PRIMARY KEY, path TEXT NOT NULL);")
+            .unwrap();
+        snapshot
+            .execute(
+                "INSERT INTO image_assets (id, path) VALUES ('late', ?1)",
+                [old_image.to_str().unwrap()],
+            )
+            .unwrap();
+        drop(snapshot);
+        rebase_image_paths(&staged_db, &old_images, &new_images).unwrap();
+        let snapshot = rusqlite::Connection::open(&staged_db).unwrap();
+        let copied_path: String = snapshot
+            .query_row(
+                "SELECT path FROM image_assets WHERE id = 'late'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_ne!(Path::new(&copied_path), new_image);
+        assert_eq!(
+            Path::new(&copied_path),
+            new_images.join("late.migrated-6c617465-1.png")
+        );
+        assert_eq!(fs::read(&copied_path).unwrap(), b"late legacy image");
+        assert_eq!(fs::read(&new_image).unwrap(), b"new app image");
+        assert_eq!(fs::read(&reserved).unwrap(), b"reserved new app image");
+        snapshot
+            .execute(
+                "UPDATE image_assets SET path = ?1 WHERE id = 'late'",
+                [old_image.to_str().unwrap()],
+            )
+            .unwrap();
+        drop(snapshot);
+
+        rebase_image_paths(&staged_db, &old_images, &new_images).unwrap();
+        let snapshot = rusqlite::Connection::open(&staged_db).unwrap();
+        let retried_path: String = snapshot
+            .query_row(
+                "SELECT path FROM image_assets WHERE id = 'late'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(retried_path, copied_path);
+        drop(snapshot);
+        let _ = fs::remove_dir_all(parent);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn migrated_secrets_keep_restrictive_permissions() {
+        let parent = std::env::temp_dir().join(format!("story-llm-secret-mode-{}", Uuid::new_v4()));
+        let legacy = legacy_app_db(&parent);
+        let old_store = parent.join("com.dungeon.app").join("secrets.json");
+        fs::write(&old_store, b"{\"placeholder\":\"old\"}").unwrap();
+        fs::set_permissions(&old_store, fs::Permissions::from_mode(0o600)).unwrap();
+        let new_dir = parent.join("com.story-llm.app");
+        let pool = init_pool(&new_dir).unwrap();
+        let new_store = new_dir.join("secrets.json");
+        assert_eq!(
+            fs::metadata(&new_store).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        assert_eq!(fs::read(&new_store).unwrap(), fs::read(&old_store).unwrap());
+        drop(pool);
+        drop(legacy);
+        let _ = fs::remove_dir_all(parent);
+    }
+
+    #[test]
+    fn preexisting_new_db_is_never_replaced_or_merged() {
+        let parent = std::env::temp_dir().join(format!("story-llm-app-data-{}", Uuid::new_v4()));
+        let new_dir = parent.join("com.story-llm.app");
+        let pool = init_pool(&new_dir).unwrap();
+        pool.get().unwrap().execute(
+            "INSERT INTO stories (id, title, created_at, updated_at) VALUES ('new', 'New story', 'now', 'now')",
+            [],
+        ).unwrap();
+        drop(pool);
+        let legacy = legacy_app_db(&parent);
+        let old_image = parent
+            .join("com.dungeon.app")
+            .join("images")
+            .join("scene.png");
+        fs::create_dir_all(old_image.parent().unwrap()).unwrap();
+        fs::write(&old_image, b"legacy image").unwrap();
+        fs::write(
+            parent.join("com.dungeon.app").join("secrets.json"),
+            b"{\"placeholder\":\"old\"}",
+        )
+        .unwrap();
+
+        let pool = init_pool(&new_dir).unwrap();
+        let conn = pool.get().unwrap();
+        let stories: Vec<String> = conn
+            .prepare("SELECT id FROM stories ORDER BY id")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(stories, vec!["new".to_string()]);
+        assert!(!new_dir.join("images").exists());
+        assert!(!new_dir.join("secrets.json").exists());
+        assert!(old_image.exists());
+        drop(conn);
+        drop(pool);
+        drop(legacy);
+        let _ = fs::remove_dir_all(parent);
+    }
+
+    #[test]
+    fn failed_file_copy_retries_before_publishing_new_db() {
+        let parent = std::env::temp_dir().join(format!("story-llm-app-data-{}", Uuid::new_v4()));
+        let new_dir = parent.join("com.story-llm.app");
+        let legacy = legacy_app_db(&parent);
+        let old_image = parent
+            .join("com.dungeon.app")
+            .join("images")
+            .join("scene.png");
+        fs::create_dir_all(old_image.parent().unwrap()).unwrap();
+        fs::write(&old_image, b"old image").unwrap();
+        fs::create_dir_all(&new_dir).unwrap();
+        fs::write(new_dir.join("images"), b"blocking file").unwrap();
+        fs::write(new_dir.join("secrets.json"), b"{\"placeholder\":\"new\"}").unwrap();
+
+        assert!(init_pool(&new_dir).is_err());
+        assert!(!new_dir.join("story-llm.sqlite3").exists());
+        fs::remove_file(new_dir.join("images")).unwrap();
+        let pool = init_pool(&new_dir).unwrap();
+        assert!(pool
+            .get()
+            .unwrap()
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM stories WHERE id = 'legacy')",
+                [],
+                |row| row.get::<_, bool>(0),
+            )
+            .unwrap());
+        assert_eq!(
+            fs::read(new_dir.join("images").join("scene.png")).unwrap(),
+            b"old image"
+        );
+        assert_eq!(
+            fs::read(new_dir.join("secrets.json")).unwrap(),
+            b"{\"placeholder\":\"new\"}"
+        );
+        drop(pool);
+        drop(legacy);
+        let _ = fs::remove_dir_all(parent);
+    }
 
     #[test]
     fn roll_needed_migration_backfills_once_without_touching_other_payloads() {
@@ -1029,7 +1588,7 @@ mod tests {
 
     #[test]
     fn migration_materializes_selected_edit_and_discards_legacy_rolls_without_repeating() {
-        let dir = std::env::temp_dir().join(format!("dungeon-tool-migration-{}", Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!("story-llm-tool-migration-{}", Uuid::new_v4()));
         let pool = init_pool(&dir).unwrap();
         let conn = pool.get().unwrap();
         conn.execute(
@@ -1164,7 +1723,7 @@ mod tests {
 
     #[test]
     fn fresh_schema_contains_ledger_and_no_story_cards() {
-        let dir = std::env::temp_dir().join(format!("dungeon-schema-{}", Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!("story-llm-schema-{}", Uuid::new_v4()));
         let pool = init_pool(&dir).expect("initialize schema");
         let conn = pool.get().unwrap();
         let exists = |name: &str| -> bool {
@@ -1294,7 +1853,7 @@ mod tests {
 
     #[test]
     fn existing_ledger_data_and_foreign_keys_survive_upgrade() {
-        let dir = std::env::temp_dir().join(format!("dungeon-ledger-upgrade-{}", Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!("story-llm-ledger-upgrade-{}", Uuid::new_v4()));
         let pool = init_pool(&dir).unwrap();
         let conn = pool.get().unwrap();
         conn.execute_batch(

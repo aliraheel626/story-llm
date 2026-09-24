@@ -28,7 +28,8 @@ pub const NOUS_PORTAL_BASE_URL: &str = "https://inference-api.nousresearch.com/v
 /// Cloudflare (fronting Nous Portal) blocks headerless requests as bot
 /// traffic — sent on every request to Nous Portal, including the narration
 /// client below and the model-metadata fetch in `features::settings`.
-pub const NOUS_PORTAL_USER_AGENT: &str = "Dungeon/0.1 (+https://github.com/dungeon-app/dungeon)";
+pub const NOUS_PORTAL_USER_AGENT: &str =
+    "story-llm/0.1 (+https://github.com/aliraheel626/story-llm)";
 
 #[derive(Debug, Clone)]
 pub struct TextModelConfig {
@@ -316,12 +317,12 @@ where
     let activity_buffer: Arc<Mutex<Vec<NarratorChunk>>> = Arc::new(Mutex::new(Vec::new()));
     let completed = Arc::new(Mutex::new(ToolCallCapture::default()));
     let mut runner = agent.runner(req.prompt).history(history);
-    if has_tools {
     if req.stop_after_tool_result {
         // Explicit decision-only runs (currently See) advertise one tool and
         // must not be allowed to answer with prose instead of calling it.
         runner = runner.tool_choice(ToolChoice::Required);
     }
+    if has_tools {
         runner = runner.add_hook(ActivityHook {
             buffer: activity_buffer.clone(),
             completed: completed.clone(),
@@ -464,7 +465,7 @@ fn build_agent(
 
     let client = openrouter::Client::builder()
         .api_key(config.api_key.clone())
-        .with_app_identity("Dungeon", "https://github.com/dungeon-app/dungeon")
+        .with_app_identity("story-llm", "https://github.com/aliraheel626/story-llm")
         .build()
         .map_err(|e| AppError::Other(format!("failed to build OpenRouter client: {e}")))?;
     let builder = client.agent(config.model.clone()).preamble(preamble);

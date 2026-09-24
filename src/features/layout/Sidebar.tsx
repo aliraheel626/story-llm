@@ -27,7 +27,7 @@ export function Sidebar() {
   return (
     <aside className="flex h-full w-64 shrink-0 flex-col overflow-y-auto border-r border-border bg-surface">
       <div className="px-3 py-3 border-b border-border">
-        <span className="font-prose text-sm tracking-wide text-text">Dungeon</span>
+        <span className="font-prose text-sm tracking-wide text-text">story-llm</span>
       </div>
 
       <AccordionPanel title={PANEL_LABELS.stories} open={openPanels.stories} onToggle={() => togglePanel("stories")}>

@@ -22,7 +22,7 @@ export function AccordionPanel({ title, open, onToggle, headerAction, children }
             height="10"
             viewBox="0 0 10 10"
             className={`shrink-0 transition-transform duration-150 ${open ? "rotate-90" : ""}`}
-            style={{ transitionDuration: "var(--dungeon-motion, 150ms)" }}
+            style={{ transitionDuration: "var(--story-llm-motion, 150ms)" }}
           >
             <path d="M2 1 L8 5 L2 9" stroke="currentColor" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
