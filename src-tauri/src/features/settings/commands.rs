@@ -3,9 +3,7 @@ use tauri::{AppHandle, State};
 use crate::shared::db::Pool;
 use crate::shared::error::AppResult;
 
-use super::model::{
-    ContextInjectionSettings, ImageModelSettings, LedgerRetentionSettings, TextModelSettings,
-};
+use super::model::{ContextInjectionSettings, ImageModelSettings, TextModelSettings};
 use super::{repository, text_model};
 
 #[tauri::command]
@@ -58,17 +56,4 @@ pub fn save_context_injection_settings(
         entity_context_mode,
         dice_rolls_in_context,
     )
-}
-
-#[tauri::command]
-pub fn get_ledger_retention_settings(pool: State<Pool>) -> AppResult<LedgerRetentionSettings> {
-    repository::read_ledger_retention_settings(pool.inner())
-}
-
-#[tauri::command]
-pub fn save_ledger_retention_settings(
-    pool: State<Pool>,
-    tool_call_persistence: bool,
-) -> AppResult<()> {
-    repository::write_ledger_retention_settings(pool.inner(), tool_call_persistence)
 }

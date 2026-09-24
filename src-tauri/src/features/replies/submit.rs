@@ -101,8 +101,17 @@ pub(super) fn start_action_generation(
                 let (target_id, target_content) = prior_narration
                     .ok_or_else(|| AppError::Invalid("no narration to illustrate".into()))?;
                 {
-                    let conn = pool.get()?;
-                    turns::set_status(&conn, &turn_id_for_done, turns::COMPLETE)?;
+                    let staging_guard = match &staging {
+                        Some(staging) => Some(staging.lock().await),
+                        None => None,
+                    };
+                    let mut conn = pool.get()?;
+                    let tx = conn.transaction()?;
+                    if let Some(staging) = staging_guard {
+                        staging.commit(&tx, &target_id, &turn_id_for_done)?;
+                    }
+                    turns::set_status(&tx, &turn_id_for_done, turns::COMPLETE)?;
+                    tx.commit()?;
                 }
                 let _ = app.emit(
                     "narration-done",

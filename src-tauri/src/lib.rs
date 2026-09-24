@@ -57,8 +57,6 @@ pub fn run() {
             features::settings::save_image_model_settings,
             features::settings::get_context_injection_settings,
             features::settings::save_context_injection_settings,
-            features::settings::get_ledger_retention_settings,
-            features::settings::save_ledger_retention_settings,
             features::images::list_images_for_story,
             features::entities::list_entities,
             features::entities::create_entity,

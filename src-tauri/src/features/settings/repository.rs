@@ -5,15 +5,13 @@ use crate::shared::db::Pool;
 use crate::shared::error::{AppError, AppResult};
 
 use super::model::{
-    ContextInjectionSettings, ImageModelSettings, LedgerRetentionSettings, TextModelSettings,
-    DEFAULT_IMAGE_STYLE,
+    ContextInjectionSettings, ImageModelSettings, TextModelSettings, DEFAULT_IMAGE_STYLE,
 };
 use super::secrets::has_api_key;
 
 const SETTINGS_KEY_TEXT_MODEL: &str = "text_model_default";
 const SETTINGS_KEY_IMAGE_MODEL: &str = "image_model_default";
 const SETTINGS_KEY_CONTEXT_INJECTION: &str = "context_injection";
-const SETTINGS_KEY_LEDGER_RETENTION: &str = "ledger_retention";
 
 /// Plain-`&Pool` variant of `get_text_model_settings` for callers that aren't
 /// Tauri commands (e.g. the narrator's config resolution and the auto-titler).
@@ -193,41 +191,6 @@ pub(super) fn write_context_injection_settings(
     Ok(())
 }
 
-pub fn read_ledger_retention_settings(pool: &Pool) -> AppResult<LedgerRetentionSettings> {
-    let conn = pool.get()?;
-    let stored: Option<String> = conn
-        .query_row(
-            "SELECT value FROM settings WHERE key = ?1",
-            [SETTINGS_KEY_LEDGER_RETENTION],
-            |row| row.get(0),
-        )
-        .ok();
-    Ok(stored
-        .and_then(|value| serde_json::from_str::<LedgerRetentionSettings>(&value).ok())
-        .unwrap_or_default())
-}
-
-pub(super) fn write_ledger_retention_settings(
-    pool: &Pool,
-    tool_call_persistence: bool,
-) -> AppResult<()> {
-    let conn = pool.get()?;
-    let value = serde_json::to_string(&LedgerRetentionSettings {
-        tool_call_persistence,
-    })
-    .map_err(|error| {
-        AppError::Other(format!(
-            "failed to serialize ledger retention settings: {error}"
-        ))
-    })?;
-    conn.execute(
-        "INSERT INTO settings (key, value) VALUES (?1, ?2)
-         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-        rusqlite::params![SETTINGS_KEY_LEDGER_RETENTION, value],
-    )?;
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -255,10 +218,9 @@ mod tests {
     }
 
     #[test]
-    fn settings_saves_survive_restart_without_recreating_legacy_memory() {
+    fn context_settings_survive_restart_without_recreating_legacy_memory() {
         let pool = crate::shared::db::test_pool();
         write_context_injection_settings(&pool, "scoped".to_string(), false).unwrap();
-        write_ledger_retention_settings(&pool, false).unwrap();
         let conn = pool.get().unwrap();
         let path: String = conn
             .query_row("PRAGMA database_list", [], |row| row.get(2))
@@ -279,11 +241,6 @@ mod tests {
         let context = read_context_injection_settings(&restarted).unwrap();
         assert_eq!(context.entity_context_mode, "scoped");
         assert!(!context.dice_rolls_in_context);
-        assert!(
-            !read_ledger_retention_settings(&restarted)
-                .unwrap()
-                .tool_call_persistence
-        );
         let conn = restarted.get().unwrap();
         let context: String = conn
             .query_row(
@@ -295,17 +252,6 @@ mod tests {
         assert_eq!(
             serde_json::from_str::<serde_json::Value>(&context).unwrap(),
             json!({"entity_context_mode": "scoped", "dice_rolls_in_context": false})
-        );
-        let retention: String = conn
-            .query_row(
-                "SELECT value FROM settings WHERE key = ?1",
-                [SETTINGS_KEY_LEDGER_RETENTION],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(
-            serde_json::from_str::<serde_json::Value>(&retention).unwrap(),
-            json!({"tool_call_persistence": false})
         );
         let legacy_exists: bool = conn
             .query_row(

@@ -4,9 +4,7 @@ import type { LedgerEntry } from "../../shared/types";
 export interface ToolCall { key: string; label: string; done: boolean; ok: boolean | null }
 export interface TurnActivityData { thoughts?: string | null; tools: ToolCall[] }
 
-/** Hidden-event kinds that record something the narrator *did* to the world,
- *  as opposed to a revision of its own prose. A turn's tool log is rebuilt
- *  from the events it targeted, so it survives a reload. */
+/** Legacy effect-event kinds used only for turns created before tool_call rows. */
 const TOOL_EVENT_KINDS = new Set([
   "diceroll",
   "entity_created",
@@ -26,9 +24,22 @@ const eventLabel = (entry: LedgerEntry): string => {
 /** The tool calls committed against one narration revision, in call order. */
 export function toolCallsFromEvents(entryId: string, hidden: LedgerEntry[] | undefined): ToolCall[] {
   if (!hidden) return [];
-  return hidden
-    .filter((event) => event.target_entry_id === entryId && TOOL_EVENT_KINDS.has(event.kind))
-    .sort((a, b) => a.seq - b.seq)
+  const targeted = hidden
+    .filter((event) => event.target_entry_id === entryId)
+    .sort((a, b) => a.seq - b.seq);
+  const captured = targeted.filter(
+    (event): event is Extract<LedgerEntry, { kind: "tool_call" }> => event.kind === "tool_call",
+  );
+  if (captured.length > 0) {
+    return captured.map((event) => ({
+      key: event.id,
+      label: event.content ?? event.payload.tool,
+      done: true,
+      ok: typeof event.payload.ok === "boolean" ? event.payload.ok : null,
+    }));
+  }
+  return targeted
+    .filter((event) => TOOL_EVENT_KINDS.has(event.kind))
     .map((event) => ({ key: event.id, label: eventLabel(event), done: true, ok: true }));
 }
 

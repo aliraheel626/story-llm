@@ -115,48 +115,60 @@ where
 
             let app_for_chunks = app.clone();
             let stream_id_for_chunks = sid.clone();
-            let (visible, thoughts) = ai::stream_narration(req, move |chunk| match chunk {
-                NarratorChunk::Text(text) => {
-                    let _ = app_for_chunks.emit(
-                        "narration-delta",
-                        NarrationDeltaPayload {
-                            stream_id: &stream_id_for_chunks,
-                            text: &text,
-                        },
-                    );
-                }
-                NarratorChunk::Reasoning(text) => {
-                    let _ = app_for_chunks.emit(
-                        "narration-thoughts",
-                        NarrationDeltaPayload {
-                            stream_id: &stream_id_for_chunks,
-                            text: &text,
-                        },
-                    );
-                }
-                NarratorChunk::ToolActivity {
-                    call_id,
-                    tool_name,
-                    args,
-                    phase,
-                } => {
-                    let (phase_str, ok) = match phase {
-                        ToolActivityPhase::Started => ("started", None),
-                        ToolActivityPhase::Finished { ok } => ("finished", Some(ok)),
+            let (visible, thoughts, tool_calls) =
+                ai::stream_narration(req, move |chunk| match chunk {
+                    NarratorChunk::Text(text) => {
+                        let _ = app_for_chunks.emit(
+                            "narration-delta",
+                            NarrationDeltaPayload {
+                                stream_id: &stream_id_for_chunks,
+                                text: &text,
+                            },
+                        );
+                    }
+                    NarratorChunk::Reasoning(text) => {
+                        let _ = app_for_chunks.emit(
+                            "narration-thoughts",
+                            NarrationDeltaPayload {
+                                stream_id: &stream_id_for_chunks,
+                                text: &text,
+                            },
+                        );
+                    }
+                    NarratorChunk::ToolActivity {
+                        call_id,
+                        tool_name,
+                        args,
+                        phase,
+                    } => {
+                        let (phase_str, ok) = match phase {
+                            ToolActivityPhase::Started => ("started", None),
+                            ToolActivityPhase::Finished { ok } => ("finished", Some(ok)),
+                        };
+                        let _ = app_for_chunks.emit(
+                            "narration-tool-activity",
+                            NarrationToolActivityPayload {
+                                stream_id: &stream_id_for_chunks,
+                                call_id,
+                                label: tools::friendly_tool_label(&tool_name, &args),
+                                phase: phase_str,
+                                ok,
+                            },
+                        );
+                    }
+                })
+                .await?;
+            if let Some(turn_staging) = &staging {
+                let mut turn_staging = turn_staging.lock().await;
+                for call in tool_calls {
+                    let args_for_label = match &call.args {
+                        serde_json::Value::String(raw) => raw.clone(),
+                        value => value.to_string(),
                     };
-                    let _ = app_for_chunks.emit(
-                        "narration-tool-activity",
-                        NarrationToolActivityPayload {
-                            stream_id: &stream_id_for_chunks,
-                            call_id,
-                            label: tools::friendly_tool_label(&tool_name, &args),
-                            phase: phase_str,
-                            ok,
-                        },
-                    );
+                    let label = tools::friendly_tool_label(&call.tool, &args_for_label);
+                    turn_staging.stage_tool_call(call.tool, call.args, call.result, call.ok, label);
                 }
-            })
-            .await?;
+            }
             let thoughts = thoughts.trim();
             Ok(Candidate {
                 visible: visible.trim().to_string(),

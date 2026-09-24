@@ -1,9 +1,6 @@
 //! In-memory world-state changes for a narrator turn, committed with its passage.
 
-use std::{
-    collections::{HashMap, HashSet},
-    sync::Arc,
-};
+use std::{collections::HashMap, sync::Arc};
 
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -47,6 +44,15 @@ pub(super) struct PendingRoll {
     pub reason: Option<String>,
     pub chance_source: &'static str,
     pub factors: Vec<RollFactor>,
+}
+
+#[derive(Debug, Clone)]
+struct PendingToolCall {
+    tool: String,
+    args: serde_json::Value,
+    result: serde_json::Value,
+    ok: bool,
+    label: String,
 }
 
 pub(super) fn chance_from_factors(factors: &[RollFactor]) -> u8 {
@@ -130,11 +136,6 @@ pub(super) enum PendingOp {
         dramatic: bool,
     },
     Roll(PendingRoll),
-    QueryEntities {
-        entity_ids: Vec<String>,
-        kind_filter: Option<String>,
-        name_filter: Option<String>,
-    },
 }
 
 fn fold_pending_delta(
@@ -166,6 +167,7 @@ pub struct TurnStaging {
     pub(super) pool: Pool,
     story_id: String,
     pub(super) pending: Vec<PendingOp>,
+    tool_calls: Vec<PendingToolCall>,
 }
 
 impl TurnStaging {
@@ -174,6 +176,7 @@ impl TurnStaging {
             pool,
             story_id,
             pending: Vec::new(),
+            tool_calls: Vec::new(),
         }
     }
 
@@ -315,16 +318,20 @@ impl TurnStaging {
         });
     }
 
-    pub(super) fn stage_entity_query(
+    pub(crate) fn stage_tool_call(
         &mut self,
-        entity_ids: Vec<String>,
-        kind: Option<&str>,
-        name: Option<&str>,
+        tool: String,
+        args: serde_json::Value,
+        result: serde_json::Value,
+        ok: bool,
+        label: String,
     ) {
-        self.pending.push(PendingOp::QueryEntities {
-            entity_ids,
-            kind_filter: kind.map(str::to_string),
-            name_filter: name.map(str::to_string),
+        self.tool_calls.push(PendingToolCall {
+            tool,
+            args,
+            result,
+            ok,
+            label,
         });
     }
 
@@ -587,38 +594,24 @@ impl TurnStaging {
                     }
                     persist_roll(tx, passage_id, turn_id, &pending)?;
                 }
-                PendingOp::QueryEntities {
-                    entity_ids,
-                    kind_filter,
-                    name_filter,
-                } => {
-                    let wanted = entity_ids.iter().cloned().collect::<HashSet<_>>();
-                    let names = entities::list_entities_sync(tx, &self.story_id, None)?
-                        .into_iter()
-                        .filter(|entity| wanted.contains(&entity.id))
-                        .map(|entity| entity.name)
-                        .collect::<Vec<_>>();
-                    let content = if names.is_empty() {
-                        "Looked up: no matching entities".to_string()
-                    } else {
-                        format!("Looked up: {}", names.join(", "))
-                    };
-                    ledger::repository::append_entry(
-                        tx,
-                        &self.story_id,
-                        ledger::model::kind::ENTITY_QUERIED,
-                        "hidden",
-                        Some(&content),
-                        &json!({
-                            "entity_ids": entity_ids,
-                            "kind_filter": kind_filter,
-                            "name_filter": name_filter,
-                        }),
-                        Some(passage_id),
-                        Some(turn_id),
-                    )?;
-                }
             }
+        }
+        for call in &self.tool_calls {
+            ledger::repository::append_entry(
+                tx,
+                &self.story_id,
+                ledger::model::kind::TOOL_CALL,
+                "hidden",
+                Some(&call.label),
+                &json!({
+                    "tool": call.tool,
+                    "args": call.args,
+                    "result": call.result,
+                    "ok": call.ok,
+                }),
+                Some(passage_id),
+                Some(turn_id),
+            )?;
         }
         Ok(())
     }
@@ -884,17 +877,30 @@ mod tests {
     }
 
     #[test]
-    fn query_entities_commit_writes_entity_ids_to_the_ledger() {
+    fn tool_calls_commit_exact_payloads_in_order_with_target_and_turn() {
         let (pool, story_id) = setup();
         let mut staging = TurnStaging::new(pool.clone(), story_id.clone());
-        let (bob, _) = staging
-            .resolve_or_stage_entity("character", "Bob", Some("a weathered coat"))
-            .unwrap();
-        staging.pending.push(PendingOp::QueryEntities {
-            entity_ids: vec![bob.id.clone()],
-            kind_filter: Some("character".into()),
-            name_filter: Some("Bob".into()),
-        });
+        staging.stage_tool_call(
+            "roll_check".into(),
+            json!({"chance_percent": 40}),
+            json!({"outcome": "failure"}),
+            true,
+            "Rolling for escape".into(),
+        );
+        staging.stage_tool_call(
+            "adjust_entity_attribute".into(),
+            json!({"delta": 1}),
+            json!({"applied": false}),
+            true,
+            "Adjusting Trust".into(),
+        );
+        staging.stage_tool_call(
+            "get_entities".into(),
+            json!({}),
+            json!("database unavailable"),
+            false,
+            "Checking who's here".into(),
+        );
         let mut conn = pool.get().unwrap();
         let turn_id = ledger::turns::create_turn(&conn, &story_id).unwrap();
         let passage = append_entry(
@@ -912,19 +918,57 @@ mod tests {
         staging.commit(&tx, &passage.id, &turn_id).unwrap();
         ledger::turns::set_status(&tx, &turn_id, ledger::turns::COMPLETE).unwrap();
         tx.commit().unwrap();
-        let (content, payload_json, target): (String, String, String) = conn
-            .query_row(
-                "SELECT content, payload_json, target_entry_id FROM ledger_entries WHERE kind = ?1",
-                [ledger::model::kind::ENTITY_QUERIED],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        let mut stmt = conn
+            .prepare(
+                "SELECT content, payload_json, target_entry_id, turn_id
+                 FROM ledger_entries WHERE kind = ?1 ORDER BY seq",
             )
             .unwrap();
-        let payload: serde_json::Value = serde_json::from_str(&payload_json).unwrap();
-        assert_eq!(content, "Looked up: Bob");
-        assert_eq!(payload["entity_ids"], json!([bob.id]));
-        assert_eq!(payload["kind_filter"], json!("character"));
-        assert_eq!(payload["name_filter"], json!("Bob"));
-        assert_eq!(target, passage.id);
+        let calls = stmt
+            .query_map([ledger::model::kind::TOOL_CALL], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
+            })
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(calls.len(), 3);
+        assert_eq!(
+            calls
+                .iter()
+                .map(|(content, _, _, _)| content.as_str())
+                .collect::<Vec<_>>(),
+            [
+                "Rolling for escape",
+                "Adjusting Trust",
+                "Checking who's here"
+            ]
+        );
+        let payloads = calls
+            .iter()
+            .map(|(_, payload, target, owner)| {
+                assert_eq!(target, &passage.id);
+                assert_eq!(owner, &turn_id);
+                serde_json::from_str::<serde_json::Value>(payload).unwrap()
+            })
+            .collect::<Vec<_>>();
+        for payload in &payloads {
+            assert_eq!(payload.as_object().unwrap().len(), 4);
+            assert!(payload.get("tool").is_some());
+            assert!(payload.get("args").is_some());
+            assert!(payload.get("result").is_some());
+            assert!(payload.get("ok").is_some());
+        }
+        assert_eq!(payloads[0]["result"]["outcome"], json!("failure"));
+        assert_eq!(payloads[0]["ok"], json!(true));
+        assert_eq!(payloads[1]["result"]["applied"], json!(false));
+        assert_eq!(payloads[1]["ok"], json!(true));
+        assert_eq!(payloads[2]["result"], json!("database unavailable"));
+        assert_eq!(payloads[2]["ok"], json!(false));
     }
 
     #[test]

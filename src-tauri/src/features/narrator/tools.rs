@@ -7,7 +7,7 @@ use serde_json::json;
 use tokio::sync::Mutex;
 
 use crate::features::images::model::ImageRequest;
-use crate::features::{settings, stories::settings::NarratorToolSettings};
+use crate::features::stories::settings::NarratorToolSettings;
 use crate::prompts;
 use crate::shared::error::AppError;
 
@@ -219,7 +219,7 @@ fn get_entities_tool(staging: Arc<Mutex<TurnStaging>>) -> PortableDynamicTool {
             Box::pin(async move {
                 let kind = args.get("kind").and_then(|v| v.as_str());
                 let name = args.get("name").and_then(|v| v.as_str());
-                let mut staging = staging.lock().await;
+                let staging = staging.lock().await;
                 let entities = staging
                     .effective_entities(kind, name)
                     .map_err(to_tool_error)?;
@@ -238,11 +238,6 @@ fn get_entities_tool(staging: Arc<Mutex<TurnStaging>>) -> PortableDynamicTool {
                         "id": entity.id, "kind": entity.kind, "name": entity.name,
                         "appearance_anchor": entity.appearance_anchor, "attributes": attributes,
                     }));
-                }
-                let retention = settings::read_ledger_retention_settings(&staging.pool)
-                    .map_err(to_tool_error)?;
-                if retention.tool_call_persistence {
-                    staging.stage_entity_query(entity_ids, kind, name);
                 }
                 Ok(ToolOutput::json(json!({"entities": out})))
             })
@@ -1180,41 +1175,7 @@ mod tests {
         assert_eq!(entities[0]["name"], json!("The Drowned Keep"));
         assert_eq!(entities[0]["kind"], json!("location"));
         assert_eq!(entities[0]["attributes"], json!([]));
-        let staging = staging.lock().await;
-        assert!(staging.pending.iter().any(|op| matches!(
-            op,
-            PendingOp::QueryEntities {
-                entity_ids,
-                kind_filter: Some(kind),
-                name_filter: None,
-            } if entity_ids.len() == 1 && kind == "location"
-        )));
-    }
-
-    #[tokio::test]
-    async fn get_entities_stays_ephemeral_when_persistence_is_disabled() {
-        let (pool, story_id) = setup();
-        pool.get()
-            .unwrap()
-            .execute(
-                "INSERT INTO settings (key, value) VALUES ('ledger_retention', ?1)",
-                [json!({"tool_call_persistence":false}).to_string()],
-            )
-            .unwrap();
-        let staging = Arc::new(Mutex::new(TurnStaging::new(pool, story_id)));
-        let tools = portable_tools(staging.clone());
-
-        tool_named(&tools, "get_entities")
-            .execute(json!({}))
-            .await
-            .unwrap();
-
-        assert!(!staging
-            .lock()
-            .await
-            .pending
-            .iter()
-            .any(|op| matches!(op, PendingOp::QueryEntities { .. })));
+        assert_eq!(staging.lock().await.pending.len(), 1);
     }
 
     #[tokio::test]

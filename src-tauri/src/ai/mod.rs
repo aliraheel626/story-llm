@@ -4,12 +4,15 @@
 
 mod reasoning_strip;
 
-use std::sync::{Arc, Mutex};
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+};
 
 use futures::StreamExt;
 use rig_agent::agent::{ToolCall, ToolResultEvent};
 use rig_agent::prelude::*;
-use rig_agent::tool::DynamicTool;
+use rig_agent::tool::{DynamicTool, ToolOutput, ToolResult};
 use rig_core::providers::{openai, openrouter};
 use rig_core::streaming::StreamedAssistantContent;
 
@@ -87,6 +90,69 @@ pub enum NarratorChunk {
     },
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct CompletedToolCall {
+    pub tool: String,
+    pub args: serde_json::Value,
+    pub result: serde_json::Value,
+    pub ok: bool,
+}
+
+#[derive(Default)]
+struct ToolCallCapture {
+    next_order: usize,
+    started: HashMap<String, usize>,
+    completed: Vec<(usize, CompletedToolCall)>,
+}
+
+impl ToolCallCapture {
+    fn start(&mut self, call_id: &str) {
+        if self.started.contains_key(call_id) {
+            return;
+        }
+        let order = self.next_order;
+        self.next_order += 1;
+        self.started.insert(call_id.to_string(), order);
+    }
+
+    fn finish(&mut self, call_id: &str, call: CompletedToolCall) {
+        let order = self.started.get(call_id).copied().unwrap_or_else(|| {
+            let order = self.next_order;
+            self.next_order += 1;
+            order
+        });
+        self.completed.push((order, call));
+    }
+
+    fn take_completed(&mut self) -> Vec<CompletedToolCall> {
+        self.completed.sort_by_key(|(order, _)| *order);
+        std::mem::take(&mut self.completed)
+            .into_iter()
+            .map(|(_, call)| call)
+            .collect()
+    }
+}
+
+fn json_or_string(value: &str) -> serde_json::Value {
+    serde_json::from_str(value).unwrap_or_else(|_| serde_json::Value::String(value.to_string()))
+}
+
+fn canonical_tool_result(output: &ToolOutput) -> serde_json::Value {
+    output
+        .as_json()
+        .cloned()
+        .unwrap_or_else(|| serde_json::Value::String(output.render()))
+}
+
+fn completed_tool_call(tool: &str, args: &str, result: &ToolResult) -> CompletedToolCall {
+    CompletedToolCall {
+        tool: tool.to_string(),
+        args: json_or_string(args),
+        result: canonical_tool_result(result.output()),
+        ok: result.is_success(),
+    }
+}
+
 /// Observes tool calls as they happen and queues a `NarratorChunk` for each,
 /// so `stream_narration` can forward live activity through the same
 /// `on_chunk` callback used for text/reasoning deltas. `on_tool_call` fires
@@ -95,6 +161,7 @@ pub enum NarratorChunk {
 /// "started" indicator.
 struct ActivityHook {
     buffer: Arc<Mutex<Vec<NarratorChunk>>>,
+    completed: Arc<Mutex<ToolCallCapture>>,
     stop_reason: Option<String>,
 }
 
@@ -121,6 +188,10 @@ impl AgentHook for ActivityHook {
             event.internal_call_id,
             event.args
         );
+        self.completed
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .start(event.internal_call_id);
         if let Ok(mut buf) = self.buffer.lock() {
             buf.push(NarratorChunk::ToolActivity {
                 call_id: event.internal_call_id.to_string(),
@@ -151,6 +222,13 @@ impl AgentHook for ActivityHook {
                 event.raw_result
             );
         }
+        self.completed
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .finish(
+                event.internal_call_id,
+                completed_tool_call(event.tool_name, event.args, event.raw_result),
+            );
         if let Ok(mut buf) = self.buffer.lock() {
             buf.push(NarratorChunk::ToolActivity {
                 call_id: event.internal_call_id.to_string(),
@@ -204,7 +282,10 @@ fn is_expected_tool_stop(
 /// Streams a narration turn, invoking `on_chunk` for every visible-text or
 /// reasoning delta as it arrives. Returns the full visible text and full
 /// reasoning text once the stream ends.
-pub async fn stream_narration<F>(req: NarrateRequest, on_chunk: F) -> AppResult<(String, String)>
+pub async fn stream_narration<F>(
+    req: NarrateRequest,
+    on_chunk: F,
+) -> AppResult<(String, String, Vec<CompletedToolCall>)>
 where
     F: FnMut(NarratorChunk),
 {
@@ -232,22 +313,29 @@ where
         .collect();
 
     let activity_buffer: Arc<Mutex<Vec<NarratorChunk>>> = Arc::new(Mutex::new(Vec::new()));
+    let completed = Arc::new(Mutex::new(ToolCallCapture::default()));
     let mut runner = agent.runner(req.prompt).history(history);
     if has_tools {
         runner = runner.add_hook(ActivityHook {
             buffer: activity_buffer.clone(),
+            completed: completed.clone(),
             stop_reason: stop_reason.clone(),
         });
     }
     let stream = runner.stream().await;
-    consume_narration_stream(
+    let (visible, thoughts) = consume_narration_stream(
         stream,
         has_tools,
         stop_reason.as_deref(),
         &activity_buffer,
         on_chunk,
     )
-    .await
+    .await?;
+    let tool_calls = completed
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .take_completed();
+    Ok((visible, thoughts, tool_calls))
 }
 
 async fn consume_narration_stream<F>(
@@ -403,6 +491,7 @@ mod tests {
         let stop_reason = "decision captured/test-call";
         let hook = ActivityHook {
             buffer: Arc::new(Mutex::new(Vec::new())),
+            completed: Arc::new(Mutex::new(ToolCallCapture::default())),
             stop_reason: Some(stop_reason.to_string()),
         };
         assert_eq!(
@@ -450,5 +539,43 @@ mod tests {
                 ..
             }]
         ));
+    }
+
+    #[test]
+    fn completed_calls_preserve_canonical_results_and_rig_success_semantics() {
+        let no_op = ToolResult::success(ToolOutput::json(serde_json::json!({
+            "applied": false
+        })));
+        let captured = completed_tool_call("adjust_entity_attribute", r#"{"delta":1}"#, &no_op);
+        assert_eq!(captured.args, serde_json::json!({"delta": 1}));
+        assert_eq!(captured.result, serde_json::json!({"applied": false}));
+        assert!(captured.ok);
+
+        let failure = ToolResult::failed(rig_agent::tool::ToolExecutionError::invalid_args(
+            "bad arguments",
+        ));
+        let captured = completed_tool_call("roll_check", "not-json", &failure);
+        assert_eq!(captured.args, serde_json::json!("not-json"));
+        assert_eq!(captured.result, serde_json::json!("bad arguments"));
+        assert!(!captured.ok);
+    }
+
+    #[test]
+    fn completed_calls_follow_call_start_order() {
+        let mut capture = ToolCallCapture::default();
+        capture.start("first");
+        capture.start("second");
+        let result = ToolResult::success(ToolOutput::json(serde_json::json!({"ok": true})));
+        capture.finish("second", completed_tool_call("second", "{}", &result));
+        capture.finish("first", completed_tool_call("first", "{}", &result));
+
+        assert_eq!(
+            capture
+                .take_completed()
+                .into_iter()
+                .map(|call| call.tool)
+                .collect::<Vec<_>>(),
+            ["first", "second"]
+        );
     }
 }

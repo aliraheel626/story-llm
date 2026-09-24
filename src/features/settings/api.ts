@@ -4,7 +4,6 @@ import type {
   EntityContextMode,
   ImageModelSettings,
   TextModelSettings,
-  LedgerRetentionSettings,
 } from "../../shared/types";
 
 export const textModelApi = {
@@ -23,10 +22,4 @@ export const contextInjectionApi = {
   get: () => invoke<ContextInjectionSettings>("get_context_injection_settings"),
   save: (entityContextMode: EntityContextMode, diceRollsInContext: boolean) =>
     invoke<void>("save_context_injection_settings", { entityContextMode, diceRollsInContext }),
-};
-
-export const ledgerRetentionApi = {
-  get: () => invoke<LedgerRetentionSettings>("get_ledger_retention_settings"),
-  save: (toolCallPersistence: boolean) =>
-    invoke<void>("save_ledger_retention_settings", { toolCallPersistence }),
 };

@@ -52,6 +52,7 @@ pub mod kind {
     pub const NARRATION: &str = "narration";
     pub const CONTENT_EDITED: &str = "content_edited";
     pub const DICEROLL: &str = "diceroll";
+    pub const TOOL_CALL: &str = "tool_call";
     pub const ENTITY_CREATED: &str = "entity_created";
     pub const ENTITY_QUERIED: &str = "entity_queried";
     pub const ENTITY_UPDATED: &str = "entity_updated";

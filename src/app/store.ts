@@ -8,7 +8,6 @@ export const SIDEBAR_PANELS = [
   "textModel",
   "imageModel",
   "contextInjection",
-  "ledgerRetention",
   "features",
 ] as const;
 
@@ -28,7 +27,6 @@ export const useAppShellStore = create<AppShellState>((set) => ({
     textModel: false,
     imageModel: false,
     contextInjection: false,
-    ledgerRetention: false,
     features: false,
   },
   togglePanel: (id) =>

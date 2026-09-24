@@ -70,13 +70,13 @@ pub fn prepare(inputs: NarratorInputs<'_>) -> AppResult<Prepared> {
         ));
     }
     let (image_tools, image_requests) = tools::narrator_image_tools(image_enabled);
-    let staging = if !illustrate
+    let world_tools_enabled = !illustrate
         && (tool_settings.get_entities
             || tool_settings.create_entity
             || tool_settings.update_entity
             || tool_settings.adjust_entity_attribute
-            || tool_settings.roll_check)
-    {
+            || tool_settings.roll_check);
+    let staging = if world_tools_enabled || !image_tools.is_empty() {
         Some(Arc::new(Mutex::new(TurnStaging::new(
             inputs.world_pool.clone(),
             inputs.story_id.to_string(),
@@ -84,7 +84,8 @@ pub fn prepare(inputs: NarratorInputs<'_>) -> AppResult<Prepared> {
     } else {
         None
     };
-    let mut tools = if let Some(staging) = &staging {
+    let mut tools = if world_tools_enabled {
+        let staging = staging.as_ref().expect("world tools require staging");
         let embedding_api_key =
             settings::read_api_key(inputs.app, "openrouter").unwrap_or_default();
         tools::narrator_tools_for_settings(staging.clone(), embedding_api_key, &tool_settings)

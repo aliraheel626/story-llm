@@ -6,7 +6,6 @@ import { WritingStylePanel } from "../writingStyle/WritingStylePanel";
 import { TextModelPanel } from "../settings/TextModelPanel";
 import { ImageModelPanel } from "../settings/ImageModelPanel";
 import { ContextInjectionPanel } from "../settings/ContextInjectionPanel";
-import { LedgerRetentionPanel } from "../settings/LedgerRetentionPanel";
 import { PlaceholderPanel } from "./PlaceholderPanel";
 import { useAppShellStore } from "../../app/store";
 
@@ -18,7 +17,6 @@ const PANEL_LABELS: Record<string, string> = {
   textModel: "Text Model",
   imageModel: "Image Model",
   contextInjection: "Context Injection",
-  ledgerRetention: "Ledger Retention",
   features: "Features",
 };
 
@@ -58,10 +56,6 @@ export function Sidebar() {
 
       <AccordionPanel title={PANEL_LABELS.contextInjection} open={openPanels.contextInjection} onToggle={() => togglePanel("contextInjection")}>
         <ContextInjectionPanel />
-      </AccordionPanel>
-
-      <AccordionPanel title={PANEL_LABELS.ledgerRetention} open={openPanels.ledgerRetention} onToggle={() => togglePanel("ledgerRetention")}>
-        <LedgerRetentionPanel />
       </AccordionPanel>
 
       <AccordionPanel title={PANEL_LABELS.features} open={openPanels.features} onToggle={() => togglePanel("features")}>

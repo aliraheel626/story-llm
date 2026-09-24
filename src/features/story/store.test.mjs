@@ -19,6 +19,7 @@ let RollDisclosure;
 let LedgerEntryView;
 let rollFromEntry;
 let groupRollsByEntry;
+let toolCallsFromEvents;
 
 const rollEvent = (id, target_entry_id, payload) => ({
   id, story_id: "story", seq: 1, kind: "diceroll", visibility: "hidden",
@@ -89,6 +90,7 @@ before(async () => {
   ({ useStoryStore: store } = await server.ssrLoadModule("/src/features/story/store.ts"));
   ({ RollDisclosure } = await server.ssrLoadModule("/src/features/ledger/RollDisclosure.tsx"));
   ({ LedgerEntryView } = await server.ssrLoadModule("/src/features/ledger/LedgerEntryView.tsx"));
+  ({ toolCallsFromEvents } = await server.ssrLoadModule("/src/features/ledger/TurnActivity.tsx"));
   ({ rollFromEntry, groupRollsByEntry } = await server.ssrLoadModule("/src/shared/types.ts"));
 });
 
@@ -276,6 +278,26 @@ test("snapshot roll grouping safely handles inherited-property target IDs", () =
   assert.equal(Object.getPrototypeOf(grouped), null);
   assert.equal(grouped.__proto__[0].id, "prototype-roll");
   assert.equal(grouped.constructor[0].id, "constructor-roll");
+});
+
+test("turn activity prefers captured tool calls and preserves false outcomes", () => {
+  const base = {
+    story_id: "story", visibility: "hidden", target_entry_id: "narration",
+    turn_id: "turn", created_at: "2026-09-23T12:00:00Z",
+  };
+  const hidden = [
+    { ...base, id: "effect", seq: 1, kind: "entity_updated", content: "Legacy effect", payload: {} },
+    { ...base, id: "failed", seq: 3, kind: "tool_call", content: "Checking who's here…", payload: { tool: "get_entities", args: {}, result: "failed", ok: false } },
+    { ...base, id: "noop", seq: 2, kind: "tool_call", content: "Adjusting Trust…", payload: { tool: "adjust_entity_attribute", args: {}, result: { applied: false }, ok: true } },
+  ];
+
+  assert.deepEqual(toolCallsFromEvents("narration", hidden), [
+    { key: "noop", label: "Adjusting Trust…", done: true, ok: true },
+    { key: "failed", label: "Checking who's here…", done: true, ok: false },
+  ]);
+  assert.deepEqual(toolCallsFromEvents("narration", [hidden[0]]), [
+    { key: "effect", label: "Legacy effect", done: true, ok: true },
+  ]);
 });
 
 test("default chance rolls show their source and no factors alongside threshold, draw, and seed", () => {

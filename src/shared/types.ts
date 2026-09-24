@@ -10,7 +10,7 @@ export type InputMode = ActionMode | "generated";
 export type LedgerVisibility = "visible" | "hidden";
 export type LedgerEntryKind =
   | "player_message" | "narration" | "content_edited"
-  | "diceroll" | "entity_created" | "entity_queried" | "entity_updated" | "entity_deleted"
+  | "diceroll" | "tool_call" | "entity_created" | "entity_queried" | "entity_updated" | "entity_deleted"
   | "entity_attribute_changed" | "entity_attribute_removed" | "image_generated"
   | "context_summary";
 
@@ -41,6 +41,9 @@ interface LedgerEntryBase {
   id: string; story_id: string; seq: number; visibility: LedgerVisibility;
   content: string | null; target_entry_id: string | null; turn_id: string | null; created_at: string;
 }
+export interface ToolCallPayload {
+  tool: string; args: unknown; result: unknown; ok: boolean;
+}
 export type LedgerEntry =
   | (LedgerEntryBase & { kind: "player_message" | "narration"; payload: NarrativePayload })
   | (LedgerEntryBase & { kind: "content_edited"; payload: ContentEditedPayload })
@@ -48,6 +51,7 @@ export type LedgerEntry =
   | (LedgerEntryBase & { kind: "entity_attribute_changed" | "entity_attribute_removed"; payload: EntityAttributeEventPayload })
   | (LedgerEntryBase & { kind: "image_generated"; payload: ImageGeneratedPayload })
   | (LedgerEntryBase & { kind: "context_summary"; payload: ContextSummaryPayload })
+  | (LedgerEntryBase & { kind: "tool_call"; payload: ToolCallPayload })
   | (LedgerEntryBase & { kind: "diceroll" | "entity_queried"; payload: LedgerPayloadBase });
 export interface TurnSummary { id: string; status: "pending" | "complete" | "failed" }
 export interface LedgerSnapshot { visible: LedgerEntry[]; hidden: LedgerEntry[]; turns: TurnSummary[] }
@@ -63,7 +67,6 @@ export interface TextModelSettings { provider: string; model: string; has_api_ke
 export interface ImageModelSettings { model: string; enabled: boolean; style: string; has_api_key: boolean }
 export type EntityContextMode = "all" | "scoped" | "none";
 export interface ContextInjectionSettings { entity_context_mode: EntityContextMode; dice_rolls_in_context: boolean }
-export interface LedgerRetentionSettings { tool_call_persistence: boolean }
 export interface StoryImage { id: string; entry_id: string; path: string; prompt: string; created_at: string }
 
 export type EntityKind = "character" | "object" | "location" | "relationship" | "campaign";
@@ -118,11 +121,11 @@ export interface Roll {
 }
 
 export function ledgerInputMode(entry: LedgerEntry): InputMode {
-  return (entry.payload.input_mode as InputMode | undefined) ?? "generated";
+  return ("input_mode" in entry.payload ? entry.payload.input_mode as InputMode | undefined : undefined) ?? "generated";
 }
 export function rollFromEntry(entry: LedgerEntry): Roll | null {
   if (entry.payload === null || typeof entry.payload !== "object" || Array.isArray(entry.payload)) return null;
-  const p: Record<string, unknown> = entry.payload;
+  const p = entry.payload as unknown as Record<string, unknown>;
   const { chance_percent: chance, roll, outcome, seed } = p;
   if (
     !Number.isInteger(chance) || typeof chance !== "number" || chance < 0 || chance > 100 ||

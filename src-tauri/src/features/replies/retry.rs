@@ -163,13 +163,9 @@ async fn commit_candidate(
     } else {
         None
     };
-    let staging_guard = if turn.illustrate {
-        None
-    } else {
-        match &staging {
-            Some(staging) => Some(staging.lock().await),
-            None => None,
-        }
+    let staging_guard = match &staging {
+        Some(staging) => Some(staging.lock().await),
+        None => None,
     };
 
     let (entry, image_paths) = with_transaction(pool, |tx| {
@@ -200,6 +196,13 @@ async fn commit_candidate(
         entities::projection::replay(tx, story_id, &affected_entities, None)?;
 
         let entry = if turn.illustrate {
+            if let Some(staging) = &staging_guard {
+                let target_id = &illustrate_target
+                    .as_ref()
+                    .expect("validated illustration target")
+                    .0;
+                staging.commit(tx, target_id, &turn.id)?;
+            }
             ledger_repository::active_entry(tx, &turn.player.id)?
         } else {
             let passage = ledger_repository::append_story_message(
@@ -841,6 +844,14 @@ mod tests {
         drop(conn);
 
         let turn = begin_retry(&pool, "s", &action.id).unwrap();
+        let mut staging = TurnStaging::new(pool.clone(), "s".into());
+        staging.stage_tool_call(
+            "illustrate_scene".into(),
+            json!({"description":"A moonlit harbor"}),
+            json!({"queued":true}),
+            true,
+            "Sketching the scene".into(),
+        );
         let committed = process_candidate(
             &pool,
             "s",
@@ -848,7 +859,7 @@ mod tests {
             Ok(Candidate {
                 visible: String::new(),
                 thoughts: None,
-                staging: None,
+                staging: Some(Arc::new(Mutex::new(staging))),
                 image_requests: vec![images::model::ImageRequest {
                     description: "A moonlit harbor".into(),
                     character_ids: Vec::new(),
@@ -875,5 +886,15 @@ mod tests {
                 .unwrap(),
             1
         );
+        let conn = pool.get().unwrap();
+        let (target, owner): (String, String) = conn
+            .query_row(
+                "SELECT target_entry_id, turn_id FROM ledger_entries WHERE kind = ?1",
+                [ledger_kind::TOOL_CALL],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(target, scene.id);
+        assert_eq!(owner, see_turn);
     }
 }

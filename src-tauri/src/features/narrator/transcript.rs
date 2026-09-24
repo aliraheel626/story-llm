@@ -371,14 +371,23 @@ mod tests {
     }
 
     #[test]
-    fn entity_queries_replay_as_authoritative_story_events() {
-        let rows = vec![entry(
-            "query",
-            0,
-            kind::ENTITY_QUERIED,
-            Some("Looked up: Bob"),
-            json!({"entity_ids":["bob"]}),
-        )];
+    fn legacy_entity_queries_remain_contextual_but_tool_calls_do_not() {
+        let rows = vec![
+            entry(
+                "query",
+                0,
+                kind::ENTITY_QUERIED,
+                Some("Looked up: Bob"),
+                json!({"entity_ids":["bob"]}),
+            ),
+            entry(
+                "tool",
+                1,
+                kind::TOOL_CALL,
+                Some("Checking who's here"),
+                json!({"tool":"get_entities","args":{},"result":{"entities":[]},"ok":true}),
+            ),
+        ];
 
         let history = history_from_entries(&rows, true);
         assert_eq!(history.len(), 1);

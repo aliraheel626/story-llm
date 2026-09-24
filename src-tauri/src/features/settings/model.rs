@@ -41,16 +41,3 @@ impl Default for ContextInjectionSettings {
         }
     }
 }
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LedgerRetentionSettings {
-    pub tool_call_persistence: bool,
-}
-
-impl Default for LedgerRetentionSettings {
-    fn default() -> Self {
-        Self {
-            tool_call_persistence: true,
-        }
-    }
-}
