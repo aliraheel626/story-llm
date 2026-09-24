@@ -8,7 +8,62 @@ use crate::features::ledger::model::kind as ledger_kind;
 use crate::shared::db::Pool;
 use crate::shared::error::AppResult;
 
-use super::boundary_for;
+#[derive(Debug, Clone)]
+pub(crate) struct SummaryBoundary {
+    pub summary_entry_id: String,
+    pub through_seq: i64,
+}
+
+/// Latest valid summary for the requested cut. A retry may have newer summary
+/// rows physically after its target, so both the summary and covered boundary
+/// must precede `before_seq`.
+pub(crate) fn boundary_for(
+    conn: &rusqlite::Connection,
+    story_id: &str,
+    before_seq: Option<i64>,
+) -> AppResult<Option<SummaryBoundary>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, seq, payload_json FROM ledger_entries
+         WHERE story_id = ?1 AND kind = ?2 ORDER BY seq DESC",
+    )?;
+    let rows = stmt.query_map(
+        rusqlite::params![story_id, ledger_kind::CONTEXT_SUMMARY],
+        |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        },
+    )?;
+    for row in rows {
+        let (summary_entry_id, summary_seq, payload_json) = row?;
+        let boundary = serde_json::from_str::<serde_json::Value>(&payload_json)
+            .ok()
+            .and_then(|value| {
+                Some((
+                    value.get("through_seq")?.as_i64()?,
+                    value.get("through_entry_id")?.as_str()?.to_string(),
+                ))
+            });
+        if let Some((through_seq, through_entry_id)) = boundary {
+            let boundary_exists: bool = conn.query_row(
+                "SELECT EXISTS(SELECT 1 FROM ledger_entries WHERE id = ?1)",
+                [through_entry_id],
+                |row| row.get(0),
+            )?;
+            if before_seq.is_none_or(|cut| summary_seq < cut && through_seq < cut)
+                && boundary_exists
+            {
+                return Ok(Some(SummaryBoundary {
+                    summary_entry_id,
+                    through_seq,
+                }));
+            }
+        }
+    }
+    Ok(None)
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ContextSummary {
@@ -59,7 +114,7 @@ pub(super) fn latest_summary_artifact(
         .map(SummaryArtifact)
 }
 
-pub(super) fn prune_summaries_covering(
+pub(crate) fn prune_summaries_covering(
     tx: &rusqlite::Transaction<'_>,
     story_id: &str,
     doomed_ids: &HashSet<String>,
@@ -86,6 +141,19 @@ pub(super) fn prune_summaries_covering(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn structured_summary_renders_all_sections() {
+        let value = ContextSummary {
+            prose: "Earlier".into(),
+            facts: vec!["fact".into()],
+            entity_notes: vec!["note".into()],
+            open_threads: vec!["thread".into()],
+            unresolved_mechanics: vec!["roll".into()],
+        };
+        let text = format_summary(&value);
+        assert!(text.contains("Earlier") && text.contains("fact") && text.contains("thread"));
+    }
 
     #[test]
     fn prune_only_summaries_covering_doomed_entries_in_story() {
