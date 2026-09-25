@@ -6,7 +6,7 @@ use tokio::sync::Mutex;
 use crate::shared::db::{open_connection, Pool};
 use crate::shared::error::{AppError, AppResult};
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct TurnGate {
     current: Arc<StdMutex<Option<String>>>,
 }

@@ -31,13 +31,17 @@ pub fn get_image_model_settings(
 }
 
 #[tauri::command]
-pub fn save_image_model_settings(
-    pool: State<Pool>,
+pub async fn save_image_model_settings(
+    pool: State<'_, Pool>,
     model: String,
     enabled: bool,
     style: String,
 ) -> AppResult<()> {
-    repository::write_image_model_settings(pool.inner(), model, enabled, style)
+    let pool = pool.inner().clone();
+    crate::shared::db::blocking(move || {
+        repository::write_image_model_settings(&pool, model, enabled, style)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -46,9 +50,13 @@ pub fn get_context_injection_settings(pool: State<Pool>) -> AppResult<ContextInj
 }
 
 #[tauri::command]
-pub fn save_context_injection_settings(
-    pool: State<Pool>,
+pub async fn save_context_injection_settings(
+    pool: State<'_, Pool>,
     entity_context_mode: String,
 ) -> AppResult<()> {
-    repository::write_context_injection_settings(pool.inner(), entity_context_mode)
+    let pool = pool.inner().clone();
+    crate::shared::db::blocking(move || {
+        repository::write_context_injection_settings(&pool, entity_context_mode)
+    })
+    .await
 }

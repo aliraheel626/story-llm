@@ -11,7 +11,7 @@ use crate::features::{
     settings as global_settings,
 };
 use crate::prompts;
-use crate::shared::db::Pool;
+use crate::shared::db::{blocking, Pool};
 
 #[derive(Debug, Clone, Serialize)]
 struct StoryTitleUpdatedPayload {
@@ -104,13 +104,20 @@ pub fn maybe_auto_title(app: &AppHandle, pool: &Pool, story_id: &str) {
         let Some(title) = sanitize_title(&generated.title) else {
             return;
         };
-        let Ok(conn) = pool.get() else { return };
         // Conditional write: if the user renamed the story while the model was
         // thinking, their title stands and the generated one is dropped.
-        let updated = conn.execute(
-            "UPDATE stories SET title = ?1 WHERE id = ?2 AND title = ?3",
-            rusqlite::params![title, story_id, DEFAULT_STORY_TITLE],
-        );
+        let updated = blocking({
+            let story_id = story_id.clone();
+            let title = title.clone();
+            move || {
+                let conn = pool.get()?;
+                Ok(conn.execute(
+                    "UPDATE stories SET title = ?1 WHERE id = ?2 AND title = ?3",
+                    rusqlite::params![title, story_id, DEFAULT_STORY_TITLE],
+                )?)
+            }
+        })
+        .await;
         if matches!(updated, Ok(n) if n > 0) {
             let _ = app.emit(
                 "story-title-updated",

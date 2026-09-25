@@ -23,63 +23,73 @@ pub fn list_entities(
 }
 
 #[tauri::command]
-pub fn create_entity(
-    pool: State<Pool>,
-    gate: State<TurnGate>,
+pub async fn create_entity(
+    pool: State<'_, Pool>,
+    gate: State<'_, TurnGate>,
     story_id: String,
     kind: String,
     name: String,
     appearance_anchor: Option<String>,
 ) -> AppResult<Entity> {
     gate.check_idle(&story_id)?;
-    with_transaction(pool.inner(), |tx| {
-        create_entity_sync(
-            tx,
-            &story_id,
-            &kind,
-            &name,
-            appearance_anchor.as_deref(),
-            "user",
-            None,
-        )
+    let pool = pool.inner().clone();
+    crate::shared::db::blocking(move || {
+        with_transaction(&pool, |tx| {
+            create_entity_sync(
+                tx,
+                &story_id,
+                &kind,
+                &name,
+                appearance_anchor.as_deref(),
+                "user",
+                None,
+            )
+        })
     })
+    .await
 }
 
 #[tauri::command]
-pub fn update_entity(
-    pool: State<Pool>,
-    gate: State<TurnGate>,
+pub async fn update_entity(
+    pool: State<'_, Pool>,
+    gate: State<'_, TurnGate>,
     story_id: String,
     entity_id: String,
     name: String,
     appearance_anchor: Option<String>,
 ) -> AppResult<Entity> {
     gate.check_idle(&story_id)?;
-    with_transaction(pool.inner(), |tx| {
-        update_entity_sync(
-            tx,
-            &story_id,
-            &entity_id,
-            &name,
-            appearance_anchor.as_deref(),
-            "user",
-            None,
-            None,
-        )
+    let pool = pool.inner().clone();
+    crate::shared::db::blocking(move || {
+        with_transaction(&pool, |tx| {
+            update_entity_sync(
+                tx,
+                &story_id,
+                &entity_id,
+                &name,
+                appearance_anchor.as_deref(),
+                "user",
+                None,
+                None,
+            )
+        })
     })
+    .await
 }
 
 #[tauri::command]
-pub fn delete_entity(
-    pool: State<Pool>,
-    gate: State<TurnGate>,
+pub async fn delete_entity(
+    pool: State<'_, Pool>,
+    gate: State<'_, TurnGate>,
     story_id: String,
     entity_id: String,
 ) -> AppResult<()> {
     gate.check_idle(&story_id)?;
-    with_transaction(pool.inner(), |tx| {
-        delete_entity_sync(tx, &story_id, &entity_id)
+    let pool = pool.inner().clone();
+    crate::shared::db::blocking(move || {
+        with_transaction(&pool, |tx| delete_entity_sync(tx, &story_id, &entity_id))
     })
+    .await
 }
 
 #[tauri::command]
@@ -99,30 +109,38 @@ pub fn list_attribute_registry(pool: State<Pool>) -> AppResult<Vec<AttributeRegi
 }
 
 #[tauri::command]
-pub fn set_entity_attribute(
-    pool: State<Pool>,
-    gate: State<TurnGate>,
+pub async fn set_entity_attribute(
+    pool: State<'_, Pool>,
+    gate: State<'_, TurnGate>,
     story_id: String,
     entity_id: String,
     attribute_id: String,
     value: f64,
 ) -> AppResult<EntityAttributeValue> {
     gate.check_idle(&story_id)?;
-    with_transaction(pool.inner(), |tx| {
-        set_entity_attribute_sync(tx, &story_id, &entity_id, &attribute_id, value)
+    let pool = pool.inner().clone();
+    crate::shared::db::blocking(move || {
+        with_transaction(&pool, |tx| {
+            set_entity_attribute_sync(tx, &story_id, &entity_id, &attribute_id, value)
+        })
     })
+    .await
 }
 
 #[tauri::command]
-pub fn remove_entity_attribute(
-    pool: State<Pool>,
-    gate: State<TurnGate>,
+pub async fn remove_entity_attribute(
+    pool: State<'_, Pool>,
+    gate: State<'_, TurnGate>,
     story_id: String,
     entity_id: String,
     attribute_id: String,
 ) -> AppResult<()> {
     gate.check_idle(&story_id)?;
-    with_transaction(pool.inner(), |tx| {
-        remove_entity_attribute_sync(tx, &story_id, &entity_id, &attribute_id)
+    let pool = pool.inner().clone();
+    crate::shared::db::blocking(move || {
+        with_transaction(&pool, |tx| {
+            remove_entity_attribute_sync(tx, &story_id, &entity_id, &attribute_id)
+        })
     })
+    .await
 }

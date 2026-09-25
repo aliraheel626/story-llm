@@ -14,7 +14,7 @@ use crate::features::{
     narrator, stories,
 };
 use crate::prompts;
-use crate::shared::db::Pool;
+use crate::shared::db::{blocking, Pool};
 use crate::shared::error::{AppError, AppResult};
 
 use super::model::{NarrationDonePayload, SubmitTurnResult};
@@ -234,6 +234,9 @@ pub(super) async fn submit_turn(
     mode: String,
     content: String,
 ) -> AppResult<SubmitTurnResult> {
-    let turn = TurnTx::begin(pool, gate, &story_id)?;
+    let begin_pool = pool.clone();
+    let begin_gate = gate.clone();
+    let begin_story_id = story_id.clone();
+    let turn = blocking(move || TurnTx::begin(&begin_pool, &begin_gate, &begin_story_id)).await?;
     run_turn(app, pool, turn, mode, content).await
 }

@@ -1,7 +1,7 @@
 use tauri::AppHandle;
 
 use crate::ai::TextModelConfig;
-use crate::shared::db::Pool;
+use crate::shared::db::{blocking, Pool};
 use crate::shared::error::{AppError, AppResult};
 
 use super::{repository, secrets};
@@ -30,7 +30,12 @@ pub(super) async fn save_text_model_settings(
             .await
             .unwrap_or(32_768),
     };
-    repository::write_text_model_settings(pool, &provider, &model, context_window)?;
+    let pool = pool.clone();
+    let provider_for_write = provider.clone();
+    blocking(move || {
+        repository::write_text_model_settings(&pool, &provider_for_write, &model, context_window)
+    })
+    .await?;
 
     if let Some(key) = api_key {
         secrets::write_api_key(app, &provider, &key)?;

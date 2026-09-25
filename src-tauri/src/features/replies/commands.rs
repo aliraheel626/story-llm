@@ -35,21 +35,25 @@ pub async fn retry_narration(
 }
 
 #[tauri::command]
-pub fn edit_ledger_entry(
-    pool: State<Pool>,
-    gate: State<TurnGate>,
+pub async fn edit_ledger_entry(
+    pool: State<'_, Pool>,
+    gate: State<'_, TurnGate>,
     entry_id: String,
     content: String,
 ) -> AppResult<LedgerEntry> {
-    edit::edit_ledger_entry(pool.inner(), gate.inner(), entry_id, content)
+    let pool = pool.inner().clone();
+    let gate = gate.inner().clone();
+    crate::shared::db::blocking(move || edit::edit_ledger_entry(&pool, &gate, entry_id, content))
+        .await
 }
 
 #[tauri::command]
-pub fn erase_last_exchange(
-    pool: State<Pool>,
-    gate: State<TurnGate>,
+pub async fn erase_last_exchange(
+    pool: State<'_, Pool>,
+    gate: State<'_, TurnGate>,
     story_id: String,
 ) -> AppResult<Vec<String>> {
     gate.check_idle(&story_id)?;
-    erase::erase_last_exchange(pool.inner(), story_id)
+    let pool = pool.inner().clone();
+    crate::shared::db::blocking(move || erase::erase_last_exchange(&pool, story_id)).await
 }

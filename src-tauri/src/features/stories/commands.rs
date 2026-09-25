@@ -11,23 +11,31 @@ pub fn list_stories(pool: State<Pool>) -> AppResult<Vec<Story>> {
 }
 
 #[tauri::command]
-pub fn create_story(
-    pool: State<Pool>,
+pub async fn create_story(
+    pool: State<'_, Pool>,
     title: Option<String>,
     settings: Option<serde_json::Value>,
 ) -> AppResult<Story> {
-    repository::create_story_in_pool(pool.inner(), title, settings)
+    let pool = pool.inner().clone();
+    crate::shared::db::blocking(move || repository::create_story_in_pool(&pool, title, settings))
+        .await
 }
 
 #[tauri::command]
-pub fn rename_story(pool: State<Pool>, story_id: String, title: String) -> AppResult<()> {
-    repository::rename_story(pool.inner(), &story_id, &title)
+pub async fn rename_story(pool: State<'_, Pool>, story_id: String, title: String) -> AppResult<()> {
+    let pool = pool.inner().clone();
+    crate::shared::db::blocking(move || repository::rename_story(&pool, &story_id, &title)).await
 }
 
 #[tauri::command]
-pub fn delete_story(pool: State<Pool>, gate: State<TurnGate>, story_id: String) -> AppResult<()> {
+pub async fn delete_story(
+    pool: State<'_, Pool>,
+    gate: State<'_, TurnGate>,
+    story_id: String,
+) -> AppResult<()> {
     gate.check_idle(&story_id)?;
-    repository::delete_story(pool.inner(), &story_id)
+    let pool = pool.inner().clone();
+    crate::shared::db::blocking(move || repository::delete_story(&pool, &story_id)).await
 }
 
 #[tauri::command]
@@ -36,8 +44,14 @@ pub fn get_author_note(pool: State<Pool>, story_id: String) -> AppResult<String>
 }
 
 #[tauri::command]
-pub fn save_author_note(pool: State<Pool>, story_id: String, note: String) -> AppResult<()> {
-    author_note::write_author_note(pool.inner(), &story_id, &note)
+pub async fn save_author_note(
+    pool: State<'_, Pool>,
+    story_id: String,
+    note: String,
+) -> AppResult<()> {
+    let pool = pool.inner().clone();
+    crate::shared::db::blocking(move || author_note::write_author_note(&pool, &story_id, &note))
+        .await
 }
 
 #[tauri::command]
@@ -46,12 +60,16 @@ pub fn get_author_note_enabled(pool: State<Pool>, story_id: String) -> AppResult
 }
 
 #[tauri::command]
-pub fn set_author_note_enabled(
-    pool: State<Pool>,
+pub async fn set_author_note_enabled(
+    pool: State<'_, Pool>,
     story_id: String,
     enabled: bool,
 ) -> AppResult<()> {
-    author_note::write_author_note_enabled(pool.inner(), &story_id, enabled)
+    let pool = pool.inner().clone();
+    crate::shared::db::blocking(move || {
+        author_note::write_author_note_enabled(&pool, &story_id, enabled)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -63,12 +81,14 @@ pub fn get_story_narrator_tools(
 }
 
 #[tauri::command]
-pub fn save_story_narrator_tools(
-    pool: State<Pool>,
+pub async fn save_story_narrator_tools(
+    pool: State<'_, Pool>,
     story_id: String,
     tools: settings::NarratorToolSettings,
 ) -> AppResult<()> {
-    settings::save_narrator_tools(pool.inner(), &story_id, tools)
+    let pool = pool.inner().clone();
+    crate::shared::db::blocking(move || settings::save_narrator_tools(&pool, &story_id, tools))
+        .await
 }
 
 #[tauri::command]
@@ -77,10 +97,14 @@ pub fn get_story_reasoning_effort(pool: State<Pool>, story_id: String) -> AppRes
 }
 
 #[tauri::command]
-pub fn save_story_reasoning_effort(
-    pool: State<Pool>,
+pub async fn save_story_reasoning_effort(
+    pool: State<'_, Pool>,
     story_id: String,
     reasoning_effort: String,
 ) -> AppResult<()> {
-    settings::save_reasoning_effort(pool.inner(), &story_id, &reasoning_effort)
+    let pool = pool.inner().clone();
+    crate::shared::db::blocking(move || {
+        settings::save_reasoning_effort(&pool, &story_id, &reasoning_effort)
+    })
+    .await
 }

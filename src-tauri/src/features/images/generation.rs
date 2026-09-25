@@ -5,7 +5,7 @@ use uuid::Uuid;
 
 use crate::features::ledger::{model::kind as ledger_kind, repository as ledger_repository};
 use crate::features::settings;
-use crate::shared::db::{with_transaction, Pool};
+use crate::shared::db::{blocking, with_transaction, Pool};
 use crate::shared::error::{AppError, AppResult};
 
 use super::model::{ImageRequest, StoryImage};
@@ -95,7 +95,10 @@ async fn generate_from_description(
     let matched: Vec<&(String, String)> = characters.iter().collect();
     let prompt = compose_image_prompt(&settings.style, description, &matched);
     let generated = openrouter::generate_image(&api_key, &settings.model, &prompt).await?;
-    persist_and_store_image(pool, target, description, prompt, generated)
+    let pool = pool.clone();
+    let target = target.clone();
+    let description = description.to_string();
+    blocking(move || persist_and_store_image(&pool, &target, &description, prompt, generated)).await
 }
 
 fn persist_and_store_image(

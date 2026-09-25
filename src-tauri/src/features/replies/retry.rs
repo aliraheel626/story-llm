@@ -8,7 +8,7 @@ use crate::features::ledger::{
     turn_tx::{TurnGate, TurnTx},
     turns,
 };
-use crate::shared::db::Pool;
+use crate::shared::db::{blocking, Pool};
 use crate::shared::error::{AppError, AppResult};
 
 use super::{erase, model::RetryResult, submit};
@@ -57,7 +57,10 @@ pub(super) async fn retry_narration(
     story_id: String,
     entry_id: String,
 ) -> AppResult<RetryResult> {
-    let turn = TurnTx::begin(pool, gate, &story_id)?;
+    let begin_pool = pool.clone();
+    let begin_gate = gate.clone();
+    let begin_story_id = story_id.clone();
+    let turn = blocking(move || TurnTx::begin(&begin_pool, &begin_gate, &begin_story_id)).await?;
     let (mode, content) = match prepare_retry(&turn, &entry_id).await {
         Ok(input) => input,
         Err(error) => {

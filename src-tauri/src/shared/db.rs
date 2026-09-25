@@ -26,6 +26,16 @@ pub fn with_transaction<T>(
     Ok(result)
 }
 
+/// Runs blocking database work on Tauri's blocking thread pool. Writes can wait
+/// here for an open turn transaction without freezing the window or the async runtime.
+pub async fn blocking<T: Send + 'static>(
+    work: impl FnOnce() -> AppResult<T> + Send + 'static,
+) -> AppResult<T> {
+    tauri::async_runtime::spawn_blocking(work)
+        .await
+        .map_err(|error| AppError::Other(format!("database task failed: {error}")))?
+}
+
 pub fn database_path(pool: &Pool) -> AppResult<PathBuf> {
     let conn = pool.get()?;
     let mut stmt = conn.prepare("PRAGMA database_list")?;
@@ -1186,6 +1196,62 @@ pub fn test_pool() -> Pool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn blocking_returns_work_value() {
+        assert_eq!(blocking(|| Ok(42)).await.unwrap(), 42);
+    }
+
+    #[tokio::test]
+    async fn blocking_preserves_work_error() {
+        assert!(matches!(
+            blocking::<()>(|| Err(AppError::Invalid("invalid test write".into()))).await,
+            Err(AppError::Invalid(message)) if message == "invalid test write"
+        ));
+    }
+
+    #[tokio::test]
+    async fn blocking_write_finishes_after_turn_commit() {
+        use crate::features::ledger::turn_tx::{TurnGate, TurnTx};
+
+        let pool = test_pool();
+        let gate = TurnGate::default();
+        let turn = TurnTx::begin(&pool, &gate, "s").unwrap();
+        let writer_pool = pool.clone();
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let mut writer = tokio::spawn(async move {
+            blocking(move || {
+                let _ = started_tx.send(());
+                with_transaction(&writer_pool, |tx| {
+                    tx.execute(
+                        "INSERT INTO settings (key, value) VALUES ('queued', 'saved')",
+                        [],
+                    )?;
+                    Ok(())
+                })
+            })
+            .await
+        });
+        started_rx.await.unwrap();
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(75), &mut writer)
+                .await
+                .is_err()
+        );
+        turn.commit().await.unwrap();
+        writer.await.unwrap().unwrap();
+        assert_eq!(
+            pool.get()
+                .unwrap()
+                .query_row(
+                    "SELECT value FROM settings WHERE key = 'queued'",
+                    [],
+                    |row| row.get::<_, String>(0)
+                )
+                .unwrap(),
+            "saved",
+        );
+    }
 
     #[test]
     fn image_migration_imports_files_once_and_keeps_backups() {
