@@ -6,7 +6,10 @@ use tauri::{AppHandle, Emitter};
 use uuid::Uuid;
 
 use crate::ai::{self, NarrateRequest, NarratorChunk, ToolActivityPhase};
-use crate::features::compaction;
+use crate::features::{
+    compaction,
+    ledger::{model::kind as ledger_kind, repository as ledger_repository},
+};
 use crate::prompts;
 use crate::shared::error::{AppError, AppResult};
 
@@ -64,28 +67,27 @@ where
     tauri::async_runtime::spawn(async move {
         let Prepared {
             app,
-            world_pool,
+            turn,
             story_id,
+            target_entry_id,
+            turn_id,
             config,
             transcript,
             context,
             tools: available_tools,
             stop_after_tool_result,
             reasoning_effort,
-            before_seq,
-            staging,
             image_requests,
         } = prepared;
         let result = guarded(async {
             let preamble = prompts::narrator_system_prompt();
             let mut history = compaction::prepare_history(
-                &world_pool,
+                &turn,
                 &story_id,
                 &config,
                 &preamble,
                 &context.full,
                 transcript,
-                before_seq,
             )
             .await
             .turns;
@@ -166,22 +168,34 @@ where
                     }
                 })
                 .await?;
-            if let Some(turn_staging) = &staging {
-                let mut turn_staging = turn_staging.lock().await;
-                for call in tool_calls {
-                    let args_for_label = match &call.args {
-                        serde_json::Value::String(raw) => raw.clone(),
-                        value => value.to_string(),
-                    };
-                    let label = tools::friendly_tool_label(&call.tool, &args_for_label);
-                    turn_staging.stage_tool_call(call.tool, call.args, call.result, call.ok, label);
-                }
+            for call in tool_calls {
+                let args_for_label = match &call.args {
+                    serde_json::Value::String(raw) => raw.clone(),
+                    value => value.to_string(),
+                };
+                let label = tools::friendly_tool_label(&call.tool, &args_for_label);
+                turn.with(|conn| {
+                    ledger_repository::append_entry(
+                        conn,
+                        &story_id,
+                        ledger_kind::TOOL_CALL,
+                        "hidden",
+                        Some(&label),
+                        &serde_json::json!({
+                            "tool": call.tool, "args": call.args,
+                            "result": call.result, "ok": call.ok,
+                        }),
+                        Some(&target_entry_id),
+                        Some(&turn_id),
+                    )?;
+                    Ok(())
+                })
+                .await?;
             }
             let thoughts = thoughts.trim();
             Ok(Candidate {
                 visible: visible.trim().to_string(),
                 thoughts: (!thoughts.is_empty()).then(|| thoughts.to_string()),
-                staging,
                 image_requests: std::mem::take(&mut *image_requests.lock().await),
             })
         })

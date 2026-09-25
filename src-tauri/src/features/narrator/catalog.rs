@@ -5,11 +5,11 @@ use serde_json::Value;
 use tokio::sync::Mutex;
 
 use crate::features::images::model::ImageRequest;
+use crate::features::ledger::turn_tx::TurnTx;
 use crate::features::stories::settings::NarratorToolSettings;
 use crate::prompts;
 
 use super::dice;
-use super::staging::TurnStaging;
 use super::tools;
 
 pub struct ToolAvailability<'a> {
@@ -19,7 +19,9 @@ pub struct ToolAvailability<'a> {
 }
 
 pub struct ToolDeps {
-    pub staging: Option<Arc<Mutex<TurnStaging>>>,
+    pub turn: Option<Arc<TurnTx>>,
+    pub target_entry_id: Option<String>,
+    pub turn_id: Option<String>,
     pub embedding_api_key: String,
     pub image_requests: Arc<Mutex<Vec<ImageRequest>>>,
 }
@@ -27,17 +29,27 @@ pub struct ToolDeps {
 pub struct ToolSpec {
     pub name: &'static str,
     pub instruction: Option<&'static str>,
-    pub needs_staging: bool,
+    pub needs_turn: bool,
     pub enabled: for<'a> fn(&ToolAvailability<'a>) -> bool,
     pub build: fn(&ToolDeps) -> PortableDynamicTool,
     pub label: fn(&Value) -> String,
 }
 
-fn staging(deps: &ToolDeps) -> Arc<Mutex<TurnStaging>> {
-    deps.staging
-        .as_ref()
-        .expect("narrator tool requires turn staging")
-        .clone()
+fn turn(deps: &ToolDeps) -> (Arc<TurnTx>, String, String) {
+    (
+        deps.turn
+            .as_ref()
+            .expect("narrator tool requires turn transaction")
+            .clone(),
+        deps.target_entry_id
+            .as_ref()
+            .expect("narrator tool requires target entry")
+            .clone(),
+        deps.turn_id
+            .as_ref()
+            .expect("narrator tool requires turn id")
+            .clone(),
+    )
 }
 
 fn normal_mode(availability: &ToolAvailability<'_>) -> bool {
@@ -69,23 +81,28 @@ fn illustrate_scene_enabled(availability: &ToolAvailability<'_>) -> bool {
 }
 
 fn build_roll_check(deps: &ToolDeps) -> PortableDynamicTool {
-    dice::roll_check_tool(staging(deps))
+    let (turn, target, turn_id) = turn(deps);
+    dice::roll_check_tool(turn, target, turn_id)
 }
 
 fn build_get_entities(deps: &ToolDeps) -> PortableDynamicTool {
-    tools::get_entities_tool(staging(deps))
+    let (turn, target, turn_id) = turn(deps);
+    tools::get_entities_tool(turn, target, turn_id)
 }
 
 fn build_create_entity(deps: &ToolDeps) -> PortableDynamicTool {
-    tools::create_entity_tool(staging(deps))
+    let (turn, target, turn_id) = turn(deps);
+    tools::create_entity_tool(turn, target, turn_id)
 }
 
 fn build_update_entity(deps: &ToolDeps) -> PortableDynamicTool {
-    tools::update_entity_tool(staging(deps))
+    let (turn, target, turn_id) = turn(deps);
+    tools::update_entity_tool(turn, target, turn_id)
 }
 
 fn build_adjust_entity_attribute(deps: &ToolDeps) -> PortableDynamicTool {
-    tools::adjust_entity_attribute_tool(staging(deps), deps.embedding_api_key.clone())
+    let (turn, target, turn_id) = turn(deps);
+    tools::adjust_entity_attribute_tool(turn, target, turn_id, deps.embedding_api_key.clone())
 }
 
 fn build_illustrate_scene(deps: &ToolDeps) -> PortableDynamicTool {
@@ -96,7 +113,7 @@ pub static TOOLS: [ToolSpec; 6] = [
     ToolSpec {
         name: prompts::ROLL_CHECK_TOOL_NAME,
         instruction: Some(prompts::ROLL_CHECK_AVAILABLE_INSTRUCTION),
-        needs_staging: true,
+        needs_turn: true,
         enabled: roll_check_enabled,
         build: build_roll_check,
         label: dice::roll_check_label,
@@ -104,7 +121,7 @@ pub static TOOLS: [ToolSpec; 6] = [
     ToolSpec {
         name: prompts::GET_ENTITIES_TOOL_NAME,
         instruction: None,
-        needs_staging: true,
+        needs_turn: true,
         enabled: get_entities_enabled,
         build: build_get_entities,
         label: tools::get_entities_label,
@@ -112,7 +129,7 @@ pub static TOOLS: [ToolSpec; 6] = [
     ToolSpec {
         name: prompts::CREATE_ENTITY_TOOL_NAME,
         instruction: None,
-        needs_staging: true,
+        needs_turn: true,
         enabled: create_entity_enabled,
         build: build_create_entity,
         label: tools::create_entity_label,
@@ -120,7 +137,7 @@ pub static TOOLS: [ToolSpec; 6] = [
     ToolSpec {
         name: prompts::UPDATE_ENTITY_TOOL_NAME,
         instruction: None,
-        needs_staging: true,
+        needs_turn: true,
         enabled: update_entity_enabled,
         build: build_update_entity,
         label: tools::update_entity_label,
@@ -128,7 +145,7 @@ pub static TOOLS: [ToolSpec; 6] = [
     ToolSpec {
         name: prompts::ADJUST_ENTITY_ATTRIBUTE_TOOL_NAME,
         instruction: None,
-        needs_staging: true,
+        needs_turn: true,
         enabled: adjust_entity_attribute_enabled,
         build: build_adjust_entity_attribute,
         label: tools::adjust_entity_attribute_label,
@@ -136,7 +153,7 @@ pub static TOOLS: [ToolSpec; 6] = [
     ToolSpec {
         name: prompts::ILLUSTRATE_SCENE_TOOL_NAME,
         instruction: Some(prompts::IMAGE_TOOL_AVAILABLE_INSTRUCTION),
-        needs_staging: false,
+        needs_turn: false,
         enabled: illustrate_scene_enabled,
         build: build_illustrate_scene,
         label: tools::illustrate_scene_label,

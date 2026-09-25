@@ -6,7 +6,7 @@ use rig_core::embeddings::distance::VectorDistance;
 use rig_core::providers::openrouter;
 use uuid::Uuid;
 
-use crate::shared::db::Pool;
+use crate::features::ledger::turn_tx::TurnTx;
 use crate::shared::error::{AppError, AppResult};
 
 use super::model::AttributeRegistryEntry;
@@ -181,31 +181,46 @@ pub(crate) enum AttributeResolution {
     Mint(AttributeRegistryEntry),
 }
 
-/// Decides how a proposed attribute should resolve. The caller applies the
-/// returned registry operation immediately before staging dependent writes.
-pub(crate) async fn resolve_attribute(
-    pool: &Pool,
+/// Reads the current turn's registry state without holding the connection
+/// across the external embedding request.
+pub(crate) async fn resolve_attribute_in_turn(
+    turn: &TurnTx,
     api_key: &str,
     proposed_name: &str,
     entity_kind: &str,
-    story_id: &str,
 ) -> AppResult<AttributeResolution> {
     let proposed_name = proposed_name.trim();
     if proposed_name.is_empty() {
         return Err(AppError::Invalid("attribute name must not be empty".into()));
     }
-
-    if let Some(entry) = {
-        let conn = pool.get()?;
-        find_exact_match(&conn, proposed_name)?
-    } {
+    let (exact, candidates) = turn
+        .with(|conn| {
+            Ok((
+                find_exact_match(conn, proposed_name)?,
+                load_registry_for_kind(conn, entity_kind)?,
+            ))
+        })
+        .await?;
+    if let Some(entry) = exact {
         return Ok(AttributeResolution::Existing(entry));
     }
+    resolve_attribute_candidates(
+        api_key,
+        proposed_name,
+        entity_kind,
+        turn.story_id(),
+        candidates,
+    )
+    .await
+}
 
-    let candidates = {
-        let conn = pool.get()?;
-        load_registry_for_kind(&conn, entity_kind)?
-    };
+async fn resolve_attribute_candidates(
+    api_key: &str,
+    proposed_name: &str,
+    entity_kind: &str,
+    story_id: &str,
+    candidates: Vec<AttributeRegistryEntry>,
+) -> AppResult<AttributeResolution> {
     if candidates.is_empty() {
         return Ok(AttributeResolution::Mint(build_minted_attribute(
             proposed_name,
@@ -262,6 +277,7 @@ pub(crate) async fn resolve_attribute(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::features::ledger::turn_tx::{TurnGate, TurnTx};
 
     #[test]
     fn minted_attribute_remaps_when_name_becomes_an_alias_before_commit() {
@@ -282,5 +298,28 @@ mod tests {
             )
             .unwrap();
         assert_eq!(duplicate_count, 0);
+    }
+
+    #[tokio::test]
+    async fn resolution_reads_uncommitted_registry_through_turn() {
+        let pool = crate::shared::db::test_pool();
+        let turn = TurnTx::begin(&pool, &TurnGate::default(), "story").unwrap();
+        turn.with(|conn| {
+            let accuracy = find_exact_match(conn, "Accuracy")?.unwrap();
+            add_alias(conn, &accuracy.id, "Pinpoint")
+        })
+        .await
+        .unwrap();
+        let result = resolve_attribute_in_turn(&turn, "", "Pinpoint", "character")
+            .await
+            .unwrap();
+        let AttributeResolution::Existing(attribute) = result else {
+            panic!("turn-local alias should resolve without an embedding request");
+        };
+        assert_eq!(attribute.canonical_name, "Accuracy");
+        turn.rollback().await.unwrap();
+        assert!(find_exact_match(&pool.get().unwrap(), "Pinpoint")
+            .unwrap()
+            .is_none());
     }
 }

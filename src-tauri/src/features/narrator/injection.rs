@@ -4,7 +4,9 @@ use std::collections::{HashMap, HashSet};
 
 use crate::ai::{HistoryTurn, TextModelConfig};
 use crate::features::{
-    compaction, entities, ledger::model::kind as ledger_kind, settings, stories::author_note,
+    compaction, entities,
+    ledger::{model::kind as ledger_kind, turn_tx::TurnTx},
+    settings,
 };
 use crate::prompts;
 use crate::shared::db::Pool;
@@ -18,7 +20,7 @@ struct EntityContextData {
 }
 
 pub(super) struct Inputs<'a> {
-    pub pool: &'a Pool,
+    pub turn: &'a TurnTx,
     pub settings_pool: &'a Pool,
     pub story_id: &'a str,
     pub history: &'a [HistoryTurn],
@@ -31,12 +33,14 @@ pub(super) struct ContextPlan {
     pub full: String,
 }
 
-fn load_entity_context_data(pool: &Pool, story_id: &str) -> AppResult<EntityContextData> {
-    let conn = pool.get()?;
-    let entities = entities::list_entities_sync(&conn, story_id, None)?;
+fn load_entity_context_data(
+    conn: &rusqlite::Connection,
+    story_id: &str,
+) -> AppResult<EntityContextData> {
+    let entities = entities::list_entities_sync(conn, story_id, None)?;
     let entity_ids = entities.iter().map(|e| e.id.as_str()).collect::<Vec<_>>();
     let attrs_by_entity = entities::attributes::list_entity_attributes_for_entities_sync(
-        &conn,
+        conn,
         story_id,
         &entity_ids,
     )?;
@@ -80,8 +84,10 @@ fn format_entity_context(
     format!("<entities>\n{}\n</entities>", lines.join("\n"))
 }
 
-fn touched_entity_ids(pool: &Pool, raw_tail: &[HistoryTurn]) -> AppResult<HashSet<String>> {
-    let conn = pool.get()?;
+fn touched_entity_ids(
+    conn: &rusqlite::Connection,
+    raw_tail: &[HistoryTurn],
+) -> AppResult<HashSet<String>> {
     let mut touched = HashSet::new();
     let entry_ids = raw_tail
         .iter()
@@ -152,9 +158,9 @@ impl EntitiesFull {
         }
     }
 
-    fn live(
+    async fn live(
         self,
-        pool: &Pool,
+        turn: &TurnTx,
         history: &[HistoryTurn],
         config: &TextModelConfig,
         full: &str,
@@ -169,20 +175,28 @@ impl EntitiesFull {
                     &prompts::narrator_system_prompt(),
                     full,
                 );
-                let touched = touched_entity_ids(pool, &history[split..])?;
+                let touched = turn
+                    .with(|conn| touched_entity_ids(conn, &history[split..]))
+                    .await?;
                 Ok(format_entity_context(&data, Some(&touched)))
             }
         }
     }
 }
 
-fn entities_full(pool: &Pool, settings_pool: &Pool, story_id: &str) -> AppResult<EntitiesFull> {
+async fn entities_full(
+    turn: &TurnTx,
+    settings_pool: &Pool,
+    story_id: &str,
+) -> AppResult<EntitiesFull> {
     let context = settings::read_context_injection_settings(settings_pool)?;
     if context.entity_context_mode == "none" {
         return Ok(EntitiesFull::None);
     }
 
-    let data = load_entity_context_data(pool, story_id)?;
+    let data = turn
+        .with(|conn| load_entity_context_data(conn, story_id))
+        .await?;
     let full = format_entity_context(&data, None);
     Ok(if context.entity_context_mode == "all" {
         EntitiesFull::All(full)
@@ -224,9 +238,36 @@ pub(super) fn combine_context_blocks(parts: &[String]) -> String {
         .join("\n\n")
 }
 
-pub(super) fn build_message_context(inputs: &Inputs<'_>) -> AppResult<ContextPlan> {
-    let entities = entities_full(inputs.pool, inputs.settings_pool, inputs.story_id)?;
-    let author_note = author_note::context_block(inputs.pool, inputs.story_id)?;
+pub(super) async fn build_message_context(inputs: &Inputs<'_>) -> AppResult<ContextPlan> {
+    let entities = entities_full(inputs.turn, inputs.settings_pool, inputs.story_id).await?;
+    let author_note = inputs
+        .turn
+        .with(|conn| {
+            let raw: String = conn
+                .query_row(
+                    "SELECT settings_json FROM stories WHERE id = ?1",
+                    [inputs.story_id],
+                    |row| row.get(0),
+                )
+                .map_err(|_| AppError::NotFound(format!("story {} not found", inputs.story_id)))?;
+            let settings: serde_json::Value =
+                serde_json::from_str(&raw).unwrap_or_else(|_| serde_json::json!({}));
+            let enabled = settings
+                .get("author_note_enabled")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(true);
+            let note = settings
+                .get("author_note")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .trim();
+            Ok(if enabled && !note.is_empty() {
+                format!("<author_note>{note}</author_note>")
+            } else {
+                String::new()
+            })
+        })
+        .await?;
     let tools = tool_context(inputs.tool_specs);
 
     let full = combine_context_blocks(&[
@@ -234,7 +275,9 @@ pub(super) fn build_message_context(inputs: &Inputs<'_>) -> AppResult<ContextPla
         author_note.clone(),
         tools.clone(),
     ]);
-    let entities_live = entities.live(inputs.pool, inputs.history, inputs.config, &full)?;
+    let entities_live = entities
+        .live(inputs.turn, inputs.history, inputs.config, &full)
+        .await?;
     let live = combine_context_blocks(&[entities_live, author_note, tools]);
     Ok(ContextPlan { live, full })
 }
@@ -246,10 +289,7 @@ mod tests {
     use crate::features::{
         images::model::ImageRequest,
         ledger::repository::append_entry,
-        narrator::{
-            catalog::{self, ToolAvailability, ToolDeps},
-            staging::TurnStaging,
-        },
+        narrator::catalog::{self, ToolAvailability, ToolDeps},
         stories::settings::NarratorToolSettings,
     };
     use rig_agent::tool::PortableDynamicTool;
@@ -316,8 +356,8 @@ mod tests {
         )
     }
 
-    #[test]
-    fn pipeline_builds_all_blocks_in_fixed_order() {
+    #[tokio::test]
+    async fn pipeline_builds_all_blocks_in_fixed_order() {
         let (pool, history_turn) = story_with_entity_query();
         let history = vec![history_turn];
         let config = config();
@@ -327,14 +367,16 @@ mod tests {
             image_enabled: true,
             illustrate: false,
         });
+        let turn = TurnTx::begin(&pool, &Default::default(), "s").unwrap();
         let plan = build_message_context(&Inputs {
-            pool: &pool,
+            turn: &turn,
             settings_pool: &pool,
             story_id: "s",
             history: &history,
             config: &config,
             tool_specs: &tools,
         })
+        .await
         .unwrap();
 
         assert!(plan
@@ -347,6 +389,45 @@ mod tests {
         assert!(plan.live.contains(&tool_context(&tools)));
         assert!(plan.full.contains(&tool_context(&tools)));
         assert!(plan.full.contains("<entities>"));
+    }
+
+    #[tokio::test]
+    async fn context_sees_uncommitted_story_and_entity_changes() {
+        let (pool, history_turn) = story_with_entity_query();
+        let turn = TurnTx::begin(&pool, &Default::default(), "s").unwrap();
+        turn.with(|conn| {
+            conn.execute(
+                "UPDATE stories SET settings_json = '{\"author_note\":\"A new direction.\"}' WHERE id = 's'",
+                [],
+            )?;
+            entities::create_entity_with_id_sync(
+                conn, "alice", "s", "character", "Alice", Some("a blue coat"),
+                "test", None, None,
+            )?;
+            Ok(())
+        }).await.unwrap();
+        let history = vec![history_turn];
+        let plan = build_message_context(&Inputs {
+            turn: &turn,
+            settings_pool: &pool,
+            story_id: "s",
+            history: &history,
+            config: &config(),
+            tool_specs: &[],
+        })
+        .await
+        .unwrap();
+
+        assert!(plan
+            .full
+            .contains("Alice (character); appearance: a blue coat"));
+        assert!(plan
+            .live
+            .contains("<author_note>A new direction.</author_note>"));
+        assert!(plan
+            .live
+            .contains("Bob (character); appearance: a red cloak"));
+        turn.rollback().await.unwrap();
     }
 
     #[test]
@@ -445,11 +526,11 @@ mod tests {
                 image_enabled,
                 illustrate,
             });
+            let pool = crate::shared::db::test_pool();
             let deps = ToolDeps {
-                staging: Some(Arc::new(Mutex::new(TurnStaging::new(
-                    crate::shared::db::test_pool(),
-                    "s".into(),
-                )))),
+                turn: Some(TurnTx::begin(&pool, &Default::default(), "s").unwrap()),
+                target_entry_id: Some("narration".into()),
+                turn_id: Some("turn".into()),
                 embedding_api_key: String::new(),
                 image_requests: Arc::new(Mutex::new(Vec::<ImageRequest>::new())),
             };

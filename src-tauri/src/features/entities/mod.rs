@@ -5,7 +5,6 @@ pub mod model;
 pub mod projection;
 pub mod registry;
 pub mod repository;
-pub mod view;
 
 pub use commands::*;
 pub use repository::{

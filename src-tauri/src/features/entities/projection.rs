@@ -183,24 +183,6 @@ pub fn replay(
     Ok(())
 }
 
-pub fn rebuild_story(
-    conn: &rusqlite::Connection,
-    story_id: &str,
-    exclude_turn: Option<&str>,
-) -> AppResult<()> {
-    let mut entity_ids = {
-        let mut stmt = conn.prepare("SELECT id FROM entities WHERE story_id = ?1")?;
-        let rows = stmt.query_map([story_id], |row| row.get::<_, String>(0))?;
-        rows.collect::<Result<HashSet<_>, _>>()?
-    };
-    for entry in repository::list_logical_entries(conn, story_id)? {
-        if let Some(event) = EntityEvent::from_entry(&entry) {
-            entity_ids.insert(event.entity_id().to_string());
-        }
-    }
-    replay(conn, story_id, &entity_ids, exclude_turn)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -391,7 +373,13 @@ mod tests {
         entity_repository::delete_entity_sync(&conn, "story", "temporary").unwrap();
 
         let before = snapshots(&conn);
-        rebuild_story(&conn, "story", None).unwrap();
+        replay(
+            &conn,
+            "story",
+            &HashSet::from(["guard".into(), "temporary".into()]),
+            None,
+        )
+        .unwrap();
         assert_eq!(snapshots(&conn), before);
     }
 }

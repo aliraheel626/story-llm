@@ -85,6 +85,7 @@ pub(super) fn write_author_note_enabled(
 }
 
 /// Tagged per-message note, or an empty block when muted or blank.
+#[cfg(test)]
 pub(crate) fn context_block(pool: &Pool, story_id: &str) -> AppResult<String> {
     let conn = pool.get()?;
     let settings = story_settings(&conn, story_id)?;

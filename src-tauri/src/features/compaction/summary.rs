@@ -5,7 +5,6 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::features::ledger::model::kind as ledger_kind;
-use crate::shared::db::Pool;
 use crate::shared::error::AppResult;
 
 #[derive(Debug, Clone)]
@@ -14,30 +13,21 @@ pub(crate) struct SummaryBoundary {
     pub through_seq: i64,
 }
 
-/// Latest valid summary for the requested cut. A retry may have newer summary
-/// rows physically after its target, so both the summary and covered boundary
-/// must precede `before_seq`.
+/// Latest valid summary with an existing covered boundary.
 pub(crate) fn boundary_for(
     conn: &rusqlite::Connection,
     story_id: &str,
-    before_seq: Option<i64>,
 ) -> AppResult<Option<SummaryBoundary>> {
     let mut stmt = conn.prepare(
-        "SELECT id, seq, payload_json FROM ledger_entries
+        "SELECT id, payload_json FROM ledger_entries
          WHERE story_id = ?1 AND kind = ?2 ORDER BY seq DESC",
     )?;
     let rows = stmt.query_map(
         rusqlite::params![story_id, ledger_kind::CONTEXT_SUMMARY],
-        |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, i64>(1)?,
-                row.get::<_, String>(2)?,
-            ))
-        },
+        |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
     )?;
     for row in rows {
-        let (summary_entry_id, summary_seq, payload_json) = row?;
+        let (summary_entry_id, payload_json) = row?;
         let boundary = serde_json::from_str::<serde_json::Value>(&payload_json)
             .ok()
             .and_then(|value| {
@@ -52,9 +42,7 @@ pub(crate) fn boundary_for(
                 [through_entry_id],
                 |row| row.get(0),
             )?;
-            if before_seq.is_none_or(|cut| summary_seq < cut && through_seq < cut)
-                && boundary_exists
-            {
+            if boundary_exists {
                 return Ok(Some(SummaryBoundary {
                     summary_entry_id,
                     through_seq,
@@ -95,12 +83,10 @@ pub(super) fn format_summary(summary: &ContextSummary) -> String {
 }
 
 pub(super) fn latest_summary_artifact(
-    pool: &Pool,
+    conn: &rusqlite::Connection,
     story_id: &str,
-    before_seq: Option<i64>,
 ) -> Option<SummaryArtifact> {
-    let conn = pool.get().ok()?;
-    let boundary = boundary_for(&conn, story_id, before_seq).ok()??;
+    let boundary = boundary_for(conn, story_id).ok()??;
     let payload_json: String = conn
         .query_row(
             "SELECT payload_json FROM ledger_entries WHERE id = ?1",

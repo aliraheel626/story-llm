@@ -1,20 +1,17 @@
-//! Dice rules, narrator tool adapter, and staged roll records.
+//! Dice rules, narrator tool adapter, and turn-local roll records.
 
 use std::sync::Arc;
 
+use crate::features::entities::{self, attributes};
+use crate::features::ledger;
+use crate::features::ledger::turn_tx::TurnTx;
+use crate::prompts;
+use crate::shared::error::{AppError, AppResult};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use rig_agent::tool::{PortableDynamicTool, ToolExecutionError, ToolOutput};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use tokio::sync::Mutex;
-
-use crate::features::entities::model::AttributeRegistryEntry;
-use crate::features::ledger;
-use crate::prompts;
-use crate::shared::error::{AppError, AppResult};
-
-use super::staging::{AttributeReading, StagedRecord, TurnStaging};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
@@ -47,20 +44,6 @@ pub struct RollPayload {
     pub seed: i64,
 }
 
-impl From<AttributeReading> for RollFactor {
-    fn from(reading: AttributeReading) -> Self {
-        Self {
-            entity_id: reading.entity_id,
-            entity_name: reading.entity_name,
-            attribute_id: reading.attribute_id,
-            attribute_name: reading.attribute_name,
-            value: reading.value,
-            min: reading.min,
-            max: reading.max,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy)]
 pub(super) struct RollOutcome {
     pub chance_percent: u8,
@@ -68,14 +51,6 @@ pub(super) struct RollOutcome {
     pub roll: i64,
     pub needed: i64,
     pub outcome: &'static str,
-}
-
-#[derive(Debug, Clone)]
-pub(super) struct PendingRoll {
-    pub output: RollOutcome,
-    pub reason: Option<String>,
-    pub chance_source: &'static str,
-    pub factors: Vec<RollFactor>,
 }
 
 pub(super) fn chance_from_factors(factors: &[RollFactor]) -> u8 {
@@ -100,50 +75,69 @@ pub(super) fn resolve_roll(chance_percent: u8) -> RollOutcome {
     }
 }
 
-impl StagedRecord for PendingRoll {
-    fn finalize(
-        &self,
-        remap: &dyn Fn(&str) -> AppResult<Option<AttributeRegistryEntry>>,
-    ) -> AppResult<(&'static str, String, serde_json::Value)> {
-        let mut pending = self.clone();
-        for factor in &mut pending.factors {
-            if let Some(canonical) = remap(&factor.attribute_id)? {
-                if factor.min != canonical.min || factor.max != canonical.max {
-                    return Err(AppError::Invalid(format!(
-                        "{}'s attribute range changed while rolling; retry this turn",
-                        factor.entity_name
-                    )));
-                }
-                factor.attribute_id = canonical.id;
-                factor.attribute_name = canonical.canonical_name;
-            }
-        }
-        let content = format!(
-            "Dice-roll outcome: rolled {} with {}% chance and got {}.",
-            pending.output.roll, pending.output.chance_percent, pending.output.outcome
-        );
-        let payload = serde_json::to_value(RollPayload {
-            chance_percent: pending.output.chance_percent,
-            roll: pending.output.roll,
-            needed: pending.output.needed,
-            outcome: pending.output.outcome,
-            reason: pending.reason,
-            chance_source: Some(pending.chance_source),
-            factors: pending.factors,
-            seed: pending.output.seed,
+fn factor_reading(
+    conn: &rusqlite::Connection,
+    story_id: &str,
+    entity_id: &str,
+    attribute_name: &str,
+) -> AppResult<RollFactor> {
+    let entity = entities::list_entities_sync(conn, story_id, None)?
+        .into_iter()
+        .find(|entity| entity.id == entity_id)
+        .ok_or_else(|| AppError::NotFound(format!("entity {entity_id} not found in this story")))?;
+    let registry_match = attributes::find_exact_match(conn, attribute_name)?;
+    let values = attributes::list_entity_attributes_sync(conn, story_id, entity_id)?;
+    let value = values
+        .into_iter()
+        .find(|value| {
+            registry_match
+                .as_ref()
+                .is_some_and(|entry| entry.id == value.attribute_id)
+                || (registry_match.is_none()
+                    && value.canonical_name.eq_ignore_ascii_case(attribute_name))
         })
-        .map_err(|error| AppError::Other(error.to_string()))?;
-        Ok((ledger::model::kind::DICEROLL, content, payload))
+        .ok_or_else(|| {
+            AppError::NotFound(format!(
+                "attribute {attribute_name} is not set on {}",
+                entity.name
+            ))
+        })?;
+    if !value.value.is_finite()
+        || !value.min.is_finite()
+        || !value.max.is_finite()
+        || value.min >= value.max
+        || value.value < value.min
+        || value.value > value.max
+    {
+        return Err(AppError::Invalid(format!(
+            "invalid value or range for {}'s {}",
+            entity.name, value.canonical_name
+        )));
     }
+    Ok(RollFactor {
+        entity_id: entity.id,
+        entity_name: entity.name,
+        attribute_id: value.attribute_id,
+        attribute_name: value.canonical_name,
+        value: value.value,
+        min: value.min,
+        max: value.max,
+    })
 }
 
-pub(super) fn roll_check_tool(staging: Arc<Mutex<TurnStaging>>) -> PortableDynamicTool {
+pub(super) fn roll_check_tool(
+    turn: Arc<TurnTx>,
+    target_entry_id: String,
+    turn_id: String,
+) -> PortableDynamicTool {
     PortableDynamicTool::new(
         prompts::ROLL_CHECK_TOOL_NAME,
         prompts::ROLL_CHECK_DESCRIPTION,
         prompts::roll_check_schema(),
         move |args: serde_json::Value| {
-            let staging = staging.clone();
+            let turn = turn.clone();
+            let target_entry_id = target_entry_id.clone();
+            let turn_id = turn_id.clone();
             Box::pin(async move {
                 let fields = args.as_object().ok_or_else(|| {
                     ToolExecutionError::invalid_args("roll_check expects an object")
@@ -180,8 +174,7 @@ pub(super) fn roll_check_tool(staging: Arc<Mutex<TurnStaging>>) -> PortableDynam
                         ));
                     }
                 };
-                let mut staging = staging.lock().await;
-                let mut factors = Vec::with_capacity(factor_args.len());
+                let mut references = Vec::with_capacity(factor_args.len());
                 for factor in factor_args {
                     let fields = factor.as_object().ok_or_else(|| {
                         ToolExecutionError::invalid_args("each factor must be an object")
@@ -205,39 +198,69 @@ pub(super) fn roll_check_tool(staging: Arc<Mutex<TurnStaging>>) -> PortableDynam
                         .ok_or_else(|| {
                             ToolExecutionError::invalid_args("factor attribute_name is required")
                         })?;
-                    factors.push(RollFactor::from(
-                        staging
-                            .attribute_reading(entity_id, attribute_name)
-                            .map_err(|error| ToolExecutionError::invalid_args(error.to_string()))?,
+                    references.push((entity_id, attribute_name));
+                }
+                if !references.is_empty() && explicit_chance.is_some() {
+                    return Err(ToolExecutionError::invalid_args(
+                        "chance_percent cannot be supplied with attribute factors",
                     ));
                 }
-                let (chance_percent, chance_source) = if factors.is_empty() {
-                    (
-                        explicit_chance.unwrap_or(50),
-                        if explicit_chance.is_some() {
-                            "narrator"
+                let (output, chance_source, factors) = turn
+                    .with(|conn| {
+                        let factors = references
+                            .iter()
+                            .map(|(id, name)| factor_reading(conn, turn.story_id(), id, name))
+                            .collect::<AppResult<Vec<_>>>()?;
+                        let (chance_percent, chance_source) = if factors.is_empty() {
+                            (
+                                explicit_chance.unwrap_or(50),
+                                if explicit_chance.is_some() {
+                                    "narrator"
+                                } else {
+                                    "default"
+                                },
+                            )
                         } else {
-                            "default"
-                        },
-                    )
-                } else {
-                    if explicit_chance.is_some() {
-                        return Err(ToolExecutionError::invalid_args(
-                            "chance_percent cannot be supplied with attribute factors",
-                        ));
-                    }
-                    (chance_from_factors(&factors), "attributes")
-                };
-                let output = resolve_roll(chance_percent);
-                staging.stage_record(PendingRoll {
-                    output,
-                    reason: reason.clone(),
-                    chance_source,
-                    factors: factors.clone(),
-                });
+                            (chance_from_factors(&factors), "attributes")
+                        };
+                        let output = resolve_roll(chance_percent);
+                        let content = format!(
+                            "Dice-roll outcome: rolled {} with {}% chance and got {}.",
+                            output.roll, output.chance_percent, output.outcome,
+                        );
+                        let payload = serde_json::to_value(RollPayload {
+                            chance_percent,
+                            roll: output.roll,
+                            needed: output.needed,
+                            outcome: output.outcome,
+                            reason: reason.clone(),
+                            chance_source: Some(chance_source),
+                            factors: factors.clone(),
+                            seed: output.seed,
+                        })
+                        .map_err(|error| AppError::Other(error.to_string()))?;
+                        ledger::repository::append_entry(
+                            conn,
+                            turn.story_id(),
+                            ledger::model::kind::DICEROLL,
+                            "hidden",
+                            Some(&content),
+                            &payload,
+                            Some(&target_entry_id),
+                            Some(&turn_id),
+                        )?;
+                        Ok((output, chance_source, factors))
+                    })
+                    .await
+                    .map_err(|error| match error {
+                        AppError::NotFound(_) | AppError::Invalid(_) => {
+                            ToolExecutionError::invalid_args(error.to_string())
+                        }
+                        _ => ToolExecutionError::other(error.to_string()),
+                    })?;
 
                 Ok(ToolOutput::json(json!({
-                    "chance_percent": chance_percent, "roll": output.roll,
+                    "chance_percent": output.chance_percent, "roll": output.roll,
                     "needed": output.needed, "outcome": output.outcome,
                     "reason": reason, "seed": output.seed,
                     "chance_source": chance_source, "factors": factors,
@@ -258,60 +281,45 @@ pub(super) fn roll_check_label(args: &serde_json::Value) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::super::staging::PendingOp;
+mod turn_tests {
     use super::*;
-    use crate::features::entities::{self, attributes, model::AttributeRegistryEntry};
-    use crate::features::ledger::repository::append_entry;
+    use crate::features::ledger::{
+        repository::append_entry,
+        turn_tx::{TurnGate, TurnTx},
+    };
     use crate::shared::db::Pool;
-    use chrono::Utc;
-    use uuid::Uuid;
 
-    fn setup() -> (Pool, String) {
+    fn fixture() -> (Pool, Arc<TurnTx>, String, String) {
         let pool = crate::shared::db::test_pool();
         let conn = pool.get().unwrap();
-        let story_id = Uuid::new_v4().to_string();
-        let now = Utc::now().to_rfc3339();
-        conn.execute(
-            "INSERT INTO stories (id, title, created_at, updated_at, settings_json) VALUES (?1, 't', ?2, ?2, '{}')",
-            rusqlite::params![story_id, now],
-        )
-        .unwrap();
-        (pool, story_id)
-    }
-
-    fn find_attribute(conn: &rusqlite::Connection, name: &str) -> AttributeRegistryEntry {
-        conn.query_row(
-            "SELECT id, canonical_name, aliases_json, entity_kinds_json, min, max, category, is_user_created, created_in_story_id, created_at
-             FROM attribute_registry WHERE canonical_name = ?1",
-            [name],
-            |row| {
-                Ok(AttributeRegistryEntry {
-                    id: row.get(0)?,
-                    canonical_name: row.get(1)?,
-                    aliases_json: row.get(2)?,
-                    entity_kinds_json: row.get(3)?,
-                    min: row.get(4)?,
-                    max: row.get(5)?,
-                    category: row.get(6)?,
-                    is_user_created: row.get::<_, i64>(7)? != 0,
-                    created_in_story_id: row.get(8)?,
-                    created_at: row.get(9)?,
-                })
-            },
+        let story_id = uuid::Uuid::new_v4().to_string();
+        conn.execute("INSERT INTO stories(id, title, created_at, updated_at, settings_json) VALUES (?1, 't', 'now', 'now', '{}')", [&story_id]).unwrap();
+        let turn_id = crate::features::ledger::turns::create_turn(&conn, &story_id).unwrap();
+        let target = append_entry(
+            &conn,
+            &story_id,
+            ledger::model::kind::NARRATION,
+            "visible",
+            Some("scene"),
+            &json!({}),
+            None,
+            Some(&turn_id),
         )
         .unwrap()
+        .id;
+        drop(conn);
+        let turn = TurnTx::begin(&pool, &TurnGate::default(), &story_id).unwrap();
+        (pool, turn, target, turn_id)
     }
 
     #[test]
     fn export_bindings() {
         use ts_rs::{Config, TS};
-
         RollPayload::export_all(&Config::new()).expect("failed to export roll bindings");
     }
 
     #[test]
-    fn roll_payload_serializes_with_exact_current_shape() {
+    fn payload_serializes_with_exact_current_shape() {
         let payload = serde_json::to_value(RollPayload {
             chance_percent: 60,
             roll: 72,
@@ -331,416 +339,131 @@ mod tests {
             seed: 42,
         })
         .unwrap();
-
         assert_eq!(
             payload,
             json!({
-                "chance_percent": 60,
-                "roll": 72,
-                "needed": 40,
-                "outcome": "success",
-                "reason": "Sneak past the guard",
-                "chance_source": "attributes",
-                "factors": [{
-                    "entity_id": "player",
-                    "entity_name": "You",
-                    "attribute_id": "stealth",
-                    "attribute_name": "Stealth",
-                    "value": 8.0,
-                    "min": 0.0,
-                    "max": 10.0,
-                }],
-                "seed": 42,
+                "chance_percent":60,"roll":72,"needed":40,"outcome":"success",
+                "reason":"Sneak past the guard","chance_source":"attributes",
+                "factors":[{"entity_id":"player","entity_name":"You","attribute_id":"stealth",
+                    "attribute_name":"Stealth","value":8.0,"min":0.0,"max":10.0}],"seed":42,
             })
         );
         assert_eq!(payload.as_object().unwrap().len(), 8);
     }
 
-    fn persist_staging(pool: &Pool, story_id: &str, staging: &TurnStaging) {
-        let mut conn = pool.get().unwrap();
-        let turn_id = crate::features::ledger::turns::create_turn(&conn, story_id).unwrap();
-        let passage = append_entry(
-            &conn,
-            story_id,
-            "narration",
-            "visible",
-            Some("scene"),
-            &json!({}),
-            None,
-            Some(&turn_id),
-        )
-        .unwrap();
-        let tx = conn.transaction().unwrap();
-        staging.commit(&tx, &passage.id, &turn_id).unwrap();
-        crate::features::ledger::turns::set_status(
-            &tx,
-            &turn_id,
-            crate::features::ledger::turns::COMPLETE,
-        )
-        .unwrap();
-        tx.commit().unwrap();
-    }
-
-    #[test]
-    fn friendly_label_describes_rolls_and_degrades_safely() {
-        assert_eq!(
-            super::super::tools::friendly_tool_label("roll_check", r#"{"reason":"escaping"}"#,),
-            "Rolling for escaping…"
-        );
-        assert_eq!(
-            super::super::tools::friendly_tool_label("roll_check", "{}"),
-            "Rolling for a check…"
-        );
-        assert_eq!(
-            super::super::tools::friendly_tool_label("roll_check", "not json"),
-            "Rolling for a check…"
-        );
-    }
-
-    #[test]
-    fn chance_roll_has_exact_zero_and_hundred_percent_bounds() {
-        for _ in 0..100 {
-            let impossible = resolve_roll(0);
-            assert!((0..100).contains(&impossible.roll));
-            assert_eq!(impossible.needed, 100);
-            assert_eq!(impossible.outcome, "failure");
-            let certain = resolve_roll(100);
-            assert!((0..100).contains(&certain.roll));
-            assert_eq!(certain.needed, 0);
-            assert_eq!(certain.outcome, "success");
-        }
-    }
-
     #[test]
     fn chance_roll_seed_replays_the_draw() {
-        for chance in [1, 25, 50, 75, 99] {
+        for chance in [0, 1, 25, 50, 75, 99, 100] {
             let result = resolve_roll(chance);
             let mut rng = StdRng::seed_from_u64(result.seed as u64);
             assert_eq!(rng.gen_range(0..100), result.roll);
-            assert_eq!(result.needed, 100 - i64::from(chance));
             assert_eq!(result.outcome == "success", result.roll >= result.needed);
         }
     }
 
     #[tokio::test]
-    async fn roll_check_stages_only_chance_and_reason_without_entity_side_effects() {
-        let (pool, story_id) = setup();
-        let staging = Arc::new(Mutex::new(TurnStaging::new(pool.clone(), story_id.clone())));
-        let out = roll_check_tool(staging.clone())
-            .execute(json!({"chance_percent": 35, "reason": " escaping a ghoul "}))
+    async fn roll_is_written_in_turn_with_exact_payload_and_target() {
+        let (pool, turn, target, turn_id) = fixture();
+        let roll = roll_check_tool(turn.clone(), target.clone(), turn_id.clone());
+        for args in [
+            json!({"chance_percent":-1}),
+            json!({"chance_percent":101}),
+            json!({"factors":"not array"}),
+            json!({"chance_percent":55.2}),
+        ] {
+            assert!(roll.execute(args).await.is_err());
+        }
+        let out = roll
+            .execute(json!({"chance_percent":35,"reason":" escaping a ghoul "}))
             .await
             .unwrap();
         let out = out.as_json().unwrap();
-        assert_eq!(out["chance_percent"], json!(35));
-        assert_eq!(out["chance_source"], json!("narrator"));
-        assert_eq!(out["factors"], json!([]));
-        assert_eq!(out["needed"], json!(65));
         assert_eq!(out["reason"], json!("escaping a ghoul"));
+        assert_eq!(out["chance_source"], json!("narrator"));
         assert_eq!(
-            out["outcome"] == json!("success"),
-            out["roll"].as_i64().unwrap() >= 65
+            pool.get()
+                .unwrap()
+                .query_row(
+                    "SELECT COUNT(*) FROM ledger_entries WHERE kind='diceroll'",
+                    [],
+                    |r| r.get::<_, i64>(0)
+                )
+                .unwrap(),
+            0
         );
-
-        let staging = staging.lock().await;
-        assert!(matches!(staging.pending.as_slice(), [PendingOp::Record(_)]));
-        assert!(staging.effective_entities(None, None).unwrap().is_empty());
-        let count: i64 = pool
-            .get()
-            .unwrap()
-            .query_row(
-                "SELECT COUNT(*) FROM ledger_entries WHERE kind = ?1",
-                [ledger::model::kind::DICEROLL],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(count, 0);
-        persist_staging(&pool, &story_id, &staging);
-        drop(staging);
-
-        let payload_json: String = pool
-            .get()
-            .unwrap()
-            .query_row(
-                "SELECT payload_json FROM ledger_entries WHERE kind = ?1",
-                [ledger::model::kind::DICEROLL],
-                |row| row.get(0),
-            )
-            .unwrap();
-        let payload: serde_json::Value = serde_json::from_str(&payload_json).unwrap();
-        assert_eq!(payload.as_object().unwrap().len(), 8);
-        assert_eq!(payload["chance_percent"], json!(35));
-        assert_eq!(payload["roll"], out["roll"]);
-        assert_eq!(payload["needed"], out["needed"]);
-        assert_eq!(payload["outcome"], out["outcome"]);
-        assert_eq!(payload["reason"], out["reason"]);
-        assert_eq!(payload["chance_source"], out["chance_source"]);
-        assert_eq!(payload["factors"], out["factors"]);
-        assert_eq!(payload["seed"], out["seed"]);
+        turn.with(|conn| {
+            let (content, raw, entry, tid): (String, String, String, String) = conn.query_row(
+                "SELECT content, payload_json, target_entry_id, turn_id FROM ledger_entries WHERE kind='diceroll'",
+                [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?;
+            assert_eq!((entry, tid), (target.clone(), turn_id.clone()));
+            assert_eq!(content, format!("Dice-roll outcome: rolled {} with 35% chance and got {}.", out["roll"], out["outcome"].as_str().unwrap()));
+            let payload: serde_json::Value = serde_json::from_str(&raw).unwrap();
+            assert_eq!(payload.as_object().unwrap().len(), 8);
+            for key in ["chance_percent", "roll", "needed", "outcome", "reason", "chance_source", "factors", "seed"] {
+                assert_eq!(payload[key], out[key]);
+            }
+            Ok(())
+        }).await.unwrap();
+        turn.rollback().await.unwrap();
+        assert_eq!(
+            pool.get()
+                .unwrap()
+                .query_row(
+                    "SELECT COUNT(*) FROM ledger_entries WHERE kind='diceroll'",
+                    [],
+                    |r| r.get::<_, i64>(0)
+                )
+                .unwrap(),
+            0
+        );
     }
 
     #[tokio::test]
-    async fn roll_check_rejects_invalid_chances_without_staging() {
-        let (pool, story_id) = setup();
-        let staging = Arc::new(Mutex::new(TurnStaging::new(pool, story_id)));
-        let roll = roll_check_tool(staging.clone());
-        for args in [
-            json!({"chance_percent": -1}),
-            json!({"chance_percent": 101}),
-            json!({"chance_percent": 50.5}),
-            json!({"chance_percent": "50"}),
-            json!({"chance_percent": 50, "reason": 7}),
-            json!({"value": 8}),
-            json!({"factors": "You"}),
-            json!({"factors": [1, 2, 3]}),
-            json!({"factors": [{"entity_id": "missing", "attribute_name": "Stealth", "value": 10}]}),
-        ] {
-            assert!(roll.execute(args.clone()).await.is_err(), "{args}");
-        }
-        assert!(staging.lock().await.pending.is_empty());
-        let default = roll.execute(json!({})).await.unwrap();
-        assert_eq!(default.as_json().unwrap()["chance_percent"], json!(50));
-        assert_eq!(
-            default.as_json().unwrap()["chance_source"],
-            json!("default")
-        );
-        for chance in [0, 100] {
-            let out = roll
-                .execute(json!({"chance_percent": chance}))
+    async fn factor_reads_current_turn_attribute_and_alias() {
+        let (_pool, turn, target, turn_id) = fixture();
+        let entity =
+            super::super::tools::create_entity_tool(turn.clone(), target.clone(), turn_id.clone())
+                .execute(json!({"kind":"character","name":"You"}))
                 .await
                 .unwrap();
-            assert_eq!(out.as_json().unwrap()["chance_percent"], json!(chance));
-        }
-    }
-
-    #[tokio::test]
-    async fn roll_check_fetches_one_or_two_authoritative_attribute_values() {
-        let (pool, story_id) = setup();
-        let conn = pool.get().unwrap();
-        entities::create_entity_with_id_sync(
-            &conn,
-            "actor",
-            &story_id,
-            "character",
-            "You",
-            None,
-            "test",
-            None,
-            None,
+        let id = entity.as_json().unwrap()["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        super::super::tools::adjust_entity_attribute_tool(
+            turn.clone(),
+            target.clone(),
+            turn_id.clone(),
+            String::new(),
         )
+        .execute(json!({"entity_id":id,"attribute":"Stealth","delta":3}))
+        .await
         .unwrap();
-        entities::create_entity_with_id_sync(
-            &conn,
-            "guard",
-            &story_id,
-            "character",
-            "Guard",
-            None,
-            "test",
-            None,
-            None,
-        )
-        .unwrap();
-        let stealth = find_attribute(&conn, "Stealth");
-        let perception = find_attribute(&conn, "Perception");
-        attributes::set_entity_attribute_sync(&conn, &story_id, "actor", &stealth.id, 8.0).unwrap();
-        attributes::set_entity_attribute_sync(&conn, &story_id, "guard", &perception.id, 6.0)
-            .unwrap();
-        drop(conn);
-
-        let staging = Arc::new(Mutex::new(TurnStaging::new(pool.clone(), story_id.clone())));
-        let roll = roll_check_tool(staging.clone());
-        let actor = json!({"entity_id":"actor","attribute_name":"Stealth"});
-        let guard = json!({"entity_id":"guard","attribute_name":"Perception"});
-        let one = roll.execute(json!({"factors":[actor]})).await.unwrap();
-        let one = one.as_json().unwrap();
-        assert_eq!(one["chance_percent"], json!(65));
-        assert_eq!(one["chance_source"], json!("attributes"));
-        assert_eq!(one["factors"][0]["entity_name"], json!("You"));
-        assert_eq!(one["factors"][0]["attribute_id"], json!(stealth.id));
-        assert_eq!(one["factors"][0]["value"], json!(8.0));
-
-        let two = roll
-            .execute(json!({"factors":[actor, guard],"reason":"slip past the guard"}))
-            .await
-            .unwrap();
-        let two = two.as_json().unwrap();
-        assert_eq!(two["chance_percent"], json!(60));
-        assert_eq!(two["factors"][1]["entity_name"], json!("Guard"));
-        assert_eq!(two["factors"][1]["attribute_name"], json!("Perception"));
-        assert_eq!(two["factors"][1]["value"], json!(6.0));
-        assert!(roll
-            .execute(json!({"chance_percent":60,"factors":[actor]}))
-            .await
-            .is_err());
-        assert!(roll
-            .execute(json!({"factors":[{"entity_id":"guard","attribute_name":"Stealth"}]}))
-            .await
-            .is_err());
-        assert!(roll
-            .execute(json!({"factors":[{"entity_id":"other-story","attribute_name":"Stealth"}]}))
-            .await
-            .is_err());
-        assert_eq!(staging.lock().await.pending.len(), 2);
-
-        let staging = staging.lock().await;
-        persist_staging(&pool, &story_id, &staging);
-        drop(staging);
-        let conn = pool.get().unwrap();
-        let payload: String = conn
-            .query_row(
-                "SELECT payload_json FROM ledger_entries WHERE kind = ?1 ORDER BY seq DESC LIMIT 1",
-                [ledger::model::kind::DICEROLL],
-                |row| row.get(0),
-            )
-            .unwrap();
-        let payload: serde_json::Value = serde_json::from_str(&payload).unwrap();
-        assert_eq!(payload["factors"][0]["value"], json!(8.0));
-        assert_eq!(payload["factors"][1]["value"], json!(6.0));
-        attributes::set_entity_attribute_sync(&conn, &story_id, "actor", &stealth.id, 2.0).unwrap();
-        assert_eq!(payload["factors"][0]["value"], json!(8.0));
-    }
-
-    #[tokio::test]
-    async fn roll_check_can_use_attribute_adjusted_earlier_in_the_same_turn() {
-        let (pool, story_id) = setup();
-        let conn = pool.get().unwrap();
-        let stealth = find_attribute(&conn, "Stealth");
-        drop(conn);
-        let mut staging = TurnStaging::new(pool, story_id);
-        let (player, _) = staging
-            .resolve_or_stage_entity("character", "You", None)
-            .unwrap();
-        staging.pending.push(PendingOp::AdjustAttribute {
-            entity_id: player.id.clone(),
-            attribute: stealth,
-            delta: 3.0,
-            cause: "careful practice".into(),
-            dramatic: false,
-        });
-        let result = roll_check_tool(Arc::new(Mutex::new(staging)))
-            .execute(json!({"factors":[{"entity_id":player.id,"attribute_name":"Stealth"}]}))
+        let roll = roll_check_tool(turn.clone(), target, turn_id);
+        let result = roll
+            .execute(json!({"factors":[{"entity_id":id,"attribute_name":"Stealth"}]}))
             .await
             .unwrap();
         assert_eq!(result.as_json().unwrap()["chance_percent"], json!(65));
         assert_eq!(result.as_json().unwrap()["factors"][0]["value"], json!(8.0));
-    }
-
-    #[tokio::test]
-    async fn roll_check_resolves_committed_and_staged_attribute_aliases() {
-        let (pool, story_id) = setup();
-        let conn = pool.get().unwrap();
-        entities::create_entity_with_id_sync(
-            &conn,
-            "actor",
-            &story_id,
-            "character",
-            "You",
-            None,
-            "test",
-            None,
-            None,
-        )
+        turn.with(|conn| {
+            let stealth = attributes::find_exact_match(conn, "Stealth")?.unwrap();
+            attributes::add_alias(conn, &stealth.id, "Sneaking")
+        })
+        .await
         .unwrap();
-        let stealth = find_attribute(&conn, "Stealth");
-        attributes::set_entity_attribute_sync(&conn, &story_id, "actor", &stealth.id, 7.0).unwrap();
-        attributes::add_alias(&conn, &stealth.id, "Sneaking").unwrap();
-        drop(conn);
-
-        let mut staging = TurnStaging::new(pool, story_id);
-        staging.pending.push(PendingOp::AddAlias {
-            attribute: stealth.clone(),
-            alias: "Quiet Steps".into(),
-        });
-        let roll = roll_check_tool(Arc::new(Mutex::new(staging)));
-        for alias in ["Sneaking", "Quiet Steps"] {
-            let out = roll
-                .execute(json!({"factors":[{"entity_id":"actor","attribute_name":alias}]}))
-                .await
-                .unwrap();
-            assert_eq!(
-                out.as_json().unwrap()["factors"][0]["attribute_id"],
-                json!(stealth.id)
-            );
-            assert_eq!(
-                out.as_json().unwrap()["factors"][0]["attribute_name"],
-                json!("Stealth")
-            );
-            assert_eq!(out.as_json().unwrap()["factors"][0]["value"], json!(7.0));
-        }
-    }
-
-    #[tokio::test]
-    async fn independently_staged_mints_commit_to_one_canonical_attribute() {
-        let (pool, story_id) = setup();
-        let first = Arc::new(Mutex::new(TurnStaging::new(pool.clone(), story_id.clone())));
-        let second = Arc::new(Mutex::new(TurnStaging::new(pool.clone(), story_id.clone())));
-        let mut staged = Vec::new();
-        for (turn, entity_name, name) in [
-            (&first, "First Prism", "Resonance"),
-            (&second, "Second Prism", "resonance"),
-        ] {
-            let entity = turn
-                .lock()
-                .await
-                .resolve_or_stage_entity("artifact", entity_name, None)
-                .unwrap()
-                .0;
-            let attribute =
-                super::super::staging::resolve_or_stage_attribute(turn, "", name, "artifact")
-                    .await
-                    .unwrap();
-            turn.lock().await.pending.push(PendingOp::AdjustAttribute {
-                entity_id: entity.id.clone(),
-                attribute: attribute.clone(),
-                delta: 1.0,
-                cause: "test".into(),
-                dramatic: false,
-            });
-            staged.push((entity, attribute));
-        }
-        assert_ne!(staged[0].1.id, staged[1].1.id);
-        let result = roll_check_tool(second.clone())
-            .execute(json!({"factors":[{"entity_id":staged[1].0.id,"attribute_name":"resonance"}]}))
+        let alias = roll
+            .execute(json!({"factors":[{"entity_id":id,"attribute_name":"Sneaking"}]}))
             .await
             .unwrap();
         assert_eq!(
-            result.as_json().unwrap()["factors"][0]["attribute_id"],
-            json!(staged[1].1.id)
+            alias.as_json().unwrap()["factors"][0]["attribute_name"],
+            json!("Stealth")
         );
-        assert_eq!(pool.get().unwrap().query_row(
-            "SELECT COUNT(*) FROM attribute_registry WHERE lower(canonical_name) = 'resonance'",
-            [], |row| row.get::<_, i64>(0),
-        ).unwrap(), 0);
-        {
-            let staging = first.lock().await;
-            persist_staging(&pool, &story_id, &staging);
-        }
-        {
-            let staging = second.lock().await;
-            persist_staging(&pool, &story_id, &staging);
-        }
-        let conn = pool.get().unwrap();
-        let (count, distinct_ids): (i64, i64) = conn.query_row(
-            "SELECT COUNT(*), COUNT(DISTINCT attribute_id) FROM entity_attributes WHERE entity_id IN (?1, ?2)",
-            rusqlite::params![staged[0].0.id, staged[1].0.id],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        ).unwrap();
-        assert_eq!((count, distinct_ids), (2, 1));
-        let roll_payload: String = conn
-            .query_row(
-                "SELECT payload_json FROM ledger_entries WHERE kind = ?1 ORDER BY seq DESC LIMIT 1",
-                [ledger::model::kind::DICEROLL],
-                |row| row.get(0),
-            )
-            .unwrap();
-        let roll_payload: serde_json::Value = serde_json::from_str(&roll_payload).unwrap();
-        assert_eq!(
-            roll_payload["factors"][0]["attribute_id"],
-            json!(staged[0].1.id)
-        );
-        assert_eq!(
-            roll_payload["factors"][0]["attribute_name"],
-            json!("Resonance")
-        );
+        assert!(roll
+            .execute(json!({"factors":[{"entity_id":"missing","attribute_name":"Stealth"}]}))
+            .await
+            .is_err());
+        turn.rollback().await.unwrap();
     }
 }

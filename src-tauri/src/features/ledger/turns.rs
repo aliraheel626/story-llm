@@ -32,6 +32,7 @@ fn row_to_turn(row: &rusqlite::Row<'_>) -> rusqlite::Result<Turn> {
     })
 }
 
+#[allow(dead_code)] // Removed with legacy pending-turn handling in step 6.
 fn pending_conflict_or_error(
     conn: &rusqlite::Connection,
     story_id: &str,
@@ -51,6 +52,7 @@ fn pending_conflict_or_error(
     }
 }
 
+#[allow(dead_code)] // Legacy fixtures still use pending turns until step 6.
 pub fn create_turn(conn: &rusqlite::Connection, story_id: &str) -> AppResult<String> {
     let id = Uuid::new_v4().to_string();
     let seq: i64 = conn.query_row(
@@ -69,6 +71,22 @@ pub fn create_turn(conn: &rusqlite::Connection, story_id: &str) -> AppResult<Str
     }
 }
 
+pub fn create_complete_turn(conn: &rusqlite::Connection, story_id: &str) -> AppResult<String> {
+    let id = Uuid::new_v4().to_string();
+    let seq: i64 = conn.query_row(
+        "SELECT COALESCE(MAX(seq), -1) + 1 FROM turns WHERE story_id = ?1",
+        [story_id],
+        |row| row.get(0),
+    )?;
+    conn.execute(
+        "INSERT INTO turns (id, story_id, seq, status, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5)",
+        rusqlite::params![id, story_id, seq, COMPLETE, Utc::now().to_rfc3339()],
+    )?;
+    Ok(id)
+}
+
+#[allow(dead_code)] // Legacy fixtures still use turn statuses until step 6.
 pub fn set_status(conn: &rusqlite::Connection, turn_id: &str, status: &str) -> AppResult<()> {
     if !matches!(status, PENDING | COMPLETE | FAILED) {
         return Err(AppError::Invalid(format!("invalid turn status: {status}")));
@@ -87,6 +105,7 @@ pub fn set_status(conn: &rusqlite::Connection, turn_id: &str, status: &str) -> A
     Ok(())
 }
 
+#[allow(dead_code)] // Removed with legacy pending-turn handling in step 6.
 pub fn begin_attempt(conn: &rusqlite::Connection, turn_id: &str) -> AppResult<i64> {
     let (story_id, status) = conn
         .query_row(

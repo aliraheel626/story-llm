@@ -1173,7 +1173,7 @@ fn seed_attribute_registry(conn: &PooledConn) -> AppResult<()> {
 
 /// A real pool against the app's actual (temp-dir-backed) schema, migrations,
 /// and seeded attribute registry — used by tests that need more than a
-/// hand-written `CREATE TABLE` subset (e.g. narrator-tool staging, which
+    /// hand-written `CREATE TABLE` subset (e.g. narrator-tool fixtures, which
 /// touches five-plus tables). Callers are responsible for creating their own
 /// story rows.
 #[cfg(test)]

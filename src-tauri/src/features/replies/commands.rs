@@ -27,10 +27,11 @@ pub async fn submit_turn(
 pub async fn retry_narration(
     app: AppHandle,
     pool: State<'_, Pool>,
+    gate: State<'_, TurnGate>,
     story_id: String,
     entry_id: String,
 ) -> AppResult<RetryResult> {
-    retry::retry_narration(app, pool.inner(), story_id, entry_id).await
+    retry::retry_narration(app, pool.inner(), gate.inner(), story_id, entry_id).await
 }
 
 #[tauri::command]

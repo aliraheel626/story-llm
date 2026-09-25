@@ -1,9 +1,8 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use crate::ai::{HistoryTurn, HistoryTurnMarker};
 use crate::features::compaction;
 use crate::features::ledger::{model::kind, reducer, repository};
-use crate::shared::db::Pool;
 use crate::shared::error::AppResult;
 
 /// Reconstructs model history from the story ledger. The latest
@@ -12,33 +11,12 @@ use crate::shared::error::AppResult;
 /// already exists, only entries from its boundary onward are even fetched —
 /// a long, already-compacted story doesn't reload and re-decode everything
 /// before it on every turn.
-pub fn load_transcript(
-    pool: &Pool,
-    story_id: &str,
-    before_seq: Option<i64>,
-) -> AppResult<Vec<HistoryTurn>> {
-    let conn = pool.get()?;
-    let since_seq =
-        compaction::boundary_for(&conn, story_id, before_seq)?.map(|boundary| boundary.through_seq);
-    let mut raw = match since_seq {
-        Some(seq) => repository::list_logical_entries_since(&conn, story_id, seq)?,
-        None => repository::list_logical_entries(&conn, story_id)?,
+pub fn load_transcript(conn: &rusqlite::Connection, story_id: &str) -> AppResult<Vec<HistoryTurn>> {
+    let since_seq = compaction::boundary_for(conn, story_id)?.map(|boundary| boundary.through_seq);
+    let raw = match since_seq {
+        Some(seq) => repository::list_logical_entries_since(conn, story_id, seq)?,
+        None => repository::list_logical_entries(conn, story_id)?,
     };
-    if let Some(cut) = before_seq {
-        let kept = raw
-            .iter()
-            .filter(|entry| entry.seq < cut)
-            .map(|entry| entry.id.clone())
-            .collect::<HashSet<_>>();
-        raw.retain(|entry| {
-            entry.seq < cut
-                || (entry.kind == kind::CONTENT_EDITED
-                    && entry
-                        .target_entry_id
-                        .as_ref()
-                        .is_some_and(|target| kept.contains(target)))
-        });
-    }
     Ok(history_from_entries(&raw))
 }
 
@@ -346,9 +324,43 @@ mod tests {
         )
         .unwrap();
         drop(conn);
-        let history = load_transcript(&pool, "s", None).unwrap();
+        let history = load_transcript(&pool.get().unwrap(), "s").unwrap();
         assert_eq!(history.len(), 1);
         assert_eq!(history[0].entry_id.as_deref(), Some(roll.id.as_str()));
+    }
+
+    #[tokio::test]
+    async fn load_transcript_reads_uncommitted_player_entry() {
+        let pool = crate::shared::db::test_pool();
+        let conn = pool.get().unwrap();
+        conn.execute(
+            "INSERT INTO stories (id, title, created_at, updated_at, settings_json) VALUES ('s', 'story', 'now', 'now', '{}')",
+            [],
+        ).unwrap();
+        drop(conn);
+        let turn = crate::features::ledger::turn_tx::TurnTx::begin(&pool, &Default::default(), "s")
+            .unwrap();
+        turn.with(|conn| {
+            repository::append_entry(
+                conn,
+                "s",
+                kind::PLAYER_MESSAGE,
+                "visible",
+                Some("I enter"),
+                &json!({"input_mode":"do"}),
+                None,
+                None,
+            )?;
+            let history = load_transcript(conn, "s")?;
+            assert_eq!(history.last().unwrap().content, "<do>I enter</do>");
+            Ok(())
+        })
+        .await
+        .unwrap();
+        turn.rollback().await.unwrap();
+        assert!(load_transcript(&pool.get().unwrap(), "s")
+            .unwrap()
+            .is_empty());
     }
 
     #[test]
@@ -425,99 +437,6 @@ mod tests {
     }
 
     #[test]
-    fn retry_cut_ends_with_the_tagged_action() {
-        let pool = crate::shared::db::test_pool();
-        let conn = pool.get().unwrap();
-        conn.execute(
-            "INSERT INTO stories (id, title, created_at, updated_at, settings_json)
-             VALUES ('s', 'story', 'now', 'now', '{}')",
-            [],
-        )
-        .unwrap();
-        repository::append_entry(
-            &conn,
-            "s",
-            kind::PLAYER_MESSAGE,
-            "visible",
-            Some("Keep the rain relentless."),
-            &json!({"input_mode":"guide"}),
-            None,
-            None,
-        )
-        .unwrap();
-        let response = repository::append_entry(
-            &conn,
-            "s",
-            kind::NARRATION,
-            "visible",
-            Some("Rain lashes the roof."),
-            &json!({"input_mode":"generated"}),
-            None,
-            None,
-        )
-        .unwrap();
-        drop(conn);
-
-        let history = load_transcript(&pool, "s", Some(response.seq)).unwrap();
-        assert_eq!(
-            history.last().map(|turn| turn.content.as_str()),
-            Some("<guide>Keep the rain relentless.</guide>")
-        );
-    }
-
-    #[test]
-    fn retry_cut_applies_player_edit_appended_after_narration() {
-        let pool = crate::shared::db::test_pool();
-        let conn = pool.get().unwrap();
-        conn.execute(
-            "INSERT INTO stories (id, title, created_at, updated_at, settings_json)
-             VALUES ('s', 'story', 'now', 'now', '{}')",
-            [],
-        )
-        .unwrap();
-        let player = repository::append_entry(
-            &conn,
-            "s",
-            kind::PLAYER_MESSAGE,
-            "visible",
-            Some("I open the door"),
-            &json!({"input_mode":"do"}),
-            None,
-            None,
-        )
-        .unwrap();
-        let narration = repository::append_entry(
-            &conn,
-            "s",
-            kind::NARRATION,
-            "visible",
-            Some("The door opens."),
-            &json!({"input_mode":"generated"}),
-            None,
-            None,
-        )
-        .unwrap();
-        repository::append_entry(
-            &conn,
-            "s",
-            kind::CONTENT_EDITED,
-            "hidden",
-            Some("I kick the door open"),
-            &json!({"reason":"user_edit"}),
-            Some(&player.id),
-            None,
-        )
-        .unwrap();
-        drop(conn);
-
-        let history = load_transcript(&pool, "s", Some(narration.seq)).unwrap();
-        assert_eq!(
-            history.last().map(|turn| turn.content.as_str()),
-            Some("<do>I kick the door open</do>")
-        );
-    }
-
-    #[test]
     fn summary_with_a_cascade_deleted_boundary_does_not_hide_older_history() {
         let pool = crate::shared::db::test_pool();
         let conn = pool.get().unwrap();
@@ -584,102 +503,9 @@ mod tests {
         assert_eq!(query_count, 0);
         drop(conn);
 
-        let history = load_transcript(&pool, "s", None).unwrap();
+        let history = load_transcript(&pool.get().unwrap(), "s").unwrap();
         assert_eq!(history.len(), 1);
         assert_eq!(history[0].entry_id.as_deref(), Some(old.id.as_str()));
         assert_eq!(history[0].content, "<do>Keep this older turn.</do>");
-    }
-
-    #[test]
-    fn retry_between_summaries_uses_the_older_summary_boundary() {
-        let pool = crate::shared::db::test_pool();
-        let conn = pool.get().unwrap();
-        conn.execute(
-            "INSERT INTO stories (id, title, created_at, updated_at, settings_json) VALUES ('s', 'story', 'now', 'now', '{}')",
-            [],
-        )
-        .unwrap();
-
-        let old_narration = repository::append_entry(
-            &conn,
-            "s",
-            kind::NARRATION,
-            "visible",
-            Some("The archive was entered."),
-            &json!({"input_mode":"generated"}),
-            None,
-            None,
-        )
-        .unwrap();
-        repository::append_entry(
-            &conn,
-            "s",
-            kind::CONTEXT_SUMMARY,
-            "hidden",
-            Some("The party entered the archive."),
-            &json!({"through_entry_id":old_narration.id,"through_seq":old_narration.seq}),
-            None,
-            None,
-        )
-        .unwrap();
-        let intervening_player = repository::append_entry(
-            &conn,
-            "s",
-            kind::PLAYER_MESSAGE,
-            "visible",
-            Some("I inspect the sealed door."),
-            &json!({"input_mode":"do"}),
-            None,
-            None,
-        )
-        .unwrap();
-        let retry_target = repository::append_entry(
-            &conn,
-            "s",
-            kind::NARRATION,
-            "visible",
-            Some("The seal begins to glow."),
-            &json!({"input_mode":"generated"}),
-            None,
-            None,
-        )
-        .unwrap();
-        repository::append_entry(
-            &conn,
-            "s",
-            kind::CONTEXT_SUMMARY,
-            "hidden",
-            Some("The party reached the sealed door."),
-            &json!({"through_entry_id":retry_target.id,"through_seq":retry_target.seq}),
-            None,
-            None,
-        )
-        .unwrap();
-        // A retry can append a new compaction event after the entry being
-        // retried even when that summary covers an earlier prefix. It must not
-        // be selected because the before-seq cutoff would then remove the
-        // summary event itself along with the target.
-        repository::append_entry(
-            &conn,
-            "s",
-            kind::CONTEXT_SUMMARY,
-            "hidden",
-            Some("A later retry summarized through the player's action."),
-            &json!({
-                "through_entry_id": intervening_player.id,
-                "through_seq": intervening_player.seq,
-            }),
-            None,
-            None,
-        )
-        .unwrap();
-        drop(conn);
-
-        let history = load_transcript(&pool, "s", Some(retry_target.seq)).unwrap();
-        assert_eq!(history.len(), 2);
-        assert!(history[0]
-            .content
-            .contains("The party entered the archive."));
-        assert_eq!(history[1].content, "<do>I inspect the sealed door.</do>");
     }
 }

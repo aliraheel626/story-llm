@@ -6,10 +6,9 @@ use rusqlite::OptionalExtension;
 
 use crate::shared::error::{AppError, AppResult};
 
-pub(crate) use super::registry::{
-    add_alias, find_attribute_by_id, find_exact_match, insert_minted_attribute, resolve_attribute,
-    AttributeResolution,
-};
+pub(crate) use super::registry::find_exact_match;
+#[cfg(test)]
+pub(crate) use super::registry::{add_alias, find_attribute_by_id};
 use super::{
     events::EntityEvent,
     model::{AttributeRegistryEntry, EntityAttributeValue},
@@ -43,10 +42,8 @@ pub fn peek_entity_attribute(
 /// scale unless the caller flags the change as dramatic.
 const NON_DRAMATIC_MAX_FRACTION: f64 = 0.3;
 
-/// Applies clamping and rate-limiting to a proposed delta, without touching
-/// the database — shared by the real write path below and by narrator-tool
-/// staging previews that need to show what a pending delta *would* do before
-/// it's committed.
+/// Applies clamping and rate-limiting to a proposed delta without touching
+/// the database; the narrator's direct write path uses the same rules.
 pub fn clamp_delta(
     before: f64,
     delta: f64,

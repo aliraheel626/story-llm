@@ -41,12 +41,36 @@ pub fn append_entry(
     target_entry_id: Option<&str>,
     turn_id: Option<&str>,
 ) -> AppResult<LedgerEntry> {
+    append_entry_with_id(
+        conn,
+        Uuid::new_v4().to_string(),
+        story_id,
+        kind,
+        visibility,
+        content,
+        payload,
+        target_entry_id,
+        turn_id,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn append_entry_with_id(
+    conn: &rusqlite::Connection,
+    id: String,
+    story_id: &str,
+    kind: &str,
+    visibility: &str,
+    content: Option<&str>,
+    payload: &Value,
+    target_entry_id: Option<&str>,
+    turn_id: Option<&str>,
+) -> AppResult<LedgerEntry> {
     if visibility != "visible" && visibility != "hidden" {
         return Err(AppError::Invalid(format!(
             "invalid ledger visibility: {visibility}"
         )));
     }
-    let id = Uuid::new_v4().to_string();
     if let Some(target_id) = target_entry_id {
         let target_belongs_to_story: bool = conn.query_row(
             "SELECT EXISTS(SELECT 1 FROM ledger_entries WHERE id = ?1 AND story_id = ?2)",
@@ -108,6 +132,25 @@ pub fn append_entry(
         turn_id: turn_id.map(str::to_string),
         created_at: now,
     })
+}
+
+pub fn append_placeholder_narration(
+    conn: &rusqlite::Connection,
+    story_id: &str,
+    turn_id: &str,
+    entry_id: String,
+) -> AppResult<LedgerEntry> {
+    append_entry_with_id(
+        conn,
+        entry_id,
+        story_id,
+        kind::NARRATION,
+        "visible",
+        Some(""),
+        &serde_json::json!({"input_mode":"generated"}),
+        None,
+        Some(turn_id),
+    )
 }
 
 pub fn get_entry(conn: &rusqlite::Connection, id: &str) -> AppResult<LedgerEntry> {
@@ -191,6 +234,32 @@ pub fn append_story_message(
         None,
         turn_id,
     )
+}
+
+pub fn finish_narration(
+    conn: &rusqlite::Connection,
+    entry_id: &str,
+    content: &str,
+    thoughts: Option<&str>,
+) -> AppResult<LedgerEntry> {
+    let thoughts = thoughts
+        .map(str::trim)
+        .filter(|thoughts| !thoughts.is_empty());
+    let payload = match thoughts {
+        Some(thoughts) => serde_json::json!({"input_mode":"generated", "thoughts":thoughts}),
+        None => serde_json::json!({"input_mode":"generated"}),
+    };
+    let changed = conn.execute(
+        "UPDATE ledger_entries SET content = ?1, payload_json = ?2
+         WHERE id = ?3 AND kind = ?4",
+        rusqlite::params![content, payload.to_string(), entry_id, kind::NARRATION],
+    )?;
+    if changed == 0 {
+        return Err(AppError::NotFound(format!(
+            "narration {entry_id} not found"
+        )));
+    }
+    active_entry(conn, entry_id)
 }
 
 #[cfg(test)]

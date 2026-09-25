@@ -2,8 +2,7 @@ use rig_core::{completion::Message, memory::Compactor};
 use rig_memory::{HeuristicTokenCounter, MemoryPolicy, TokenCounter, TokenWindowMemory};
 
 use crate::ai::{HistoryTurn, TextModelConfig};
-use crate::features::ledger::{model::kind, repository};
-use crate::shared::db::{with_transaction, Pool};
+use crate::features::ledger::{model::kind, repository, turn_tx::TurnTx};
 
 use super::budget::{messages, raw_tail_boundary, FALLBACK_CONTEXT_WINDOW};
 use super::compactor::NarratorCompactor;
@@ -14,23 +13,21 @@ pub(crate) struct PreparedHistory {
 }
 
 pub async fn prepare_history(
-    pool: &Pool,
+    turn: &TurnTx,
     story_id: &str,
     config: &TextModelConfig,
     preamble: &str,
     prompt: &str,
     history: Vec<HistoryTurn>,
-    before_seq: Option<i64>,
 ) -> PreparedHistory {
     let compactor = NarratorCompactor::new(config.clone());
     let result = prepare_history_with_compactor(
         HistoryPreparation {
-            pool,
+            turn,
             story_id,
             config,
             preamble,
             prompt,
-            before_seq,
         },
         history,
         &compactor,
@@ -46,12 +43,11 @@ struct PreparationResult {
 }
 
 struct HistoryPreparation<'a> {
-    pool: &'a Pool,
+    turn: &'a TurnTx,
     story_id: &'a str,
     config: &'a TextModelConfig,
     preamble: &'a str,
     prompt: &'a str,
-    before_seq: Option<i64>,
 }
 
 async fn prepare_history_with_compactor<C>(
@@ -63,12 +59,11 @@ where
     C: Compactor<Artifact = SummaryArtifact>,
 {
     let HistoryPreparation {
-        pool,
+        turn,
         story_id,
         config,
         preamble,
         prompt,
-        before_seq,
     } = input;
     let context_window = if config.context_window == 0 {
         FALLBACK_CONTEXT_WINDOW
@@ -92,11 +87,17 @@ where
         .rev()
         .find_map(|turn| turn.entry_id.clone());
 
-    let carry_over = history
+    let carry_over = if history
         .first()
         .is_some_and(|turn| turn.marker == crate::ai::HistoryTurnMarker::Summary)
-        .then(|| latest_summary_artifact(pool, story_id, before_seq))
-        .flatten();
+    {
+        turn.with(|conn| Ok(latest_summary_artifact(conn, story_id)))
+            .await
+            .ok()
+            .flatten()
+    } else {
+        None
+    };
     let evict_from = usize::from(carry_over.is_some());
 
     match compactor
@@ -109,13 +110,13 @@ where
     {
         Ok(artifact) => {
             let summary_text = format_summary(&artifact.0);
-            let _ = with_transaction(pool, |tx| {
+            let _ = turn.with(|conn| {
                 let boundary = through_entry_id
                     .as_deref()
-                    .and_then(|id| repository::get_entry(tx, id).ok());
+                    .and_then(|id| repository::get_entry(conn, id).ok());
                 if let Some(boundary) = boundary {
                     repository::append_entry(
-                        tx,
+                        conn,
                         story_id,
                         kind::CONTEXT_SUMMARY,
                         "hidden",
@@ -128,7 +129,7 @@ where
                     )?;
                 }
                 Ok(())
-            });
+            }).await;
             let mut compacted = vec![HistoryTurn {
                 entry_id: None,
                 is_player: false,
@@ -244,15 +245,15 @@ mod tests {
             evicted_count: evicted_count.clone(),
         };
         let pool = crate::shared::db::test_pool();
+        let turn = TurnTx::begin(&pool, &Default::default(), "story").unwrap();
 
         let compacted = prepare_history_with_compactor(
             HistoryPreparation {
-                pool: &pool,
+                turn: &turn,
                 story_id: "story",
                 config: &config,
                 preamble: "preamble",
                 prompt: "prompt",
-                before_seq: None,
             },
             history.clone(),
             &compactor,
@@ -261,5 +262,82 @@ mod tests {
 
         assert_eq!(*evicted_count.lock().unwrap(), Some(expected));
         assert_eq!(compacted.turns.len(), 1 + history.len() - expected);
+    }
+
+    #[tokio::test]
+    async fn compacted_summary_is_part_of_the_turn_transaction() {
+        let pool = crate::shared::db::test_pool();
+        pool.get().unwrap().execute(
+            "INSERT INTO stories (id, title, created_at, updated_at, settings_json) VALUES ('story', 'Story', 'now', 'now', '{}')",
+            [],
+        ).unwrap();
+        let turn = TurnTx::begin(&pool, &Default::default(), "story").unwrap();
+        let history = turn
+            .with(|conn| {
+                (0..30)
+                    .map(|index| {
+                        let is_player = index % 2 == 0;
+                        let content =
+                            format!("Long historical turn {index}: {}", "context ".repeat(40));
+                        let entry = repository::append_entry(
+                            conn,
+                            "story",
+                            if is_player {
+                                kind::PLAYER_MESSAGE
+                            } else {
+                                kind::NARRATION
+                            },
+                            "visible",
+                            Some(&content),
+                            &serde_json::json!({}),
+                            None,
+                            None,
+                        )?;
+                        Ok(HistoryTurn {
+                            entry_id: Some(entry.id),
+                            is_player,
+                            content,
+                            marker: crate::ai::HistoryTurnMarker::Ledger,
+                        })
+                    })
+                    .collect::<crate::shared::error::AppResult<Vec<_>>>()
+            })
+            .await
+            .unwrap();
+        let config = TextModelConfig {
+            provider: "openrouter".into(),
+            model: "test".into(),
+            api_key: "test".into(),
+            context_window: 256,
+        };
+        assert!(raw_tail_boundary(&history, &config, "preamble", "prompt") > 0);
+        let compactor = RecordingCompactor {
+            carry_over: Arc::new(Mutex::new(None)),
+            evicted_count: Arc::new(Mutex::new(None)),
+        };
+        let result = prepare_history_with_compactor(
+            HistoryPreparation {
+                turn: &turn,
+                story_id: "story",
+                config: &config,
+                preamble: "preamble",
+                prompt: "prompt",
+            },
+            history,
+            &compactor,
+        )
+        .await;
+        assert!(result.turns[0].content.contains("new compacted context"));
+        let summary_count = turn.with(|conn| Ok(conn.query_row(
+            "SELECT COUNT(*) FROM ledger_entries WHERE story_id = 'story' AND kind = 'context_summary'",
+            [], |row| row.get::<_, i64>(0),
+        )?)).await.unwrap();
+        assert_eq!(summary_count, 1);
+        turn.rollback().await.unwrap();
+        let committed_count: i64 = pool.get().unwrap().query_row(
+            "SELECT COUNT(*) FROM ledger_entries WHERE story_id = 'story' AND kind = 'context_summary'",
+            [], |row| row.get(0),
+        ).unwrap();
+        assert_eq!(committed_count, 0);
     }
 }

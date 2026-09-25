@@ -49,7 +49,14 @@ fn story_settings(conn: &rusqlite::Connection, story_id: &str) -> AppResult<Valu
 
 pub fn read_story_narrator_tools(pool: &Pool, story_id: &str) -> AppResult<NarratorToolSettings> {
     let conn = pool.get()?;
-    let settings = story_settings(&conn, story_id)?;
+    read_story_narrator_tools_conn(&conn, story_id)
+}
+
+pub(crate) fn read_story_narrator_tools_conn(
+    conn: &rusqlite::Connection,
+    story_id: &str,
+) -> AppResult<NarratorToolSettings> {
+    let settings = story_settings(conn, story_id)?;
     match settings.get("narrator_tools") {
         Some(tools) => serde_json::from_value(tools.clone())
             .map_err(|error| AppError::Other(format!("invalid narrator tools: {error}"))),
@@ -88,7 +95,14 @@ pub(crate) fn normalize_reasoning_effort(value: &str) -> Option<&'static str> {
 
 pub fn read_story_reasoning_effort(pool: &Pool, story_id: &str) -> AppResult<String> {
     let conn = pool.get()?;
-    let settings = story_settings(&conn, story_id)?;
+    read_story_reasoning_effort_conn(&conn, story_id)
+}
+
+pub(crate) fn read_story_reasoning_effort_conn(
+    conn: &rusqlite::Connection,
+    story_id: &str,
+) -> AppResult<String> {
+    let settings = story_settings(conn, story_id)?;
     Ok(settings
         .get("reasoning_effort")
         .and_then(Value::as_str)
@@ -205,5 +219,33 @@ mod tests {
         let mut value = json!(NarratorToolSettings::default());
         value["unexpected"] = json!(true);
         assert!(serde_json::from_value::<NarratorToolSettings>(value).is_err());
+    }
+
+    #[test]
+    fn connection_readers_see_uncommitted_story_settings() {
+        let pool = crate::shared::db::test_pool();
+        let mut conn = pool.get().unwrap();
+        conn.execute(
+            "INSERT INTO stories (id,title,created_at,updated_at,settings_json) VALUES ('s','Story','now','now','{}')",
+            [],
+        ).unwrap();
+        let tx = conn.transaction().unwrap();
+        let tools = NarratorToolSettings {
+            roll_check: false,
+            ..NarratorToolSettings::default()
+        };
+        tx.execute(
+            "UPDATE stories SET settings_json = ?1 WHERE id = 's'",
+            [json!({"narrator_tools": tools, "reasoning_effort": "HIGH"}).to_string()],
+        )
+        .unwrap();
+
+        assert_eq!(read_story_narrator_tools_conn(&tx, "s").unwrap(), tools);
+        assert_eq!(read_story_reasoning_effort_conn(&tx, "s").unwrap(), "high");
+        assert_eq!(
+            read_story_narrator_tools(&pool, "s").unwrap(),
+            NarratorToolSettings::default()
+        );
+        tx.rollback().unwrap();
     }
 }
