@@ -31,7 +31,7 @@ pub fn read_text_model_settings(app: &AppHandle, pool: &Pool) -> AppResult<TextM
             let provider = v
                 .get("provider")
                 .and_then(|p| p.as_str())
-                .filter(|p| matches!(*p, "openrouter" | "nous_portal"))
+                .filter(|p| matches!(*p, "openrouter" | "nous_portal" | "ollama"))
                 .unwrap_or("openrouter")
                 .to_string();
             let model = v

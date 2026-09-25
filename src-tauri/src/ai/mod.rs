@@ -31,9 +31,14 @@ pub const NOUS_PORTAL_BASE_URL: &str = "https://inference-api.nousresearch.com/v
 pub const NOUS_PORTAL_USER_AGENT: &str =
     "story-llm/0.1 (+https://github.com/aliraheel626/story-llm)";
 
+/// The self-hosted Ollama server's OpenAI-compatible endpoint. It needs no API
+/// key; Ollama ignores the bearer token, but Rig's client still sends one.
+pub const OLLAMA_BASE_URL: &str = "https://ollama-dev.greatworkflows.ai/v1";
+pub const OLLAMA_API_KEY: &str = "ollama";
+
 #[derive(Debug, Clone)]
 pub struct TextModelConfig {
-    /// `"openrouter"` or `"nous_portal"` — see `build_agent`. Anything else
+    /// `"openrouter"`, `"nous_portal"` or `"ollama"` — see `build_agent`. Anything else
     /// falls back to OpenRouter, matching `settings::read_text_model_settings`.
     pub provider: String,
     pub model: String,
@@ -429,16 +434,22 @@ fn build_agent(
     tools: Vec<DynamicTool>,
     reasoning_effort: Option<&str>,
 ) -> AppResult<rig_agent::Agent> {
-    if config.provider == "nous_portal" {
-        // Nous Portal is plain OpenAI Chat Completions — no OpenRouter wire
-        // extensions (e.g. `reasoning.effort`) are sent here; that field is
-        // an OpenRouter-specific extension with no confirmed Nous Portal
-        // contract, so `reasoning_effort` is silently ignored for this
-        // provider rather than risk an unrecognized-field rejection.
+    let openai_compatible_base_url = match config.provider.as_str() {
+        "nous_portal" => Some(NOUS_PORTAL_BASE_URL),
+        "ollama" => Some(OLLAMA_BASE_URL),
+        _ => None,
+    };
+    if let Some(base_url) = openai_compatible_base_url {
+        // Nous Portal and Ollama are plain OpenAI Chat Completions — no
+        // OpenRouter wire extensions (e.g. `reasoning.effort`) are sent here;
+        // that field is an OpenRouter-specific extension with no confirmed
+        // contract on these hosts, so `reasoning_effort` is silently ignored
+        // rather than risk an unrecognized-field rejection.
         // rig's HTTP client sends no User-Agent by default, which Cloudflare
         // (fronting Nous Portal) treats as bot traffic and blocks with a 403
         // before the request ever reaches the API — confirmed live. A
-        // normal-looking app UA is enough to pass that check.
+        // normal-looking app UA is enough to pass that check. The Ollama host
+        // also rejects some default client UAs with a 403, so it gets one too.
         let mut headers = http::HeaderMap::new();
         headers.insert(
             http::header::USER_AGENT,
@@ -446,10 +457,12 @@ fn build_agent(
         );
         let client = openai::Client::builder()
             .api_key(config.api_key.clone())
-            .base_url(NOUS_PORTAL_BASE_URL)
+            .base_url(base_url)
             .http_headers(headers)
             .build()
-            .map_err(|e| AppError::Other(format!("failed to build Nous Portal client: {e}")))?
+            .map_err(|e| {
+                AppError::Other(format!("failed to build {} client: {e}", config.provider))
+            })?
             .completions_api();
         let builder = client.agent(config.model.clone()).preamble(preamble);
         let agent = if tools.is_empty() {

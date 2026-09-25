@@ -5,6 +5,7 @@ import { useSettingsForm } from "./useSettingsForm";
 const PROVIDERS: { value: string; label: string }[] = [
   { value: "openrouter", label: "OpenRouter" },
   { value: "nous_portal", label: "Nous Portal" },
+  { value: "ollama", label: "Ollama (ollama-dev.greatworkflows.ai)" },
 ];
 
 const MODELS_BY_PROVIDER: Record<string, { slug: string; label: string }[]> = {
@@ -24,6 +25,10 @@ const MODELS_BY_PROVIDER: Record<string, { slug: string; label: string }[]> = {
     { slug: "Hermes-4.3-36B", label: "Hermes 4.3 36B" },
     { slug: "Hermes-4-70B", label: "Hermes 4 70B" },
     { slug: "Hermes-4-405B", label: "Hermes 4 405B" },
+  ],
+  ollama: [
+    { slug: "hf.co/NousResearch/Hermes-4.3-36B-GGUF:Q4_K_M", label: "Hermes 4.3 36B (Q4_K_M)" },
+    { slug: "hf.co/bartowski/NousResearch_Hermes-4-70B-GGUF:Q4_K_M", label: "Hermes 4 70B (Q4_K_M)" },
   ],
 };
 
@@ -121,34 +126,40 @@ export function TextModelPanel() {
             placeholder={
               provider === "nous_portal"
                 ? "exact model id from Nous Portal's listing"
-                : "e.g. anthropic/claude-opus-5"
+                : provider === "ollama"
+                  ? "exact model name from the Ollama server"
+                  : "e.g. anthropic/claude-opus-5"
             }
             className="mt-1.5 w-full rounded bg-bg border border-border px-2 py-1.5 text-sm text-text placeholder:text-muted focus:outline-none focus:border-accent"
           />
         )}
       </div>
 
-      <div>
-        <label className="block text-xs text-muted mb-1">
-          API key {apiKeyMatchesSelectedProvider && settings?.has_api_key && <span className="text-success">(set)</span>}
-        </label>
-        <input
-          type="password"
-          value={apiKey}
-          onChange={(e) => setApiKey(e.target.value)}
-          placeholder={
-            apiKeyMatchesSelectedProvider && settings?.has_api_key
-              ? "•••••••• (leave blank to keep)"
-              : API_KEY_PLACEHOLDER[provider] ?? API_KEY_PLACEHOLDER.openrouter
-          }
-          className="w-full rounded bg-bg border border-border px-2 py-1.5 text-sm text-text placeholder:text-muted focus:outline-none focus:border-accent"
-        />
-      </div>
+      {/* The Ollama server needs no key. */}
+      {provider !== "ollama" && (
+        <div>
+          <label className="block text-xs text-muted mb-1">
+            API key {apiKeyMatchesSelectedProvider && settings?.has_api_key && <span className="text-success">(set)</span>}
+          </label>
+          <input
+            type="password"
+            value={apiKey}
+            onChange={(e) => setApiKey(e.target.value)}
+            placeholder={
+              apiKeyMatchesSelectedProvider && settings?.has_api_key
+                ? "•••••••• (leave blank to keep)"
+                : API_KEY_PLACEHOLDER[provider] ?? API_KEY_PLACEHOLDER.openrouter
+            }
+            className="w-full rounded bg-bg border border-border px-2 py-1.5 text-sm text-text placeholder:text-muted focus:outline-none focus:border-accent"
+          />
+        </div>
+      )}
 
-      {provider === "nous_portal" && (
+      {provider !== "openrouter" && (
         <p className="text-[11px] text-muted">
           Image generation and attribute matching always use OpenRouter separately — keep an
-          OpenRouter key set too, even with Nous Portal as your narration provider.
+          OpenRouter key set too, even with {provider === "ollama" ? "Ollama" : "Nous Portal"} as your
+          narration provider.
         </p>
       )}
 
