@@ -5,5 +5,5 @@ pub mod model;
 mod repository;
 pub mod settings;
 
-pub use auto_title::maybe_auto_title;
+pub use auto_title::title_in_turn;
 pub use commands::*;

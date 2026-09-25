@@ -1,23 +1,20 @@
 use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter};
+use serde::Deserialize;
+use std::time::Duration;
+use tauri::AppHandle;
 
 use super::repository::DEFAULT_STORY_TITLE;
 use crate::ai;
 use crate::features::{
     ledger::{
         model::kind as ledger_kind, reducer as ledger_reducer, repository as ledger_repository,
+        turn_tx::TurnTx,
     },
     settings as global_settings,
 };
 use crate::prompts;
-use crate::shared::db::{blocking, Pool};
-
-#[derive(Debug, Clone, Serialize)]
-struct StoryTitleUpdatedPayload {
-    story_id: String,
-    title: String,
-}
+use crate::shared::db::Pool;
+use crate::shared::error::AppResult;
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 struct GeneratedTitle {
@@ -33,44 +30,52 @@ const TITLE_INPUT_LIMIT: usize = 2_000;
 /// unusable sidebar entry.
 const TITLE_MAX_CHARS: usize = 60;
 
-/// Auto-title (the ChatGPT/Gemini pattern): once a story has its first
-/// exchange, name it with the text model and emit `story-title-updated`. Only
-/// runs while the story still carries the placeholder title, so a user rename
-/// before or during generation always wins. Best-effort throughout — a
-/// failure leaves the placeholder in place and the next exchange retries.
-pub fn maybe_auto_title(app: &AppHandle, pool: &Pool, story_id: &str) {
-    let Ok(conn) = pool.get() else { return };
-    let Ok(title) = conn.query_row("SELECT title FROM stories WHERE id = ?1", [story_id], |r| {
-        r.get::<_, String>(0)
-    }) else {
-        return;
-    };
-    if title != DEFAULT_STORY_TITLE {
-        return;
-    }
-    // The opening exchange: the earliest one or two visible ledger entries,
-    // folded through the reducer so an edit/swipe made before this fires
-    // (auto-title only runs once, right after the first exchange) titles
-    // from what the player actually sees rather than the discarded original.
-    let opening: Vec<(String, String)> = {
-        let Ok(raw) = ledger_repository::list_logical_entries(&conn, story_id) else {
-            return;
-        };
-        ledger_reducer::active_visible_entries(&raw)
-            .into_iter()
-            .take(2)
-            .map(|e| (e.kind, e.content.unwrap_or_default()))
-            .collect()
-    };
+/// Read the first two active entries from the same connection as the turn,
+/// including the narration that has not been committed yet.
+pub fn opening_exchange(
+    conn: &rusqlite::Connection,
+    story_id: &str,
+) -> AppResult<Vec<(String, String)>> {
+    let raw = ledger_repository::list_logical_entries(conn, story_id)?;
+    Ok(ledger_reducer::active_visible_entries(&raw)
+        .into_iter()
+        .take(2)
+        .map(|e| (e.kind, e.content.unwrap_or_default()))
+        .collect())
+}
+
+/// A rename made before the generated title is written always wins.
+pub fn write_title(conn: &rusqlite::Connection, story_id: &str, title: &str) -> AppResult<bool> {
+    Ok(conn.execute(
+        "UPDATE stories SET title = ?1 WHERE id = ?2 AND title = ?3",
+        rusqlite::params![title, story_id, DEFAULT_STORY_TITLE],
+    )? > 0)
+}
+
+/// Best-effort title generation within the narration turn. The caller emits
+/// the update only after committing the transaction.
+pub async fn title_in_turn(app: &AppHandle, settings_pool: &Pool, turn: &TurnTx) -> Option<String> {
+    let story_id = turn.story_id();
+    let opening = turn
+        .with(|conn| {
+            let title: String = conn.query_row(
+                "SELECT title FROM stories WHERE id = ?1",
+                [story_id],
+                |row| row.get(0),
+            )?;
+            if title == DEFAULT_STORY_TITLE {
+                opening_exchange(conn, story_id)
+            } else {
+                Ok(Vec::new())
+            }
+        })
+        .await
+        .ok()?;
     if opening.is_empty() {
-        return;
+        return None;
     }
 
-    let Ok(config) = global_settings::resolve_text_model(app, pool) else {
-        // No text model configured yet (or no API key): keep the placeholder;
-        // a later exchange retries once the model is set up.
-        return;
-    };
+    let config = global_settings::resolve_text_model(app, settings_pool).ok()?;
 
     let opening_text: String = opening
         .iter()
@@ -91,40 +96,23 @@ pub fn maybe_auto_title(app: &AppHandle, pool: &Pool, story_id: &str) {
         .take(TITLE_INPUT_LIMIT)
         .collect();
 
-    let app = app.clone();
-    let pool = pool.clone();
-    let story_id = story_id.to_string();
-    tauri::async_runtime::spawn(async move {
-        let prompt = format!("The story opens:\n\n{opening_text}\n\nGive it a title.");
-        let Ok(generated) =
-            ai::prompt_typed::<GeneratedTitle>(&config, prompts::TITLE_SYSTEM_PROMPT, prompt).await
-        else {
-            return;
-        };
-        let Some(title) = sanitize_title(&generated.title) else {
-            return;
-        };
-        // Conditional write: if the user renamed the story while the model was
-        // thinking, their title stands and the generated one is dropped.
-        let updated = blocking({
-            let story_id = story_id.clone();
-            let title = title.clone();
-            move || {
-                let conn = pool.get()?;
-                Ok(conn.execute(
-                    "UPDATE stories SET title = ?1 WHERE id = ?2 AND title = ?3",
-                    rusqlite::params![title, story_id, DEFAULT_STORY_TITLE],
-                )?)
-            }
-        })
-        .await;
-        if matches!(updated, Ok(n) if n > 0) {
-            let _ = app.emit(
-                "story-title-updated",
-                StoryTitleUpdatedPayload { story_id, title },
-            );
+    let prompt = format!("The story opens:\n\n{opening_text}\n\nGive it a title.");
+    let generated = tokio::time::timeout(
+        Duration::from_secs(30),
+        ai::prompt_typed::<GeneratedTitle>(&config, prompts::TITLE_SYSTEM_PROMPT, prompt),
+    )
+    .await
+    .ok()?
+    .ok()?;
+    let title = sanitize_title(&generated.title)?;
+    match turn.with(|conn| write_title(conn, story_id, &title)).await {
+        Ok(true) => Some(title),
+        Ok(false) => None,
+        Err(error) => {
+            log::error!("auto-title write failed for story {story_id}: {error}");
+            None
         }
-    });
+    }
 }
 
 fn sanitize_title(raw: &str) -> Option<String> {
@@ -142,7 +130,124 @@ fn sanitize_title(raw: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::sanitize_title;
+    use super::{opening_exchange, sanitize_title, write_title};
+    use crate::features::ledger::{
+        model::kind,
+        repository as ledger_repository,
+        turn_tx::{TurnGate, TurnTx},
+    };
+    use crate::shared::db::test_pool;
+
+    #[tokio::test]
+    async fn title_rollback_leaves_placeholder_in_pool() {
+        let pool = test_pool();
+        let conn = pool.get().unwrap();
+        conn.execute(
+            "INSERT INTO stories (id, title, created_at, updated_at) VALUES ('s', 'New story', 'now', 'now')",
+            [],
+        )
+        .unwrap();
+        drop(conn);
+
+        let turn = TurnTx::begin(&pool, &TurnGate::default(), "s").unwrap();
+        assert!(turn
+            .with(|conn| write_title(conn, "s", "The Iron Crown"))
+            .await
+            .unwrap());
+        turn.rollback().await.unwrap();
+        let title: String = pool
+            .get()
+            .unwrap()
+            .query_row("SELECT title FROM stories WHERE id = 's'", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(title, "New story");
+    }
+
+    #[tokio::test]
+    async fn rename_wins_when_title_is_not_placeholder() {
+        let pool = test_pool();
+        let conn = pool.get().unwrap();
+        conn.execute(
+            "INSERT INTO stories (id, title, created_at, updated_at) VALUES ('s', 'New story', 'now', 'now')",
+            [],
+        )
+        .unwrap();
+        drop(conn);
+
+        let turn = TurnTx::begin(&pool, &TurnGate::default(), "s").unwrap();
+        turn.with(|conn| {
+            conn.execute("UPDATE stories SET title = 'My title' WHERE id = 's'", [])?;
+            assert!(!write_title(conn, "s", "Generated title")?);
+            Ok(())
+        })
+        .await
+        .unwrap();
+        turn.commit().await.unwrap();
+        let title: String = pool
+            .get()
+            .unwrap()
+            .query_row("SELECT title FROM stories WHERE id = 's'", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(title, "My title");
+    }
+
+    #[tokio::test]
+    async fn opening_exchange_sees_uncommitted_narration() {
+        let pool = test_pool();
+        let conn = pool.get().unwrap();
+        conn.execute(
+            "INSERT INTO stories (id, title, created_at, updated_at) VALUES ('s', 'New story', 'now', 'now')",
+            [],
+        )
+        .unwrap();
+        drop(conn);
+
+        let turn = TurnTx::begin(&pool, &TurnGate::default(), "s").unwrap();
+        let opening = turn
+            .with(|conn| {
+                ledger_repository::append_story_message(
+                    conn,
+                    "s",
+                    "player",
+                    "do",
+                    "Open the gate",
+                    None,
+                    None,
+                )?;
+                ledger_repository::append_story_message(
+                    conn,
+                    "s",
+                    "narrator",
+                    "generated",
+                    "A bell rings",
+                    None,
+                    None,
+                )?;
+                opening_exchange(conn, "s")
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            opening,
+            vec![
+                (
+                    kind::PLAYER_MESSAGE.to_string(),
+                    "Open the gate".to_string()
+                ),
+                (kind::NARRATION.to_string(), "A bell rings".to_string()),
+            ]
+        );
+        assert!(
+            ledger_repository::list_logical_entries(&pool.get().unwrap(), "s")
+                .unwrap()
+                .is_empty()
+        );
+        turn.rollback().await.unwrap();
+    }
 
     #[test]
     fn sanitize_title_strips_quotes_punctuation_and_whitespace() {

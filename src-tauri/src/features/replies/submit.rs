@@ -20,6 +20,12 @@ use crate::shared::error::{AppError, AppResult};
 use super::model::{NarrationDonePayload, SubmitTurnResult};
 use narrator::{transcript::load_transcript, Candidate, NarratorInputs, NarratorPurpose};
 
+#[derive(Clone, serde::Serialize)]
+struct StoryTitleUpdatedPayload {
+    story_id: String,
+    title: String,
+}
+
 fn emit_image_results(
     app: &AppHandle,
     entry_id: &str,
@@ -221,7 +227,7 @@ async fn complete_turn(
         source_action_id: None,
         turn_id: turn_id.to_string(),
     };
-    let (images, _title) = tokio::join!(
+    let (images, title) = tokio::join!(
         async {
             if image_requests.is_empty() {
                 Vec::new()
@@ -229,12 +235,20 @@ async fn complete_turn(
                 images::generate_in_turn(app, pool, turn, &target, image_requests).await
             }
         },
-        async { None::<String> },
+        stories::title_in_turn(app, pool, turn),
     );
     turn.commit().await?;
     let _ = app.emit("narration-done", NarrationDonePayload { stream_id, entry });
     emit_image_results(app, &target.entry_id, images);
-    stories::maybe_auto_title(app, pool, turn.story_id());
+    if let Some(title) = title {
+        let _ = app.emit(
+            "story-title-updated",
+            StoryTitleUpdatedPayload {
+                story_id: turn.story_id().to_string(),
+                title,
+            },
+        );
+    }
     Ok(())
 }
 
