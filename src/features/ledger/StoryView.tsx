@@ -113,8 +113,7 @@ export function StoryView() {
             const pinHere = isStreamingReplace ? entry.id === streaming!.targetEntryId : isLastEntry && !isStreamingAppend;
             const activity = activityFor(entry, isLastEntry);
             const hiddenTrailingAction = isLastEntry
-               && actualLastEntry?.kind === "player_message"
-               && ledgerInputMode(actualLastEntry) !== "see"
+              && actualLastEntry?.kind === "player_message"
               && modeDefinition(ledgerInputMode(actualLastEntry) as ActionMode).display === "hidden"
               ? actualLastEntry
               : undefined;
@@ -128,7 +127,6 @@ export function StoryView() {
                   storyId={activeStoryId!}
                   isLast={isLastEntry}
                   retryEntryId={retryEntryId}
-                  canRetry={!(isLastEntry && actualLastEntry?.kind === "player_message" && ledgerInputMode(actualLastEntry) === "see")}
                   turnFailed={isLastEntry && !!retryTurnId && turns?.some((turn) => turn.id === retryTurnId && turn.status === "failed")}
                   images={imagesByEntry?.[entry.id]}
                   rolls={rollsByEntry?.[entry.id]}
