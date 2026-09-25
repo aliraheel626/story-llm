@@ -141,10 +141,10 @@ test("rapid independent toggles remain isolated by story and failed saves roll b
 test("replacement keeps original through streaming and failure, then clears old caches on success", async () => {
   const storyId = store.getState().activeStoryId;
   const original = { id: "original", story_id: storyId, kind: "narration", payload: { input_mode: "generated" }, content: "Original", turn_id: "turn-original" };
-  const replacement = { ...original, id: "replacement", content: "Replacement" };
+  const replacement = { ...original, id: "replacement", content: "Replacement", turn_id: "turn-replacement" };
   entries.set(storyId, [original]);
   hiddenEntries.set(storyId, [rollEvent("old-roll", original.id, { chance_percent: 50, roll: 90, needed: 50, outcome: "success", seed: 1, reason: "Old roll" })]);
-  images.set(storyId, [{ id: "old-image", entry_id: original.id, path: "old.png" }]);
+  images.set(storyId, [{ id: "old-image", entry_id: original.id }]);
   await Promise.all([store.getState().loadLedger(storyId), store.getState().loadImagesForStory(storyId)]);
   await store.getState().retryNarration(storyId, original.id);
   let stream = store.getState().bundles[storyId].streaming.streamId;
@@ -167,6 +167,8 @@ test("replacement keeps original through streaming and failure, then clears old 
   assert.equal(groupRollsByEntry(store.getState().bundles[storyId].hidden)[original.id], undefined);
   assert.doesNotMatch(renderedReply(storyId), /Old roll/);
   await store.getState().loadLedger(storyId);
+  assert.deepEqual(store.getState().bundles[storyId].turns, [{ id: "turn-replacement", status: "complete" }]);
+  assert.equal(store.getState().bundles[storyId].entries.some((entry) => entry.turn_id === "turn-original"), false);
   assert.equal(groupRollsByEntry(store.getState().bundles[storyId].hidden)[replacement.id][0].id, "new-roll");
   const html = renderedReply(storyId);
   assert.match(html, /New roll/);
