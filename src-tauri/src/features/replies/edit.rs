@@ -26,18 +26,6 @@ pub(super) fn edit_ledger_entry(
     gate.check_idle(&story_id)?;
     with_transaction(pool, |tx| {
         let target = ledger_repository::get_entry(tx, &entry_id)?;
-        if let Some(turn_id) = &target.turn_id {
-            let pending: bool = tx.query_row(
-                "SELECT status = 'pending' FROM turns WHERE id = ?1",
-                [turn_id],
-                |row| row.get(0),
-            )?;
-            if pending {
-                return Err(AppError::Invalid(
-                    "cannot edit an entry while its turn is generating".into(),
-                ));
-            }
-        }
         images::detach_from_entry(tx, &entry_id)?;
         ledger_repository::append_entry(
             tx,

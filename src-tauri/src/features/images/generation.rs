@@ -17,7 +17,6 @@ pub(crate) struct ImageTarget {
     pub expected_content: String,
     pub source_action_id: Option<String>,
     pub turn_id: String,
-    pub attempt: i64,
 }
 
 /// Composes the final image prompt: style prefix + the scene description, plus
@@ -127,15 +126,16 @@ fn persist_image_record(
     generated: &openrouter::GeneratedImage,
 ) -> AppResult<()> {
     with_transaction(pool, |tx| {
-        let current_attempt = tx
+        let turn_exists = tx
             .query_row(
-                "SELECT attempt FROM turns WHERE id = ?1",
+                "SELECT 1 FROM turns WHERE id = ?1",
                 [&target.turn_id],
                 |row| row.get::<_, i64>(0),
             )
-            .optional()?;
-        if current_attempt != Some(target.attempt) {
-            return Err(AppError::Other(
+            .optional()?
+            .is_some();
+        if !turn_exists {
+            return Err(AppError::Invalid(
                 "the turn was regenerated while its image was being generated".into(),
             ));
         }
@@ -170,16 +170,8 @@ fn persist_image_record(
     })
 }
 
-fn mark_source_action_image_failed(pool: &Pool, target: &ImageTarget) -> AppResult<()> {
-    if target.source_action_id.is_some() {
-        let conn = pool.get()?;
-        crate::features::ledger::turns::mark_image_failed(&conn, &target.turn_id, target.attempt)?;
-    }
-    Ok(())
-}
-
 /// Starts the slow image work requested by `submit_turn`'s narrator after the
-/// passage and its staged entity changes have committed. Each request keeps
+/// passage and its entity changes have committed. Each request keeps
 /// the existing pending/generated/failed event contract used by the frontend.
 pub(crate) fn generate_from_narrator_requests(
     app: &AppHandle,
@@ -209,9 +201,6 @@ pub(crate) fn generate_from_narrator_requests(
                         "scene image generation failed for entry {}: {error}",
                         target.entry_id
                     );
-                    if let Err(status_error) = mark_source_action_image_failed(&pool, &target) {
-                        log::error!("failed to mark image turn failed: {status_error}");
-                    }
                     let _ = app.emit("scene-image-failed", &target.entry_id);
                 }
             }
@@ -234,64 +223,14 @@ mod tests {
         )
         .unwrap();
         let turn_id = turns::create_turn(&conn, "s").unwrap();
-        turns::set_status(&conn, &turn_id, turns::COMPLETE).unwrap();
         drop(conn);
         (pool, turn_id)
     }
 
-    fn see_target(turn_id: &str, attempt: i64) -> ImageTarget {
-        ImageTarget {
-            entry_id: "scene".into(),
-            expected_content: "Scene".into(),
-            source_action_id: Some("see-action".into()),
-            turn_id: turn_id.into(),
-            attempt,
-        }
-    }
-
     #[test]
-    fn stale_see_failure_leaves_the_pending_retry_pending() {
-        let (pool, turn_id) = turn_fixture();
-        assert_eq!(
-            turns::begin_attempt(&pool.get().unwrap(), &turn_id).unwrap(),
-            1
-        );
-
-        mark_source_action_image_failed(&pool, &see_target(&turn_id, 0)).unwrap();
-
-        let turn = turns::last_turn(&pool.get().unwrap(), "s")
-            .unwrap()
-            .unwrap();
-        assert_eq!(turn.status, turns::PENDING);
-        assert_eq!(turn.attempt, 1);
-    }
-
-    #[test]
-    fn current_see_failure_marks_the_completed_turn_failed() {
-        let (pool, turn_id) = turn_fixture();
-
-        mark_source_action_image_failed(&pool, &see_target(&turn_id, 0)).unwrap();
-
-        assert_eq!(
-            turns::last_turn(&pool.get().unwrap(), "s")
-                .unwrap()
-                .unwrap()
-                .status,
-            turns::FAILED
-        );
-    }
-
-    #[test]
-    fn stale_success_writes_no_asset_or_event() {
-        let pool = crate::shared::db::test_pool();
+    fn removed_turn_writes_no_asset_or_event() {
+        let (pool, prior_turn_id) = turn_fixture();
         let conn = pool.get().unwrap();
-        conn.execute(
-            "INSERT INTO stories (id, title, created_at, updated_at, settings_json)
-             VALUES ('s', 'Story', 'now', 'now', '{}')",
-            [],
-        )
-        .unwrap();
-        let turn_id = turns::create_turn(&conn, "s").unwrap();
         let entry = ledger_repository::append_story_message(
             &conn,
             "s",
@@ -299,18 +238,18 @@ mod tests {
             "generated",
             "A moonlit harbor",
             None,
-            Some(&turn_id),
+            Some(&prior_turn_id),
         )
         .unwrap();
-        turns::set_status(&conn, &turn_id, turns::COMPLETE).unwrap();
+        let turn_id = turns::create_turn(&conn, "s").unwrap();
         let stale_target = ImageTarget {
             entry_id: entry.id.clone(),
             expected_content: "A moonlit harbor".into(),
             source_action_id: None,
             turn_id: turn_id.clone(),
-            attempt: 0,
         };
-        assert_eq!(turns::begin_attempt(&conn, &turn_id).unwrap(), 1);
+        conn.execute("DELETE FROM turns WHERE id = ?1", [&turn_id])
+            .unwrap();
         drop(conn);
         let image = StoryImage {
             id: "stale-image".into(),
@@ -319,12 +258,17 @@ mod tests {
             created_at: "now".into(),
         };
 
-        let generated = openrouter::GeneratedImage { bytes: vec![1, 2, 3], media_type: "image/png".into() };
-        let error = persist_image_record(&pool, &stale_target, "moonlit harbor", &image, &generated).unwrap_err();
+        let generated = openrouter::GeneratedImage {
+            bytes: vec![1, 2, 3],
+            media_type: "image/png".into(),
+        };
+        let error =
+            persist_image_record(&pool, &stale_target, "moonlit harbor", &image, &generated)
+                .unwrap_err();
 
         assert!(matches!(
             error,
-            AppError::Other(message)
+            AppError::Invalid(message)
                 if message == "the turn was regenerated while its image was being generated"
         ));
         let conn = pool.get().unwrap();
@@ -351,8 +295,15 @@ mod tests {
         let (pool, turn_id) = turn_fixture();
         let conn = pool.get().unwrap();
         let entry = ledger_repository::append_story_message(
-            &conn, "s", "narrator", "generated", "Scene", None, Some(&turn_id),
-        ).unwrap();
+            &conn,
+            "s",
+            "narrator",
+            "generated",
+            "Scene",
+            None,
+            Some(&turn_id),
+        )
+        .unwrap();
         drop(conn);
         let image = StoryImage {
             id: "new-image".into(),
@@ -361,7 +312,8 @@ mod tests {
             created_at: "now".into(),
         };
         let generated = openrouter::GeneratedImage {
-            bytes: vec![1, 2, 3], media_type: "image/webp".into(),
+            bytes: vec![1, 2, 3],
+            media_type: "image/webp".into(),
         };
         persist_image_record(
             &pool,
@@ -369,20 +321,92 @@ mod tests {
                 entry_id: entry.id,
                 expected_content: "Scene".into(),
                 source_action_id: None,
-                turn_id,
-                attempt: 0,
+                turn_id: turn_id.clone(),
             },
-            "the scene", &image, &generated,
-        ).unwrap();
+            "the scene",
+            &image,
+            &generated,
+        )
+        .unwrap();
         let conn = pool.get().unwrap();
-        let (path, media_type, bytes): (String, String, Vec<u8>) = conn.query_row(
-            "SELECT image_assets.path, image_blobs.media_type, image_blobs.bytes
+        let (path, media_type, bytes): (String, String, Vec<u8>) = conn
+            .query_row(
+                "SELECT image_assets.path, image_blobs.media_type, image_blobs.bytes
              FROM image_assets JOIN image_blobs ON image_blobs.asset_id = image_assets.id
              WHERE image_assets.id = 'new-image'",
-            [], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-        ).unwrap();
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
         assert_eq!(path, "");
         assert_eq!(media_type, "image/webp");
         assert_eq!(bytes, generated.bytes);
+        let (event_turn_id, asset_id): (String, String) = conn
+            .query_row(
+                "SELECT turn_id, json_extract(payload_json, '$.asset_id')
+             FROM ledger_entries WHERE kind = ?1",
+                [ledger_kind::IMAGE_GENERATED],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(event_turn_id, turn_id);
+        assert_eq!(asset_id, image.id);
+    }
+
+    #[test]
+    fn event_failure_rolls_back_asset_and_blob_without_failing_turn() {
+        let (pool, turn_id) = turn_fixture();
+        let conn = pool.get().unwrap();
+        let entry = ledger_repository::append_story_message(
+            &conn,
+            "s",
+            "narrator",
+            "generated",
+            "Scene",
+            None,
+            Some(&turn_id),
+        )
+        .unwrap();
+        drop(conn);
+        let image = StoryImage {
+            id: "rolled-back-image".into(),
+            entry_id: entry.id.clone(),
+            prompt: "the scene".into(),
+            created_at: "now".into(),
+        };
+        let target = ImageTarget {
+            entry_id: entry.id,
+            expected_content: "Scene".into(),
+            source_action_id: Some("missing-action".into()),
+            turn_id,
+        };
+        let generated = openrouter::GeneratedImage {
+            bytes: vec![1, 2, 3],
+            media_type: "image/png".into(),
+        };
+
+        assert!(persist_image_record(&pool, &target, "the scene", &image, &generated).is_err());
+        let conn = pool.get().unwrap();
+        for table in ["image_assets", "image_blobs"] {
+            let count: i64 = conn
+                .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                    row.get(0)
+                })
+                .unwrap();
+            assert_eq!(count, 0, "{table} must roll back with the image event");
+        }
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM ledger_entries WHERE kind = ?1",
+                [ledger_kind::IMAGE_GENERATED],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+            0
+        );
+        assert_eq!(
+            turns::last_turn(&conn, "s").unwrap().unwrap().status,
+            turns::COMPLETE
+        );
     }
 }

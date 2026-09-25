@@ -68,7 +68,7 @@ async fn prepare_and_spawn(
                     "there is no narrated scene to illustrate".into(),
                 ));
             }
-            let turn_id = turns::create_complete_turn(conn, &story_id)?;
+            let turn_id = turns::create_turn(conn, &story_id)?;
             let action = ledger_repository::append_story_message(
                 conn,
                 &story_id,
@@ -187,7 +187,6 @@ async fn complete_turn(
                 expected_content: target_content,
                 source_action_id: Some(action.id.clone()),
                 turn_id: turn_id.to_string(),
-                attempt: 0,
             },
             vec![request],
         );
@@ -220,7 +219,6 @@ async fn complete_turn(
                 expected_content: visible,
                 source_action_id: None,
                 turn_id: turn_id.to_string(),
-                attempt: 0,
             },
             image_requests,
         );

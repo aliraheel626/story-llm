@@ -8,7 +8,7 @@ use crate::features::{
     },
 };
 use crate::shared::db::{with_transaction, Pool};
-use crate::shared::error::{AppError, AppResult};
+use crate::shared::error::AppResult;
 use chrono::Utc;
 
 pub(super) fn entries_for_turn(
@@ -96,11 +96,6 @@ fn erase_last_exchange_in_tx(
     let Some(last_turn) = turns::last_turn(tx, story_id)? else {
         return Ok(vec![]);
     };
-    if last_turn.status == turns::PENDING {
-        return Err(AppError::Invalid(
-            "cannot erase a turn while it is generating".into(),
-        ));
-    }
     remove_turn(tx, story_id, &last_turn.id)
 }
 
@@ -154,11 +149,9 @@ mod tests {
                 Some(&turn_id),
             )
             .unwrap();
-            turns::set_status(&conn, &turn_id, turns::COMPLETE).unwrap();
             drop(conn);
 
-            let removed =
-                with_transaction(&pool, |tx| erase_last_exchange_in_tx(tx, "s")).unwrap();
+            let removed = with_transaction(&pool, |tx| erase_last_exchange_in_tx(tx, "s")).unwrap();
             assert_eq!(removed, vec![action.id, response.id], "mode {mode}");
         }
     }
@@ -185,7 +178,6 @@ mod tests {
             Some(&narration_turn),
         )
         .unwrap();
-        turns::set_status(&conn, &narration_turn, turns::COMPLETE).unwrap();
         let see_turn = turns::create_turn(&conn, "s").unwrap();
         let see = append_entry(
             &conn,
@@ -215,11 +207,9 @@ mod tests {
             Some(&see_turn),
         )
         .unwrap();
-        turns::set_status(&conn, &see_turn, turns::COMPLETE).unwrap();
         drop(conn);
 
-        let removed =
-            with_transaction(&pool, |tx| erase_last_exchange_in_tx(tx, "s")).unwrap();
+        let removed = with_transaction(&pool, |tx| erase_last_exchange_in_tx(tx, "s")).unwrap();
         assert_eq!(removed, vec![see.id]);
         let conn = pool.get().unwrap();
         assert_eq!(
@@ -270,7 +260,6 @@ mod tests {
             Some(&baseline_turn),
         )
         .unwrap();
-        turns::set_status(&conn, &baseline_turn, turns::COMPLETE).unwrap();
         crate::features::entities::create_entity_with_id_sync(
             &conn,
             "mira",
@@ -455,7 +444,6 @@ mod tests {
             None,
         )
         .unwrap();
-        turns::set_status(&conn, &turn_id, turns::COMPLETE).unwrap();
         conn.execute(
             "INSERT INTO image_assets (id, entry_id, path, prompt, created_at)
              VALUES ('image', ?1, 'C:/tmp/image.png', 'prompt', 'now')",
@@ -464,8 +452,7 @@ mod tests {
         .unwrap();
         drop(conn);
 
-        let removed =
-            with_transaction(&pool, |tx| erase_last_exchange_in_tx(tx, "s")).unwrap();
+        let removed = with_transaction(&pool, |tx| erase_last_exchange_in_tx(tx, "s")).unwrap();
         assert_eq!(removed, vec![player.id, narration.id]);
         let conn = pool.get().unwrap();
         assert_eq!(
@@ -599,7 +586,6 @@ mod tests {
             Some(&turn_id),
         )
         .unwrap();
-        turns::set_status(&conn, &turn_id, turns::COMPLETE).unwrap();
         let health_id: String = conn
             .query_row(
                 "SELECT id FROM attribute_registry WHERE canonical_name = 'Health'",
@@ -611,8 +597,7 @@ mod tests {
             .unwrap();
         drop(conn);
 
-        let removed =
-            with_transaction(&pool, |tx| erase_last_exchange_in_tx(tx, "s")).unwrap();
+        let removed = with_transaction(&pool, |tx| erase_last_exchange_in_tx(tx, "s")).unwrap();
         assert_eq!(removed, vec![action.id, narration.id]);
 
         let conn = pool.get().unwrap();
@@ -639,7 +624,7 @@ mod tests {
     }
 
     #[test]
-    fn erase_refuses_a_pending_turn_without_deleting_entries() {
+    fn erase_removes_legacy_failed_turn_and_entries() {
         let pool = crate::shared::db::test_pool();
         let conn = pool.get().unwrap();
         conn.execute(
@@ -660,14 +645,15 @@ mod tests {
             Some(&turn_id),
         )
         .unwrap();
+        conn.execute(
+            "UPDATE turns SET status = 'failed' WHERE id = ?1",
+            [&turn_id],
+        )
+        .unwrap();
         drop(conn);
 
-        let error = with_transaction(&pool, |tx| erase_last_exchange_in_tx(tx, "s")).unwrap_err();
-        assert!(matches!(
-            error,
-            AppError::Invalid(message)
-                if message == "cannot erase a turn while it is generating"
-        ));
-        assert!(ledger_repository::get_entry(&pool.get().unwrap(), &action.id).is_ok());
+        let removed = with_transaction(&pool, |tx| erase_last_exchange_in_tx(tx, "s")).unwrap();
+        assert_eq!(removed, vec![action.id.clone()]);
+        assert!(ledger_repository::get_entry(&pool.get().unwrap(), &action.id).is_err());
     }
 }

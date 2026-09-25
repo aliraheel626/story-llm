@@ -1,6 +1,5 @@
-use std::{future::Future, panic::AssertUnwindSafe};
+use std::future::Future;
 
-use futures::FutureExt;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 use uuid::Uuid;
@@ -49,13 +48,6 @@ fn emit_error(app: &AppHandle, stream_id: &str, error: &AppError) {
     );
 }
 
-async fn guarded<T>(fut: impl Future<Output = AppResult<T>>) -> AppResult<T> {
-    AssertUnwindSafe(fut)
-        .catch_unwind()
-        .await
-        .map_err(|_| AppError::Other("narration task panicked".into()))?
-}
-
 /// Streams one candidate without persisting a reply or emitting narration-done.
 pub fn spawn<F, Fut>(prepared: Prepared, on_candidate: F) -> String
 where
@@ -79,7 +71,7 @@ where
             reasoning_effort,
             image_requests,
         } = prepared;
-        let result = guarded(async {
+        let result = async {
             let preamble = prompts::narrator_system_prompt();
             let mut history = compaction::prepare_history(
                 &turn,
@@ -198,7 +190,7 @@ where
                 thoughts: (!thoughts.is_empty()).then(|| thoughts.to_string()),
                 image_requests: std::mem::take(&mut *image_requests.lock().await),
             })
-        })
+        }
         .await;
 
         if let Err(error) = on_candidate(app.clone(), sid.clone(), result).await {
@@ -206,19 +198,4 @@ where
         }
     });
     stream_id
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn guarded_maps_panics_to_narration_error() {
-        let result: AppResult<()> = guarded(async { panic!("boom") }).await;
-
-        assert!(matches!(
-            result,
-            Err(AppError::Other(message)) if message == "narration task panicked"
-        ));
-    }
 }

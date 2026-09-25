@@ -41,7 +41,9 @@ pub fn database_path(pool: &Pool) -> AppResult<PathBuf> {
 
 pub fn open_connection(pool: &Pool) -> AppResult<rusqlite::Connection> {
     let conn = rusqlite::Connection::open(database_path(pool)?)?;
-    conn.execute_batch("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 300000;")?;
+    conn.execute_batch(
+        "PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 300000;",
+    )?;
     Ok(conn)
 }
 
@@ -64,7 +66,9 @@ pub fn init_pool(app_data_dir: &Path) -> AppResult<Pool> {
     }
     let manager = SqliteConnectionManager::file(db_path).with_init(|conn| {
         // Other writes wait for the generating turn's SQLite write lock.
-        conn.execute_batch("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 300000;")?;
+        conn.execute_batch(
+            "PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 300000;",
+        )?;
         Ok(())
     });
     let pool = r2d2::Pool::new(manager).map_err(AppError::Pool)?;
@@ -332,9 +336,6 @@ fn run_migrations(conn: &mut PooledConn) -> AppResult<()> {
             created_at TEXT NOT NULL,
             UNIQUE(story_id, seq)
         );
-        CREATE UNIQUE INDEX IF NOT EXISTS idx_turns_one_pending
-            ON turns(story_id) WHERE status = 'pending';
-
         CREATE TABLE IF NOT EXISTS ledger_entries (
             id TEXT PRIMARY KEY,
             story_id TEXT NOT NULL REFERENCES stories(id) ON DELETE CASCADE,
@@ -429,10 +430,7 @@ fn run_migrations(conn: &mut PooledConn) -> AppResult<()> {
     migrate_author_notes(conn)?;
     migrate_narrator_tools(conn)?;
     migrate_turns_v1(conn)?;
-    conn.execute(
-        "UPDATE turns SET status = 'failed' WHERE status = 'pending'",
-        [],
-    )?;
+    conn.execute_batch("DROP INDEX IF EXISTS idx_turns_one_pending;")?;
     let auto_vacuum: i64 = conn.query_row("PRAGMA auto_vacuum", [], |row| row.get(0))?;
     if auto_vacuum != 2 {
         conn.execute_batch("PRAGMA auto_vacuum = INCREMENTAL; VACUUM;")?;
@@ -457,7 +455,9 @@ fn migrate_image_blobs_v1(conn: &mut rusqlite::Connection) -> AppResult<()> {
             "SELECT id, path FROM image_assets
              WHERE NOT EXISTS (SELECT 1 FROM image_blobs WHERE asset_id = image_assets.id)",
         )?;
-        let rows = stmt.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))?;
+        let rows = stmt.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
         rows.collect::<Result<Vec<_>, _>>()?
     };
     for (id, path) in assets {
@@ -1173,7 +1173,7 @@ fn seed_attribute_registry(conn: &PooledConn) -> AppResult<()> {
 
 /// A real pool against the app's actual (temp-dir-backed) schema, migrations,
 /// and seeded attribute registry — used by tests that need more than a
-    /// hand-written `CREATE TABLE` subset (e.g. narrator-tool fixtures, which
+/// hand-written `CREATE TABLE` subset (e.g. narrator-tool fixtures, which
 /// touches five-plus tables). Callers are responsible for creating their own
 /// story rows.
 #[cfg(test)]
@@ -1190,7 +1190,9 @@ mod tests {
     fn image_migration_imports_files_once_and_keeps_backups() {
         let pool = test_pool();
         let mut conn = pool.get().unwrap();
-        let db_path: String = conn.query_row("PRAGMA database_list", [], |row| row.get(2)).unwrap();
+        let db_path: String = conn
+            .query_row("PRAGMA database_list", [], |row| row.get(2))
+            .unwrap();
         let image_path = Path::new(&db_path).with_extension("webp");
         fs::write(&image_path, b"original image").unwrap();
         conn.execute_batch(
@@ -1208,15 +1210,25 @@ mod tests {
         fs::write(&image_path, b"changed image").unwrap();
         migrate_image_blobs_v1(&mut conn).unwrap();
 
-        let (media_type, bytes): (String, Vec<u8>) = conn.query_row(
-            "SELECT media_type, bytes FROM image_blobs WHERE asset_id = 'asset'",
-            [],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        ).unwrap();
+        let (media_type, bytes): (String, Vec<u8>) = conn
+            .query_row(
+                "SELECT media_type, bytes FROM image_blobs WHERE asset_id = 'asset'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
         assert_eq!(media_type, "image/webp");
         assert_eq!(bytes, b"original image");
         assert!(image_path.exists());
-        assert_eq!(conn.query_row("SELECT value FROM settings WHERE key = 'migration_image_blobs_v1'", [], |row| row.get::<_, String>(0)).unwrap(), "1");
+        assert_eq!(
+            conn.query_row(
+                "SELECT value FROM settings WHERE key = 'migration_image_blobs_v1'",
+                [],
+                |row| row.get::<_, String>(0)
+            )
+            .unwrap(),
+            "1"
+        );
     }
 
     fn legacy_app_db(parent: &Path) -> rusqlite::Connection {
@@ -1876,15 +1888,14 @@ mod tests {
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
         assert!(ledger_columns.contains(&"turn_id".to_string()));
-        for index in ["idx_turns_one_pending", "idx_ledger_turn"] {
-            assert!(conn
-                .query_row(
-                    "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?1)",
-                    [index],
-                    |row| row.get::<_, bool>(0),
-                )
-                .unwrap());
-        }
+        assert!(conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'idx_ledger_turn')",
+                [],
+                |row| row.get::<_, bool>(0),
+            )
+            .unwrap());
+        assert!(!conn.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'idx_turns_one_pending')", [], |row| row.get::<_, bool>(0)).unwrap());
         assert!(!exists("story_cards"));
         assert!(!exists("passages"));
         drop(conn);
@@ -2653,7 +2664,7 @@ mod tests {
     }
 
     #[test]
-    fn startup_recovers_pending_turns_as_failed() {
+    fn startup_preserves_legacy_pending_rows_and_drops_old_index() {
         let dir = std::env::temp_dir().join(format!("story-llm-recovery-{}", Uuid::new_v4()));
         let pool = init_pool(&dir).unwrap();
         let conn = pool.get().unwrap();
@@ -2663,7 +2674,12 @@ mod tests {
             [],
         )
         .unwrap();
-        let turn_id = crate::features::ledger::turns::create_turn(&conn, "s").unwrap();
+        conn.execute_batch("CREATE UNIQUE INDEX idx_turns_one_pending ON turns(story_id) WHERE status = 'pending';").unwrap();
+        let turn_id = Uuid::new_v4().to_string();
+        conn.execute(
+            "INSERT INTO turns (id, story_id, seq, status, created_at) VALUES (?1, 's', 0, 'pending', 'now')",
+            [&turn_id],
+        ).unwrap();
         drop(conn);
         drop(pool);
 
@@ -2675,7 +2691,8 @@ mod tests {
                 row.get(0)
             })
             .unwrap();
-        assert_eq!(status, "failed");
+        assert_eq!(status, "pending");
+        assert!(!pool.get().unwrap().query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'idx_turns_one_pending')", [], |row| row.get::<_, bool>(0)).unwrap());
         drop(pool);
         let _ = std::fs::remove_dir_all(dir);
     }

@@ -30,10 +30,6 @@ async fn prepare_retry(turn: &TurnTx, entry_id: &str) -> AppResult<(String, Stri
                 "only the latest turn can be retried".into(),
             ));
         }
-        if old_turn.status == turns::PENDING {
-            return Err(AppError::Invalid("a turn is already generating".into()));
-        }
-
         let player_id = erase::entries_for_turn(conn, &old_turn.id)?
             .into_iter()
             .find(|entry| entry.kind == ledger_kind::PLAYER_MESSAGE)
@@ -148,7 +144,6 @@ mod tests {
             Some(&turn_id),
         )
         .unwrap();
-        turns::set_status(&conn, &turn_id, turns::COMPLETE).unwrap();
         drop(conn);
         (pool, action.id, reply.id, turn_id)
     }
@@ -302,7 +297,6 @@ mod tests {
                 None,
                 Some(&new_turn),
             )?;
-            turns::set_status(conn, &new_turn, turns::COMPLETE)?;
             Ok(())
         })
         .await
@@ -348,7 +342,12 @@ mod tests {
             Some(&turn_id),
         )
         .unwrap();
-        turns::set_status(&conn, &turn_id, turns::FAILED).unwrap();
+        // A pre-migration failed turn remains retryable.
+        conn.execute(
+            "UPDATE turns SET status = 'failed' WHERE id = ?1",
+            [&turn_id],
+        )
+        .unwrap();
         drop(conn);
         let gate = TurnGate::default();
         let turn = TurnTx::begin(&pool, &gate, "s").unwrap();
@@ -362,7 +361,7 @@ mod tests {
                 .unwrap()
                 .unwrap()
                 .status,
-            turns::FAILED
+            "failed"
         );
     }
 
@@ -382,7 +381,6 @@ mod tests {
             Some(&scene_turn),
         )
         .unwrap();
-        turns::set_status(&conn, &scene_turn, turns::COMPLETE).unwrap();
         let see_turn = turns::create_turn(&conn, "s").unwrap();
         let see = ledger_repository::append_story_message(
             &conn,
@@ -394,7 +392,6 @@ mod tests {
             Some(&see_turn),
         )
         .unwrap();
-        turns::set_status(&conn, &see_turn, turns::COMPLETE).unwrap();
         drop(conn);
 
         let gate = TurnGate::default();
@@ -415,8 +412,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn invalid_entry_latest_turn_and_pending_turn_do_not_erase() {
-        let (pool, action, reply, turn_id) = retry_fixture();
+    async fn invalid_entry_and_non_latest_turn_do_not_erase() {
+        let (pool, _action, reply, _turn_id) = retry_fixture();
         let gate = TurnGate::default();
         let turn = TurnTx::begin(&pool, &gate, "different").unwrap();
         assert!(
@@ -425,8 +422,7 @@ mod tests {
         turn.rollback().await.unwrap();
         drop(turn);
 
-        let later = turns::create_turn(&pool.get().unwrap(), "s").unwrap();
-        turns::set_status(&pool.get().unwrap(), &later, turns::COMPLETE).unwrap();
+        turns::create_turn(&pool.get().unwrap(), "s").unwrap();
         let turn = TurnTx::begin(&pool, &gate, "s").unwrap();
         assert!(
             matches!(prepare_retry(&turn, &reply).await, Err(AppError::Invalid(message)) if message == "only the latest turn can be retried")
@@ -434,16 +430,6 @@ mod tests {
         turn.rollback().await.unwrap();
         drop(turn);
 
-        pool.get()
-            .unwrap()
-            .execute("DELETE FROM turns WHERE id = ?1", [&later])
-            .unwrap();
-        turns::set_status(&pool.get().unwrap(), &turn_id, turns::PENDING).unwrap();
-        let turn = TurnTx::begin(&pool, &gate, "s").unwrap();
-        assert!(
-            matches!(prepare_retry(&turn, &action).await, Err(AppError::Invalid(message)) if message == "a turn is already generating")
-        );
-        turn.rollback().await.unwrap();
         assert!(ledger_repository::get_entry(&pool.get().unwrap(), &reply).is_ok());
     }
 }
