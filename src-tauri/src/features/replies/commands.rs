@@ -53,7 +53,9 @@ pub async fn erase_last_exchange(
     gate: State<'_, TurnGate>,
     story_id: String,
 ) -> AppResult<Vec<String>> {
-    gate.check_idle(&story_id)?;
+    let ticket = gate.check_idle(&story_id)?;
     let pool = pool.inner().clone();
-    crate::shared::db::blocking(move || erase::erase_last_exchange(&pool, story_id)).await
+    let gate = gate.inner().clone();
+    crate::shared::db::blocking(move || erase::erase_last_exchange(&pool, &gate, ticket, &story_id))
+        .await
 }

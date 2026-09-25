@@ -4,6 +4,7 @@ use uuid::Uuid;
 
 use super::model::Story;
 use super::settings::{normalize_reasoning_effort, NarratorToolSettings};
+use crate::features::ledger::turn_tx::{TurnGate, TurnTicket};
 use crate::shared::db::{seed_player_entity, with_transaction, Pool};
 use crate::shared::error::{AppError, AppResult};
 
@@ -121,8 +122,14 @@ pub(super) fn rename_story(pool: &Pool, story_id: &str, title: &str) -> AppResul
     Ok(())
 }
 
-pub(super) fn delete_story(pool: &Pool, story_id: &str) -> AppResult<()> {
+pub(super) fn delete_story(
+    pool: &Pool,
+    gate: &TurnGate,
+    ticket: TurnTicket,
+    story_id: &str,
+) -> AppResult<()> {
     with_transaction(pool, |tx| {
+        gate.still_idle(&ticket)?;
         let deleted = tx.execute("DELETE FROM stories WHERE id = ?1", [story_id])?;
         if deleted == 0 {
             return Err(AppError::NotFound(format!("story {story_id} not found")));

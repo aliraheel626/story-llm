@@ -31,10 +31,12 @@ pub async fn create_entity(
     name: String,
     appearance_anchor: Option<String>,
 ) -> AppResult<Entity> {
-    gate.check_idle(&story_id)?;
+    let ticket = gate.check_idle(&story_id)?;
+    let gate = gate.inner().clone();
     let pool = pool.inner().clone();
     crate::shared::db::blocking(move || {
         with_transaction(&pool, |tx| {
+            gate.still_idle(&ticket)?;
             create_entity_sync(
                 tx,
                 &story_id,
@@ -58,10 +60,12 @@ pub async fn update_entity(
     name: String,
     appearance_anchor: Option<String>,
 ) -> AppResult<Entity> {
-    gate.check_idle(&story_id)?;
+    let ticket = gate.check_idle(&story_id)?;
+    let gate = gate.inner().clone();
     let pool = pool.inner().clone();
     crate::shared::db::blocking(move || {
         with_transaction(&pool, |tx| {
+            gate.still_idle(&ticket)?;
             update_entity_sync(
                 tx,
                 &story_id,
@@ -84,10 +88,14 @@ pub async fn delete_entity(
     story_id: String,
     entity_id: String,
 ) -> AppResult<()> {
-    gate.check_idle(&story_id)?;
+    let ticket = gate.check_idle(&story_id)?;
+    let gate = gate.inner().clone();
     let pool = pool.inner().clone();
     crate::shared::db::blocking(move || {
-        with_transaction(&pool, |tx| delete_entity_sync(tx, &story_id, &entity_id))
+        with_transaction(&pool, |tx| {
+            gate.still_idle(&ticket)?;
+            delete_entity_sync(tx, &story_id, &entity_id)
+        })
     })
     .await
 }
@@ -117,10 +125,12 @@ pub async fn set_entity_attribute(
     attribute_id: String,
     value: f64,
 ) -> AppResult<EntityAttributeValue> {
-    gate.check_idle(&story_id)?;
+    let ticket = gate.check_idle(&story_id)?;
+    let gate = gate.inner().clone();
     let pool = pool.inner().clone();
     crate::shared::db::blocking(move || {
         with_transaction(&pool, |tx| {
+            gate.still_idle(&ticket)?;
             set_entity_attribute_sync(tx, &story_id, &entity_id, &attribute_id, value)
         })
     })
@@ -135,10 +145,12 @@ pub async fn remove_entity_attribute(
     entity_id: String,
     attribute_id: String,
 ) -> AppResult<()> {
-    gate.check_idle(&story_id)?;
+    let ticket = gate.check_idle(&story_id)?;
+    let gate = gate.inner().clone();
     let pool = pool.inner().clone();
     crate::shared::db::blocking(move || {
         with_transaction(&pool, |tx| {
+            gate.still_idle(&ticket)?;
             remove_entity_attribute_sync(tx, &story_id, &entity_id, &attribute_id)
         })
     })

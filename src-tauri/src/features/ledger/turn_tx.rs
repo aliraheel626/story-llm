@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 
@@ -8,38 +9,64 @@ use crate::shared::error::{AppError, AppResult};
 
 #[derive(Clone, Default)]
 pub struct TurnGate {
-    current: Arc<StdMutex<Option<String>>>,
+    state: Arc<StdMutex<GateState>>,
+}
+
+#[derive(Default)]
+struct GateState {
+    current: Option<String>,
+    /// Number of turns started per story, used to invalidate queued writes.
+    started: HashMap<String, u64>,
+}
+
+#[derive(Clone)]
+pub struct TurnTicket {
+    story_id: String,
+    started: u64,
 }
 
 pub struct GateGuard {
-    current: Arc<StdMutex<Option<String>>>,
+    state: Arc<StdMutex<GateState>>,
 }
 
 impl TurnGate {
     pub fn acquire(&self, story_id: &str) -> AppResult<GateGuard> {
-        let mut current = self
-            .current
-            .lock()
-            .unwrap_or_else(|error| error.into_inner());
-        if let Some(active_story) = current.as_deref() {
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        if let Some(active_story) = state.current.as_deref() {
             return Err(AppError::Invalid(if active_story == story_id {
                 "a turn is already generating".into()
             } else {
                 "another story is generating".into()
             }));
         }
-        *current = Some(story_id.to_string());
+        state.current = Some(story_id.to_string());
+        *state.started.entry(story_id.to_string()).or_default() += 1;
         Ok(GateGuard {
-            current: Arc::clone(&self.current),
+            state: Arc::clone(&self.state),
         })
     }
 
-    pub fn check_idle(&self, story_id: &str) -> AppResult<()> {
-        let current = self
-            .current
-            .lock()
-            .unwrap_or_else(|error| error.into_inner());
-        if current.as_deref() == Some(story_id) {
+    pub fn check_idle(&self, story_id: &str) -> AppResult<TurnTicket> {
+        let state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        if state.current.as_deref() == Some(story_id) {
+            return Err(AppError::Invalid("a turn is already generating".into()));
+        }
+        Ok(TurnTicket {
+            story_id: story_id.to_string(),
+            started: state.started.get(story_id).copied().unwrap_or_default(),
+        })
+    }
+
+    pub fn still_idle(&self, ticket: &TurnTicket) -> AppResult<()> {
+        let state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        if state.current.as_deref() == Some(&ticket.story_id)
+            || state
+                .started
+                .get(&ticket.story_id)
+                .copied()
+                .unwrap_or_default()
+                != ticket.started
+        {
             return Err(AppError::Invalid("a turn is already generating".into()));
         }
         Ok(())
@@ -48,10 +75,10 @@ impl TurnGate {
 
 impl Drop for GateGuard {
     fn drop(&mut self) {
-        *self
-            .current
+        self.state
             .lock()
-            .unwrap_or_else(|error| error.into_inner()) = None;
+            .unwrap_or_else(|error| error.into_inner())
+            .current = None;
     }
 }
 
@@ -230,6 +257,29 @@ mod tests {
         let next = TurnTx::begin(&pool, &gate, "s").unwrap();
         next.rollback().await.unwrap();
         drop(retained);
+    }
+
+    #[tokio::test]
+    async fn same_story_turn_invalidates_idle_ticket_after_commit() {
+        let pool = crate::shared::db::test_pool();
+        let gate = TurnGate::default();
+        let ticket = gate.check_idle("s").unwrap();
+        let turn = TurnTx::begin(&pool, &gate, "s").unwrap();
+        turn.commit().await.unwrap();
+        assert!(matches!(
+            gate.still_idle(&ticket),
+            Err(AppError::Invalid(message)) if message == "a turn is already generating"
+        ));
+    }
+
+    #[tokio::test]
+    async fn other_story_turn_does_not_invalidate_idle_ticket() {
+        let pool = crate::shared::db::test_pool();
+        let gate = TurnGate::default();
+        let ticket = gate.check_idle("s").unwrap();
+        let turn = TurnTx::begin(&pool, &gate, "other").unwrap();
+        turn.commit().await.unwrap();
+        gate.still_idle(&ticket).unwrap();
     }
 
     #[tokio::test]

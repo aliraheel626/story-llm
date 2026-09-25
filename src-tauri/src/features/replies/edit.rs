@@ -23,8 +23,9 @@ pub(super) fn edit_ledger_entry(
     let conn = pool.get()?;
     let story_id = ledger_repository::get_entry(&conn, &entry_id)?.story_id;
     drop(conn);
-    gate.check_idle(&story_id)?;
+    let ticket = gate.check_idle(&story_id)?;
     with_transaction(pool, |tx| {
+        gate.still_idle(&ticket)?;
         let target = ledger_repository::get_entry(tx, &entry_id)?;
         images::detach_from_entry(tx, &entry_id)?;
         ledger_repository::append_entry(

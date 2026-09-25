@@ -4,7 +4,9 @@ use crate::features::{
     compaction, entities, images,
     ledger::{
         model::{kind as ledger_kind, LedgerEntry},
-        repository as ledger_repository, turns,
+        repository as ledger_repository,
+        turn_tx::{TurnGate, TurnTicket},
+        turns,
     },
 };
 use crate::shared::db::{with_transaction, Pool};
@@ -102,15 +104,71 @@ fn erase_last_exchange_in_tx(
 /// "Erase": removes the most recent exchange — the latest narration plus the
 /// player message (or story draft) that triggered it. Returns the IDs removed
 /// so the frontend can splice locally.
-pub(super) fn erase_last_exchange(pool: &Pool, story_id: String) -> AppResult<Vec<String>> {
-    with_transaction(pool, |tx| erase_last_exchange_in_tx(tx, &story_id))
+pub(super) fn erase_last_exchange(
+    pool: &Pool,
+    gate: &TurnGate,
+    ticket: TurnTicket,
+    story_id: &str,
+) -> AppResult<Vec<String>> {
+    with_transaction(pool, |tx| {
+        gate.still_idle(&ticket)?;
+        erase_last_exchange_in_tx(tx, story_id)
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::features::ledger::repository::append_entry;
+    use crate::features::ledger::turn_tx::TurnTx;
     use serde_json::json;
+
+    #[tokio::test]
+    async fn erase_rejects_a_turn_started_since_the_idle_check() {
+        let pool = crate::shared::db::test_pool();
+        let gate = TurnGate::default();
+        pool.get().unwrap().execute(
+            "INSERT INTO stories (id, title, created_at, updated_at) VALUES ('s', 'story', 'now', 'now')",
+            [],
+        ).unwrap();
+        let ticket = gate.check_idle("s").unwrap();
+        let turn = TurnTx::begin(&pool, &gate, "s").unwrap();
+        let entry_id = turn
+            .with(|conn| {
+                let turn_id = turns::create_turn(conn, "s")?;
+                let entry = append_entry(
+                    conn,
+                    "s",
+                    ledger_kind::PLAYER_MESSAGE,
+                    "visible",
+                    Some("action"),
+                    &json!({"input_mode":"do"}),
+                    None,
+                    Some(&turn_id),
+                )?;
+                append_entry(
+                    conn,
+                    "s",
+                    ledger_kind::NARRATION,
+                    "visible",
+                    Some("new response"),
+                    &json!({"input_mode":"generated"}),
+                    None,
+                    Some(&turn_id),
+                )?;
+                Ok(entry.id)
+            })
+            .await
+            .unwrap();
+        turn.commit().await.unwrap();
+
+        assert!(matches!(
+            erase_last_exchange(&pool, &gate, ticket, "s"),
+            Err(crate::shared::error::AppError::Invalid(message)) if message == "a turn is already generating"
+        ));
+        assert!(ledger_repository::get_entry(&pool.get().unwrap(), &entry_id).is_ok());
+    }
+
     #[test]
     fn erase_removes_the_action_and_generated_response_for_every_mode() {
         for mode in ["do", "say", "story", "guide", "continue", "see"] {
