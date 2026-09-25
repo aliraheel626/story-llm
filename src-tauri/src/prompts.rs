@@ -93,7 +93,7 @@ pub const ILLUSTRATE_SCENE_TOOL_NAME: &str = "illustrate_scene";
 pub const ILLUSTRATE_SCENE_DESCRIPTION: &str =
     "Generate a scene image. Always call this when the player sends <see>, whatever the \
      subject: that is an explicit request, so never skip it or answer in prose. Invoke it as a real \
-     tool call; never write the call out as text. When you choose \
+     tool call, at most once per turn; never write the call out as text. When you choose \
      to illustrate on your own, use it sparingly: reserve it for a genuinely striking visual \
      moment (a new place revealed, a character's first appearance, a dramatic turn worth \
      seeing). Write a vivid, concrete visual description of the subject as it appears in the \

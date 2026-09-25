@@ -94,7 +94,14 @@ pub(super) fn illustrate_scene_tool(
                         .collect::<Result<Vec<_>, _>>()?,
                 };
 
-                image_requests.lock().await.push(ImageRequest {
+                let mut requests = image_requests.lock().await;
+                if !requests.is_empty() {
+                    return Ok(ToolOutput::json(json!({
+                        "queued": false,
+                        "reason": "a scene image is already queued for this turn; only one image per turn",
+                    })));
+                }
+                requests.push(ImageRequest {
                     description,
                     character_ids,
                 });
@@ -464,6 +471,25 @@ mod turn_tests {
             image_requests: Arc::new(Mutex::new(Vec::new())),
         };
         assert_eq!((specs[0].build)(&deps).name(), "roll_check");
+    }
+
+    #[tokio::test]
+    async fn illustrate_scene_queues_one_image_per_turn() {
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let tool = illustrate_scene_tool(requests.clone());
+        let first = tool
+            .execute(json!({"description": "a lighthouse at dusk"}))
+            .await
+            .unwrap();
+        assert_eq!(first.as_json().unwrap()["queued"], json!(true));
+        let second = tool
+            .execute(json!({"description": "the harbor below"}))
+            .await
+            .unwrap();
+        assert_eq!(second.as_json().unwrap()["queued"], json!(false));
+        let queued = requests.lock().await;
+        assert_eq!(queued.len(), 1);
+        assert_eq!(queued[0].description, "a lighthouse at dusk");
     }
 
     #[tokio::test]
