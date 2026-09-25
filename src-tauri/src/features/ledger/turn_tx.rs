@@ -122,6 +122,28 @@ impl TurnTx {
         f(&conn)
     }
 
+    /// Runs `f` inside a SAVEPOINT of the open turn. If `f` fails, only its
+    /// writes are undone; the turn stays open and usable.
+    pub async fn with_savepoint<R>(
+        &self,
+        f: impl FnOnce(&rusqlite::Connection) -> AppResult<R>,
+    ) -> AppResult<R> {
+        self.with(|conn| {
+            conn.execute_batch("SAVEPOINT turn_step")?;
+            match f(conn) {
+                Ok(value) => {
+                    conn.execute_batch("RELEASE turn_step")?;
+                    Ok(value)
+                }
+                Err(error) => {
+                    conn.execute_batch("ROLLBACK TO turn_step; RELEASE turn_step")?;
+                    Err(error)
+                }
+            }
+        })
+        .await
+    }
+
     pub async fn commit(&self) -> AppResult<()> {
         let conn = self.conn.lock().await;
         if self.done.load(Ordering::Acquire) {
@@ -201,6 +223,47 @@ mod tests {
                     .get::<_, i64>(0))
                 .unwrap(),
             1
+        );
+    }
+
+    #[tokio::test]
+    async fn savepoint_failure_preserves_other_turn_writes() {
+        let pool = crate::shared::db::test_pool();
+        let gate = TurnGate::default();
+        let turn = TurnTx::begin(&pool, &gate, "s").unwrap();
+        turn.with(|conn| {
+            conn.execute(
+                "INSERT INTO stories (id, title, created_at, updated_at) VALUES ('s', 'Story', 'now', 'now')",
+                [],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+        assert!(matches!(
+            turn.with_savepoint(|conn| {
+                conn.execute("INSERT INTO settings (key, value) VALUES ('step', 'lost')", [])?;
+                Err::<(), _>(AppError::Other("x".into()))
+            })
+            .await,
+            Err(AppError::Other(message)) if message == "x"
+        ));
+        turn.commit().await.unwrap();
+        let conn = pool.get().unwrap();
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM stories WHERE id = 's'", [], |row| row
+                .get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM settings WHERE key = 'step'",
+                [],
+                |row| row.get::<_, i64>(0)
+            )
+            .unwrap(),
+            0
         );
     }
 
