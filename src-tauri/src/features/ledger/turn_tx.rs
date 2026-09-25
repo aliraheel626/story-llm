@@ -82,6 +82,9 @@ impl Drop for GateGuard {
     }
 }
 
+/// All writes to a generating story, including its images and auto-title, use
+/// this transaction. Keeping them together permits BEGIN IMMEDIATE to become
+/// BEGIN CONCURRENT if storage with concurrent writes is adopted later.
 pub struct TurnTx {
     story_id: String,
     conn: Mutex<rusqlite::Connection>,
