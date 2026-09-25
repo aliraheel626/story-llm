@@ -59,7 +59,7 @@ pub struct TurnTx {
     story_id: String,
     conn: Mutex<rusqlite::Connection>,
     done: AtomicBool,
-    _gate: GateGuard,
+    gate: StdMutex<Option<GateGuard>>,
 }
 
 impl TurnTx {
@@ -71,8 +71,15 @@ impl TurnTx {
             story_id: story_id.to_string(),
             conn: Mutex::new(conn),
             done: AtomicBool::new(false),
-            _gate: guard,
+            gate: StdMutex::new(Some(guard)),
         }))
+    }
+
+    fn release_gate(&self) {
+        self.gate
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .take();
     }
 
     pub async fn with<R>(
@@ -97,6 +104,7 @@ impl TurnTx {
         }
         conn.execute_batch("COMMIT")?;
         self.done.store(true, Ordering::Release);
+        self.release_gate();
         Ok(())
     }
 
@@ -109,6 +117,7 @@ impl TurnTx {
         }
         conn.execute_batch("ROLLBACK")?;
         self.done.store(true, Ordering::Release);
+        self.release_gate();
         Ok(())
     }
 
@@ -195,6 +204,32 @@ mod tests {
         );
         let next = TurnTx::begin(&pool, &gate, "other").unwrap();
         next.rollback().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn commit_releases_gate_while_a_clone_is_alive() {
+        let pool = crate::shared::db::test_pool();
+        let gate = TurnGate::default();
+        let turn = TurnTx::begin(&pool, &gate, "s").unwrap();
+        let retained = Arc::clone(&turn);
+        turn.commit().await.unwrap();
+
+        let next = TurnTx::begin(&pool, &gate, "s").unwrap();
+        next.rollback().await.unwrap();
+        drop(retained);
+    }
+
+    #[tokio::test]
+    async fn rollback_releases_gate_while_a_clone_is_alive() {
+        let pool = crate::shared::db::test_pool();
+        let gate = TurnGate::default();
+        let turn = TurnTx::begin(&pool, &gate, "s").unwrap();
+        let retained = Arc::clone(&turn);
+        turn.rollback().await.unwrap();
+
+        let next = TurnTx::begin(&pool, &gate, "s").unwrap();
+        next.rollback().await.unwrap();
+        drop(retained);
     }
 
     #[tokio::test]
