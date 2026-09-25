@@ -8,7 +8,7 @@ use crate::ai;
 use crate::features::{
     ledger::{
         model::kind as ledger_kind, reducer as ledger_reducer, repository as ledger_repository,
-        turn_tx::TurnTx,
+        turn_tx::TurnTx, turns,
     },
     settings as global_settings,
 };
@@ -29,6 +29,21 @@ const TITLE_INPUT_LIMIT: usize = 2_000;
 /// Hard cap on the persisted title, so a runaway model can't produce an
 /// unusable sidebar entry.
 const TITLE_MAX_CHARS: usize = 60;
+/// Titling is attempted on a story's first three turns only. Each attempt runs
+/// inside the turn, so a title model that keeps failing would otherwise make
+/// every later turn wait for it.
+const TITLE_ATTEMPT_TURNS: usize = 3;
+
+/// The current turn's row already exists, so it is included in the limit.
+fn needs_title(conn: &rusqlite::Connection, story_id: &str) -> AppResult<bool> {
+    let title: String = conn.query_row(
+        "SELECT title FROM stories WHERE id = ?1",
+        [story_id],
+        |row| row.get(0),
+    )?;
+    Ok(title == DEFAULT_STORY_TITLE
+        && turns::list_summaries(conn, story_id)?.len() <= TITLE_ATTEMPT_TURNS)
+}
 
 /// Read the first two active entries from the same connection as the turn,
 /// including the narration that has not been committed yet.
@@ -58,12 +73,7 @@ pub async fn title_in_turn(app: &AppHandle, settings_pool: &Pool, turn: &TurnTx)
     let story_id = turn.story_id();
     let opening = turn
         .with(|conn| {
-            let title: String = conn.query_row(
-                "SELECT title FROM stories WHERE id = ?1",
-                [story_id],
-                |row| row.get(0),
-            )?;
-            if title == DEFAULT_STORY_TITLE {
+            if needs_title(conn, story_id)? {
                 opening_exchange(conn, story_id)
             } else {
                 Ok(Vec::new())
@@ -130,13 +140,44 @@ fn sanitize_title(raw: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{opening_exchange, sanitize_title, write_title};
+    use super::{needs_title, opening_exchange, sanitize_title, write_title};
     use crate::features::ledger::{
         model::kind,
         repository as ledger_repository,
         turn_tx::{TurnGate, TurnTx},
+        turns,
     };
     use crate::shared::db::test_pool;
+
+    #[test]
+    fn title_is_tried_only_on_the_first_three_turns() {
+        let pool = test_pool();
+        let conn = pool.get().unwrap();
+        conn.execute(
+            "INSERT INTO stories (id, title, created_at, updated_at) VALUES ('s', 'New story', 'now', 'now')",
+            [],
+        )
+        .unwrap();
+        for _ in 0..3 {
+            turns::create_turn(&conn, "s").unwrap();
+        }
+        assert!(needs_title(&conn, "s").unwrap());
+        turns::create_turn(&conn, "s").unwrap();
+        assert!(!needs_title(&conn, "s").unwrap());
+    }
+
+    #[test]
+    fn renamed_story_needs_no_title() {
+        let pool = test_pool();
+        let conn = pool.get().unwrap();
+        conn.execute(
+            "INSERT INTO stories (id, title, created_at, updated_at) VALUES ('s', 'My title', 'now', 'now')",
+            [],
+        )
+        .unwrap();
+        turns::create_turn(&conn, "s").unwrap();
+        assert!(!needs_title(&conn, "s").unwrap());
+    }
 
     #[tokio::test]
     async fn title_rollback_leaves_placeholder_in_pool() {
