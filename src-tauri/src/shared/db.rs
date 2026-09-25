@@ -478,6 +478,7 @@ fn migrate_image_blobs_v1(conn: &mut rusqlite::Connection) -> AppResult<()> {
             Some("jpg" | "jpeg") => "image/jpeg",
             Some("webp") => "image/webp",
             Some("gif") => "image/gif",
+            Some("svg") => "image/svg+xml",
             _ => "image/png",
         };
         tx.execute(
@@ -1194,7 +1195,9 @@ mod tests {
             .query_row("PRAGMA database_list", [], |row| row.get(2))
             .unwrap();
         let image_path = Path::new(&db_path).with_extension("webp");
+        let svg_path = Path::new(&db_path).with_extension("svg");
         fs::write(&image_path, b"original image").unwrap();
+        fs::write(&svg_path, b"<svg></svg>").unwrap();
         conn.execute_batch(
             "INSERT INTO stories (id, title, created_at, updated_at) VALUES ('s', 'Story', 'now', 'now');
              INSERT INTO ledger_entries (id, story_id, seq, kind, visibility, payload_json, created_at)
@@ -1204,6 +1207,10 @@ mod tests {
         conn.execute(
             "INSERT INTO image_assets (id, entry_id, path, prompt, created_at) VALUES ('asset', 'entry', ?1, 'prompt', 'now')",
             [image_path.to_string_lossy().as_ref()],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO image_assets (id, entry_id, path, prompt, created_at) VALUES ('svg-asset', 'entry', ?1, 'prompt', 'now')",
+            [svg_path.to_string_lossy().as_ref()],
         ).unwrap();
 
         migrate_image_blobs_v1(&mut conn).unwrap();
@@ -1220,6 +1227,16 @@ mod tests {
         assert_eq!(media_type, "image/webp");
         assert_eq!(bytes, b"original image");
         assert!(image_path.exists());
+        assert!(svg_path.exists());
+        assert_eq!(
+            conn.query_row(
+                "SELECT media_type FROM image_blobs WHERE asset_id = 'svg-asset'",
+                [],
+                |row| row.get::<_, String>(0)
+            )
+            .unwrap(),
+            "image/svg+xml",
+        );
         assert_eq!(
             conn.query_row(
                 "SELECT value FROM settings WHERE key = 'migration_image_blobs_v1'",

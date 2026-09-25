@@ -43,6 +43,7 @@ export function Composer({ storyId }: { storyId: string | null }) {
   const requestPending = useStoryStore((s) => storyId ? (s.bundles[storyId]?.requestPending ?? false) : false);
   const ledgerLoading = useStoryStore((s) => storyId ? (s.bundles[storyId]?.ledgerLoading ?? false) : false);
   const turnError = useStoryStore((s) => storyId ? s.bundles[storyId]?.turnError : null);
+  const imageError = useStoryStore((s) => storyId ? s.bundles[storyId]?.imageError : null);
   const restoreDraft = useStoryStore((s) => storyId ? s.bundles[storyId]?.restoreDraft : null);
   const entries = useStoryStore((s) => storyId ? s.bundles[storyId]?.entries : undefined);
   const imagePendingFor = useStoryStore((s) => storyId ? s.bundles[storyId]?.imagePendingFor : undefined);
@@ -146,7 +147,7 @@ export function Composer({ storyId }: { storyId: string | null }) {
   };
 
   const activeMode = modeDefinition(mode);
-  const displayedError = error ?? turnError ?? reasoningEffortError;
+  const displayedError = error ?? turnError ?? imageError ?? reasoningEffortError;
 
   const submitDisabled = busy
     || (activeMode.textRequired && !text.trim())

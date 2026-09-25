@@ -551,6 +551,7 @@ export const useStoryStore = create<StoryStoreState>((set, get) => ({
     set((state) => ({
       bundles: patchBundle(state.bundles, storyId, (bundle) => ({
         imagePendingFor: bundle.imagePendingFor.includes(entryId) ? bundle.imagePendingFor : [...bundle.imagePendingFor, entryId],
+        imageError: null,
       })),
     }));
   },
@@ -567,6 +568,7 @@ export const useStoryStore = create<StoryStoreState>((set, get) => ({
             [image.entry_id]: current.some((candidate) => candidate.id === image.id) ? current : [...current, image],
           },
           imagePendingFor: removeOne(bundle.imagePendingFor, image.entry_id),
+          imageError: null,
         };
       }),
     }));
@@ -577,6 +579,7 @@ export const useStoryStore = create<StoryStoreState>((set, get) => ({
     set((state) => ({
       bundles: patchBundle(state.bundles, storyId, (bundle) => ({
         imagePendingFor: removeOne(bundle.imagePendingFor, entryId),
+        imageError: "Scene image generation failed. Retry See to try again.",
       })),
     }));
     get().loadLedger(storyId);

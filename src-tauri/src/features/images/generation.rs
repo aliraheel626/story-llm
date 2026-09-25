@@ -170,6 +170,14 @@ fn persist_image_record(
     })
 }
 
+fn turn_exists(pool: &Pool, turn_id: &str) -> AppResult<bool> {
+    Ok(pool.get()?.query_row(
+        "SELECT EXISTS(SELECT 1 FROM turns WHERE id = ?1)",
+        [turn_id],
+        |row| row.get(0),
+    )?)
+}
+
 /// Starts the slow image work requested by `submit_turn`'s narrator after the
 /// passage and its entity changes have committed. Each request keeps
 /// the existing pending/generated/failed event contract used by the frontend.
@@ -201,6 +209,14 @@ pub(crate) fn generate_from_narrator_requests(
                         "scene image generation failed for entry {}: {error}",
                         target.entry_id
                     );
+                    match turn_exists(&pool, &target.turn_id) {
+                        Ok(false) => continue,
+                        Err(check_error) => log::warn!(
+                            "could not check failed image turn {}: {check_error}",
+                            target.turn_id
+                        ),
+                        Ok(true) => {}
+                    }
                     let _ = app.emit("scene-image-failed", &target.entry_id);
                 }
             }
@@ -251,6 +267,7 @@ mod tests {
         conn.execute("DELETE FROM turns WHERE id = ?1", [&turn_id])
             .unwrap();
         drop(conn);
+        assert!(!turn_exists(&pool, &turn_id).unwrap());
         let image = StoryImage {
             id: "stale-image".into(),
             entry_id: entry.id,

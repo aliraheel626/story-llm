@@ -237,6 +237,22 @@ test("a refresh in flight cannot reintroduce a player entry after narration fail
   assert.equal(store.getState().bundles[storyId].ledgerLoading, false);
 });
 
+test("image failure surfaces an error and a new request clears it", async () => {
+  const storyId = "image-failure-story";
+  const narration = { id: "failed-image-scene", story_id: storyId, kind: "narration", payload: { input_mode: "generated" }, content: "Scene" };
+  entries.set(storyId, [narration]);
+  await store.getState().loadLedger(storyId);
+
+  store.getState()._imagePending(narration.id);
+  assert.deepEqual(store.getState().bundles[storyId].imagePendingFor, [narration.id]);
+  store.getState()._imageFailed(narration.id);
+  assert.equal(store.getState().bundles[storyId].imagePendingFor.length, 0);
+  assert.match(store.getState().bundles[storyId].imageError, /image generation failed/i);
+
+  store.getState()._imagePending(narration.id);
+  assert.equal(store.getState().bundles[storyId].imageError, null);
+});
+
 test("a failed legacy action remains visible when the backend snapshot persists it", async () => {
   const storyId = "persisted-failure-story";
   entries.set(storyId, []);
