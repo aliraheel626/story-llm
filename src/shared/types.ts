@@ -62,6 +62,7 @@ export interface SubmitTurnResult { entry: LedgerEntry; stream_id: string }
 export interface RetryResult { entry_id: string; stream_id: string }
 export interface NarrationDeltaPayload { stream_id: string; text: string }
 export interface NarrationDonePayload { stream_id: string; entry: LedgerEntry }
+export interface NarrationTextCompletePayload { stream_id: string }
 export interface NarrationErrorPayload { stream_id: string; message: string }
 export interface NarrationToolActivityPayload { stream_id: string; call_id: string; label: string; phase: "started" | "finished"; ok: boolean | null }
 

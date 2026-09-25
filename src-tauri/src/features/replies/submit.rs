@@ -17,7 +17,7 @@ use crate::prompts;
 use crate::shared::db::{blocking, Pool};
 use crate::shared::error::{AppError, AppResult};
 
-use super::model::{NarrationDonePayload, SubmitTurnResult};
+use super::model::{NarrationDonePayload, NarrationTextCompletePayload, SubmitTurnResult};
 use narrator::{transcript::load_transcript, Candidate, NarratorInputs, NarratorPurpose};
 
 #[derive(Clone, serde::Serialize)]
@@ -222,6 +222,12 @@ async fn complete_turn(
             )
         })
         .await?;
+    let _ = app.emit(
+        "narration-text-complete",
+        NarrationTextCompletePayload {
+            stream_id: stream_id.clone(),
+        },
+    );
     let target = images::ImageTarget {
         entry_id: target_entry_id.to_string(),
         source_action_id: None,

@@ -31,6 +31,7 @@ interface StreamingState {
   text: string;
   thoughts: string;
   imagePending?: boolean;
+  textComplete?: boolean;
   mode: "append" | "replace";
   targetEntryId?: string;
   turnId?: string;
@@ -99,6 +100,7 @@ interface StoryStoreState {
   editEntry: (storyId: string, entryId: string, content: string) => Promise<void>;
   loadImagesForStory: (storyId: string) => Promise<void>;
   _appendDelta: (streamId: string, text: string) => void;
+  _textComplete: (streamId: string) => void;
   _appendThoughts: (streamId: string, text: string) => void;
   _toolActivity: (payload: NarrationToolActivityPayload) => void;
   _finalize: (payload: NarrationDonePayload) => void;
@@ -546,6 +548,17 @@ export const useStoryStore = create<StoryStoreState>((set, get) => ({
       })),
     }));
     get().loadLedger(storyId);
+  },
+  _textComplete: (streamId) => {
+    const found = findStream(get().bundles, streamId);
+    if (!found) return;
+    const [storyId] = found;
+    set((state) => ({
+      bundles: patchBundle(state.bundles, storyId, (bundle) =>
+        bundle.streaming?.streamId === streamId
+          ? { streaming: { ...bundle.streaming, textComplete: true } }
+          : {}),
+    }));
   },
   _imagePending: (entryId) => {
     const { bundles } = get();

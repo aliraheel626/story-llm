@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { useStoryStore } from "../features/story/store";
 import type {
   NarrationDonePayload,
+  NarrationTextCompletePayload,
   NarrationDeltaPayload,
   NarrationErrorPayload,
   NarrationToolActivityPayload,
@@ -22,6 +23,9 @@ export function useNarrationEvents() {
       }),
       listen<NarrationDonePayload>("narration-done", (event) => {
         useStoryStore.getState()._finalize(event.payload);
+      }),
+      listen<NarrationTextCompletePayload>("narration-text-complete", (event) => {
+        useStoryStore.getState()._textComplete(event.payload.stream_id);
       }),
       listen<NarrationErrorPayload>("narration-error", (event) => {
         useStoryStore.getState()._fail(event.payload.stream_id, event.payload.message);

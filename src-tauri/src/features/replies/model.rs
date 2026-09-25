@@ -19,3 +19,8 @@ pub(super) struct NarrationDonePayload {
     pub(super) stream_id: String,
     pub(super) entry: LedgerEntry,
 }
+
+#[derive(Debug, Clone, Serialize)]
+pub(super) struct NarrationTextCompletePayload {
+    pub(super) stream_id: String,
+}

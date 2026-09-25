@@ -287,6 +287,27 @@ test("image pending before narration finalize remains through finalize and clear
   store.getState().setActiveStory(previousStoryId);
 });
 
+test("text completion stops the cursor without changing streamed narration", async () => {
+  const previousStoryId = store.getState().activeStoryId;
+  store.getState().startDraft();
+  const storyId = (await store.getState().createStory()).id;
+  entries.set(storyId, []);
+  await store.getState().submitTurn(storyId, "do", "Enter the forest");
+  const streamId = store.getState().bundles[storyId].streaming.streamId;
+  store.getState()._appendDelta(streamId, "A forest opens");
+  assert.equal(!!store.getState().bundles[storyId].streaming.textComplete, false);
+  store.getState()._textComplete(streamId);
+  let streaming = store.getState().bundles[storyId].streaming;
+  assert.equal(streaming.textComplete, true);
+  assert.equal(streaming.text, "A forest opens");
+  store.getState()._textComplete("unknown-stream");
+  streaming = store.getState().bundles[storyId].streaming;
+  assert.equal(streaming.textComplete, true);
+  assert.equal(streaming.text, "A forest opens");
+  store.getState()._fail(streamId, "test cleanup");
+  store.getState().setActiveStory(previousStoryId);
+});
+
 test("image pending during replacement marks the stream without replacing the original reply", async () => {
   const previousStoryId = store.getState().activeStoryId;
   store.getState().startDraft();

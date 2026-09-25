@@ -147,7 +147,7 @@ export function StoryView() {
               />
               <p className="whitespace-pre-wrap font-prose text-base leading-8 text-text">
                 {streaming!.text}
-                {!streaming!.imagePending && <span className="ml-0.5 inline-block h-4 w-1.5 translate-y-0.5 animate-pulse bg-muted motion-reduce:animate-none" />}
+                {!streaming!.textComplete && !streaming!.imagePending && <span className="ml-0.5 inline-block h-4 w-1.5 translate-y-0.5 animate-pulse bg-muted motion-reduce:animate-none" />}
               </p>
               {streaming!.imagePending && <ImagePlaceholder />}
             </div>
