@@ -1,7 +1,7 @@
 use tauri::State;
 
 use crate::features::ledger::turn_tx::TurnGate;
-use crate::shared::db::{with_transaction, Pool};
+use crate::shared::db::{blocking, with_transaction, Pool};
 use crate::shared::error::AppResult;
 
 use super::attributes::{
@@ -34,7 +34,7 @@ pub async fn create_entity(
     let ticket = gate.check_idle(&story_id)?;
     let gate = gate.inner().clone();
     let pool = pool.inner().clone();
-    crate::shared::db::blocking(move || {
+    blocking(move || {
         with_transaction(&pool, |tx| {
             gate.still_idle(&ticket)?;
             create_entity_sync(
@@ -63,7 +63,7 @@ pub async fn update_entity(
     let ticket = gate.check_idle(&story_id)?;
     let gate = gate.inner().clone();
     let pool = pool.inner().clone();
-    crate::shared::db::blocking(move || {
+    blocking(move || {
         with_transaction(&pool, |tx| {
             gate.still_idle(&ticket)?;
             update_entity_sync(
@@ -91,7 +91,7 @@ pub async fn delete_entity(
     let ticket = gate.check_idle(&story_id)?;
     let gate = gate.inner().clone();
     let pool = pool.inner().clone();
-    crate::shared::db::blocking(move || {
+    blocking(move || {
         with_transaction(&pool, |tx| {
             gate.still_idle(&ticket)?;
             delete_entity_sync(tx, &story_id, &entity_id)
@@ -128,7 +128,7 @@ pub async fn set_entity_attribute(
     let ticket = gate.check_idle(&story_id)?;
     let gate = gate.inner().clone();
     let pool = pool.inner().clone();
-    crate::shared::db::blocking(move || {
+    blocking(move || {
         with_transaction(&pool, |tx| {
             gate.still_idle(&ticket)?;
             set_entity_attribute_sync(tx, &story_id, &entity_id, &attribute_id, value)
@@ -148,7 +148,7 @@ pub async fn remove_entity_attribute(
     let ticket = gate.check_idle(&story_id)?;
     let gate = gate.inner().clone();
     let pool = pool.inner().clone();
-    crate::shared::db::blocking(move || {
+    blocking(move || {
         with_transaction(&pool, |tx| {
             gate.still_idle(&ticket)?;
             remove_entity_attribute_sync(tx, &story_id, &entity_id, &attribute_id)

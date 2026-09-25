@@ -1,6 +1,6 @@
 use tauri::{AppHandle, State};
 
-use crate::shared::db::Pool;
+use crate::shared::db::{blocking, Pool};
 use crate::shared::error::AppResult;
 
 use super::model::{ContextInjectionSettings, ImageModelSettings, TextModelSettings};
@@ -38,10 +38,7 @@ pub async fn save_image_model_settings(
     style: String,
 ) -> AppResult<()> {
     let pool = pool.inner().clone();
-    crate::shared::db::blocking(move || {
-        repository::write_image_model_settings(&pool, model, enabled, style)
-    })
-    .await
+    blocking(move || repository::write_image_model_settings(&pool, model, enabled, style)).await
 }
 
 #[tauri::command]
@@ -55,8 +52,5 @@ pub async fn save_context_injection_settings(
     entity_context_mode: String,
 ) -> AppResult<()> {
     let pool = pool.inner().clone();
-    crate::shared::db::blocking(move || {
-        repository::write_context_injection_settings(&pool, entity_context_mode)
-    })
-    .await
+    blocking(move || repository::write_context_injection_settings(&pool, entity_context_mode)).await
 }

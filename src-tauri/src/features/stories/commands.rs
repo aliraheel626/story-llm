@@ -2,7 +2,7 @@ use tauri::State;
 
 use super::{author_note, model::Story, repository, settings};
 use crate::features::ledger::turn_tx::TurnGate;
-use crate::shared::db::Pool;
+use crate::shared::db::{blocking, Pool};
 use crate::shared::error::AppResult;
 
 #[tauri::command]
@@ -17,14 +17,13 @@ pub async fn create_story(
     settings: Option<serde_json::Value>,
 ) -> AppResult<Story> {
     let pool = pool.inner().clone();
-    crate::shared::db::blocking(move || repository::create_story_in_pool(&pool, title, settings))
-        .await
+    blocking(move || repository::create_story_in_pool(&pool, title, settings)).await
 }
 
 #[tauri::command]
 pub async fn rename_story(pool: State<'_, Pool>, story_id: String, title: String) -> AppResult<()> {
     let pool = pool.inner().clone();
-    crate::shared::db::blocking(move || repository::rename_story(&pool, &story_id, &title)).await
+    blocking(move || repository::rename_story(&pool, &story_id, &title)).await
 }
 
 #[tauri::command]
@@ -36,8 +35,7 @@ pub async fn delete_story(
     let ticket = gate.check_idle(&story_id)?;
     let pool = pool.inner().clone();
     let gate = gate.inner().clone();
-    crate::shared::db::blocking(move || repository::delete_story(&pool, &gate, ticket, &story_id))
-        .await
+    blocking(move || repository::delete_story(&pool, &gate, ticket, &story_id)).await
 }
 
 #[tauri::command]
@@ -52,8 +50,7 @@ pub async fn save_author_note(
     note: String,
 ) -> AppResult<()> {
     let pool = pool.inner().clone();
-    crate::shared::db::blocking(move || author_note::write_author_note(&pool, &story_id, &note))
-        .await
+    blocking(move || author_note::write_author_note(&pool, &story_id, &note)).await
 }
 
 #[tauri::command]
@@ -68,10 +65,7 @@ pub async fn set_author_note_enabled(
     enabled: bool,
 ) -> AppResult<()> {
     let pool = pool.inner().clone();
-    crate::shared::db::blocking(move || {
-        author_note::write_author_note_enabled(&pool, &story_id, enabled)
-    })
-    .await
+    blocking(move || author_note::write_author_note_enabled(&pool, &story_id, enabled)).await
 }
 
 #[tauri::command]
@@ -89,8 +83,7 @@ pub async fn save_story_narrator_tools(
     tools: settings::NarratorToolSettings,
 ) -> AppResult<()> {
     let pool = pool.inner().clone();
-    crate::shared::db::blocking(move || settings::save_narrator_tools(&pool, &story_id, tools))
-        .await
+    blocking(move || settings::save_narrator_tools(&pool, &story_id, tools)).await
 }
 
 #[tauri::command]
@@ -105,8 +98,5 @@ pub async fn save_story_reasoning_effort(
     reasoning_effort: String,
 ) -> AppResult<()> {
     let pool = pool.inner().clone();
-    crate::shared::db::blocking(move || {
-        settings::save_reasoning_effort(&pool, &story_id, &reasoning_effort)
-    })
-    .await
+    blocking(move || settings::save_reasoning_effort(&pool, &story_id, &reasoning_effort)).await
 }

@@ -2,7 +2,7 @@ use tauri::{AppHandle, State};
 
 use crate::features::ledger::model::LedgerEntry;
 use crate::features::ledger::turn_tx::TurnGate;
-use crate::shared::db::Pool;
+use crate::shared::db::{blocking, Pool};
 use crate::shared::error::AppResult;
 
 use super::{
@@ -43,8 +43,7 @@ pub async fn edit_ledger_entry(
 ) -> AppResult<LedgerEntry> {
     let pool = pool.inner().clone();
     let gate = gate.inner().clone();
-    crate::shared::db::blocking(move || edit::edit_ledger_entry(&pool, &gate, entry_id, content))
-        .await
+    blocking(move || edit::edit_ledger_entry(&pool, &gate, entry_id, content)).await
 }
 
 #[tauri::command]
@@ -56,6 +55,5 @@ pub async fn erase_last_exchange(
     let ticket = gate.check_idle(&story_id)?;
     let pool = pool.inner().clone();
     let gate = gate.inner().clone();
-    crate::shared::db::blocking(move || erase::erase_last_exchange(&pool, &gate, ticket, &story_id))
-        .await
+    blocking(move || erase::erase_last_exchange(&pool, &gate, ticket, &story_id)).await
 }
