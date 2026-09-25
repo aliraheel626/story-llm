@@ -4,6 +4,7 @@ import type { LedgerEntry, NarrativePayload } from "../../shared/types";
 import { useStoryStore } from "../story/store";
 import { EditableStoryTitle } from "../stories/EditableStoryTitle";
 import { LedgerEntryView } from "./LedgerEntryView";
+import { ImagePlaceholder } from "./ImagePlaceholder";
 import { TurnActivity, toolCallsFromEvents, type TurnActivityData } from "./TurnActivity";
 import { Composer, modeDefinition } from "./Composer";
 
@@ -146,8 +147,9 @@ export function StoryView() {
               />
               <p className="whitespace-pre-wrap font-prose text-base leading-8 text-text">
                 {streaming!.text}
-                <span className="ml-0.5 inline-block h-4 w-1.5 translate-y-0.5 animate-pulse bg-muted motion-reduce:animate-none" />
+                {!streaming!.imagePending && <span className="ml-0.5 inline-block h-4 w-1.5 translate-y-0.5 animate-pulse bg-muted motion-reduce:animate-none" />}
               </p>
+              {streaming!.imagePending && <ImagePlaceholder />}
             </div>
           )}
         </div>

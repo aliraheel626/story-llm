@@ -20,8 +20,21 @@ use crate::shared::error::{AppError, AppResult};
 use super::model::{NarrationDonePayload, SubmitTurnResult};
 use narrator::{transcript::load_transcript, Candidate, NarratorInputs, NarratorPurpose};
 
-fn kick_auto_title(app: &AppHandle, pool: &Pool, story_id: &str) {
-    stories::maybe_auto_title(app, pool, story_id);
+fn emit_image_results(
+    app: &AppHandle,
+    entry_id: &str,
+    results: Vec<Result<images::model::StoryImage, ()>>,
+) {
+    for result in results {
+        match result {
+            Ok(image) => {
+                let _ = app.emit("scene-image-generated", image);
+            }
+            Err(()) => {
+                let _ = app.emit("scene-image-failed", entry_id);
+            }
+        }
+    }
 }
 
 pub(super) async fn run_turn(
@@ -62,7 +75,7 @@ async fn prepare_and_spawn(
             .into_iter()
             .rev()
             .find(|entry| entry.kind == ledger_kind::NARRATION)
-            .map(|entry| (entry.id, entry.content.unwrap_or_default()));
+            .map(|entry| entry.id);
             if mode == "see" && prior_narration.is_none() {
                 return Err(AppError::Invalid(
                     "there is no narrated scene to illustrate".into(),
@@ -87,7 +100,7 @@ async fn prepare_and_spawn(
     let target_entry_id = prior_narration
         .as_ref()
         .filter(|_| is_see)
-        .map(|(id, _)| id.clone())
+        .cloned()
         .unwrap_or_else(|| Uuid::new_v4().to_string());
     let prepared = narrator::prepare(NarratorInputs {
         app: &app,
@@ -155,7 +168,7 @@ async fn complete_turn(
     turn_id: &str,
     target_entry_id: &str,
     action: &LedgerEntry,
-    prior_narration: Option<(String, String)>,
+    prior_narration: Option<String>,
     is_see: bool,
     stream_id: String,
     candidate: AppResult<Candidate>,
@@ -169,8 +182,14 @@ async fn complete_turn(
         let request = image_requests.into_iter().next().ok_or_else(|| {
             AppError::Other("the narrator did not request an illustration".into())
         })?;
-        let (_, target_content) = prior_narration
+        let target_id = prior_narration
             .ok_or_else(|| AppError::Invalid("no narration to illustrate".into()))?;
+        let target = images::ImageTarget {
+            entry_id: target_id,
+            source_action_id: Some(action.id.clone()),
+            turn_id: turn_id.to_string(),
+        };
+        let results = images::generate_in_turn(app, pool, turn, &target, vec![request]).await;
         turn.commit().await?;
         let _ = app.emit(
             "narration-done",
@@ -179,17 +198,7 @@ async fn complete_turn(
                 entry: action.clone(),
             },
         );
-        images::generate_from_narrator_requests(
-            app,
-            pool,
-            images::ImageTarget {
-                entry_id: target_entry_id.to_string(),
-                expected_content: target_content,
-                source_action_id: Some(action.id.clone()),
-                turn_id: turn_id.to_string(),
-            },
-            vec![request],
-        );
+        emit_image_results(app, &target.entry_id, results);
         return Ok(());
     }
     if visible.trim().is_empty() {
@@ -207,22 +216,25 @@ async fn complete_turn(
             )
         })
         .await?;
+    let target = images::ImageTarget {
+        entry_id: target_entry_id.to_string(),
+        source_action_id: None,
+        turn_id: turn_id.to_string(),
+    };
+    let (images, _title) = tokio::join!(
+        async {
+            if image_requests.is_empty() {
+                Vec::new()
+            } else {
+                images::generate_in_turn(app, pool, turn, &target, image_requests).await
+            }
+        },
+        async { None::<String> },
+    );
     turn.commit().await?;
     let _ = app.emit("narration-done", NarrationDonePayload { stream_id, entry });
-    kick_auto_title(app, pool, turn.story_id());
-    if !image_requests.is_empty() {
-        images::generate_from_narrator_requests(
-            app,
-            pool,
-            images::ImageTarget {
-                entry_id: target_entry_id.to_string(),
-                expected_content: visible,
-                source_action_id: None,
-                turn_id: turn_id.to_string(),
-            },
-            image_requests,
-        );
-    }
+    emit_image_results(app, &target.entry_id, images);
+    stories::maybe_auto_title(app, pool, turn.story_id());
     Ok(())
 }
 

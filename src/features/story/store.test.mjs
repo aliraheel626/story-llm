@@ -18,6 +18,7 @@ let server;
 let store;
 let RollDisclosure;
 let LedgerEntryView;
+let ImagePlaceholder;
 let rollFromEntry;
 let groupRollsByEntry;
 let toolCallsFromEvents;
@@ -99,6 +100,7 @@ before(async () => {
   ({ useStoryStore: store } = await server.ssrLoadModule("/src/features/story/store.ts"));
   ({ RollDisclosure } = await server.ssrLoadModule("/src/features/ledger/RollDisclosure.tsx"));
   ({ LedgerEntryView } = await server.ssrLoadModule("/src/features/ledger/LedgerEntryView.tsx"));
+  ({ ImagePlaceholder } = await server.ssrLoadModule("/src/features/ledger/ImagePlaceholder.tsx"));
   ({ toolCallsFromEvents } = await server.ssrLoadModule("/src/features/ledger/TurnActivity.tsx"));
   ({ rollFromEntry, groupRollsByEntry } = await server.ssrLoadModule("/src/shared/types.ts"));
 });
@@ -251,6 +253,58 @@ test("image failure surfaces an error and a new request clears it", async () => 
 
   store.getState()._imagePending(narration.id);
   assert.equal(store.getState().bundles[storyId].imageError, null);
+});
+
+test("image pending before narration finalize remains through finalize and clears when generated", async () => {
+  const previousStoryId = store.getState().activeStoryId;
+  store.getState().startDraft();
+  const storyId = (await store.getState().createStory()).id;
+  entries.set(storyId, []);
+  await store.getState().submitTurn(storyId, "do", "Enter the forest");
+  const { streaming } = store.getState().bundles[storyId];
+  const narration = {
+    id: "pending-image-narration", story_id: storyId, kind: "narration", payload: { input_mode: "generated" },
+    content: "A forest opens ahead.", turn_id: streaming.pendingEntry.turn_id,
+  };
+  store.getState()._appendDelta(streaming.streamId, "A forest opens");
+  store.getState().setActiveStory(previousStoryId);
+  store.getState()._imagePending(narration.id);
+  let bundle = store.getState().bundles[storyId];
+  assert.equal(bundle.streaming.imagePending, true);
+  assert.deepEqual(bundle.imagePendingFor, [narration.id]);
+  assert.match(renderToStaticMarkup(createElement(ImagePlaceholder)), /Generating scene image/);
+
+  entries.set(storyId, [streaming.pendingEntry, narration]);
+  store.getState()._finalize({ stream_id: streaming.streamId, entry: narration });
+  bundle = store.getState().bundles[storyId];
+  assert.equal(bundle.streaming, null);
+  assert.deepEqual(bundle.imagePendingFor, [narration.id]);
+
+  store.getState()._imageGenerated({ id: "finished-image", entry_id: narration.id, prompt: "Forest", created_at: "2026-09-25T12:00:00Z" });
+  bundle = store.getState().bundles[storyId];
+  assert.deepEqual(bundle.imagePendingFor, []);
+  assert.equal(bundle.imagesByEntry[narration.id][0].id, "finished-image");
+  store.getState().setActiveStory(previousStoryId);
+});
+
+test("image pending during replacement marks the stream without replacing the original reply", async () => {
+  const previousStoryId = store.getState().activeStoryId;
+  store.getState().startDraft();
+  const storyId = (await store.getState().createStory()).id;
+  const original = { id: "replace-image-original", story_id: storyId, kind: "narration", payload: { input_mode: "generated" }, content: "Original", turn_id: "replace-image-turn" };
+  entries.set(storyId, [original]);
+  await store.getState().loadLedger(storyId);
+  await store.getState().retryNarration(storyId, original.id);
+  store.getState()._imagePending("replace-image-next");
+  assert.equal(store.getState().bundles[storyId].entries[0].content, "Original");
+  assert.equal(store.getState().bundles[storyId].streaming.imagePending, true);
+  store.getState()._imageFailed("replace-image-next");
+  assert.equal(store.getState().bundles[storyId].streaming.imagePending, false);
+  assert.deepEqual(store.getState().bundles[storyId].imagePendingFor, []);
+  store.getState()._imagePending("replace-image-next");
+  store.getState()._fail(store.getState().bundles[storyId].streaming.streamId, "test cleanup");
+  assert.deepEqual(store.getState().bundles[storyId].imagePendingFor, []);
+  store.getState().setActiveStory(previousStoryId);
 });
 
 test("a failed legacy action remains visible when the backend snapshot persists it", async () => {

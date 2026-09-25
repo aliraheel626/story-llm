@@ -1,20 +1,21 @@
 use chrono::Utc;
-use rusqlite::OptionalExtension;
 use tauri::{AppHandle, Emitter};
+use tokio::time::{timeout, Duration};
 use uuid::Uuid;
 
+use crate::features::ledger::turn_tx::TurnTx;
 use crate::features::ledger::{model::kind as ledger_kind, repository as ledger_repository};
 use crate::features::settings;
-use crate::shared::db::{blocking, with_transaction, Pool};
+use crate::shared::db::Pool;
 use crate::shared::error::{AppError, AppResult};
 
 use super::model::{ImageRequest, StoryImage};
 use super::{openrouter, repository};
 
-#[derive(Clone)]
+const IMAGE_TIMEOUT: Duration = Duration::from_secs(120);
+
 pub(crate) struct ImageTarget {
     pub entry_id: String,
-    pub expected_content: String,
     pub source_action_id: Option<String>,
     pub turn_id: String,
 }
@@ -66,12 +67,13 @@ fn characters_by_ids(
 
 async fn generate_from_description(
     app: &AppHandle,
-    pool: &Pool,
+    settings_pool: &Pool,
+    turn: &TurnTx,
     target: &ImageTarget,
     description: &str,
     character_ids: &[String],
 ) -> AppResult<StoryImage> {
-    let settings = settings::read_image_model_settings(app, pool)?;
+    let settings = settings::read_image_model_settings(app, settings_pool)?;
     if !settings.enabled {
         return Err(AppError::Invalid(
             "image generation is disabled in the Image Model panel".into(),
@@ -79,30 +81,28 @@ async fn generate_from_description(
     }
     let api_key = settings::read_api_key(app, "openrouter")?;
 
-    let characters = {
-        let conn = pool.get()?;
-        let story_id: String = conn
-            .query_row(
-                "SELECT story_id FROM ledger_entries WHERE id = ?1",
-                [&target.entry_id],
-                |row| row.get(0),
-            )
-            .map_err(|_| {
-                AppError::NotFound(format!("ledger entry {} not found", target.entry_id))
-            })?;
-        characters_by_ids(&conn, &story_id, character_ids)?
-    };
+    let characters = turn
+        .with(|conn| {
+            let story_id = ledger_repository::get_entry(conn, &target.entry_id)?.story_id;
+            characters_by_ids(conn, &story_id, character_ids)
+        })
+        .await?;
     let matched: Vec<&(String, String)> = characters.iter().collect();
     let prompt = compose_image_prompt(&settings.style, description, &matched);
-    let generated = openrouter::generate_image(&api_key, &settings.model, &prompt).await?;
-    let pool = pool.clone();
-    let target = target.clone();
-    let description = description.to_string();
-    blocking(move || persist_and_store_image(&pool, &target, &description, prompt, generated)).await
+    let generated = timeout(
+        IMAGE_TIMEOUT,
+        openrouter::generate_image(&api_key, &settings.model, &prompt),
+    )
+    .await
+    .map_err(|_| AppError::Other("image generation timed out".into()))??;
+    turn.with_savepoint(|conn| {
+        persist_and_store_image(conn, target, description, prompt, generated)
+    })
+    .await
 }
 
 fn persist_and_store_image(
-    pool: &Pool,
+    conn: &rusqlite::Connection,
     target: &ImageTarget,
     description: &str,
     prompt: String,
@@ -117,122 +117,77 @@ fn persist_and_store_image(
         prompt,
         created_at: now,
     };
-    persist_image_record(pool, target, description, &image, &generated)?;
+    persist_image_record(conn, target, description, &image, &generated)?;
     Ok(image)
 }
 
 fn persist_image_record(
-    pool: &Pool,
+    conn: &rusqlite::Connection,
     target: &ImageTarget,
     description: &str,
     image: &StoryImage,
     generated: &openrouter::GeneratedImage,
 ) -> AppResult<()> {
-    with_transaction(pool, |tx| {
-        let turn_exists = tx
-            .query_row(
-                "SELECT 1 FROM turns WHERE id = ?1",
-                [&target.turn_id],
-                |row| row.get::<_, i64>(0),
-            )
-            .optional()?
-            .is_some();
-        if !turn_exists {
-            return Err(AppError::Invalid(
-                "the turn was regenerated while its image was being generated".into(),
-            ));
-        }
-        let current_content = ledger_repository::active_entry(tx, &target.entry_id)?
-            .content
-            .unwrap_or_default();
-        if current_content != target.expected_content {
-            return Err(AppError::Other(
-                "the passage changed while its image was being generated".into(),
-            ));
-        }
-        repository::insert_asset(tx, image, &generated.media_type, &generated.bytes)?;
-        let base = ledger_repository::get_entry(tx, &target.entry_id)?;
-        ledger_repository::append_entry(
-            tx,
-            &base.story_id,
-            ledger_kind::IMAGE_GENERATED,
-            "hidden",
-            Some(&format!(
-                "A scene image was generated depicting: {description}"
-            )),
-            &serde_json::json!({"asset_id": image.id, "prompt": image.prompt}),
-            Some(
-                target
-                    .source_action_id
-                    .as_deref()
-                    .unwrap_or(&target.entry_id),
-            ),
-            Some(&target.turn_id),
-        )?;
-        Ok(())
-    })
+    repository::insert_asset(conn, image, &generated.media_type, &generated.bytes)?;
+    let base = ledger_repository::get_entry(conn, &target.entry_id)?;
+    ledger_repository::append_entry(
+        conn,
+        &base.story_id,
+        ledger_kind::IMAGE_GENERATED,
+        "hidden",
+        Some(&format!(
+            "A scene image was generated depicting: {description}"
+        )),
+        &serde_json::json!({"asset_id": image.id, "prompt": image.prompt}),
+        Some(
+            target
+                .source_action_id
+                .as_deref()
+                .unwrap_or(&target.entry_id),
+        ),
+        Some(&target.turn_id),
+    )?;
+    Ok(())
 }
 
-fn turn_exists(pool: &Pool, turn_id: &str) -> AppResult<bool> {
-    Ok(pool.get()?.query_row(
-        "SELECT EXISTS(SELECT 1 FROM turns WHERE id = ?1)",
-        [turn_id],
-        |row| row.get(0),
-    )?)
-}
-
-/// Starts the slow image work requested by `submit_turn`'s narrator after the
-/// passage and its entity changes have committed. Each request keeps
-/// the existing pending/generated/failed event contract used by the frontend.
-pub(crate) fn generate_from_narrator_requests(
+pub(crate) async fn generate_in_turn(
     app: &AppHandle,
-    pool: &Pool,
-    target: ImageTarget,
+    settings_pool: &Pool,
+    turn: &TurnTx,
+    target: &ImageTarget,
     requests: Vec<ImageRequest>,
-) {
-    let app = app.clone();
-    let pool = pool.clone();
-    tauri::async_runtime::spawn(async move {
-        for request in requests {
-            let _ = app.emit("scene-image-pending", &target.entry_id);
-            match generate_from_description(
-                &app,
-                &pool,
-                &target,
-                &request.description,
-                &request.character_ids,
-            )
-            .await
-            {
-                Ok(image) => {
-                    let _ = app.emit("scene-image-generated", image);
-                }
-                Err(error) => {
-                    log::error!(
-                        "scene image generation failed for entry {}: {error}",
-                        target.entry_id
-                    );
-                    match turn_exists(&pool, &target.turn_id) {
-                        Ok(false) => continue,
-                        Err(check_error) => log::warn!(
-                            "could not check failed image turn {}: {check_error}",
-                            target.turn_id
-                        ),
-                        Ok(true) => {}
-                    }
-                    let _ = app.emit("scene-image-failed", &target.entry_id);
-                }
-            }
-        }
-    });
+) -> Vec<Result<StoryImage, ()>> {
+    if !requests.is_empty() {
+        let _ = app.emit("scene-image-pending", &target.entry_id);
+    }
+    let mut results = Vec::with_capacity(requests.len());
+    for request in requests {
+        let result = generate_from_description(
+            app,
+            settings_pool,
+            turn,
+            target,
+            &request.description,
+            &request.character_ids,
+        )
+        .await
+        .map_err(|error| {
+            log::error!(
+                "scene image generation failed for entry {}: {error}",
+                target.entry_id
+            );
+        });
+        results.push(result);
+    }
+    results
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::features::ledger::{repository as ledger_repository, turns};
+    use crate::features::ledger::{repository as ledger_repository, turn_tx::TurnGate, turns};
 
-    fn turn_fixture() -> (Pool, String) {
+    async fn turn_fixture() -> (Pool, std::sync::Arc<TurnTx>, String, String) {
         let pool = crate::shared::db::test_pool();
         let conn = pool.get().unwrap();
         conn.execute(
@@ -241,126 +196,83 @@ mod tests {
             [],
         )
         .unwrap();
-        let turn_id = turns::create_turn(&conn, "s").unwrap();
         drop(conn);
-        (pool, turn_id)
-    }
-
-    #[test]
-    fn removed_turn_writes_no_asset_or_event() {
-        let (pool, prior_turn_id) = turn_fixture();
-        let conn = pool.get().unwrap();
-        let entry = ledger_repository::append_story_message(
-            &conn,
-            "s",
-            "narrator",
-            "generated",
-            "A moonlit harbor",
-            None,
-            Some(&prior_turn_id),
-        )
-        .unwrap();
-        let turn_id = turns::create_turn(&conn, "s").unwrap();
-        let stale_target = ImageTarget {
-            entry_id: entry.id.clone(),
-            expected_content: "A moonlit harbor".into(),
-            source_action_id: None,
-            turn_id: turn_id.clone(),
-        };
-        conn.execute("DELETE FROM turns WHERE id = ?1", [&turn_id])
-            .unwrap();
-        drop(conn);
-        assert!(!turn_exists(&pool, &turn_id).unwrap());
-        let image = StoryImage {
-            id: "stale-image".into(),
-            entry_id: entry.id,
-            prompt: "moonlit harbor".into(),
-            created_at: "now".into(),
-        };
-
-        let generated = openrouter::GeneratedImage {
-            bytes: vec![1, 2, 3],
-            media_type: "image/png".into(),
-        };
-        let error =
-            persist_image_record(&pool, &stale_target, "moonlit harbor", &image, &generated)
-                .unwrap_err();
-
-        assert!(matches!(
-            error,
-            AppError::Invalid(message)
-                if message == "the turn was regenerated while its image was being generated"
-        ));
-        let conn = pool.get().unwrap();
-        assert_eq!(
-            conn.query_row("SELECT COUNT(*) FROM image_assets", [], |row| {
-                row.get::<_, i64>(0)
+        let turn = TurnTx::begin(&pool, &TurnGate::default(), "s").unwrap();
+        let (turn_id, entry_id) = turn
+            .with(|conn| {
+                let turn_id = turns::create_turn(conn, "s")?;
+                let entry = ledger_repository::append_story_message(
+                    conn,
+                    "s",
+                    "narrator",
+                    "generated",
+                    "Scene",
+                    None,
+                    Some(&turn_id),
+                )?;
+                Ok((turn_id, entry.id))
             })
-            .unwrap(),
-            0
-        );
-        assert_eq!(
-            conn.query_row(
-                "SELECT COUNT(*) FROM ledger_entries WHERE kind = ?1",
-                [ledger_kind::IMAGE_GENERATED],
-                |row| row.get::<_, i64>(0),
-            )
-            .unwrap(),
-            0
-        );
+            .await
+            .unwrap();
+        (pool, turn, turn_id, entry_id)
     }
 
-    #[test]
-    fn persisted_image_has_blob_and_empty_legacy_path() {
-        let (pool, turn_id) = turn_fixture();
-        let conn = pool.get().unwrap();
-        let entry = ledger_repository::append_story_message(
-            &conn,
-            "s",
-            "narrator",
-            "generated",
-            "Scene",
-            None,
-            Some(&turn_id),
-        )
-        .unwrap();
-        drop(conn);
-        let image = StoryImage {
-            id: "new-image".into(),
-            entry_id: entry.id.clone(),
-            prompt: "the scene".into(),
-            created_at: "now".into(),
-        };
+    #[tokio::test]
+    async fn persisted_image_is_private_until_turn_commit() {
+        let (pool, turn, turn_id, entry_id) = turn_fixture().await;
         let generated = openrouter::GeneratedImage {
             bytes: vec![1, 2, 3],
             media_type: "image/webp".into(),
         };
-        persist_image_record(
-            &pool,
-            &ImageTarget {
-                entry_id: entry.id,
-                expected_content: "Scene".into(),
-                source_action_id: None,
-                turn_id: turn_id.clone(),
-            },
-            "the scene",
-            &image,
-            &generated,
-        )
-        .unwrap();
+        let expected_bytes = generated.bytes.clone();
+        let image = turn
+            .with_savepoint(|conn| {
+                persist_and_store_image(
+                    conn,
+                    &ImageTarget {
+                        entry_id,
+                        source_action_id: None,
+                        turn_id: turn_id.clone(),
+                    },
+                    "the scene",
+                    "the scene".into(),
+                    generated,
+                )
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            turn.with(|conn| Ok(conn.query_row(
+                "SELECT COUNT(*) FROM image_assets",
+                [],
+                |row| row.get::<_, i64>(0)
+            )?))
+            .await
+            .unwrap(),
+            1
+        );
+        assert_eq!(
+            pool.get()
+                .unwrap()
+                .query_row("SELECT COUNT(*) FROM image_assets", [], |row| row
+                    .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+        turn.commit().await.unwrap();
         let conn = pool.get().unwrap();
         let (path, media_type, bytes): (String, String, Vec<u8>) = conn
             .query_row(
                 "SELECT image_assets.path, image_blobs.media_type, image_blobs.bytes
              FROM image_assets JOIN image_blobs ON image_blobs.asset_id = image_assets.id
-             WHERE image_assets.id = 'new-image'",
-                [],
+              WHERE image_assets.id = ?1",
+                [&image.id],
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
             .unwrap();
         assert_eq!(path, "");
         assert_eq!(media_type, "image/webp");
-        assert_eq!(bytes, generated.bytes);
+        assert_eq!(bytes, expected_bytes);
         let (event_turn_id, asset_id): (String, String) = conn
             .query_row(
                 "SELECT turn_id, json_extract(payload_json, '$.asset_id')
@@ -373,30 +285,17 @@ mod tests {
         assert_eq!(asset_id, image.id);
     }
 
-    #[test]
-    fn event_failure_rolls_back_asset_and_blob_without_failing_turn() {
-        let (pool, turn_id) = turn_fixture();
-        let conn = pool.get().unwrap();
-        let entry = ledger_repository::append_story_message(
-            &conn,
-            "s",
-            "narrator",
-            "generated",
-            "Scene",
-            None,
-            Some(&turn_id),
-        )
-        .unwrap();
-        drop(conn);
+    #[tokio::test]
+    async fn event_failure_rolls_back_image_savepoint_but_preserves_turn() {
+        let (pool, turn, turn_id, entry_id) = turn_fixture().await;
         let image = StoryImage {
             id: "rolled-back-image".into(),
-            entry_id: entry.id.clone(),
+            entry_id: entry_id.clone(),
             prompt: "the scene".into(),
             created_at: "now".into(),
         };
         let target = ImageTarget {
-            entry_id: entry.id,
-            expected_content: "Scene".into(),
+            entry_id,
             source_action_id: Some("missing-action".into()),
             turn_id,
         };
@@ -405,7 +304,42 @@ mod tests {
             media_type: "image/png".into(),
         };
 
-        assert!(persist_image_record(&pool, &target, "the scene", &image, &generated).is_err());
+        assert!(turn
+            .with_savepoint(|conn| persist_image_record(
+                conn,
+                &target,
+                "the scene",
+                &image,
+                &generated
+            ))
+            .await
+            .is_err());
+        turn.with(|conn| {
+            assert_eq!(
+                conn.query_row("SELECT COUNT(*) FROM image_assets", [], |row| row
+                    .get::<_, i64>(0))?,
+                0
+            );
+            assert_eq!(
+                conn.query_row("SELECT COUNT(*) FROM image_blobs", [], |row| row
+                    .get::<_, i64>(0))?,
+                0
+            );
+            ledger_repository::append_entry(
+                conn,
+                "s",
+                ledger_kind::CONTENT_EDITED,
+                "hidden",
+                Some("turn remains writable"),
+                &serde_json::json!({}),
+                None,
+                Some(&target.turn_id),
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+        turn.commit().await.unwrap();
         let conn = pool.get().unwrap();
         for table in ["image_assets", "image_blobs"] {
             let count: i64 = conn
@@ -427,6 +361,15 @@ mod tests {
         assert_eq!(
             turns::last_turn(&conn, "s").unwrap().unwrap().status,
             turns::COMPLETE
+        );
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM ledger_entries WHERE id = ?1",
+                [&target.entry_id],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+            1
         );
     }
 }

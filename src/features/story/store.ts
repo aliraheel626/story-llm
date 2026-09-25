@@ -30,6 +30,7 @@ interface StreamingState {
   storyId: string;
   text: string;
   thoughts: string;
+  imagePending?: boolean;
   mode: "append" | "replace";
   targetEntryId?: string;
   turnId?: string;
@@ -535,6 +536,7 @@ export const useStoryStore = create<StoryStoreState>((set, get) => ({
           ? bundle.entries.filter((entry) => entry.id !== pendingEntry.id)
           : bundle.entries,
         streaming: null,
+        imagePendingFor: [],
         turnActivity: current.mode === "replace" && current.targetEntryId
           ? { entryId: current.targetEntryId, thoughts: "", tools: [] }
           : null,
@@ -546,12 +548,16 @@ export const useStoryStore = create<StoryStoreState>((set, get) => ({
     get().loadLedger(storyId);
   },
   _imagePending: (entryId) => {
-    const storyId = findStoryForEntry(get().bundles, entryId);
+    const { bundles } = get();
+    const knownStoryId = findStoryForEntry(bundles, entryId);
+    const storyId = knownStoryId
+      ?? Object.keys(bundles).find((id) => bundles[id].streaming !== null);
     if (!storyId) return;
     set((state) => ({
       bundles: patchBundle(state.bundles, storyId, (bundle) => ({
         imagePendingFor: bundle.imagePendingFor.includes(entryId) ? bundle.imagePendingFor : [...bundle.imagePendingFor, entryId],
         imageError: null,
+        ...(!knownStoryId && bundle.streaming ? { streaming: { ...bundle.streaming, imagePending: true } } : {}),
       })),
     }));
   },
@@ -569,6 +575,7 @@ export const useStoryStore = create<StoryStoreState>((set, get) => ({
           },
           imagePendingFor: removeOne(bundle.imagePendingFor, image.entry_id),
           imageError: null,
+          ...(bundle.streaming ? { streaming: { ...bundle.streaming, imagePending: false } } : {}),
         };
       }),
     }));
@@ -580,6 +587,7 @@ export const useStoryStore = create<StoryStoreState>((set, get) => ({
       bundles: patchBundle(state.bundles, storyId, (bundle) => ({
         imagePendingFor: removeOne(bundle.imagePendingFor, entryId),
         imageError: "Scene image generation failed. Retry See to try again.",
+        ...(bundle.streaming ? { streaming: { ...bundle.streaming, imagePending: false } } : {}),
       })),
     }));
     get().loadLedger(storyId);
