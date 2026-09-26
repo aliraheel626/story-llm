@@ -2,16 +2,13 @@ use serde_json::json;
 use tauri::AppHandle;
 
 use crate::shared::db::Pool;
-use crate::shared::error::{AppError, AppResult};
+use crate::shared::error::AppResult;
 
-use super::model::{
-    ContextInjectionSettings, ImageModelSettings, TextModelSettings, DEFAULT_IMAGE_STYLE,
-};
+use super::model::{ImageModelSettings, TextModelSettings, DEFAULT_IMAGE_STYLE};
 use super::secrets::has_api_key;
 
 const SETTINGS_KEY_TEXT_MODEL: &str = "text_model_default";
 const SETTINGS_KEY_IMAGE_MODEL: &str = "image_model_default";
-const SETTINGS_KEY_CONTEXT_INJECTION: &str = "context_injection";
 
 /// Plain-`&Pool` variant of `get_text_model_settings` for callers that aren't
 /// Tauri commands (e.g. the narrator's config resolution and the auto-titler).
@@ -140,159 +137,4 @@ pub(super) fn write_image_model_settings(
         rusqlite::params![SETTINGS_KEY_IMAGE_MODEL, value],
     )?;
     Ok(())
-}
-
-pub fn read_context_injection_settings(pool: &Pool) -> AppResult<ContextInjectionSettings> {
-    let conn = pool.get()?;
-    let stored: Option<String> = conn
-        .query_row(
-            "SELECT value FROM settings WHERE key = ?1",
-            [SETTINGS_KEY_CONTEXT_INJECTION],
-            |row| row.get(0),
-        )
-        .ok();
-    let mut settings = stored
-        .and_then(|value| serde_json::from_str::<ContextInjectionSettings>(&value).ok())
-        .unwrap_or_default();
-    if !matches!(
-        settings.entity_context_mode.as_str(),
-        "all" | "scoped" | "none"
-    ) {
-        settings.entity_context_mode = "all".to_string();
-    }
-    Ok(settings)
-}
-
-pub(super) fn write_context_injection_settings(
-    pool: &Pool,
-    entity_context_mode: String,
-) -> AppResult<()> {
-    if !matches!(entity_context_mode.as_str(), "all" | "scoped" | "none") {
-        return Err(AppError::Invalid(format!(
-            "invalid narrator entity context mode: {entity_context_mode}"
-        )));
-    }
-    let conn = pool.get()?;
-    let mut context = conn
-        .query_row(
-            "SELECT value FROM settings WHERE key = ?1",
-            [SETTINGS_KEY_CONTEXT_INJECTION],
-            |row| row.get::<_, String>(0),
-        )
-        .ok()
-        .and_then(|value| serde_json::from_str::<serde_json::Value>(&value).ok())
-        .filter(serde_json::Value::is_object)
-        .unwrap_or_else(|| json!({}));
-    context["entity_context_mode"] = json!(entity_context_mode);
-    let value = serde_json::to_string(&context).map_err(|error| {
-        AppError::Other(format!(
-            "failed to serialize context injection settings: {error}"
-        ))
-    })?;
-    conn.execute(
-        "INSERT INTO settings (key, value) VALUES (?1, ?2)
-         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-        rusqlite::params![SETTINGS_KEY_CONTEXT_INJECTION, value],
-    )?;
-    Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn context_injection_defaults_and_legacy_rows_preserve_entity_mode() {
-        let pool = crate::shared::db::test_pool();
-        let defaults = read_context_injection_settings(&pool).unwrap();
-        assert_eq!(defaults.entity_context_mode, "all");
-
-        let conn = pool.get().unwrap();
-        conn.execute(
-            "INSERT INTO settings (key, value) VALUES (?1, ?2)",
-            rusqlite::params![
-                SETTINGS_KEY_CONTEXT_INJECTION,
-                r#"{"entity_context_mode":"scoped","dice_rolls_in_context":false}"#
-            ],
-        )
-        .unwrap();
-        drop(conn);
-        let legacy = read_context_injection_settings(&pool).unwrap();
-        assert_eq!(legacy.entity_context_mode, "scoped");
-    }
-
-    #[test]
-    fn context_settings_survive_restart_without_recreating_legacy_memory() {
-        let pool = crate::shared::db::test_pool();
-        write_context_injection_settings(&pool, "scoped".to_string()).unwrap();
-        let conn = pool.get().unwrap();
-        let path: String = conn
-            .query_row("PRAGMA database_list", [], |row| row.get(2))
-            .unwrap();
-        let dir = std::path::Path::new(&path).parent().unwrap().to_path_buf();
-        let legacy_exists: bool = conn
-            .query_row(
-                "SELECT EXISTS(SELECT 1 FROM settings WHERE key = 'narrator_memory')",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert!(!legacy_exists);
-        drop(conn);
-        drop(pool);
-
-        let restarted = crate::shared::db::init_pool(&dir).unwrap();
-        let context = read_context_injection_settings(&restarted).unwrap();
-        assert_eq!(context.entity_context_mode, "scoped");
-        let conn = restarted.get().unwrap();
-        let context: String = conn
-            .query_row(
-                "SELECT value FROM settings WHERE key = ?1",
-                [SETTINGS_KEY_CONTEXT_INJECTION],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(
-            serde_json::from_str::<serde_json::Value>(&context).unwrap(),
-            json!({"entity_context_mode": "scoped"})
-        );
-        let legacy_exists: bool = conn
-            .query_row(
-                "SELECT EXISTS(SELECT 1 FROM settings WHERE key = 'narrator_memory')",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert!(!legacy_exists);
-    }
-
-    #[test]
-    fn writing_context_settings_preserves_unrelated_json() {
-        let pool = crate::shared::db::test_pool();
-        let conn = pool.get().unwrap();
-        conn.execute(
-            "INSERT INTO settings (key, value) VALUES (?1, ?2)",
-            rusqlite::params![
-                SETTINGS_KEY_CONTEXT_INJECTION,
-                r#"{"entity_context_mode":"all","future_option":{"enabled":true}}"#
-            ],
-        )
-        .unwrap();
-        drop(conn);
-
-        write_context_injection_settings(&pool, "none".to_string()).unwrap();
-
-        let conn = pool.get().unwrap();
-        let context: String = conn
-            .query_row(
-                "SELECT value FROM settings WHERE key = ?1",
-                [SETTINGS_KEY_CONTEXT_INJECTION],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(
-            serde_json::from_str::<serde_json::Value>(&context).unwrap(),
-            json!({"entity_context_mode": "none", "future_option": {"enabled": true}})
-        );
-    }
 }

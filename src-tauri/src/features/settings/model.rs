@@ -21,16 +21,3 @@ pub struct ImageModelSettings {
     /// only one provider (OpenRouter) for both text and images.
     pub has_api_key: bool,
 }
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ContextInjectionSettings {
-    pub entity_context_mode: String,
-}
-
-impl Default for ContextInjectionSettings {
-    fn default() -> Self {
-        Self {
-            entity_context_mode: "all".to_string(),
-        }
-    }
-}

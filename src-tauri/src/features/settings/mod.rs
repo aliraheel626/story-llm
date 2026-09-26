@@ -6,9 +6,7 @@ mod text_model;
 
 pub use commands::*;
 #[allow(unused_imports)]
-pub use model::{
-    ContextInjectionSettings, ImageModelSettings, TextModelSettings, DEFAULT_IMAGE_STYLE,
-};
+pub use model::{ImageModelSettings, TextModelSettings, DEFAULT_IMAGE_STYLE};
 pub use repository::*;
 pub use secrets::read_api_key;
 pub use text_model::resolve_text_model;

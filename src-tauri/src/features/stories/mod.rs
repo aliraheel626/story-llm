@@ -1,4 +1,3 @@
-pub mod author_note;
 mod auto_title;
 mod commands;
 pub mod model;

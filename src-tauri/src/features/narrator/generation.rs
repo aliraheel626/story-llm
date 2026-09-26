@@ -134,8 +134,6 @@ pub async fn prepare(inputs: NarratorInputs<'_>) -> AppResult<Prepared> {
         .iter()
         .map(|spec| DynamicTool::from_portable((spec.build)(&deps)))
         .collect();
-    let entity_mode =
-        settings::read_context_injection_settings(inputs.settings_pool)?.entity_context_mode;
     let descriptions = enabled_tools
         .iter()
         .map(|spec| context::injection::ToolDescription {
@@ -146,17 +144,17 @@ pub async fn prepare(inputs: NarratorInputs<'_>) -> AppResult<Prepared> {
     let context = inputs
         .turn
         .with(|conn| {
-            let entities = if entity_mode == "none" {
+            let injection = context::settings::read_injection_settings(conn, inputs.story_id)?;
+            let entities = if injection.entities == context::settings::EntityInjection::None {
                 Vec::new()
             } else {
                 entity_snapshot(conn, inputs.story_id)?
             };
             context::build_message_context(&context::injection::Inputs {
                 conn,
-                story_id: inputs.story_id,
                 history: &inputs.transcript,
                 config: &config,
-                entity_mode: &entity_mode,
+                injection: &injection,
                 entities: &entities,
                 tools: &descriptions,
             })

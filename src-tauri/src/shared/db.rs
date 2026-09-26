@@ -439,6 +439,7 @@ fn run_migrations(conn: &mut PooledConn) -> AppResult<()> {
     migrate_narrator_memory_settings(conn)?;
     migrate_author_notes(conn)?;
     migrate_narrator_tools(conn)?;
+    migrate_story_injection_v1(conn)?;
     migrate_turns_v1(conn)?;
     conn.execute_batch("DROP INDEX IF EXISTS idx_turns_one_pending;")?;
     let auto_vacuum: i64 = conn.query_row("PRAGMA auto_vacuum", [], |row| row.get(0))?;
@@ -1137,6 +1138,79 @@ fn migrate_author_notes(conn: &rusqlite::Connection) -> AppResult<()> {
         "INSERT INTO settings (key, value) VALUES (?1, 'true')",
         [MIGRATION_KEY],
     )?;
+    Ok(())
+}
+
+fn migrate_story_injection_v1(conn: &mut rusqlite::Connection) -> AppResult<()> {
+    const MIGRATION_KEY: &str = "migration_story_injection_v1";
+    let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+    if tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM settings WHERE key = ?1)",
+        [MIGRATION_KEY],
+        |row| row.get::<_, bool>(0),
+    )? {
+        tx.commit()?;
+        return Ok(());
+    }
+    let global: Option<String> = tx
+        .query_row(
+            "SELECT value FROM settings WHERE key = 'context_injection'",
+            [],
+            |row| row.get(0),
+        )
+        .optional()?;
+    let global = global.and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok());
+    let mode = global
+        .as_ref()
+        .and_then(|value| value.get("entity_context_mode"))
+        .and_then(serde_json::Value::as_str)
+        .filter(|mode| matches!(*mode, "all" | "scoped" | "none"))
+        .unwrap_or("all");
+    let stories = {
+        let mut stmt = tx.prepare("SELECT id, settings_json FROM stories")?;
+        let rows = stmt.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+        rows.collect::<Result<Vec<_>, _>>()?
+    };
+    for (id, raw) in stories {
+        let mut settings: serde_json::Value = serde_json::from_str(&raw).map_err(|error| {
+            AppError::Other(format!("invalid story settings for {id}: {error}"))
+        })?;
+        let object = settings
+            .as_object_mut()
+            .ok_or_else(|| AppError::Other(format!("story settings for {id} must be an object")))?;
+        if !object.contains_key("injection") {
+            let note = object
+                .get("author_note")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .trim();
+            let enabled = object
+                .get("author_note_enabled")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(true);
+            object.insert(
+                "injection".into(),
+                serde_json::json!({
+                    "entities": mode, "author_note_enabled": enabled,
+                    "author_note": note, "tool_instructions": true
+                }),
+            );
+        }
+        object.remove("author_note");
+        object.remove("author_note_enabled");
+        tx.execute(
+            "UPDATE stories SET settings_json = ?1 WHERE id = ?2",
+            rusqlite::params![settings.to_string(), id],
+        )?;
+    }
+    tx.execute("DELETE FROM settings WHERE key = 'context_injection'", [])?;
+    tx.execute(
+        "INSERT INTO settings (key, value) VALUES (?1, 'true')",
+        [MIGRATION_KEY],
+    )?;
+    tx.commit()?;
     Ok(())
 }
 
@@ -2450,6 +2524,116 @@ mod tests {
             )
             .unwrap();
         assert!(migrated);
+    }
+
+    #[test]
+    fn story_injection_migration_preserves_muted_notes_and_scoped_mode_once() {
+        let pool = test_pool();
+        let mut conn = pool.get().unwrap();
+        conn.execute(
+            "DELETE FROM settings WHERE key = 'migration_story_injection_v1'",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES ('context_injection', ?1)",
+            [r#"{"entity_context_mode":"scoped"}"#],
+        )
+        .unwrap();
+        conn.execute_batch(
+            "INSERT INTO stories (id,title,created_at,updated_at,settings_json) VALUES
+             ('a','A','now','now','{\"author_note\":\"  Keep it terse.  \",\"author_note_enabled\":false,\"custom\":42}'),
+             ('b','B','now','now','{\"author_note\":\"Second\",\"custom\":true}'),
+             ('c','C','now','now','{\"injection\":{\"entities\":\"none\",\"author_note\":\"new\",\"author_note_enabled\":true,\"tool_instructions\":false},\"author_note\":\"old\"}'),
+             ('d','D','now','now','{}');"
+        ).unwrap();
+        migrate_story_injection_v1(&mut conn).unwrap();
+        for (id, note, enabled, entities, tools) in [
+            ("a", "Keep it terse.", false, "scoped", true),
+            ("b", "Second", true, "scoped", true),
+            ("c", "new", true, "none", false),
+            ("d", "", true, "scoped", true),
+        ] {
+            let raw: String = conn
+                .query_row(
+                    "SELECT settings_json FROM stories WHERE id = ?1",
+                    [id],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            let saved: serde_json::Value = serde_json::from_str(&raw).unwrap();
+            assert_eq!(saved["injection"]["author_note"], note);
+            assert_eq!(saved["injection"]["author_note_enabled"], enabled);
+            assert_eq!(saved["injection"]["entities"], entities);
+            assert_eq!(saved["injection"]["tool_instructions"], tools);
+            assert!(saved.get("author_note").is_none());
+            assert!(saved.get("author_note_enabled").is_none());
+        }
+        let saved: String = conn
+            .query_row(
+                "SELECT settings_json FROM stories WHERE id = 'a'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&saved).unwrap()["custom"],
+            42
+        );
+        assert!(!conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM settings WHERE key = 'context_injection')",
+                [],
+                |row| row.get::<_, bool>(0)
+            )
+            .unwrap());
+        assert!(conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM settings WHERE key = 'migration_story_injection_v1')",
+                [],
+                |row| row.get::<_, bool>(0)
+            )
+            .unwrap());
+        conn.execute("UPDATE stories SET settings_json = '{}' WHERE id = 'b'", [])
+            .unwrap();
+        migrate_story_injection_v1(&mut conn).unwrap();
+        let raw: String = conn
+            .query_row(
+                "SELECT settings_json FROM stories WHERE id = 'b'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(raw, "{}");
+    }
+
+    #[test]
+    fn story_injection_migration_rejects_invalid_global_entity_mode() {
+        let pool = test_pool();
+        let mut conn = pool.get().unwrap();
+        conn.execute(
+            "DELETE FROM settings WHERE key = 'migration_story_injection_v1'",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES ('context_injection', ?1)",
+            [r#"{"entity_context_mode":"invalid"}"#],
+        )
+        .unwrap();
+        conn.execute("INSERT INTO stories (id,title,created_at,updated_at,settings_json) VALUES ('s','Story','now','now','{}')", []).unwrap();
+        migrate_story_injection_v1(&mut conn).unwrap();
+        let raw: String = conn
+            .query_row(
+                "SELECT settings_json FROM stories WHERE id = 's'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&raw).unwrap()["injection"]["entities"],
+            "all"
+        );
     }
 
     #[test]

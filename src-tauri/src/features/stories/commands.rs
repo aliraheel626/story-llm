@@ -1,6 +1,6 @@
 use tauri::State;
 
-use super::{author_note, model::Story, repository, settings};
+use super::{model::Story, repository, settings};
 use crate::features::turn::TurnGate;
 use crate::shared::db::{blocking, Pool};
 use crate::shared::error::AppResult;
@@ -36,36 +36,6 @@ pub async fn delete_story(
     let pool = pool.inner().clone();
     let gate = gate.inner().clone();
     blocking(move || repository::delete_story(&pool, &gate, ticket, &story_id)).await
-}
-
-#[tauri::command]
-pub fn get_author_note(pool: State<Pool>, story_id: String) -> AppResult<String> {
-    author_note::read_author_note(pool.inner(), &story_id)
-}
-
-#[tauri::command]
-pub async fn save_author_note(
-    pool: State<'_, Pool>,
-    story_id: String,
-    note: String,
-) -> AppResult<()> {
-    let pool = pool.inner().clone();
-    blocking(move || author_note::write_author_note(&pool, &story_id, &note)).await
-}
-
-#[tauri::command]
-pub fn get_author_note_enabled(pool: State<Pool>, story_id: String) -> AppResult<bool> {
-    author_note::read_author_note_enabled(pool.inner(), &story_id)
-}
-
-#[tauri::command]
-pub async fn set_author_note_enabled(
-    pool: State<'_, Pool>,
-    story_id: String,
-    enabled: bool,
-) -> AppResult<()> {
-    let pool = pool.inner().clone();
-    blocking(move || author_note::write_author_note_enabled(&pool, &story_id, enabled)).await
 }
 
 #[tauri::command]

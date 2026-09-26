@@ -5,9 +5,12 @@ use std::collections::HashSet;
 use crate::ai::{HistoryTurn, TextModelConfig};
 use crate::features::ledger::{query, repository};
 use crate::prompts;
-use crate::shared::error::{AppError, AppResult};
+use crate::shared::error::AppResult;
 
-use super::raw_tail_boundary;
+use super::{
+    raw_tail_boundary,
+    settings::{EntityInjection, InjectionSettings},
+};
 
 pub(crate) struct EntityDisplay {
     pub id: String,
@@ -29,10 +32,9 @@ pub(crate) struct ToolDescription<'a> {
 
 pub(crate) struct Inputs<'a> {
     pub conn: &'a rusqlite::Connection,
-    pub story_id: &'a str,
     pub history: &'a [HistoryTurn],
     pub config: &'a TextModelConfig,
-    pub entity_mode: &'a str,
+    pub injection: &'a InjectionSettings,
     pub entities: &'a [EntityDisplay],
     pub tools: &'a [ToolDescription<'a>],
 }
@@ -125,41 +127,25 @@ pub(crate) fn combine_context_blocks(parts: &[String]) -> String {
 }
 
 pub(crate) fn build_message_context(inputs: &Inputs<'_>) -> AppResult<ContextPlan> {
-    let entities_full = if inputs.entity_mode == "none" {
+    let entities_full = if inputs.injection.entities == EntityInjection::None {
         String::new()
     } else {
         format_entity_context(inputs.entities, None)
     };
-    let author_note = {
-        let raw: String = inputs
-            .conn
-            .query_row(
-                "SELECT settings_json FROM stories WHERE id = ?1",
-                [inputs.story_id],
-                |row| row.get(0),
-            )
-            .map_err(|_| AppError::NotFound(format!("story {} not found", inputs.story_id)))?;
-        let settings: serde_json::Value =
-            serde_json::from_str(&raw).unwrap_or_else(|_| serde_json::json!({}));
-        let enabled = settings
-            .get("author_note_enabled")
-            .and_then(serde_json::Value::as_bool)
-            .unwrap_or(true);
-        let note = settings
-            .get("author_note")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or_default()
-            .trim();
-        if enabled && !note.is_empty() {
-            format!("<author_note>{note}</author_note>")
-        } else {
-            String::new()
-        }
+    let note = inputs.injection.author_note.trim();
+    let author_note = if inputs.injection.author_note_enabled && !note.is_empty() {
+        format!("<author_note>{note}</author_note>")
+    } else {
+        String::new()
     };
-    let tools = tool_context(inputs.tools);
+    let tools = if inputs.injection.tool_instructions {
+        tool_context(inputs.tools)
+    } else {
+        String::new()
+    };
 
     let full = combine_context_blocks(&[entities_full.clone(), author_note.clone(), tools.clone()]);
-    let entities_live = if inputs.entity_mode == "none" || inputs.entity_mode == "all" {
+    let entities_live = if inputs.injection.entities != EntityInjection::Scoped {
         entities_full
     } else {
         let split = raw_tail_boundary(
@@ -275,8 +261,8 @@ mod tests {
         )
         .unwrap();
         conn.execute(
-            "INSERT INTO settings (key, value) VALUES ('context_injection', ?1)",
-            [json!({"entity_context_mode":"scoped"}).to_string()],
+            "UPDATE stories SET settings_json = ?1 WHERE id = 's'",
+            [json!({"injection": {"entities":"scoped", "author_note":"Keep it terse.", "author_note_enabled":true, "tool_instructions":true}}).to_string()],
         )
         .unwrap();
         drop(conn);
@@ -306,12 +292,12 @@ mod tests {
         let turn = TurnTx::begin(&pool, &Default::default(), "s").unwrap();
         let plan = turn
             .with(|conn| {
+                let injection = super::super::settings::read_injection_settings(conn, "s")?;
                 build_message_context(&Inputs {
                     conn,
-                    story_id: "s",
                     history: &history,
                     config: &config,
-                    entity_mode: "scoped",
+                    injection: &injection,
                     entities: &snapshot(conn),
                     tools: &descriptions(&tools),
                 })
@@ -337,8 +323,8 @@ mod tests {
         let turn = TurnTx::begin(&pool, &Default::default(), "s").unwrap();
         turn.with(|conn| {
             conn.execute(
-                "UPDATE stories SET settings_json = '{\"author_note\":\"A new direction.\"}' WHERE id = 's'",
-                [],
+                "UPDATE stories SET settings_json = ?1 WHERE id = 's'",
+                [json!({"injection": {"entities":"scoped", "author_note":"A new direction.", "author_note_enabled":true, "tool_instructions":true}}).to_string()],
             )?;
             entities::create_entity_with_id_sync(
                 conn, "alice", "s", "character", "Alice", Some("a blue coat"),
@@ -349,12 +335,12 @@ mod tests {
         let history = vec![history_turn];
         let plan = turn
             .with(|conn| {
+                let injection = super::super::settings::read_injection_settings(conn, "s")?;
                 build_message_context(&Inputs {
                     conn,
-                    story_id: "s",
                     history: &history,
                     config: &config(),
-                    entity_mode: "scoped",
+                    injection: &injection,
                     entities: &snapshot(conn),
                     tools: &[],
                 })
@@ -371,7 +357,43 @@ mod tests {
         assert!(plan
             .live
             .contains("Bob (character); appearance: a red cloak"));
-        assert!(plan.live.contains("Alice (character); appearance: a blue coat"));
+        assert!(plan
+            .live
+            .contains("Alice (character); appearance: a blue coat"));
+        turn.rollback().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn muted_note_and_tool_instructions_leave_offered_tools_unchanged() {
+        let (pool, history_turn) = story_with_entity_query();
+        let turn = TurnTx::begin(&pool, &Default::default(), "s").unwrap();
+        let specs = catalog::enabled(&ToolAvailability {
+            settings: &NarratorToolSettings::default(),
+            image_enabled: false,
+            illustrate: false,
+        });
+        let plan = turn
+            .with(|conn| {
+                let injection = InjectionSettings {
+                    entities: EntityInjection::None,
+                    author_note_enabled: false,
+                    author_note: "Keep it terse.".into(),
+                    tool_instructions: false,
+                };
+                build_message_context(&Inputs {
+                    conn,
+                    history: &[history_turn],
+                    config: &config(),
+                    injection: &injection,
+                    entities: &snapshot(conn),
+                    tools: &descriptions(&specs),
+                })
+            })
+            .await
+            .unwrap();
+        assert!(!specs.is_empty());
+        assert!(plan.live.is_empty());
+        assert!(plan.full.is_empty());
         turn.rollback().await.unwrap();
     }
 
