@@ -64,7 +64,10 @@ globalThis.__storyTestInvoke = async (command, args = {}) => {
     case "get_story_reasoning_effort": return story.reasoning_effort ?? "";
     case "save_story_reasoning_effort": story.reasoning_effort = args.reasoningEffort; return;
     case "get_story_context_settings": {
-      const items = [{ key: "images", group: "Images", label: "The images themselves", enabled: args.storyId === "B" }];
+      const items = [
+        { key: "images", group: "Images", label: "The images themselves", enabled: args.storyId === "B" },
+        { key: "narration", group: "Narration", label: "Narration text", enabled: true },
+      ];
       if (nextContextLoad) {
         const wait = nextContextLoad;
         nextContextLoad = null;
@@ -78,7 +81,10 @@ globalThis.__storyTestInvoke = async (command, args = {}) => {
         nextContextSave = null;
         await wait;
       }
-      return [{ key: "images", group: "Images", label: "The images themselves", enabled: args.include.images }];
+      return [
+        { key: "images", group: "Images", label: "The images themselves", enabled: args.include.images },
+        { key: "narration", group: "Narration", label: "Narration text", enabled: args.include.narration },
+      ];
     }
     case "get_story_injection_settings": {
       const settings = { entities: "all", author_note_enabled: true, author_note: `Note ${args.storyId}`, tool_instructions: true };
@@ -273,21 +279,63 @@ test("delayed context loads and failed saves for A cannot show A data in B", asy
   const injectionSave = contextStore.getState().saveInjection("A", { entities: "scoped" });
   assert.equal(contextStore.getState().stories.A.items[0].enabled, true);
   assert.equal(contextStore.getState().stories.A.injection.entities, "scoped");
-  await contextStore.getState().toggleContext("A", "images", false);
-  assert.equal(contextStore.getState().stories.A.items[0].enabled, true);
+  const secondContextSave = contextStore.getState().toggleContext("A", "images", false);
+  assert.equal(contextStore.getState().stories.A.items[0].enabled, false);
   store.getState().setActiveStory("B");
   rejectContext(new Error("A context failed"));
   rejectInjection(new Error("A injection failed"));
   await assert.rejects(contextSave, /A context failed/);
+  await secondContextSave;
   await assert.rejects(injectionSave, /A injection failed/);
   assert.equal(visible().items[0].enabled, true);
   assert.equal(visible().noteDraft, "Unsent B draft");
   assert.equal(visible().injection.entities, "all");
   assert.equal(contextStore.getState().stories.A.items[0].enabled, false);
   assert.equal(contextStore.getState().stories.A.injection.entities, "all");
-  assert.deepEqual(calls.filter(({ command }) => command === "save_story_context_settings").at(-1).args,
-    { storyId: "A", include: { images: true } });
+  assert.deepEqual(calls.filter(({ command, args }) => command === "save_story_context_settings" && args.storyId === "A").slice(-2).map(({ args }) => args.include),
+    [{ images: true, narration: true }, { images: false, narration: true }]);
   store.getState().setActiveStory(previousStoryId);
+});
+
+test("rapid Context and Injection toggles save every change in order", async () => {
+  const storyId = "queued-settings-story";
+  await Promise.all([contextStore.getState().loadContext(storyId), contextStore.getState().loadInjection(storyId)]);
+  let releaseContext;
+  let releaseInjection;
+  nextContextSave = new Promise((resolve) => { releaseContext = resolve; });
+  nextInjectionSave = new Promise((resolve) => { releaseInjection = resolve; });
+  const firstContext = contextStore.getState().toggleContext(storyId, "images", true);
+  const secondContext = contextStore.getState().toggleContext(storyId, "narration", false);
+  const firstInjection = contextStore.getState().saveInjection(storyId, { entities: "scoped" });
+  const secondInjection = contextStore.getState().saveInjection(storyId, { tool_instructions: false });
+  assert.deepEqual(contextStore.getState().stories[storyId].items.map((item) => item.enabled), [true, false]);
+  assert.equal(contextStore.getState().stories[storyId].injection.entities, "scoped");
+  assert.equal(contextStore.getState().stories[storyId].injection.tool_instructions, false);
+  releaseContext();
+  releaseInjection();
+  await Promise.all([firstContext, secondContext, firstInjection, secondInjection]);
+  assert.deepEqual(calls.filter(({ command, args }) => command === "save_story_context_settings" && args.storyId === storyId).map(({ args }) => args.include),
+    [{ images: true, narration: true }, { images: true, narration: false }]);
+  assert.deepEqual(calls.filter(({ command, args }) => command === "save_story_injection_settings" && args.storyId === storyId).map(({ args }) => [args.settings.entities, args.settings.tool_instructions]),
+    [["scoped", true], ["scoped", false]]);
+  assert.deepEqual(contextStore.getState().stories[storyId].items.map((item) => item.enabled), [true, false]);
+  assert.equal(contextStore.getState().stories[storyId].contextSaving, false);
+  assert.equal(contextStore.getState().stories[storyId].injectionSaving, false);
+
+  let rejectContext;
+  let rejectInjection;
+  nextContextSave = new Promise((_, reject) => { rejectContext = reject; });
+  nextInjectionSave = new Promise((_, reject) => { rejectInjection = reject; });
+  const failedContext = contextStore.getState().toggleContext(storyId, "images", false);
+  const failedInjection = contextStore.getState().saveInjection(storyId, { tool_instructions: true });
+  await Promise.resolve();
+  rejectContext(new Error("context failed"));
+  rejectInjection(new Error("injection failed"));
+  await assert.rejects(failedContext, /context failed/);
+  await assert.rejects(failedInjection, /injection failed/);
+  assert.deepEqual(contextStore.getState().stories[storyId].items.map((item) => item.enabled), [true, false]);
+  assert.equal(contextStore.getState().stories[storyId].injection.entities, "scoped");
+  assert.equal(contextStore.getState().stories[storyId].injection.tool_instructions, false);
 });
 
 test("failed last turns render a status beside Retry", async () => {
