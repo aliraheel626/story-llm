@@ -1,8 +1,12 @@
 //! Ordered per-message context assembly for narrator requests.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::ai::{HistoryTurn, TextModelConfig};
+use crate::features::entities::{
+    self,
+    model::{Entity, EntityAttributeValue},
+};
 use crate::features::ledger::{query, repository};
 use crate::prompts;
 use crate::shared::error::AppResult;
@@ -12,19 +16,6 @@ use super::{
     settings::{EntityInjection, InjectionSettings},
 };
 
-pub(crate) struct EntityDisplay {
-    pub id: String,
-    pub name: String,
-    pub kind: String,
-    pub appearance_anchor: Option<String>,
-    pub attributes: Vec<AttributeDisplay>,
-}
-
-pub(crate) struct AttributeDisplay {
-    pub canonical_name: String,
-    pub value: f64,
-}
-
 pub(crate) struct ToolDescription<'a> {
     pub name: &'a str,
     pub instruction: Option<&'a str>,
@@ -32,10 +23,10 @@ pub(crate) struct ToolDescription<'a> {
 
 pub(crate) struct Inputs<'a> {
     pub conn: &'a rusqlite::Connection,
+    pub story_id: &'a str,
     pub history: &'a [HistoryTurn],
     pub config: &'a TextModelConfig,
     pub injection: &'a InjectionSettings,
-    pub entities: &'a [EntityDisplay],
     pub tools: &'a [ToolDescription<'a>],
     pub rejected_reply: Option<&'a str>,
 }
@@ -46,7 +37,8 @@ pub(crate) struct ContextPlan {
 }
 
 fn format_entity_context(
-    data: &[EntityDisplay],
+    data: &[Entity],
+    attributes: &HashMap<String, Vec<EntityAttributeValue>>,
     detailed_entity_ids: Option<&HashSet<String>>,
 ) -> String {
     let mut lines = vec![prompts::ENTITY_CONTEXT_HEADER.to_string()];
@@ -60,8 +52,8 @@ fn format_entity_context(
             .as_deref()
             .map(|a| format!("; appearance: {a}"))
             .unwrap_or_default();
-        let attributes = match &entity.attributes {
-            attrs if !attrs.is_empty() => format!(
+        let attributes = match attributes.get(&entity.id) {
+            Some(attrs) if !attrs.is_empty() => format!(
                 "; attributes: {}",
                 attrs
                     .iter()
@@ -128,10 +120,25 @@ pub(crate) fn combine_context_blocks(parts: &[String]) -> String {
 }
 
 pub(crate) fn build_message_context(inputs: &Inputs<'_>) -> AppResult<ContextPlan> {
+    let (entities, attributes) = if inputs.injection.entities == EntityInjection::None {
+        (Vec::new(), HashMap::new())
+    } else {
+        let entities = entities::list_entities_sync(inputs.conn, inputs.story_id, None)?;
+        let ids = entities
+            .iter()
+            .map(|entity| entity.id.as_str())
+            .collect::<Vec<_>>();
+        let attributes = entities::attributes::list_entity_attributes_for_entities_sync(
+            inputs.conn,
+            inputs.story_id,
+            &ids,
+        )?;
+        (entities, attributes)
+    };
     let entities_full = if inputs.injection.entities == EntityInjection::None {
         String::new()
     } else {
-        format_entity_context(inputs.entities, None)
+        format_entity_context(&entities, &attributes, None)
     };
     let note = inputs.injection.author_note.trim();
     let author_note = if inputs.injection.author_note_enabled && !note.is_empty() {
@@ -156,7 +163,7 @@ pub(crate) fn build_message_context(inputs: &Inputs<'_>) -> AppResult<ContextPla
             &full,
         );
         let touched = touched_entity_ids(inputs.conn, &inputs.history[split..])?;
-        format_entity_context(inputs.entities, Some(&touched))
+        format_entity_context(&entities, &attributes, Some(&touched))
     };
     let retry = inputs
         .rejected_reply
@@ -193,35 +200,6 @@ mod tests {
             context_window: 32_768,
             supports_images: false,
         }
-    }
-
-    fn snapshot(conn: &rusqlite::Connection) -> Vec<EntityDisplay> {
-        let entities = entities::list_entities_sync(conn, "s", None).unwrap();
-        let ids = entities
-            .iter()
-            .map(|entity| entity.id.as_str())
-            .collect::<Vec<_>>();
-        let mut attrs =
-            entities::attributes::list_entity_attributes_for_entities_sync(conn, "s", &ids)
-                .unwrap();
-        entities
-            .into_iter()
-            .map(|entity| EntityDisplay {
-                attributes: attrs
-                    .remove(&entity.id)
-                    .unwrap_or_default()
-                    .into_iter()
-                    .map(|attr| AttributeDisplay {
-                        canonical_name: attr.canonical_name,
-                        value: attr.value,
-                    })
-                    .collect(),
-                id: entity.id,
-                name: entity.name,
-                kind: entity.kind,
-                appearance_anchor: entity.appearance_anchor,
-            })
-            .collect()
     }
 
     fn descriptions<'a>(specs: &'a [&'a ToolSpec]) -> Vec<ToolDescription<'a>> {
@@ -303,10 +281,10 @@ mod tests {
                 let injection = super::super::settings::read_injection_settings(conn, "s")?;
                 build_message_context(&Inputs {
                     conn,
+                    story_id: "s",
                     history: &history,
                     config: &config,
                     injection: &injection,
-                    entities: &snapshot(conn),
                     tools: &descriptions(&tools),
                     rejected_reply: None,
                 })
@@ -347,10 +325,10 @@ mod tests {
                 let injection = super::super::settings::read_injection_settings(conn, "s")?;
                 build_message_context(&Inputs {
                     conn,
+                    story_id: "s",
                     history: &history,
                     config: &config(),
                     injection: &injection,
-                    entities: &snapshot(conn),
                     tools: &[],
                     rejected_reply: None,
                 })
@@ -374,6 +352,81 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn entity_snapshot_reads_uncommitted_attributes_on_turn_connection() {
+        let pool = crate::shared::db::test_pool();
+        let conn = pool.get().unwrap();
+        conn.execute(
+            "INSERT INTO stories (id, title, created_at, updated_at, settings_json) VALUES ('s', 'Story', 'now', 'now', '{}')",
+            [],
+        ).unwrap();
+        drop(conn);
+        let turn = TurnTx::begin(&pool, &Default::default(), "s").unwrap();
+        turn.with(|conn| {
+            entities::create_entity_with_id_sync(
+                conn,
+                "alice",
+                "s",
+                "character",
+                "Alice",
+                Some("blue coat"),
+                "test",
+                None,
+                None,
+            )?;
+            let attribute_id: String = conn.query_row(
+                "SELECT id FROM attribute_registry WHERE canonical_name = 'Accuracy'",
+                [],
+                |row| row.get(0),
+            )?;
+            entities::attributes::set_entity_attribute_sync(
+                conn,
+                "s",
+                "alice",
+                &attribute_id,
+                7.0,
+            )?;
+            let snapshot = entities::list_entities_sync(conn, "s", None)?;
+            let alice = snapshot.iter().find(|entity| entity.id == "alice").unwrap();
+            let attributes = entities::attributes::list_entity_attributes_for_entities_sync(
+                conn,
+                "s",
+                &["alice"],
+            )?;
+            let alice_attributes = &attributes["alice"];
+            assert_eq!(snapshot.len(), 1);
+            assert_eq!(alice.id, "alice");
+            assert_eq!(alice.name, "Alice");
+            assert_eq!(alice.appearance_anchor.as_deref(), Some("blue coat"));
+            assert_eq!(alice_attributes.len(), 1);
+            assert_eq!(alice_attributes[0].canonical_name, "Accuracy");
+            assert_eq!(alice_attributes[0].value, 7.0);
+            let injection = InjectionSettings {
+                entities: EntityInjection::All,
+                author_note_enabled: false,
+                author_note: String::new(),
+                tool_instructions: false,
+            };
+            let plan = build_message_context(&Inputs {
+                conn,
+                story_id: "s",
+                history: &[],
+                config: &config(),
+                injection: &injection,
+                tools: &[],
+                rejected_reply: None,
+            })?;
+            assert!(plan
+                .full
+                .contains("Alice (character); appearance: blue coat; attributes: Accuracy=7"));
+            assert_eq!(plan.full, plan.live);
+            Ok(())
+        })
+        .await
+        .unwrap();
+        turn.rollback().await.unwrap();
+    }
+
+    #[tokio::test]
     async fn muted_note_and_tool_instructions_leave_offered_tools_unchanged() {
         let (pool, history_turn) = story_with_entity_query();
         let turn = TurnTx::begin(&pool, &Default::default(), "s").unwrap();
@@ -392,10 +445,10 @@ mod tests {
                 };
                 build_message_context(&Inputs {
                     conn,
+                    story_id: "s",
                     history: &[history_turn],
                     config: &config(),
                     injection: &injection,
-                    entities: &snapshot(conn),
                     tools: &descriptions(&specs),
                     rejected_reply: None,
                 })
@@ -421,21 +474,26 @@ mod tests {
             let history = [history_turn];
             let base = Inputs {
                 conn,
+                story_id: "s",
                 history: &history,
                 config: &config(),
                 injection: &injection,
-                entities: &snapshot(conn),
                 tools: &tools,
                 rejected_reply: Some("Rejected narration."),
             };
             let retry = build_message_context(&base)?;
-            assert!(retry.live.contains("<rejected_reply>Rejected narration.</rejected_reply>"));
+            assert!(retry
+                .live
+                .contains("<rejected_reply>Rejected narration.</rejected_reply>"));
             assert!(
                 retry.live.find("</additional_instructions>").unwrap()
                     < retry.live.find("<retry>").unwrap()
             );
             assert!(!retry.full.contains("<retry>"));
-            let normal = build_message_context(&Inputs { rejected_reply: None, ..base })?;
+            let normal = build_message_context(&Inputs {
+                rejected_reply: None,
+                ..base
+            })?;
             assert!(!normal.live.contains("<retry>"));
             assert_eq!(normal.full, retry.full);
             Ok(())

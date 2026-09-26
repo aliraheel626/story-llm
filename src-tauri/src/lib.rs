@@ -57,10 +57,6 @@ pub fn run() {
             tauri::async_runtime::spawn(features::settings::refresh_missing_capabilities(
                 refresh_pool,
             ));
-            app.manage(features::context::preview::PreviewCallbacks {
-                config: features::narrator::preview_config,
-                metadata: features::narrator::preview_metadata,
-            });
             app.manage(features::turn::TurnGate::default());
             Ok(())
         })
@@ -73,7 +69,7 @@ pub fn run() {
             features::context::save_story_context_settings,
             features::context::get_story_injection_settings,
             features::context::save_story_injection_settings,
-            features::context::preview_story_context,
+            features::narrator::preview_story_context,
             features::ledger::list_ledger_entries,
             features::turn::submit_turn,
             features::turn::retry_narration,

@@ -1,18 +1,15 @@
 //! Read-only semantic preview of the next continue narration request.
 
 use serde::Serialize;
-use tauri::AppHandle;
 
 use crate::ai::{HistoryRole, HistoryTurn, HistoryTurnMarker, TextModelConfig};
 use crate::prompts;
-use crate::shared::{db::Pool, error::AppResult};
+use crate::shared::error::AppResult;
 
 use super::{
     build_message_context, combine_context_blocks,
-    injection::{EntityDisplay, Inputs, ToolDescription},
-    load_transcript,
-    settings::{self, EntityInjection},
-    ImagePolicy,
+    injection::{Inputs, ToolDescription},
+    load_transcript, settings, ImagePolicy,
 };
 
 #[derive(Serialize, Debug, PartialEq, Eq)]
@@ -31,37 +28,16 @@ pub struct ContextPreview {
     pub images_unsupported: bool,
 }
 
-pub struct PreviewConfig {
-    pub model: TextModelConfig,
-    pub image_enabled: bool,
-}
-
-pub struct PreviewTool {
-    pub name: &'static str,
-    pub instruction: Option<&'static str>,
-}
-
-pub struct PreviewMetadata {
-    pub entities: Vec<EntityDisplay>,
-    pub tools: Vec<PreviewTool>,
-}
-
-#[derive(Clone, Copy)]
-pub struct PreviewCallbacks {
-    pub config: fn(&AppHandle, &Pool) -> AppResult<PreviewConfig>,
-    pub metadata: fn(&rusqlite::Connection, &str, bool) -> AppResult<PreviewMetadata>,
-}
-
 pub fn build_preview(
     conn: &rusqlite::Connection,
     story_id: &str,
-    config: &PreviewConfig,
-    metadata: impl FnOnce(&rusqlite::Connection, &str) -> AppResult<PreviewMetadata>,
+    model: &TextModelConfig,
+    tools: &[ToolDescription<'_>],
 ) -> AppResult<ContextPreview> {
     let settings = settings::read_context_settings(conn, story_id)?;
     let injection = settings::read_injection_settings(conn, story_id)?;
-    let images_unsupported = settings.includes("images") && !config.model.supports_images;
-    let policy = if config.model.supports_images {
+    let images_unsupported = settings.includes("images") && !model.supports_images;
+    let policy = if model.supports_images {
         ImagePolicy::Allowed
     } else {
         ImagePolicy::Unsupported
@@ -75,25 +51,13 @@ pub fn build_preview(
         images: Vec::new(),
         reasoning: None,
     });
-    let mut data = metadata(conn, story_id)?;
-    if injection.entities == EntityInjection::None {
-        data.entities.clear();
-    }
-    let descriptions = data
-        .tools
-        .iter()
-        .map(|tool| ToolDescription {
-            name: tool.name,
-            instruction: tool.instruction,
-        })
-        .collect::<Vec<_>>();
     let plan = build_message_context(&Inputs {
         conn,
+        story_id,
         history: &history,
-        config: &config.model,
+        config: model,
         injection: &injection,
-        entities: &data.entities,
-        tools: &descriptions,
+        tools,
         rejected_reply: None,
     })?;
     let last = history.last_mut().expect("synthetic continue turn exists");
@@ -121,36 +85,27 @@ pub fn build_preview(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::features::ledger::{attachments, model::kind, repository};
+    use crate::features::{
+        entities,
+        ledger::{attachments, model::kind, repository},
+    };
     use serde_json::json;
 
-    fn config(supports_images: bool) -> PreviewConfig {
-        PreviewConfig {
-            model: TextModelConfig {
-                provider: "test".into(),
-                model: "test".into(),
-                api_key: "secret-api-key".into(),
-                context_window: 32_768,
-                supports_images,
-            },
-            image_enabled: false,
+    fn config(supports_images: bool) -> TextModelConfig {
+        TextModelConfig {
+            provider: "test".into(),
+            model: "test".into(),
+            api_key: "secret-api-key".into(),
+            context_window: 32_768,
+            supports_images,
         }
     }
 
-    fn metadata(_: &rusqlite::Connection, _: &str) -> AppResult<PreviewMetadata> {
-        Ok(PreviewMetadata {
-            entities: vec![EntityDisplay {
-                id: "bob".into(),
-                name: "Bob".into(),
-                kind: "character".into(),
-                appearance_anchor: Some("red cloak".into()),
-                attributes: Vec::new(),
-            }],
-            tools: vec![PreviewTool {
-                name: "get_entities",
-                instruction: Some("Look up characters."),
-            }],
-        })
+    fn tools() -> [ToolDescription<'static>; 1] {
+        [ToolDescription {
+            name: "get_entities",
+            instruction: Some("Look up characters."),
+        }]
     }
 
     #[test]
@@ -165,6 +120,18 @@ mod tests {
         conn.execute(
             "INSERT INTO stories (id,title,created_at,updated_at,settings_json) VALUES ('s','Story','now','now',?1)",
             [story_settings.to_string()],
+        )
+        .unwrap();
+        entities::create_entity_with_id_sync(
+            &conn,
+            "bob",
+            "s",
+            "character",
+            "Bob",
+            Some("red cloak"),
+            "test",
+            None,
+            None,
         )
         .unwrap();
         let append = |kind, visibility, content, payload, target: Option<&str>| {
@@ -243,7 +210,7 @@ mod tests {
 
         for supports_images in [true, false] {
             let config = config(supports_images);
-            let preview = build_preview(&conn, "s", &config, metadata).unwrap();
+            let preview = build_preview(&conn, "s", &config, &tools()).unwrap();
             let settings = settings::read_context_settings(&conn, "s").unwrap();
             let injection = settings::read_injection_settings(&conn, "s").unwrap();
             let mut history = load_transcript(
@@ -273,22 +240,13 @@ mod tests {
                 images: Vec::new(),
                 reasoning: None,
             });
-            let data = metadata(&conn, "s").unwrap();
-            let descriptions = data
-                .tools
-                .iter()
-                .map(|tool| ToolDescription {
-                    name: tool.name,
-                    instruction: tool.instruction,
-                })
-                .collect::<Vec<_>>();
             let plan = build_message_context(&Inputs {
                 conn: &conn,
+                story_id: "s",
                 history: &history,
-                config: &config.model,
+                config: &config,
                 injection: &injection,
-                entities: &data.entities,
-                tools: &descriptions,
+                tools: &tools(),
                 rejected_reply: None,
             })
             .unwrap();
@@ -354,13 +312,13 @@ mod tests {
             .unwrap();
         assert_eq!(before, after);
 
-        conn.execute(
-            "UPDATE stories SET settings_json = '{}' WHERE id = 's'",
-            [],
-        )
-        .unwrap();
-        let disabled = build_preview(&conn, "s", &config(false), metadata).unwrap();
+        conn.execute("UPDATE stories SET settings_json = '{}' WHERE id = 's'", [])
+            .unwrap();
+        let disabled = build_preview(&conn, "s", &config(false), &tools()).unwrap();
         assert!(!disabled.images_unsupported);
-        assert!(disabled.messages.iter().all(|message| message.image_count == 0));
+        assert!(disabled
+            .messages
+            .iter()
+            .all(|message| message.image_count == 0));
     }
 }
