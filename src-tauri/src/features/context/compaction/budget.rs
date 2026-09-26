@@ -125,8 +125,9 @@ mod tests {
             reasoning: Some("private thought ".repeat(500)),
             marker: HistoryTurnMarker::Ledger,
         };
-        let text_cost = HeuristicTokenCounter::openai().count(&messages(&[turn.clone()])[0]);
-        assert_eq!(kept_count(&[turn.clone()], text_cost + 1), 0);
+        let text_cost =
+            HeuristicTokenCounter::openai().count(&messages(std::slice::from_ref(&turn))[0]);
+        assert_eq!(kept_count(std::slice::from_ref(&turn), text_cost + 1), 0);
         assert_eq!(
             kept_count(
                 &[HistoryTurn {
