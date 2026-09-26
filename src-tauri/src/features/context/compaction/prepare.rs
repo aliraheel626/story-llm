@@ -177,7 +177,7 @@ mod tests {
     };
 
     use super::*;
-    use crate::features::compaction::summary::ContextSummary;
+    use crate::features::context::compaction::summary::ContextSummary;
     use crate::features::ledger::{model::kind, repository};
 
     fn summary(prose: &str) -> ContextSummary {

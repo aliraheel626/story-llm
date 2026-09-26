@@ -4,6 +4,7 @@ use tauri::{AppHandle, Emitter};
 use uuid::Uuid;
 
 use crate::features::{
+    context::load_transcript,
     images,
     ledger::{
         model::LedgerEntry, query as ledger_query, repository as ledger_repository, turns,
@@ -16,7 +17,7 @@ use crate::shared::db::{blocking, Pool};
 use crate::shared::error::{AppError, AppResult};
 
 use super::model::{NarrationDonePayload, NarrationTextCompletePayload, SubmitTurnResult};
-use narrator::{transcript::load_transcript, Candidate, NarratorInputs, NarratorPurpose};
+use narrator::{Candidate, NarratorInputs, NarratorPurpose};
 
 #[derive(Clone, serde::Serialize)]
 struct StoryTitleUpdatedPayload {

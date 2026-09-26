@@ -4,20 +4,24 @@ use std::collections::{HashMap, HashSet};
 
 use crate::ai::{HistoryTurn, TextModelConfig};
 use crate::features::{
-    compaction, entities, ledger::{query, repository}, settings, turn::TurnTx,
+    entities,
+    ledger::{query, repository},
+    narrator::catalog::ToolSpec,
+    settings,
+    turn::TurnTx,
 };
 use crate::prompts;
 use crate::shared::db::Pool;
 use crate::shared::error::{AppError, AppResult};
 
-use super::catalog::ToolSpec;
+use super::raw_tail_boundary;
 
 struct EntityContextData {
     entities: Vec<entities::model::Entity>,
     attrs_by_entity: HashMap<String, Vec<entities::model::EntityAttributeValue>>,
 }
 
-pub(super) struct Inputs<'a> {
+pub(crate) struct Inputs<'a> {
     pub turn: &'a TurnTx,
     pub settings_pool: &'a Pool,
     pub story_id: &'a str,
@@ -26,7 +30,7 @@ pub(super) struct Inputs<'a> {
     pub tool_specs: &'a [&'static ToolSpec],
 }
 
-pub(super) struct ContextPlan {
+pub(crate) struct ContextPlan {
     pub live: String,
     pub full: String,
 }
@@ -124,12 +128,8 @@ impl EntitiesFull {
             Self::None => Ok(String::new()),
             Self::All(dump) => Ok(dump),
             Self::Scoped { data, .. } => {
-                let split = compaction::raw_tail_boundary(
-                    history,
-                    config,
-                    &prompts::narrator_system_prompt(),
-                    full,
-                );
+                let split =
+                    raw_tail_boundary(history, config, &prompts::narrator_system_prompt(), full);
                 let touched = turn
                     .with(|conn| touched_entity_ids(conn, &history[split..]))
                     .await?;
@@ -184,7 +184,7 @@ fn tool_context(specs: &[&ToolSpec]) -> String {
     )
 }
 
-pub(super) fn combine_context_blocks(parts: &[String]) -> String {
+pub(crate) fn combine_context_blocks(parts: &[String]) -> String {
     parts
         .iter()
         .filter(|part| !part.is_empty())
@@ -193,7 +193,7 @@ pub(super) fn combine_context_blocks(parts: &[String]) -> String {
         .join("\n\n")
 }
 
-pub(super) async fn build_message_context(inputs: &Inputs<'_>) -> AppResult<ContextPlan> {
+pub(crate) async fn build_message_context(inputs: &Inputs<'_>) -> AppResult<ContextPlan> {
     let entities = entities_full(inputs.turn, inputs.settings_pool, inputs.story_id).await?;
     let author_note = inputs
         .turn

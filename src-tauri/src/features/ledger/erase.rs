@@ -1,11 +1,12 @@
 use std::collections::HashSet;
 
 use crate::features::{
+    context::prune_summaries_covering,
     entities,
     ledger::{
         attachments,
         model::{kind as ledger_kind, LedgerEntry},
-        query, summaries, turns,
+        query, turns,
     },
     turn::{TurnGate, TurnTicket},
 };
@@ -68,7 +69,7 @@ pub(crate) fn remove_turn(
         .map(|entry| entry.id.clone())
         .collect::<HashSet<_>>();
     let affected_entities = touched_entities(&entries);
-    summaries::prune_covering(conn, story_id, &doomed_ids)?;
+    prune_summaries_covering(conn, story_id, &doomed_ids)?;
     conn.execute(
         "DELETE FROM turns WHERE id = ?1 AND story_id = ?2",
         rusqlite::params![turn_id, story_id],

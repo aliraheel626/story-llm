@@ -5,12 +5,15 @@ use tauri::AppHandle;
 use tokio::sync::Mutex;
 
 use crate::ai::{HistoryTurn, TextModelConfig};
-use crate::features::{images, settings, stories, turn::TurnTx};
+use crate::features::{
+    context::{self, ContextPlan},
+    images, settings, stories,
+    turn::TurnTx,
+};
 use crate::shared::db::Pool;
 use crate::shared::error::{AppError, AppResult};
 
 use super::catalog::{self, ToolAvailability, ToolDeps};
-use super::injection::{self, ContextPlan};
 use super::model::NarratorPurpose;
 
 pub struct NarratorInputs<'a> {
@@ -97,7 +100,7 @@ pub async fn prepare(inputs: NarratorInputs<'_>) -> AppResult<Prepared> {
         .iter()
         .map(|spec| DynamicTool::from_portable((spec.build)(&deps)))
         .collect();
-    let context = injection::build_message_context(&injection::Inputs {
+    let context = context::build_message_context(&context::injection::Inputs {
         turn: &inputs.turn,
         settings_pool: inputs.settings_pool,
         story_id: inputs.story_id,

@@ -6,14 +6,13 @@ use uuid::Uuid;
 
 use crate::ai::{self, NarrateRequest, NarratorChunk, ToolActivityPhase};
 use crate::features::{
-    compaction,
+    context::{combine_context_blocks, prepare_history},
     ledger::{model::kind as ledger_kind, repository as ledger_repository},
 };
 use crate::prompts;
 use crate::shared::error::{AppError, AppResult};
 
 use super::generation::Prepared;
-use super::injection::combine_context_blocks;
 use super::model::Candidate;
 use super::tools;
 
@@ -73,7 +72,7 @@ where
         } = prepared;
         let result = async {
             let preamble = prompts::narrator_system_prompt();
-            let mut history = compaction::prepare_history(
+            let mut history = prepare_history(
                 &turn,
                 &story_id,
                 &config,
