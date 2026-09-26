@@ -16,6 +16,38 @@ use crate::shared::error::{AppError, AppResult};
 use super::catalog::{self, ToolAvailability, ToolDeps};
 use super::model::NarratorPurpose;
 
+pub fn preview_config(app: &AppHandle, pool: &Pool) -> AppResult<context::preview::PreviewConfig> {
+    let model = settings::resolve_text_model(app, pool)?;
+    let image = settings::read_image_model_settings(app, pool)?;
+    Ok(context::preview::PreviewConfig {
+        model,
+        image_enabled: image.enabled && image.has_api_key,
+    })
+}
+
+pub fn preview_metadata(
+    conn: &rusqlite::Connection,
+    story_id: &str,
+    image_enabled: bool,
+) -> AppResult<context::preview::PreviewMetadata> {
+    let settings = stories::settings::read_story_narrator_tools_conn(conn, story_id)?;
+    let tools = catalog::enabled(&ToolAvailability {
+        settings: &settings,
+        image_enabled: image_enabled && settings.illustrate_scene,
+        illustrate: false,
+    });
+    Ok(context::preview::PreviewMetadata {
+        entities: entity_snapshot(conn, story_id)?,
+        tools: tools
+            .into_iter()
+            .map(|spec| context::preview::PreviewTool {
+                name: spec.name,
+                instruction: spec.instruction,
+            })
+            .collect(),
+    })
+}
+
 fn entity_snapshot(
     conn: &rusqlite::Connection,
     story_id: &str,

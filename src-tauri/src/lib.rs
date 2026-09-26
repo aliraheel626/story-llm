@@ -53,6 +53,10 @@ pub fn run() {
             let app_data_dir = app.path().app_data_dir()?;
             let pool = shared::db::init_pool(&app_data_dir)?;
             app.manage(pool);
+            app.manage(features::context::preview::PreviewCallbacks {
+                config: features::narrator::preview_config,
+                metadata: features::narrator::preview_metadata,
+            });
             app.manage(features::turn::TurnGate::default());
             app.manage(features::ledger::erase::EraseReplay(
                 features::entities::projection::replay_after_erase,
@@ -68,6 +72,7 @@ pub fn run() {
             features::context::save_story_context_settings,
             features::context::get_story_injection_settings,
             features::context::save_story_injection_settings,
+            features::context::preview_story_context,
             features::ledger::list_ledger_entries,
             features::turn::submit_turn,
             features::turn::retry_narration,

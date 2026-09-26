@@ -1,11 +1,31 @@
 use std::collections::BTreeMap;
 
-use tauri::State;
+use tauri::{AppHandle, State};
 
 use crate::shared::db::{blocking, with_transaction, Pool};
 use crate::shared::error::AppResult;
 
+use super::preview::{self, ContextPreview, PreviewCallbacks};
 use super::settings::{self, ContextItem, InjectionSettings};
+
+#[tauri::command]
+pub async fn preview_story_context(
+    app: AppHandle,
+    pool: State<'_, Pool>,
+    callbacks: State<'_, PreviewCallbacks>,
+    story_id: String,
+) -> AppResult<ContextPreview> {
+    let pool = pool.inner().clone();
+    let callbacks = *callbacks.inner();
+    blocking(move || {
+        let config = (callbacks.config)(&app, &pool)?;
+        let conn = pool.get()?;
+        preview::build_preview(&conn, &story_id, &config, |conn, story_id| {
+            (callbacks.metadata)(conn, story_id, config.image_enabled)
+        })
+    })
+    .await
+}
 
 #[tauri::command]
 pub fn get_story_context_settings(

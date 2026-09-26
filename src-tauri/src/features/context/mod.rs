@@ -1,6 +1,7 @@
 mod commands;
 mod compaction;
 pub(crate) mod injection;
+pub(crate) mod preview;
 pub(crate) mod settings;
 mod transcript;
 
