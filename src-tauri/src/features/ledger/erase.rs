@@ -85,6 +85,7 @@ mod tests {
     use crate::features::entities;
     use crate::features::ledger::repository::{self as ledger_repository, append_entry};
     use crate::shared::db::with_transaction;
+    use crate::shared::test_support;
     use serde_json::json;
 
     #[test]
@@ -159,39 +160,20 @@ mod tests {
         for mode in ["do", "say", "story", "guide", "continue", "see"] {
             let pool = crate::shared::db::test_pool();
             let conn = pool.get().unwrap();
-            conn.execute(
-                "INSERT INTO stories (id, title, created_at, updated_at, settings_json)
-                 VALUES ('s', 'story', 'now', 'now', '{}')",
-                [],
-            )
-            .unwrap();
-            let turn_id = turns::create_turn(&conn, "s").unwrap();
-            let action = append_entry(
+            test_support::story(&conn, "s");
+            let (_, action_id, response_id) = test_support::exchange(
                 &conn,
                 "s",
-                ledger_kind::PLAYER_MESSAGE,
-                "visible",
-                Some(if matches!(mode, "continue" | "see") {
+                mode,
+                if matches!(mode, "continue" | "see") {
                     ""
                 } else {
                     "action"
-                }),
-                &json!({"input_mode":mode}),
-                None,
-                Some(&turn_id),
-            )
-            .unwrap();
-            let response = append_entry(
-                &conn,
-                "s",
-                ledger_kind::NARRATION,
-                "visible",
+                },
                 Some("response"),
-                &json!({"input_mode":"generated"}),
-                None,
-                Some(&turn_id),
-            )
-            .unwrap();
+            );
+            let action = ledger_repository::get_entry(&conn, &action_id).unwrap();
+            let response = ledger_repository::get_entry(&conn, &response_id.unwrap()).unwrap();
             drop(conn);
 
             let removed = with_transaction(&pool, |tx| {
@@ -208,12 +190,7 @@ mod tests {
     fn erase_trailing_see_removes_its_image_from_the_prior_narration() {
         let pool = crate::shared::db::test_pool();
         let conn = pool.get().unwrap();
-        conn.execute(
-            "INSERT INTO stories (id, title, created_at, updated_at, settings_json)
-             VALUES ('s', 'story', 'now', 'now', '{}')",
-            [],
-        )
-        .unwrap();
+        test_support::story(&conn, "s");
         let narration_turn = turns::create_turn(&conn, "s").unwrap();
         let narration = append_entry(
             &conn,
@@ -295,12 +272,7 @@ mod tests {
     fn hard_erase_removes_exchange_derivatives_summaries_and_projections() {
         let pool = crate::shared::db::test_pool();
         let conn = pool.get().unwrap();
-        conn.execute(
-            "INSERT INTO stories (id, title, created_at, updated_at, settings_json)
-             VALUES ('s', 'story', 'now', 'now', '{}')",
-            [],
-        )
-        .unwrap();
+        test_support::story(&conn, "s");
         let baseline_turn = turns::create_turn(&conn, "s").unwrap();
         let baseline = append_entry(
             &conn,
@@ -400,29 +372,10 @@ mod tests {
         )
         .unwrap();
 
-        let turn_id = turns::create_turn(&conn, "s").unwrap();
-        let player = append_entry(
-            &conn,
-            "s",
-            ledger_kind::PLAYER_MESSAGE,
-            "visible",
-            Some("act"),
-            &json!({"input_mode":"do"}),
-            None,
-            Some(&turn_id),
-        )
-        .unwrap();
-        let narration = append_entry(
-            &conn,
-            "s",
-            ledger_kind::NARRATION,
-            "visible",
-            Some("result"),
-            &json!({"input_mode":"generated"}),
-            None,
-            Some(&turn_id),
-        )
-        .unwrap();
+        let (turn_id, player_id, narration_id) =
+            test_support::exchange(&conn, "s", "do", "act", Some("result"));
+        let player = ledger_repository::get_entry(&conn, &player_id).unwrap();
+        let narration = ledger_repository::get_entry(&conn, &narration_id.unwrap()).unwrap();
         crate::features::entities::update_entity_sync(
             &conn,
             "s",
@@ -603,35 +556,11 @@ mod tests {
     fn erasing_entity_creation_skips_a_later_player_attribute_event() {
         let pool = crate::shared::db::test_pool();
         let conn = pool.get().unwrap();
-        conn.execute(
-            "INSERT INTO stories (id, title, created_at, updated_at, settings_json)
-             VALUES ('s', 'story', 'now', 'now', '{}')",
-            [],
-        )
-        .unwrap();
-        let turn_id = turns::create_turn(&conn, "s").unwrap();
-        let action = append_entry(
-            &conn,
-            "s",
-            ledger_kind::PLAYER_MESSAGE,
-            "visible",
-            Some("act"),
-            &json!({"input_mode":"do"}),
-            None,
-            Some(&turn_id),
-        )
-        .unwrap();
-        let narration = append_entry(
-            &conn,
-            "s",
-            ledger_kind::NARRATION,
-            "visible",
-            Some("result"),
-            &json!({"input_mode":"generated"}),
-            None,
-            Some(&turn_id),
-        )
-        .unwrap();
+        test_support::story(&conn, "s");
+        let (turn_id, action_id, narration_id) =
+            test_support::exchange(&conn, "s", "do", "act", Some("result"));
+        let action = ledger_repository::get_entry(&conn, &action_id).unwrap();
+        let narration = ledger_repository::get_entry(&conn, &narration_id.unwrap()).unwrap();
         entities::create_entity_with_id_sync(
             &conn,
             "temporary",
@@ -690,24 +619,9 @@ mod tests {
     fn erase_removes_legacy_failed_turn_and_entries() {
         let pool = crate::shared::db::test_pool();
         let conn = pool.get().unwrap();
-        conn.execute(
-            "INSERT INTO stories (id, title, created_at, updated_at, settings_json)
-             VALUES ('s', 'story', 'now', 'now', '{}')",
-            [],
-        )
-        .unwrap();
-        let turn_id = turns::create_turn(&conn, "s").unwrap();
-        let action = append_entry(
-            &conn,
-            "s",
-            ledger_kind::PLAYER_MESSAGE,
-            "visible",
-            Some("act"),
-            &json!({"input_mode":"do"}),
-            None,
-            Some(&turn_id),
-        )
-        .unwrap();
+        test_support::story(&conn, "s");
+        let (turn_id, action_id, _) = test_support::exchange(&conn, "s", "do", "act", None);
+        let action = ledger_repository::get_entry(&conn, &action_id).unwrap();
         conn.execute(
             "UPDATE turns SET status = 'failed' WHERE id = ?1",
             [&turn_id],

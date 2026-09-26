@@ -323,10 +323,7 @@ mod tests {
     #[tokio::test]
     async fn compacted_summary_is_part_of_the_turn_transaction() {
         let pool = crate::shared::db::test_pool();
-        pool.get().unwrap().execute(
-            "INSERT INTO stories (id, title, created_at, updated_at, settings_json) VALUES ('story', 'Story', 'now', 'now', '{}')",
-            [],
-        ).unwrap();
+        crate::shared::test_support::story(&pool.get().unwrap(), "story");
         let turn = TurnTx::begin(&pool, &Default::default(), "story").unwrap();
         let history = turn
             .with(|conn| {

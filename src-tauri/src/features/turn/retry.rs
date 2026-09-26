@@ -99,12 +99,7 @@ mod tests {
     fn retry_fixture() -> (Pool, String, String, String) {
         let pool = crate::shared::db::test_pool();
         let conn = pool.get().unwrap();
-        conn.execute(
-            "INSERT INTO stories (id, title, created_at, updated_at, settings_json)
-             VALUES ('s', 'story', 'now', 'now', '{}')",
-            [],
-        )
-        .unwrap();
+        crate::shared::test_support::story(&conn, "s");
         crate::features::entities::create_entity_with_id_sync(
             &conn,
             "mira",
@@ -117,27 +112,14 @@ mod tests {
             None,
         )
         .unwrap();
-        let turn_id = turns::create_turn(&conn, "s").unwrap();
-        let action = ledger_repository::append_story_message(
+        let (turn_id, action_id, reply_id) = crate::shared::test_support::exchange(
             &conn,
             "s",
-            "player",
             "do",
             "Open the door",
-            None,
-            Some(&turn_id),
-        )
-        .unwrap();
-        let reply = ledger_repository::append_story_message(
-            &conn,
-            "s",
-            "narrator",
-            "generated",
-            "Original",
-            None,
-            Some(&turn_id),
-        )
-        .unwrap();
+            Some("Original"),
+        );
+        let reply_id = reply_id.unwrap();
         crate::features::entities::update_entity_sync(
             &conn,
             "s",
@@ -145,51 +127,45 @@ mod tests {
             "Mira Changed",
             Some("new cloak"),
             "narrator_tool",
-            Some(&reply.id),
+            Some(&reply_id),
             Some(&turn_id),
         )
         .unwrap();
-        ledger_repository::append_entry(
+        crate::shared::test_support::record(
             &conn,
             "s",
             ledger_kind::DICEROLL,
-            "hidden",
             Some("Old roll"),
-            &json!({"roll":99,"chance_percent":50,"seed":123,"outcome":"success"}),
-            Some(&reply.id),
+            json!({"roll":99,"chance_percent":50,"seed":123,"outcome":"success"}),
+            Some(&reply_id),
             Some(&turn_id),
-        )
-        .unwrap();
+        );
         drop(conn);
-        (pool, action.id, reply.id, turn_id)
+        (pool, action_id, reply_id, turn_id)
     }
 
     #[tokio::test]
     async fn edited_player_mode_and_content_are_used_before_erasing() {
         let (pool, action, reply, _) = retry_fixture();
         let conn = pool.get().unwrap();
-        ledger_repository::append_entry(
+        crate::shared::test_support::record(
             &conn,
             "s",
             ledger_kind::CONTENT_EDITED,
-            "hidden",
             Some("I kick the door open"),
-            &json!({"reason":"user_edit"}),
+            json!({"reason":"user_edit"}),
             Some(&action),
             None,
-        )
-        .unwrap();
-        ledger_repository::append_entry(
+        );
+        crate::shared::test_support::record(
             &conn,
             "s",
             ledger_kind::CONTENT_EDITED,
-            "hidden",
             Some("An edited answer."),
-            &json!({"reason":"user_edit"}),
+            json!({"reason":"user_edit"}),
             Some(&reply),
             None,
-        )
-        .unwrap();
+        );
         drop(conn);
 
         let gate = TurnGate::default();
@@ -378,12 +354,7 @@ mod tests {
     async fn failed_unanswered_turn_can_be_replaced() {
         let pool = crate::shared::db::test_pool();
         let conn = pool.get().unwrap();
-        conn.execute(
-            "INSERT INTO stories (id, title, created_at, updated_at, settings_json)
-             VALUES ('s', 'story', 'now', 'now', '{}')",
-            [],
-        )
-        .unwrap();
+        crate::shared::test_support::story(&conn, "s");
         let turn_id = turns::create_turn(&conn, "s").unwrap();
         let action = ledger_repository::append_story_message(
             &conn,
@@ -422,7 +393,7 @@ mod tests {
     async fn see_retry_preserves_prior_scene_and_restores_old_turn_on_rollback() {
         let pool = crate::shared::db::test_pool();
         let conn = pool.get().unwrap();
-        conn.execute("INSERT INTO stories (id, title, created_at, updated_at, settings_json) VALUES ('s', 'story', 'now', 'now', '{}')", []).unwrap();
+        crate::shared::test_support::story(&conn, "s");
         let scene_turn = turns::create_turn(&conn, "s").unwrap();
         let scene = ledger_repository::append_story_message(
             &conn,

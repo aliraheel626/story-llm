@@ -95,15 +95,13 @@ pub async fn erase_last_exchange(
 mod tests {
     use super::*;
     use crate::features::turn::TurnTx;
+    use crate::shared::test_support;
 
     #[test]
     fn editing_the_generating_story_is_refused_before_writing() {
         let pool = crate::shared::db::test_pool();
         let conn = pool.get().unwrap();
-        conn.execute(
-            "INSERT INTO stories (id, title, created_at, updated_at) VALUES ('s', 'Story', 'now', 'now')",
-            [],
-        ).unwrap();
+        test_support::story(&conn, "s");
         let entry =
             repository::append_story_message(&conn, "s", "player", "do", "Original", None, None)
                 .unwrap();
@@ -127,10 +125,7 @@ mod tests {
     async fn edit_rejects_a_turn_started_since_the_idle_check() {
         let pool = crate::shared::db::test_pool();
         let conn = pool.get().unwrap();
-        conn.execute(
-            "INSERT INTO stories (id, title, created_at, updated_at) VALUES ('s', 'Story', 'now', 'now')",
-            [],
-        ).unwrap();
+        test_support::story(&conn, "s");
         let entry =
             repository::append_story_message(&conn, "s", "player", "do", "Original", None, None)
                 .unwrap();
@@ -156,34 +151,14 @@ mod tests {
     async fn erase_rejects_a_turn_started_since_the_idle_check() {
         let pool = crate::shared::db::test_pool();
         let gate = TurnGate::default();
-        pool.get().unwrap().execute(
-            "INSERT INTO stories (id, title, created_at, updated_at) VALUES ('s', 'story', 'now', 'now')",
-            [],
-        ).unwrap();
+        test_support::story(&pool.get().unwrap(), "s");
         let ticket = gate.check_idle("s").unwrap();
         let turn = TurnTx::begin(&pool, &gate, "s").unwrap();
         let entry_id = turn
             .with(|conn| {
-                let turn_id = turns::create_turn(conn, "s")?;
-                let entry = repository::append_story_message(
-                    conn,
-                    "s",
-                    "player",
-                    "do",
-                    "action",
-                    None,
-                    Some(&turn_id),
-                )?;
-                repository::append_story_message(
-                    conn,
-                    "s",
-                    "narrator",
-                    "generated",
-                    "new response",
-                    None,
-                    Some(&turn_id),
-                )?;
-                Ok(entry.id)
+                let (_, action_id, _) =
+                    test_support::exchange(conn, "s", "do", "action", Some("new response"));
+                Ok(action_id)
             })
             .await
             .unwrap();

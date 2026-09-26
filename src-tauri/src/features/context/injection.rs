@@ -181,7 +181,6 @@ mod tests {
     use crate::features::{
         entities,
         images::model::ImageRequest,
-        ledger::repository::append_entry,
         narrator::catalog::{self, ToolAvailability, ToolDeps, ToolSpec},
         stories::settings::NarratorToolSettings,
         turn::TurnTx,
@@ -215,12 +214,9 @@ mod tests {
     fn story_with_entity_query() -> (Pool, HistoryTurn) {
         let pool = crate::shared::db::test_pool();
         let conn = pool.get().unwrap();
-        conn.execute(
-            "INSERT INTO stories (id, title, created_at, updated_at, settings_json)
-             VALUES ('s', 'story', 'now', 'now', '{\"author_note\":\"Keep it terse.\"}')",
-            [],
-        )
-        .unwrap();
+        crate::shared::test_support::story_with_settings(
+            &conn, "s", json!({"author_note":"Keep it terse."}),
+        );
         entities::create_entity_with_id_sync(
             &conn,
             "bob",
@@ -233,17 +229,10 @@ mod tests {
             None,
         )
         .unwrap();
-        let query = append_entry(
-            &conn,
-            "s",
-            ledger_kind::ENTITY_QUERIED,
-            "hidden",
-            Some("Looked up: Bob"),
-            &json!({"entity_ids":["bob"]}),
-            None,
-            None,
-        )
-        .unwrap();
+        let query_id = crate::shared::test_support::record(
+            &conn, "s", ledger_kind::ENTITY_QUERIED, Some("Looked up: Bob"),
+            json!({"entity_ids":["bob"]}), None, None,
+        );
         conn.execute(
             "UPDATE stories SET settings_json = ?1 WHERE id = 's'",
             [json!({"injection": {"entities":"scoped", "author_note":"Keep it terse.", "author_note_enabled":true, "tool_instructions":true}}).to_string()],
@@ -254,7 +243,7 @@ mod tests {
         (
             pool,
             HistoryTurn {
-                entry_id: Some(query.id),
+                entry_id: Some(query_id),
                 role: HistoryRole::Narrator,
                 content: "[Authoritative story event: entity_queried]\nLooked up: Bob".into(),
                 marker: HistoryTurnMarker::Ledger,
@@ -355,10 +344,7 @@ mod tests {
     async fn entity_snapshot_reads_uncommitted_attributes_on_turn_connection() {
         let pool = crate::shared::db::test_pool();
         let conn = pool.get().unwrap();
-        conn.execute(
-            "INSERT INTO stories (id, title, created_at, updated_at, settings_json) VALUES ('s', 'Story', 'now', 'now', '{}')",
-            [],
-        ).unwrap();
+        crate::shared::test_support::story(&conn, "s");
         drop(conn);
         let turn = TurnTx::begin(&pool, &Default::default(), "s").unwrap();
         turn.with(|conn| {

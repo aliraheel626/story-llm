@@ -127,18 +127,12 @@ pub fn entries_of_turn(conn: &rusqlite::Connection, turn_id: &str) -> AppResult<
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::shared::test_support;
     use serde_json::json;
 
     fn story() -> crate::shared::db::Pool {
         let pool = crate::shared::db::test_pool();
-        pool.get()
-            .unwrap()
-            .execute(
-                "INSERT INTO stories (id, title, created_at, updated_at, settings_json)
-                 VALUES ('story', 'Story', 'now', 'now', '{}')",
-                [],
-            )
-            .unwrap();
+        test_support::story(&pool.get().unwrap(), "story");
         pool
     }
 
@@ -149,10 +143,8 @@ mod tests {
         payload: serde_json::Value,
         target: Option<&str>,
     ) -> LedgerEntry {
-        repository::append_entry(
-            conn, "story", kind, "hidden", content, &payload, target, None,
-        )
-        .unwrap()
+        let id = test_support::record(conn, "story", kind, content, payload, target, None);
+        repository::get_entry(conn, &id).unwrap()
     }
 
     #[test]

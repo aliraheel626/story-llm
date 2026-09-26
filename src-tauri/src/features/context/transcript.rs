@@ -459,22 +459,11 @@ mod tests {
     fn load_transcript_ignores_legacy_dice_roll_preference() {
         let pool = crate::shared::db::test_pool();
         let conn = pool.get().unwrap();
-        conn.execute(
-            "INSERT INTO stories (id, title, created_at, updated_at, settings_json) VALUES ('s', 'story', 'now', 'now', '{}')",
-            [],
-        )
-        .unwrap();
-        let roll = repository::append_entry(
-            &conn,
-            "s",
-            kind::DICEROLL,
-            "hidden",
-            Some("Stealth succeeded."),
-            &json!({}),
-            None,
-            None,
-        )
-        .unwrap();
+        crate::shared::test_support::story(&conn, "s");
+        let roll_id = crate::shared::test_support::record(
+            &conn, "s", kind::DICEROLL, Some("Stealth succeeded."), json!({}), None, None,
+        );
+        let roll = repository::get_entry(&conn, &roll_id).unwrap();
         conn.execute(
             "INSERT INTO settings (key, value) VALUES ('context_injection', ?1)",
             [r#"{"entity_context_mode":"scoped","dice_rolls_in_context":false}"#],
@@ -496,10 +485,7 @@ mod tests {
     async fn load_transcript_reads_uncommitted_player_entry() {
         let pool = crate::shared::db::test_pool();
         let conn = pool.get().unwrap();
-        conn.execute(
-            "INSERT INTO stories (id, title, created_at, updated_at, settings_json) VALUES ('s', 'story', 'now', 'now', '{}')",
-            [],
-        ).unwrap();
+        crate::shared::test_support::story(&conn, "s");
         drop(conn);
         let turn = crate::features::turn::TurnTx::begin(&pool, &Default::default(), "s").unwrap();
         turn.with(|conn| {
@@ -612,12 +598,7 @@ mod tests {
     fn summary_with_a_cascade_deleted_boundary_does_not_hide_older_history() {
         let pool = crate::shared::db::test_pool();
         let conn = pool.get().unwrap();
-        conn.execute(
-            "INSERT INTO stories (id, title, created_at, updated_at, settings_json)
-             VALUES ('s', 'story', 'now', 'now', '{}')",
-            [],
-        )
-        .unwrap();
+        crate::shared::test_support::story(&conn, "s");
         let old = repository::append_entry(
             &conn,
             "s",
@@ -691,10 +672,9 @@ mod tests {
     fn settings_select_actions_narration_thoughts_and_records_independently() {
         let pool = crate::shared::db::test_pool();
         let conn = pool.get().unwrap();
-        conn.execute("INSERT INTO stories (id, title, created_at, updated_at, settings_json) VALUES ('s','Story','now','now','{}')", []).unwrap();
+        crate::shared::test_support::story(&conn, "s");
         let append = |kind, content, payload| {
-            repository::append_entry(&conn, "s", kind, "hidden", content, &payload, None, None)
-                .unwrap()
+            crate::shared::test_support::record(&conn, "s", kind, content, payload, None, None)
         };
         append(
             kind::PLAYER_MESSAGE,
@@ -790,7 +770,7 @@ mod tests {
     fn images_are_latest_four_after_the_summary_and_ignore_unsupported_mime() {
         let pool = crate::shared::db::test_pool();
         let conn = pool.get().unwrap();
-        conn.execute("INSERT INTO stories (id,title,created_at,updated_at,settings_json) VALUES ('s','S','now','now','{}')", []).unwrap();
+        crate::shared::test_support::story(&conn, "s");
         let old = repository::append_entry(
             &conn,
             "s",
@@ -904,7 +884,7 @@ mod tests {
     fn summary_survives_when_its_covered_action_is_filtered_out() {
         let pool = crate::shared::db::test_pool();
         let conn = pool.get().unwrap();
-        conn.execute("INSERT INTO stories (id,title,created_at,updated_at,settings_json) VALUES ('s','S','now','now','{}')", []).unwrap();
+        crate::shared::test_support::story(&conn, "s");
         let action = repository::append_entry(
             &conn,
             "s",

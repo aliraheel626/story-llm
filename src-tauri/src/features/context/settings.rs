@@ -227,6 +227,7 @@ pub fn write_injection_settings(
 mod tests {
     use super::*;
     use crate::shared::db::{with_transaction, Pool};
+    use crate::shared::test_support;
 
     fn read_story_context_settings(pool: &Pool, story_id: &str) -> AppResult<ContextSettings> {
         let conn = pool.get()?;
@@ -258,14 +259,9 @@ mod tests {
 
     fn stories() -> Pool {
         let pool = crate::shared::db::test_pool();
-        pool.get()
-            .unwrap()
-            .execute_batch(
-                "INSERT INTO stories (id,title,created_at,updated_at,settings_json) VALUES
-             ('first','First','now','now','{\"custom\":42}'),
-             ('second','Second','now','now','{}');",
-            )
-            .unwrap();
+        let conn = pool.get().unwrap();
+        test_support::story_with_settings(&conn, "first", json!({"custom":42}));
+        test_support::story(&conn, "second");
         pool
     }
 

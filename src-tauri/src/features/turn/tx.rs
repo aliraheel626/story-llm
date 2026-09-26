@@ -114,6 +114,7 @@ impl Drop for TurnTx {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::shared::test_support;
 
     #[tokio::test]
     async fn writes_are_private_until_commit() {
@@ -121,10 +122,7 @@ mod tests {
         let gate = TurnGate::default();
         let turn = TurnTx::begin(&pool, &gate, "s").unwrap();
         turn.with(|conn| {
-            conn.execute(
-                "INSERT INTO stories (id, title, created_at, updated_at) VALUES ('s', 'Story', 'now', 'now')",
-                [],
-            )?;
+            test_support::story(conn, "s");
             Ok(())
         }).await.unwrap();
         assert_eq!(
@@ -160,10 +158,7 @@ mod tests {
         let gate = TurnGate::default();
         let turn = TurnTx::begin(&pool, &gate, "s").unwrap();
         turn.with(|conn| {
-            conn.execute(
-                "INSERT INTO stories (id, title, created_at, updated_at) VALUES ('s', 'Story', 'now', 'now')",
-                [],
-            )?;
+            test_support::story(conn, "s");
             Ok(())
         })
         .await
@@ -201,7 +196,7 @@ mod tests {
         let gate = TurnGate::default();
         let turn = TurnTx::begin(&pool, &gate, "s").unwrap();
         turn.with(|conn| {
-            conn.execute("INSERT INTO stories (id, title, created_at, updated_at) VALUES ('s', 'Story', 'now', 'now')", [])?;
+            test_support::story(conn, "s");
             Ok(())
         }).await.unwrap();
         assert!(

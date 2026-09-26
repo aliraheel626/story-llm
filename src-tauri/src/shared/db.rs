@@ -2621,7 +2621,7 @@ mod tests {
             [r#"{"entity_context_mode":"invalid"}"#],
         )
         .unwrap();
-        conn.execute("INSERT INTO stories (id,title,created_at,updated_at,settings_json) VALUES ('s','Story','now','now','{}')", []).unwrap();
+        crate::shared::test_support::story(&conn, "s");
         migrate_story_injection_v1(&mut conn).unwrap();
         let raw: String = conn
             .query_row(

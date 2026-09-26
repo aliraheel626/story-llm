@@ -89,6 +89,7 @@ mod tests {
         entities,
         ledger::{attachments, model::kind, repository},
     };
+    use crate::shared::test_support;
     use serde_json::json;
 
     fn config(supports_images: bool) -> TextModelConfig {
@@ -117,11 +118,7 @@ mod tests {
             "injection": {"entities": "scoped", "author_note": "Keep it tense.",
                           "author_note_enabled": true, "tool_instructions": true}
         });
-        conn.execute(
-            "INSERT INTO stories (id,title,created_at,updated_at,settings_json) VALUES ('s','Story','now','now',?1)",
-            [story_settings.to_string()],
-        )
-        .unwrap();
+        test_support::story_with_settings(&conn, "s", story_settings);
         entities::create_entity_with_id_sync(
             &conn,
             "bob",
