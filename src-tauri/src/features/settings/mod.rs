@@ -9,4 +9,4 @@ pub use commands::*;
 pub use model::{ImageModelSettings, TextModelSettings, DEFAULT_IMAGE_STYLE};
 pub use repository::*;
 pub use secrets::read_api_key;
-pub use text_model::resolve_text_model;
+pub use text_model::{refresh_missing_capabilities, resolve_text_model};

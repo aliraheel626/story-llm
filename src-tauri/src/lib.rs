@@ -52,7 +52,11 @@ pub fn run() {
         .setup(|app| {
             let app_data_dir = app.path().app_data_dir()?;
             let pool = shared::db::init_pool(&app_data_dir)?;
+            let refresh_pool = pool.clone();
             app.manage(pool);
+            tauri::async_runtime::spawn(features::settings::refresh_missing_capabilities(
+                refresh_pool,
+            ));
             app.manage(features::context::preview::PreviewCallbacks {
                 config: features::narrator::preview_config,
                 metadata: features::narrator::preview_metadata,

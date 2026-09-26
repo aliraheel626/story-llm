@@ -18,11 +18,34 @@ pub(super) async fn save_text_model_settings(
             "unsupported text model provider: {provider}"
         )));
     }
-    let (context_window, supports_images) = match provider.as_str() {
+    let (context_window, supports_images) = model_capabilities(&provider, &model).await;
+    let pool = pool.clone();
+    let provider_for_write = provider.clone();
+    blocking(move || {
+        repository::write_text_model_settings(
+            &pool,
+            &provider_for_write,
+            &model,
+            context_window,
+            supports_images,
+        )
+    })
+    .await?;
+
+    if let Some(key) = api_key {
+        secrets::write_api_key(app, &provider, &key)?;
+    }
+
+    Ok(())
+}
+
+/// The served context window and whether the model accepts image input.
+async fn model_capabilities(provider: &str, model: &str) -> (usize, bool) {
+    match provider {
         "nous_portal" => fetch_context_window(
             &format!("{}/models", crate::ai::NOUS_PORTAL_BASE_URL),
             ("data", "id"),
-            &model,
+            model,
             Some(crate::ai::NOUS_PORTAL_USER_AGENT),
         )
         .await
@@ -34,7 +57,7 @@ pub(super) async fn save_text_model_settings(
         "ollama" => {
             let base = crate::ai::OLLAMA_BASE_URL.trim_end_matches("/v1");
             let window =
-                fetch_context_window(&format!("{base}/api/ps"), ("models", "name"), &model, None)
+                fetch_context_window(&format!("{base}/api/ps"), ("models", "name"), model, None)
                     .await
                     .unwrap_or(32_768);
             let supports_images = reqwest::Client::new()
@@ -58,7 +81,7 @@ pub(super) async fn save_text_model_settings(
             let item = fetch_model(
                 "https://openrouter.ai/api/v1/models",
                 ("data", "id"),
-                &model,
+                model,
                 None,
             )
             .await
@@ -72,25 +95,55 @@ pub(super) async fn save_text_model_settings(
             let supports_images = item.as_ref().is_some_and(openrouter_supports_images);
             (window, supports_images)
         }
-    };
-    let pool = pool.clone();
-    let provider_for_write = provider.clone();
-    blocking(move || {
-        repository::write_text_model_settings(
-            &pool,
-            &provider_for_write,
-            &model,
-            context_window,
-            supports_images,
-        )
-    })
-    .await?;
-
-    if let Some(key) = api_key {
-        secrets::write_api_key(app, &provider, &key)?;
     }
+}
 
-    Ok(())
+/// Settings saved before image support was recorded have no `supports_images`.
+/// Look it up once in the background without delaying app startup.
+pub async fn refresh_missing_capabilities(pool: Pool) {
+    let result: AppResult<()> = async {
+        let read_pool = pool.clone();
+        let stored = blocking(move || repository::stored_text_model_row(&read_pool)).await?;
+        let Some(stored) = stored.filter(repository::needs_capability_refresh) else {
+            return Ok(());
+        };
+        let provider = stored
+            .get("provider")
+            .and_then(|value| value.as_str())
+            .unwrap_or("openrouter")
+            .to_string();
+        let model = stored
+            .get("model")
+            .and_then(|value| value.as_str())
+            .unwrap_or_default()
+            .to_string();
+        if model.is_empty() {
+            return Ok(());
+        }
+        let context_window = stored
+            .get("context_window")
+            .and_then(|value| value.as_u64())
+            .unwrap_or(32_768) as usize;
+        let (_, supports_images) = model_capabilities(&provider, &model).await;
+        blocking(move || {
+            // A foreground save may have changed the model while metadata was fetched.
+            if repository::stored_text_model_row(&pool)?.as_ref() != Some(&stored) {
+                return Ok(());
+            }
+            repository::write_text_model_settings(
+                &pool,
+                &provider,
+                &model,
+                context_window,
+                supports_images,
+            )
+        })
+        .await
+    }
+    .await;
+    if let Err(error) = result {
+        log::warn!("could not refresh saved text model image support: {error}");
+    }
 }
 
 /// Best-effort, fetched once at save time and persisted — not a live cache.

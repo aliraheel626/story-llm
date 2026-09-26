@@ -1,14 +1,35 @@
 use serde_json::json;
+use rusqlite::OptionalExtension;
 use tauri::AppHandle;
 
 use crate::shared::db::Pool;
-use crate::shared::error::AppResult;
+use crate::shared::error::{AppError, AppResult};
 
 use super::model::{ImageModelSettings, TextModelSettings, DEFAULT_IMAGE_STYLE};
 use super::secrets::has_api_key;
 
 const SETTINGS_KEY_TEXT_MODEL: &str = "text_model_default";
 const SETTINGS_KEY_IMAGE_MODEL: &str = "image_model_default";
+
+pub(super) fn stored_text_model_row(pool: &Pool) -> AppResult<Option<serde_json::Value>> {
+    let conn = pool.get()?;
+    let row: Option<String> = conn
+        .query_row(
+            "SELECT value FROM settings WHERE key = ?1",
+            [SETTINGS_KEY_TEXT_MODEL],
+            |row| row.get(0),
+        )
+        .optional()?;
+    row.map(|value| {
+        serde_json::from_str(&value)
+            .map_err(|error| AppError::Other(format!("invalid text model settings: {error}")))
+    })
+    .transpose()
+}
+
+pub(super) fn needs_capability_refresh(stored: &serde_json::Value) -> bool {
+    stored.get("supports_images").is_none()
+}
 
 /// Plain-`&Pool` variant of `get_text_model_settings` for callers that aren't
 /// Tauri commands (e.g. the narrator's config resolution and the auto-titler).
@@ -152,6 +173,17 @@ pub(super) fn write_image_model_settings(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn capability_refresh_only_applies_to_legacy_rows() {
+        assert!(needs_capability_refresh(&json!({
+            "provider":"openrouter","model":"x","context_window":1
+        })));
+        assert!(!needs_capability_refresh(&json!({"supports_images":true})));
+        assert!(!needs_capability_refresh(&json!({"supports_images":false})));
+        let missing: Option<serde_json::Value> = None;
+        assert!(!missing.as_ref().is_some_and(needs_capability_refresh));
+    }
 
     #[test]
     fn legacy_and_invalid_image_support_default_to_false() {
