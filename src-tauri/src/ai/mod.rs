@@ -9,11 +9,13 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use base64::{engine::general_purpose::STANDARD, Engine};
 use futures::StreamExt;
 use rig_agent::agent::{ToolCall, ToolResultEvent};
 use rig_agent::prelude::*;
 use rig_agent::tool::{DynamicTool, ToolOutput, ToolResult};
-use rig_core::message::ToolChoice;
+use rig_core::completion::{AssistantContent, Message};
+use rig_core::message::{ImageMediaType, MimeType, ToolChoice, UserContent};
 use rig_core::providers::{openai, openrouter};
 use rig_core::streaming::StreamedAssistantContent;
 
@@ -50,15 +52,63 @@ pub struct TextModelConfig {
 #[derive(Debug, Clone)]
 pub struct HistoryTurn {
     pub entry_id: Option<String>,
-    pub is_player: bool,
+    pub role: HistoryRole,
     pub content: String,
+    pub images: Vec<HistoryImage>,
+    pub reasoning: Option<String>,
     pub marker: HistoryTurnMarker,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HistoryRole {
+    Player,
+    Narrator,
+    #[allow(dead_code)] // First constructed by the transcript in Phase 5b.
+    Record,
+}
+
+#[derive(Debug, Clone)]
+pub struct HistoryImage {
+    pub media_type: String,
+    pub bytes: Vec<u8>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HistoryTurnMarker {
     Ledger,
     Summary,
+}
+
+pub fn history_message(turn: &HistoryTurn) -> AppResult<Message> {
+    match turn.role {
+        HistoryRole::Player => Ok(Message::user(turn.content.clone())),
+        HistoryRole::Narrator => {
+            let mut content = Vec::new();
+            if let Some(reasoning) = &turn.reasoning {
+                content.push(AssistantContent::reasoning(reasoning));
+            }
+            content.push(AssistantContent::text(turn.content.clone()));
+            Ok(Message::Assistant { id: None, content })
+        }
+        HistoryRole::Record => {
+            let mut content = vec![UserContent::text(turn.content.clone())];
+            for image in &turn.images {
+                let media_type =
+                    ImageMediaType::from_mime_type(&image.media_type).ok_or_else(|| {
+                        AppError::Invalid(format!(
+                            "unsupported history image MIME type: {}",
+                            image.media_type
+                        ))
+                    })?;
+                content.push(UserContent::image_base64(
+                    STANDARD.encode(&image.bytes),
+                    Some(media_type),
+                    None,
+                ));
+            }
+            Ok(Message::User { content })
+        }
+    }
 }
 
 pub struct NarrateRequest {
@@ -307,17 +357,11 @@ where
         req.reasoning_effort.as_deref(),
     )?;
 
-    let history: Vec<rig_core::completion::Message> = req
+    let history: Vec<Message> = req
         .history
         .iter()
-        .map(|t| {
-            if t.is_player {
-                rig_core::completion::Message::user(t.content.clone())
-            } else {
-                rig_core::completion::Message::assistant(t.content.clone())
-            }
-        })
-        .collect();
+        .map(history_message)
+        .collect::<AppResult<_>>()?;
 
     let activity_buffer: Arc<Mutex<Vec<NarratorChunk>>> = Arc::new(Mutex::new(Vec::new()));
     let completed = Arc::new(Mutex::new(ToolCallCapture::default()));
@@ -505,6 +549,75 @@ fn build_agent(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn turn(role: HistoryRole) -> HistoryTurn {
+        HistoryTurn {
+            entry_id: None,
+            role,
+            content: "Visible story text".into(),
+            images: Vec::new(),
+            reasoning: None,
+            marker: HistoryTurnMarker::Ledger,
+        }
+    }
+
+    #[test]
+    fn narrator_reasoning_and_text_reach_provider_wires() {
+        let mut narrator = turn(HistoryRole::Narrator);
+        narrator.reasoning = Some("Private thought".into());
+        let message = history_message(&narrator).unwrap();
+        let openrouter =
+            openrouter::completion::messages_from_rig_message(message.clone()).unwrap();
+        let wire = serde_json::to_value(&openrouter[0]).unwrap();
+        assert_eq!(wire["role"], "assistant");
+        assert_eq!(wire["content"][0]["text"], "Visible story text");
+        assert_eq!(wire["reasoning_details"][0]["type"], "reasoning.text");
+        assert_eq!(wire["reasoning_details"][0]["text"], "Private thought");
+
+        let openai = Vec::<openai::completion::Message>::try_from(message).unwrap();
+        let wire = serde_json::to_value(&openai[0]).unwrap();
+        assert_eq!(wire["role"], "assistant");
+        assert_eq!(wire["content"][0]["text"], "Visible story text");
+        assert_eq!(wire["reasoning_content"], "Private thought");
+    }
+
+    #[test]
+    fn record_images_are_base64_data_uris_after_text() {
+        let mut record = turn(HistoryRole::Record);
+        record.images.push(HistoryImage {
+            media_type: "image/png".into(),
+            bytes: vec![137, 80, 78, 71],
+        });
+        let message = history_message(&record).unwrap();
+        for wire in [
+            serde_json::to_value(
+                &openrouter::completion::messages_from_rig_message(message.clone()).unwrap()[0],
+            )
+            .unwrap(),
+            serde_json::to_value(
+                &Vec::<openai::completion::Message>::try_from(message).unwrap()[0],
+            )
+            .unwrap(),
+        ] {
+            assert_eq!(wire["role"], "user");
+            assert_eq!(wire["content"][0]["text"], "Visible story text");
+            assert_eq!(wire["content"][1]["type"], "image_url");
+            assert_eq!(
+                wire["content"][1]["image_url"]["url"],
+                "data:image/png;base64,iVBORw=="
+            );
+        }
+    }
+
+    #[test]
+    fn unsupported_record_image_mime_is_rejected() {
+        let mut record = turn(HistoryRole::Record);
+        record.images.push(HistoryImage {
+            media_type: "application/octet-stream".into(),
+            bytes: vec![0],
+        });
+        assert!(history_message(&record).is_err());
+    }
 
     #[tokio::test]
     async fn decision_tool_result_stops_and_ends_the_stream_cleanly() {

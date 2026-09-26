@@ -4,7 +4,9 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 use uuid::Uuid;
 
-use crate::ai::{self, HistoryTurnMarker, NarrateRequest, NarratorChunk, ToolActivityPhase};
+use crate::ai::{
+    self, HistoryRole, HistoryTurnMarker, NarrateRequest, NarratorChunk, ToolActivityPhase,
+};
 use crate::features::{
     context::{self, combine_context_blocks, prepare_history},
     ledger::{model::kind as ledger_kind, repository as ledger_repository},
@@ -100,7 +102,7 @@ where
             let mut action = history.pop().ok_or_else(|| {
                 AppError::Other("the narration history has no action turn".into())
             })?;
-            if !action.is_player {
+            if action.role != HistoryRole::Player {
                 return Err(AppError::Other(
                     "the narration history does not end with an action turn".into(),
                 ));
@@ -113,7 +115,11 @@ where
                 history
                     .iter()
                     .map(|turn| (
-                        if turn.is_player { "player" } else { "narrator" },
+                        match turn.role {
+                            HistoryRole::Player => "player",
+                            HistoryRole::Narrator => "narrator",
+                            HistoryRole::Record => "record",
+                        },
                         &turn.content
                     ))
                     .collect::<Vec<_>>(),

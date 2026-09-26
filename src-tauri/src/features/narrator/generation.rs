@@ -4,7 +4,7 @@ use rig_agent::tool::DynamicTool;
 use tauri::AppHandle;
 use tokio::sync::Mutex;
 
-use crate::ai::{HistoryTurn, TextModelConfig};
+use crate::ai::{HistoryRole, HistoryTurn, TextModelConfig};
 use crate::features::{
     context::{self, ContextPlan},
     entities, images, settings, stories,
@@ -83,7 +83,7 @@ pub async fn prepare(inputs: NarratorInputs<'_>) -> AppResult<Prepared> {
                 "the narration history has no action turn".into(),
             ))
         }
-        Some(turn) if !turn.is_player => {
+        Some(turn) if turn.role != HistoryRole::Player => {
             return Err(AppError::Invalid(
                 "the narration history does not end with an action turn".into(),
             ));

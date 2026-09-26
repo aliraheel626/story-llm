@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::ai::{HistoryTurn, HistoryTurnMarker};
+use crate::ai::{HistoryRole, HistoryTurn, HistoryTurnMarker};
 use crate::features::ledger::{model::kind, query, reducer, summaries};
 use crate::shared::error::AppResult;
 
@@ -11,8 +11,16 @@ use crate::shared::error::AppResult;
 /// a long, already-compacted story doesn't reload and re-decode everything
 /// before it on every turn.
 pub fn load_transcript(conn: &rusqlite::Connection, story_id: &str) -> AppResult<Vec<HistoryTurn>> {
-    let since_seq = summaries::latest_boundary(conn, story_id)?.map(|boundary| boundary.through_seq);
-    let raw = query::select(conn, story_id, &query::LedgerQuery { since_seq, ..Default::default() })?;
+    let since_seq =
+        summaries::latest_boundary(conn, story_id)?.map(|boundary| boundary.through_seq);
+    let raw = query::select(
+        conn,
+        story_id,
+        &query::LedgerQuery {
+            since_seq,
+            ..Default::default()
+        },
+    )?;
     Ok(history_from_entries(&raw))
 }
 
@@ -41,12 +49,14 @@ fn history_from_entries(raw: &[crate::features::ledger::model::LedgerEntry]) -> 
     if let Some(index) = summary_index {
         history.push(HistoryTurn {
             entry_id: None,
-            is_player: false,
+            role: HistoryRole::Narrator,
             content: format!(
                 "[Authoritative context summary]\n{}",
                 raw[index].content.as_deref().unwrap_or_default()
             ),
             marker: HistoryTurnMarker::Summary,
+            images: Vec::new(),
+            reasoning: None,
         });
     }
 
@@ -69,9 +79,15 @@ fn history_from_entries(raw: &[crate::features::ledger::model::LedgerEntry]) -> 
             };
             history.push(HistoryTurn {
                 entry_id: Some(entry.id.clone()),
-                is_player,
+                role: if is_player {
+                    HistoryRole::Player
+                } else {
+                    HistoryRole::Narrator
+                },
                 content,
                 marker: HistoryTurnMarker::Ledger,
+                images: Vec::new(),
+                reasoning: None,
             });
             continue;
         }
@@ -106,9 +122,11 @@ fn history_from_entries(raw: &[crate::features::ledger::model::LedgerEntry]) -> 
         let content = format!("[Authoritative story event: {}]\n{content}", entry.kind);
         history.push(HistoryTurn {
             entry_id: Some(entry.id.clone()),
-            is_player: false,
+            role: HistoryRole::Narrator,
             content,
             marker: HistoryTurnMarker::Ledger,
+            images: Vec::new(),
+            reasoning: None,
         });
     }
     history
@@ -117,8 +135,8 @@ fn history_from_entries(raw: &[crate::features::ledger::model::LedgerEntry]) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::features::ledger::repository;
     use crate::features::ledger::model::LedgerEntry;
+    use crate::features::ledger::repository;
     use crate::prompts;
     use serde_json::json;
 

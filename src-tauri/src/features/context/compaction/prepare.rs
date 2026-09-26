@@ -1,11 +1,11 @@
 use rig_core::{completion::Message, memory::Compactor};
-use rig_memory::{HeuristicTokenCounter, MemoryPolicy, TokenCounter, TokenWindowMemory};
+use rig_memory::{HeuristicTokenCounter, TokenCounter};
 
-use crate::ai::{HistoryTurn, TextModelConfig};
+use crate::ai::{HistoryRole, HistoryTurn, TextModelConfig};
 use crate::features::ledger::summaries;
 use crate::shared::error::AppResult;
 
-use super::budget::{messages, raw_tail_boundary, FALLBACK_CONTEXT_WINDOW};
+use super::budget::{kept_count, messages, raw_tail_boundary, FALLBACK_CONTEXT_WINDOW};
 use super::compactor::NarratorCompactor;
 use super::summary::{format_summary, SummaryArtifact};
 
@@ -121,9 +121,11 @@ where
             });
             let mut compacted = vec![HistoryTurn {
                 entry_id: None,
-                is_player: false,
+                role: HistoryRole::Narrator,
                 content: format!("[Authoritative context summary]\n{summary_text}"),
                 marker: crate::ai::HistoryTurnMarker::Summary,
+                images: Vec::new(),
+                reasoning: None,
             }];
             compacted.extend(history.into_iter().skip(split));
             PreparedHistory {
@@ -141,11 +143,7 @@ where
                 let remaining_budget = target_history_budget.saturating_sub(
                     fallback_counter.count(&Message::assistant(summary.content.clone())),
                 );
-                let fallback_policy = TokenWindowMemory::new(remaining_budget, fallback_counter);
-                let recent_count = fallback_policy
-                    .apply(messages(&history[1..]))
-                    .map(|recent| recent.len())
-                    .unwrap_or(0);
+                let recent_count = kept_count(&history[1..], remaining_budget);
                 let mut fallback = vec![summary];
                 let mut recent = history
                     .into_iter()
@@ -224,9 +222,15 @@ mod tests {
         let history = (0..30)
             .map(|index| HistoryTurn {
                 entry_id: Some(format!("entry-{index}")),
-                is_player: index % 2 == 0,
+                role: if index % 2 == 0 {
+                    HistoryRole::Player
+                } else {
+                    HistoryRole::Narrator
+                },
                 content: format!("Long historical turn {index}: {}", "context ".repeat(40)),
                 marker: crate::ai::HistoryTurnMarker::Ledger,
+                images: Vec::new(),
+                reasoning: None,
             })
             .collect::<Vec<_>>();
         let config = TextModelConfig {
@@ -290,9 +294,15 @@ mod tests {
                         )?;
                         Ok(HistoryTurn {
                             entry_id: Some(entry.id),
-                            is_player,
+                            role: if is_player {
+                                HistoryRole::Player
+                            } else {
+                                HistoryRole::Narrator
+                            },
                             content,
                             marker: crate::ai::HistoryTurnMarker::Ledger,
+                            images: Vec::new(),
+                            reasoning: None,
                         })
                     })
                     .collect::<crate::shared::error::AppResult<Vec<_>>>()

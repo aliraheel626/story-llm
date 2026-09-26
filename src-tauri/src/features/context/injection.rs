@@ -164,7 +164,7 @@ pub(crate) fn build_message_context(inputs: &Inputs<'_>) -> AppResult<ContextPla
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ai::HistoryTurnMarker;
+    use crate::ai::{HistoryRole, HistoryTurnMarker};
     use crate::features::ledger::model::kind as ledger_kind;
     use crate::features::{
         entities,
@@ -271,9 +271,11 @@ mod tests {
             pool,
             HistoryTurn {
                 entry_id: Some(query.id),
-                is_player: false,
+                role: HistoryRole::Narrator,
                 content: "[Authoritative story event: entity_queried]\nLooked up: Bob".into(),
                 marker: HistoryTurnMarker::Ledger,
+                images: Vec::new(),
+                reasoning: None,
             },
         )
     }
