@@ -12,7 +12,7 @@ use crate::shared::db::{with_transaction, Pool};
 use crate::shared::error::AppResult;
 use chrono::Utc;
 
-pub(super) fn entries_for_turn(
+pub(crate) fn entries_for_turn(
     conn: &rusqlite::Connection,
     turn_id: &str,
 ) -> AppResult<Vec<LedgerEntry>> {
@@ -58,7 +58,7 @@ pub(super) fn delete_turn_assets(
     Ok(())
 }
 
-pub(super) fn remove_turn(
+pub(crate) fn remove_turn(
     conn: &rusqlite::Connection,
     story_id: &str,
     turn_id: &str,

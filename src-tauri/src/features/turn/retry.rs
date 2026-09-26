@@ -2,12 +2,12 @@ use std::sync::Arc;
 
 use tauri::AppHandle;
 
-use crate::features::ledger::{model::kind as ledger_kind, repository as ledger_repository, turns};
+use crate::features::ledger::{erase, model::kind as ledger_kind, repository as ledger_repository, turns};
 use crate::features::turn::{TurnGate, TurnTx};
 use crate::shared::db::{blocking, Pool};
 use crate::shared::error::{AppError, AppResult};
 
-use super::{erase, model::RetryResult, submit};
+use super::{model::RetryResult, submit};
 
 async fn prepare_retry(turn: &TurnTx, entry_id: &str) -> AppResult<(String, String)> {
     turn.with(|conn| {
