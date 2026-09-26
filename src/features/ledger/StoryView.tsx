@@ -112,7 +112,13 @@ export function StoryView() {
           {displayedEntries.map((entry, i) => {
             const isLastEntry = i === displayedEntries.length - 1;
             const pinHere = isStreamingReplace ? entry.id === streaming!.targetEntryId : isLastEntry && !isStreamingAppend;
-            const activity = activityFor(entry, isLastEntry);
+            const replacingEntry = isStreamingReplace && entry.id === streaming!.targetEntryId;
+            const activity = replacingEntry
+              ? {
+                  thoughts: streaming!.thoughts,
+                  tools: streaming!.toolLog.map((tool) => ({ key: tool.callId, label: tool.label, done: tool.phase === "finished", ok: tool.ok })),
+                }
+              : activityFor(entry, isLastEntry);
             const hiddenTrailingAction = isLastEntry
               && actualLastEntry?.kind === "player_message"
               && modeDefinition(ledgerInputMode(actualLastEntry) as ActionMode).display === "hidden"
@@ -122,7 +128,7 @@ export function StoryView() {
             const retryTurnId = entries.find((candidate) => candidate.id === retryEntryId)?.turn_id;
             return (
               <div key={entry.id} ref={pinHere ? pinRef : undefined}>
-                {activity && <TurnActivity activity={activity} />}
+                {activity && <TurnActivity activity={activity} live={replacingEntry} />}
                 <LedgerEntryView
                   entry={entry}
                   storyId={activeStoryId!}

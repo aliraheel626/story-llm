@@ -5,6 +5,7 @@ import { useStoryStore } from "../story/store";
 import { ImagePlaceholder } from "./ImagePlaceholder";
 import { RollDisclosure } from "./RollDisclosure";
 import { modeDefinition } from "./Composer";
+import { entryDisplay } from "./replacement";
 
 interface LedgerEntryViewProps {
   entry: LedgerEntry;
@@ -75,7 +76,7 @@ export function LedgerEntryView({ entry, storyId, isLast, retryEntryId, canRetry
     }
   };
 
-  const displayContent = entry.content ?? "";
+  const display = entryDisplay(entry, streaming);
 
   const editControls = !editing && !anyStreamBusy && (
     <button
@@ -146,17 +147,18 @@ export function LedgerEntryView({ entry, storyId, isLast, retryEntryId, canRetry
         <EditBox textareaRef={textareaRef} draft={draft} setDraft={setDraft} onSave={saveEdit} onCancel={cancelEdit} busy={actionBusy} />
       ) : (
         <p className="whitespace-pre-wrap font-prose text-base leading-8 text-text">
-          {displayContent}
+          {display.text}
+          {display.streaming && !streaming?.imagePending && <span className="ml-0.5 inline-block h-4 w-1.5 translate-y-0.5 animate-pulse bg-muted motion-reduce:animate-none" />}
         </p>
       )}
 
-      {isBeingReplaced && <p className="text-xs italic text-muted" role="status">Retrying this reply. The original stays until the new reply succeeds.</p>}
+      {isBeingReplaced && <p className="text-xs italic text-muted" role="status">Retrying. The original comes back if this fails.</p>}
 
-      {rolls?.map((roll) => (
+      {display.showOldExtras && rolls?.map((roll) => (
         <RollDisclosure key={roll.id} roll={roll} />
       ))}
 
-      {images?.map((image) => (
+      {display.showOldExtras && images?.map((image) => (
         <div key={image.id} className="flex flex-col gap-1">
           <img src={convertFileSrc(image.id, "storyimg")} alt={image.prompt} className="w-full rounded border border-border object-cover" />
           <ImageCaption prompt={image.prompt} />
