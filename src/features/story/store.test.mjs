@@ -178,6 +178,41 @@ test("sidebar toggle persists without losing expanded panels or failing on block
   }
 });
 
+test("settings store ignores an older load after capability refresh", async () => {
+  const { createSettingsStore } = await server.ssrLoadModule("/src/features/settings/settingsStore.ts");
+  let resolveOld;
+  let resolveFresh;
+  let calls = 0;
+  const store = createSettingsStore({
+    get: () => new Promise((resolve) => { if (calls++ === 0) resolveOld = resolve; else resolveFresh = resolve; }),
+    save: async () => {},
+  }, "text model");
+  const old = store.getState().load();
+  const fresh = store.getState().load();
+  resolveFresh({ supports_images: true });
+  await fresh;
+  resolveOld({ supports_images: false });
+  await old;
+  assert.equal(store.getState().settings.supports_images, true);
+  assert.equal(store.getState().loading, false);
+});
+
+test("settings store ignores a load started before a foreground save", async () => {
+  const { createSettingsStore } = await server.ssrLoadModule("/src/features/settings/settingsStore.ts");
+  let resolveOld;
+  let calls = 0;
+  const store = createSettingsStore({
+    get: () => calls++ === 0 ? new Promise((resolve) => { resolveOld = resolve; }) : Promise.resolve({ supports_images: true }),
+    save: async () => {},
+  }, "text model");
+  const old = store.getState().load();
+  await store.getState().save();
+  resolveOld({ supports_images: false });
+  await old;
+  assert.equal(store.getState().settings.supports_images, true);
+  assert.equal(store.getState().saving, false);
+});
+
 test("draft defaults are all on and first create persists selected tools and effort", async () => {
   store.getState().startDraft();
   assert.ok(Object.values(store.getState().draftNarratorTools).every(Boolean));

@@ -19,24 +19,33 @@ export function createSettingsStore<T, Args extends unknown[]>(
   api: SettingsApi<T, Args>,
   label: string,
 ): SettingsStore<T, Args> {
+  let requestVersion = 0;
   return create<SettingsState<T, Args>>((set) => ({
     settings: null,
     loading: false,
     saving: false,
     load: async () => {
+      const version = ++requestVersion;
       set({ loading: true });
       try {
-        set({ settings: await api.get(), loading: false });
+        const settings = await api.get();
+        if (version === requestVersion) set({ settings, loading: false });
       } catch (error) {
-        console.error(`failed to load ${label} settings`, error);
-        set({ loading: false });
+        if (version === requestVersion) {
+          console.error(`failed to load ${label} settings`, error);
+          set({ loading: false });
+        }
       }
     },
     save: async (...args) => {
+      ++requestVersion;
       set({ saving: true });
       try {
         await api.save(...args);
-        set({ settings: await api.get(), saving: false });
+        const version = ++requestVersion;
+        const settings = await api.get();
+        if (version === requestVersion) set({ settings, saving: false });
+        else set({ saving: false });
       } catch (error) {
         set({ saving: false });
         throw error;

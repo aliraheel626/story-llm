@@ -80,7 +80,7 @@ async fn model_capabilities_with_status(provider: &str, model: &str) -> (usize, 
                     .json::<serde_json::Value>()
                     .await
                     .ok()
-                    .map(|value| ollama_supports_images(&value)),
+                    .and_then(|value| ollama_image_support(&value)),
                 None => None,
             };
             (window, supports_images)
@@ -100,7 +100,7 @@ async fn model_capabilities_with_status(provider: &str, model: &str) -> (usize, 
                 .and_then(|value| value.as_u64())
                 .map(|n| n as usize)
                 .unwrap_or(32_768);
-            let supports_images = item.as_ref().map(openrouter_supports_images);
+            let supports_images = item.as_ref().and_then(openrouter_image_support);
             (window, supports_images)
         }
     }
@@ -166,18 +166,26 @@ async fn fetch_context_window(
         .ok_or_else(|| AppError::NotFound(format!("context metadata for model {model} not found")))
 }
 
-fn openrouter_supports_images(value: &serde_json::Value) -> bool {
-    value
+fn openrouter_image_support(value: &serde_json::Value) -> Option<bool> {
+    let modalities = value
         .pointer("/architecture/input_modalities")
         .and_then(|v| v.as_array())
-        .is_some_and(|modalities| modalities.iter().any(|v| v.as_str() == Some("image")))
+        ?;
+    if modalities.iter().any(|v| !v.is_string()) {
+        return None;
+    }
+    Some(modalities.iter().any(|v| v.as_str() == Some("image")))
 }
 
-fn ollama_supports_images(value: &serde_json::Value) -> bool {
-    value
+fn ollama_image_support(value: &serde_json::Value) -> Option<bool> {
+    let capabilities = value
         .get("capabilities")
         .and_then(|v| v.as_array())
-        .is_some_and(|capabilities| capabilities.iter().any(|v| v.as_str() == Some("vision")))
+        ?;
+    if capabilities.iter().any(|v| !v.is_string()) {
+        return None;
+    }
+    Some(capabilities.iter().any(|v| v.as_str() == Some("vision")))
 }
 
 async fn fetch_model(
@@ -248,24 +256,23 @@ mod tests {
 
     #[test]
     fn image_metadata_parses_independently_of_context_length() {
-        assert!(openrouter_supports_images(
-            &json!({"architecture":{"input_modalities":["text","image"]}})
-        ));
-        assert!(!openrouter_supports_images(
-            &json!({"architecture":{"input_modalities":["text"]},"context_length":8192})
-        ));
-        assert!(!openrouter_supports_images(
-            &json!({"architecture":{"input_modalities":"image"}})
-        ));
-        assert!(ollama_supports_images(
-            &json!({"capabilities":["completion","vision"]})
-        ));
-        assert!(!ollama_supports_images(&json!({"capabilities":null})));
+        assert_eq!(openrouter_image_support(&json!({"architecture":{"input_modalities":["text","image"]}})), Some(true));
+        assert_eq!(openrouter_image_support(&json!({"architecture":{"input_modalities":["text"]},"context_length":8192})), Some(false));
+        assert_eq!(openrouter_image_support(&json!({"architecture":{"input_modalities":"image"}})), None);
+        assert_eq!(openrouter_image_support(&json!({"architecture":{}})), None);
+        assert_eq!(openrouter_image_support(&json!({"architecture":{"input_modalities":["text",7]}})), None);
+        assert_eq!(ollama_image_support(&json!({"capabilities":["completion","vision"]})), Some(true));
+        assert_eq!(ollama_image_support(&json!({"capabilities":[]})), Some(false));
+        assert_eq!(ollama_image_support(&json!({"capabilities":null})), None);
+        assert_eq!(ollama_image_support(&json!({})), None);
+        assert_eq!(ollama_image_support(&json!({"capabilities":["completion",7]})), None);
     }
 
     #[test]
     fn unavailable_metadata_does_not_become_text_only() {
         assert!(confirmed_image_support(None).is_err());
+        assert!(confirmed_image_support(openrouter_image_support(&json!({"architecture":{}}))).is_err());
+        assert!(confirmed_image_support(ollama_image_support(&json!({}))).is_err());
         assert!(!confirmed_image_support(Some(false)).unwrap());
         assert!(confirmed_image_support(Some(true)).unwrap());
     }
