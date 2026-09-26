@@ -6,8 +6,7 @@ use uuid::Uuid;
 use crate::features::{
     images,
     ledger::{
-        model::{kind as ledger_kind, LedgerEntry},
-        reducer, repository as ledger_repository, turns,
+        model::LedgerEntry, query as ledger_query, repository as ledger_repository, turns,
     },
     narrator, stories,
     turn::{TurnGate, TurnTx},
@@ -74,13 +73,7 @@ async fn prepare_and_spawn(
 
     let (turn_id, action, prior_narration, history) = turn
         .with(|conn| {
-            let prior_narration = reducer::active_visible_entries(
-                &ledger_repository::list_logical_entries(conn, &story_id)?,
-            )
-            .into_iter()
-            .rev()
-            .find(|entry| entry.kind == ledger_kind::NARRATION)
-            .map(|entry| entry.id);
+            let prior_narration = ledger_query::latest_narration_id(conn, &story_id)?;
             if mode == "see" && prior_narration.is_none() {
                 return Err(AppError::Invalid(
                     "there is no narrated scene to illustrate".into(),

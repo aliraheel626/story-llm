@@ -37,8 +37,7 @@ pub(super) fn latest_summary_artifact(
     conn: &rusqlite::Connection,
     story_id: &str,
 ) -> Option<SummaryArtifact> {
-    let payload_json = summaries::latest_payload(conn, story_id)?;
-    let value: serde_json::Value = serde_json::from_str(&payload_json).ok()?;
+    let value = summaries::latest_payload(conn, story_id).ok()??;
     serde_json::from_value::<ContextSummary>(value)
         .ok()
         .map(SummaryArtifact)

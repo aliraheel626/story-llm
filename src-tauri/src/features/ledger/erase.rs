@@ -5,7 +5,7 @@ use crate::features::{
     ledger::{
         attachments,
         model::{kind as ledger_kind, LedgerEntry},
-        repository as ledger_repository, summaries, turns,
+        query, summaries, turns,
     },
     turn::{TurnGate, TurnTicket},
 };
@@ -17,13 +17,7 @@ pub(crate) fn entries_for_turn(
     conn: &rusqlite::Connection,
     turn_id: &str,
 ) -> AppResult<Vec<LedgerEntry>> {
-    let mut stmt = conn.prepare(
-        "SELECT id, story_id, seq, kind, visibility, content, payload_json,
-                target_entry_id, turn_id, created_at
-         FROM ledger_entries WHERE turn_id = ?1 ORDER BY seq ASC",
-    )?;
-    let rows = stmt.query_map([turn_id], ledger_repository::row_to_entry)?;
-    Ok(rows.collect::<Result<_, _>>()?)
+    query::entries_of_turn(conn, turn_id)
 }
 
 pub(super) fn touched_entities(entries: &[LedgerEntry]) -> HashSet<String> {
@@ -117,7 +111,7 @@ pub(super) fn erase_last_exchange(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::features::ledger::repository::append_entry;
+    use crate::features::ledger::repository::{self as ledger_repository, append_entry};
     use crate::features::turn::TurnTx;
     use serde_json::json;
 

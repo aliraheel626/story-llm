@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::ai::{HistoryTurn, TextModelConfig};
 use crate::features::{
-    compaction, entities, ledger::model::kind as ledger_kind, settings, turn::TurnTx,
+    compaction, entities, ledger::{query, repository}, settings, turn::TurnTx,
 };
 use crate::prompts;
 use crate::shared::db::Pool;
@@ -86,57 +86,14 @@ fn touched_entity_ids(
     conn: &rusqlite::Connection,
     raw_tail: &[HistoryTurn],
 ) -> AppResult<HashSet<String>> {
-    let mut touched = HashSet::new();
-    let entry_ids = raw_tail
+    let Some(first_id) = raw_tail
         .iter()
         .filter_map(|turn| turn.entry_id.as_deref())
-        .collect::<Vec<_>>();
-    if entry_ids.is_empty() {
-        return Ok(touched);
-    }
-    let entry_ids_json = serde_json::to_string(&entry_ids).map_err(|error| {
-        AppError::Other(format!("failed to serialize ledger entry ids: {error}"))
-    })?;
-    let mut stmt = conn.prepare(
-        "SELECT kind, payload_json FROM ledger_entries
-         WHERE id IN (SELECT value FROM json_each(?1))
-           AND kind IN (?2, ?3, ?4, ?5)",
-    )?;
-    let rows = stmt.query_map(
-        rusqlite::params![
-            entry_ids_json,
-            ledger_kind::ENTITY_CREATED,
-            ledger_kind::ENTITY_UPDATED,
-            ledger_kind::ENTITY_ATTRIBUTE_CHANGED,
-            ledger_kind::ENTITY_QUERIED,
-        ],
-        |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
-    )?;
-    for row in rows {
-        let (entry_kind, payload_json) = row?;
-        let payload = serde_json::from_str::<serde_json::Value>(&payload_json)
-            .map_err(|error| AppError::Other(format!("invalid ledger payload JSON: {error}")))?;
-        match entry_kind.as_str() {
-            ledger_kind::ENTITY_CREATED
-            | ledger_kind::ENTITY_UPDATED
-            | ledger_kind::ENTITY_ATTRIBUTE_CHANGED => {
-                if let Some(entity_id) = payload.get("entity_id").and_then(|id| id.as_str()) {
-                    touched.insert(entity_id.to_string());
-                }
-            }
-            ledger_kind::ENTITY_QUERIED => {
-                if let Some(entity_ids) = payload.get("entity_ids").and_then(|ids| ids.as_array()) {
-                    touched.extend(
-                        entity_ids
-                            .iter()
-                            .filter_map(|id| id.as_str().map(str::to_string)),
-                    );
-                }
-            }
-            _ => {}
-        }
-    }
-    Ok(touched)
+        .next() else {
+        return Ok(HashSet::new());
+    };
+    let first = repository::get_entry(conn, first_id)?;
+    query::entities_touched_since(conn, &first.story_id, first.seq)
 }
 
 enum EntitiesFull {
@@ -283,6 +240,7 @@ pub(super) async fn build_message_context(inputs: &Inputs<'_>) -> AppResult<Cont
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::features::ledger::model::kind as ledger_kind;
     use crate::ai::HistoryTurnMarker;
     use crate::features::{
         images::model::ImageRequest,

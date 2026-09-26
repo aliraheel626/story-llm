@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::ai::{HistoryTurn, HistoryTurnMarker};
-use crate::features::ledger::{model::kind, reducer, repository, summaries};
+use crate::features::ledger::{model::kind, query, reducer, summaries};
 use crate::shared::error::AppResult;
 
 /// Reconstructs model history from the story ledger. The latest
@@ -12,10 +12,7 @@ use crate::shared::error::AppResult;
 /// before it on every turn.
 pub fn load_transcript(conn: &rusqlite::Connection, story_id: &str) -> AppResult<Vec<HistoryTurn>> {
     let since_seq = summaries::latest_boundary(conn, story_id)?.map(|boundary| boundary.through_seq);
-    let raw = match since_seq {
-        Some(seq) => repository::list_logical_entries_since(conn, story_id, seq)?,
-        None => repository::list_logical_entries(conn, story_id)?,
-    };
+    let raw = query::select(conn, story_id, &query::LedgerQuery { since_seq, ..Default::default() })?;
     Ok(history_from_entries(&raw))
 }
 
@@ -120,6 +117,7 @@ fn history_from_entries(raw: &[crate::features::ledger::model::LedgerEntry]) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::features::ledger::repository;
     use crate::features::ledger::model::LedgerEntry;
     use crate::prompts;
     use serde_json::json;

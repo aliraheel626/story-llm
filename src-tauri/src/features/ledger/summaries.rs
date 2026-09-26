@@ -53,15 +53,16 @@ pub(crate) fn latest_boundary(
 pub(crate) fn latest_payload(
     conn: &rusqlite::Connection,
     story_id: &str,
-) -> Option<String> {
-    let boundary = latest_boundary(conn, story_id).ok()??;
-    conn
-        .query_row(
-            "SELECT payload_json FROM ledger_entries WHERE id = ?1",
-            [boundary.summary_entry_id],
-            |row| row.get(0),
-        )
-        .ok()
+) -> AppResult<Option<serde_json::Value>> {
+    let Some(boundary) = latest_boundary(conn, story_id)? else {
+        return Ok(None);
+    };
+    let payload: String = conn.query_row(
+        "SELECT payload_json FROM ledger_entries WHERE id = ?1",
+        [boundary.summary_entry_id],
+        |row| row.get(0),
+    )?;
+    Ok(serde_json::from_str(&payload).ok())
 }
 
 pub(crate) fn append(

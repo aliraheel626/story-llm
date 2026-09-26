@@ -3,6 +3,7 @@ mod commands;
 mod edit;
 pub(crate) mod erase;
 pub mod model;
+pub mod query;
 pub mod reducer;
 pub mod repository;
 pub(crate) mod summaries;

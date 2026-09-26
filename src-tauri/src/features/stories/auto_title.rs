@@ -7,8 +7,7 @@ use super::repository::DEFAULT_STORY_TITLE;
 use crate::ai;
 use crate::features::{
     ledger::{
-        model::kind as ledger_kind, reducer as ledger_reducer, repository as ledger_repository,
-        turns,
+        model::kind as ledger_kind, query as ledger_query, turns,
     },
     settings as global_settings,
     turn::TurnTx,
@@ -52,9 +51,9 @@ pub fn opening_exchange(
     conn: &rusqlite::Connection,
     story_id: &str,
 ) -> AppResult<Vec<(String, String)>> {
-    let raw = ledger_repository::list_logical_entries(conn, story_id)?;
-    Ok(ledger_reducer::active_visible_entries(&raw)
+    Ok(ledger_query::select(conn, story_id, &Default::default())?
         .into_iter()
+        .filter(|entry| entry.kind == ledger_kind::PLAYER_MESSAGE || entry.kind == ledger_kind::NARRATION)
         .take(2)
         .map(|e| (e.kind, e.content.unwrap_or_default()))
         .collect())
