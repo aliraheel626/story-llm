@@ -63,7 +63,6 @@ pub struct HistoryTurn {
 pub enum HistoryRole {
     Player,
     Narrator,
-    #[allow(dead_code)] // First constructed by the transcript in Phase 5b.
     Record,
 }
 

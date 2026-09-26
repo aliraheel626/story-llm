@@ -122,7 +122,7 @@ fn history_from_entries(raw: &[crate::features::ledger::model::LedgerEntry]) -> 
         let content = format!("[Authoritative story event: {}]\n{content}", entry.kind);
         history.push(HistoryTurn {
             entry_id: Some(entry.id.clone()),
-            role: HistoryRole::Narrator,
+            role: HistoryRole::Record,
             content,
             marker: HistoryTurnMarker::Ledger,
             images: Vec::new(),
@@ -269,8 +269,11 @@ mod tests {
 
         let history = history_from_entries(&rows);
         assert_eq!(history.len(), 3);
+        assert_eq!(history[0].role, HistoryRole::Narrator);
         assert!(history[0].content.contains("The archive was entered."));
+        assert_eq!(history[1].role, HistoryRole::Record);
         assert!(history[1].content.contains("Stealth succeeded."));
+        assert_eq!(history[2].role, HistoryRole::Player);
         assert_eq!(history[2].content, "<do>I take the key.</do>");
         assert!(!history
             .iter()
@@ -311,6 +314,46 @@ mod tests {
         assert!(history[1].content.contains("Stealth succeeded."));
         assert!(history[2].content.contains("Looked up: Bob"));
         assert_eq!(history[3].content, "<do>I take the key.</do>");
+    }
+
+    #[test]
+    fn player_narration_and_dice_roll_have_distinct_history_roles() {
+        let rows = vec![
+            entry(
+                "player",
+                0,
+                kind::PLAYER_MESSAGE,
+                Some("Open the door"),
+                json!({"input_mode":"do"}),
+            ),
+            entry(
+                "narration",
+                1,
+                kind::NARRATION,
+                Some("It opens."),
+                json!({}),
+            ),
+            entry(
+                "roll",
+                2,
+                kind::DICEROLL,
+                Some("Stealth succeeded."),
+                json!({}),
+            ),
+        ];
+        let history = history_from_entries(&rows);
+        assert_eq!(
+            history.iter().map(|turn| turn.role).collect::<Vec<_>>(),
+            [
+                HistoryRole::Player,
+                HistoryRole::Narrator,
+                HistoryRole::Record,
+            ]
+        );
+        assert_eq!(
+            history[2].content,
+            "[Authoritative story event: diceroll]\nStealth succeeded."
+        );
     }
 
     #[test]
