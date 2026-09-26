@@ -107,6 +107,31 @@ before(async () => {
 
 after(async () => { await server?.close(); });
 
+test("sidebar toggle persists without losing expanded panels or failing on blocked storage", async () => {
+  const { useAppShellStore } = await server.ssrLoadModule("/src/app/store.ts");
+  const originalStorage = globalThis.localStorage;
+  const values = new Map();
+  globalThis.localStorage = {
+    getItem: (key) => values.get(key) ?? null,
+    setItem: (key, value) => values.set(key, value),
+  };
+  try {
+    useAppShellStore.setState({ sidebarOpen: true });
+    const storiesOpen = useAppShellStore.getState().openPanels.stories;
+    useAppShellStore.getState().toggleSidebar();
+    assert.equal(useAppShellStore.getState().sidebarOpen, false);
+    assert.equal(values.get("story-llm.sidebarOpen"), "false");
+    assert.equal(useAppShellStore.getState().openPanels.stories, storiesOpen);
+
+    globalThis.localStorage.setItem = () => { throw new Error("storage blocked"); };
+    useAppShellStore.getState().toggleSidebar();
+    assert.equal(useAppShellStore.getState().sidebarOpen, true);
+  } finally {
+    if (originalStorage === undefined) delete globalThis.localStorage;
+    else globalThis.localStorage = originalStorage;
+  }
+});
+
 test("draft defaults are all on and first create persists selected tools and effort", async () => {
   store.getState().startDraft();
   assert.ok(Object.values(store.getState().draftNarratorTools).every(Boolean));
