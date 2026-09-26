@@ -94,6 +94,7 @@ pub fn build_preview(
         injection: &injection,
         entities: &data.entities,
         tools: &descriptions,
+        rejected_reply: None,
     })?;
     let last = history.last_mut().expect("synthetic continue turn exists");
     last.content = combine_context_blocks(&[plan.live.clone(), last.content.clone()]);
@@ -288,6 +289,7 @@ mod tests {
                 injection: &injection,
                 entities: &data.entities,
                 tools: &descriptions,
+                rejected_reply: None,
             })
             .unwrap();
             history.last_mut().unwrap().content =

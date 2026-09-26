@@ -37,6 +37,7 @@ pub(crate) struct Inputs<'a> {
     pub injection: &'a InjectionSettings,
     pub entities: &'a [EntityDisplay],
     pub tools: &'a [ToolDescription<'a>],
+    pub rejected_reply: Option<&'a str>,
 }
 
 pub(crate) struct ContextPlan {
@@ -157,7 +158,11 @@ pub(crate) fn build_message_context(inputs: &Inputs<'_>) -> AppResult<ContextPla
         let touched = touched_entity_ids(inputs.conn, &inputs.history[split..])?;
         format_entity_context(inputs.entities, Some(&touched))
     };
-    let live = combine_context_blocks(&[entities_live, author_note, tools]);
+    let retry = inputs
+        .rejected_reply
+        .map(prompts::retry_instruction)
+        .unwrap_or_default();
+    let live = combine_context_blocks(&[entities_live, author_note, tools, retry]);
     Ok(ContextPlan { live, full })
 }
 
@@ -303,6 +308,7 @@ mod tests {
                     injection: &injection,
                     entities: &snapshot(conn),
                     tools: &descriptions(&tools),
+                    rejected_reply: None,
                 })
             })
             .await
@@ -346,6 +352,7 @@ mod tests {
                     injection: &injection,
                     entities: &snapshot(conn),
                     tools: &[],
+                    rejected_reply: None,
                 })
             })
             .await
@@ -390,6 +397,7 @@ mod tests {
                     injection: &injection,
                     entities: &snapshot(conn),
                     tools: &descriptions(&specs),
+                    rejected_reply: None,
                 })
             })
             .await
@@ -397,6 +405,43 @@ mod tests {
         assert!(!specs.is_empty());
         assert!(plan.live.is_empty());
         assert!(plan.full.is_empty());
+        turn.rollback().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn retry_adds_rejected_text_only_to_live_context_after_tools() {
+        let (pool, history_turn) = story_with_entity_query();
+        let turn = TurnTx::begin(&pool, &Default::default(), "s").unwrap();
+        turn.with(|conn| {
+            let injection = super::super::settings::read_injection_settings(conn, "s")?;
+            let tools = [ToolDescription {
+                name: "get_entities",
+                instruction: Some("Look up characters."),
+            }];
+            let history = [history_turn];
+            let base = Inputs {
+                conn,
+                history: &history,
+                config: &config(),
+                injection: &injection,
+                entities: &snapshot(conn),
+                tools: &tools,
+                rejected_reply: Some("Rejected narration."),
+            };
+            let retry = build_message_context(&base)?;
+            assert!(retry.live.contains("<rejected_reply>Rejected narration.</rejected_reply>"));
+            assert!(
+                retry.live.find("</additional_instructions>").unwrap()
+                    < retry.live.find("<retry>").unwrap()
+            );
+            assert!(!retry.full.contains("<retry>"));
+            let normal = build_message_context(&Inputs { rejected_reply: None, ..base })?;
+            assert!(!normal.live.contains("<retry>"));
+            assert_eq!(normal.full, retry.full);
+            Ok(())
+        })
+        .await
+        .unwrap();
         turn.rollback().await.unwrap();
     }
 

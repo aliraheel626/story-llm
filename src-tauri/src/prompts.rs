@@ -55,6 +55,7 @@ Each turn arrives as tagged input. These tags are input markup. Never reproduce 
 - `<entities>` is authoritative, and user overrides win.
 - `<author_note>` contains the author's current standing guidance. Follow it on every turn while present, including tone, style, pacing, and scene constraints even when they differ from earlier narration. Keep the rules above, authoritative story facts and rolls, and the player's latest action intact. Never quote or mention the note in your reply.
 - `<additional_instructions>` contains extra guidance for this turn, such as tool availability and when to use those tools.
+- `<retry>` means the player rejected your previous reply to this action. Follow it, and never mention it.
 
 ## Records in history
 
@@ -68,6 +69,15 @@ Your replies are only narration or real tool calls.
 /// the player's action instead of being baked into this value.
 pub fn narrator_system_prompt() -> String {
     NARRATOR_SYSTEM_PROMPT_BASE.trim_end().to_string()
+}
+
+/// Shown only on Retry so the next request differs from the rejected one.
+pub fn retry_instruction(rejected: &str) -> String {
+    format!(
+        "<retry>\nThe player rejected your previous reply to this action and asked for a new one. \
+         Write a clearly different continuation: different events, wording and focus. \
+         Never reuse its sentences. The rejected reply was:\n<rejected_reply>{rejected}</rejected_reply>\n</retry>"
+    )
 }
 
 pub const IMAGE_TOOL_AVAILABLE_INSTRUCTION: &str = "You have an illustrate_scene tool: always call it when the player sends <see>, and otherwise only for a genuinely striking moment.";

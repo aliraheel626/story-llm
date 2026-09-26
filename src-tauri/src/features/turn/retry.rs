@@ -17,7 +17,7 @@ async fn prepare_retry(
     turn: &TurnTx,
     entry_id: &str,
     replay: EraseReplay,
-) -> AppResult<(String, String)> {
+) -> AppResult<(String, String, Option<String>)> {
     turn.with(|conn| {
         let story_id = turn.story_id();
         let old_turn = turns::turn_of(conn, entry_id)?
@@ -34,10 +34,11 @@ async fn prepare_retry(
                 "only the latest turn can be retried".into(),
             ));
         }
-        let player_id = erase::entries_for_turn(conn, &old_turn.id)?
-            .into_iter()
+        let entries = erase::entries_for_turn(conn, &old_turn.id)?;
+        let player_id = entries
+            .iter()
             .find(|entry| entry.kind == ledger_kind::PLAYER_MESSAGE)
-            .map(|entry| entry.id)
+            .map(|entry| entry.id.clone())
             .ok_or_else(|| AppError::Invalid("turn has no player action".into()))?;
         let player = ledger_repository::active_entry(conn, &player_id)?;
         let mode = player
@@ -47,9 +48,18 @@ async fn prepare_retry(
             .ok_or_else(|| AppError::Invalid("player action has no input mode".into()))?
             .to_string();
         let content = player.content.unwrap_or_default();
+        let rejected = entries
+            .iter()
+            .rev()
+            .find(|entry| entry.kind == ledger_kind::NARRATION)
+            .map(|entry| {
+                ledger_repository::active_entry(conn, &entry.id)
+                    .map(|active| active.content.unwrap_or_default())
+            })
+            .transpose()?;
 
         erase::remove_turn(conn, story_id, &old_turn.id, replay.0)?;
-        Ok((mode, content))
+        Ok((mode, content, rejected))
     })
     .await
 }
@@ -66,7 +76,7 @@ pub(super) async fn retry_narration(
     let begin_gate = gate.clone();
     let begin_story_id = story_id.clone();
     let turn = blocking(move || TurnTx::begin(&begin_pool, &begin_gate, &begin_story_id)).await?;
-    let (mode, content) = match prepare_retry(&turn, &entry_id, replay).await {
+    let (mode, content, rejected) = match prepare_retry(&turn, &entry_id, replay).await {
         Ok(input) => input,
         Err(error) => {
             if let Err(rollback_error) = turn.rollback().await {
@@ -76,7 +86,7 @@ pub(super) async fn retry_narration(
         }
     };
 
-    let result = submit::run_turn(app, pool, Arc::clone(&turn), mode, content).await?;
+    let result = submit::run_turn(app, pool, Arc::clone(&turn), mode, content, rejected).await?;
     Ok(RetryResult {
         entry_id,
         stream_id: result.stream_id,
@@ -176,14 +186,25 @@ mod tests {
             None,
         )
         .unwrap();
+        ledger_repository::append_entry(
+            &conn,
+            "s",
+            ledger_kind::CONTENT_EDITED,
+            "hidden",
+            Some("An edited answer."),
+            &json!({"reason":"user_edit"}),
+            Some(&reply),
+            None,
+        )
+        .unwrap();
         drop(conn);
 
         let gate = TurnGate::default();
         let turn = TurnTx::begin(&pool, &gate, "s").unwrap();
-        let (mode, content) = prepare_retry(&turn, &reply, replay()).await.unwrap();
+        let (mode, content, rejected) = prepare_retry(&turn, &reply, replay()).await.unwrap();
         assert_eq!(
-            (mode.as_str(), content.as_str()),
-            ("do", "I kick the door open")
+            (mode.as_str(), content.as_str(), rejected.as_deref()),
+            ("do", "I kick the door open", Some("An edited answer."))
         );
         turn.with(|conn| {
             assert!(turns::turn_of(conn, &reply)?.is_none());
@@ -316,7 +337,8 @@ mod tests {
         let (pool, _, reply, old_turn) = retry_fixture();
         let gate = TurnGate::default();
         let turn = TurnTx::begin(&pool, &gate, "s").unwrap();
-        let (mode, content) = prepare_retry(&turn, &reply, replay()).await.unwrap();
+        let (mode, content, rejected) = prepare_retry(&turn, &reply, replay()).await.unwrap();
+        assert_eq!(rejected.as_deref(), Some("Original"));
         turn.with(|conn| {
             let new_turn = turns::create_turn(conn, "s")?;
             ledger_repository::append_story_message(
@@ -393,7 +415,7 @@ mod tests {
         let turn = TurnTx::begin(&pool, &gate, "s").unwrap();
         assert_eq!(
             prepare_retry(&turn, &action.id, replay()).await.unwrap(),
-            ("continue".into(), "".into())
+            ("continue".into(), "".into(), None)
         );
         turn.rollback().await.unwrap();
         assert_eq!(
@@ -438,7 +460,7 @@ mod tests {
         let turn = TurnTx::begin(&pool, &gate, "s").unwrap();
         assert_eq!(
             prepare_retry(&turn, &see.id, replay()).await.unwrap(),
-            ("see".into(), "".into())
+            ("see".into(), "".into(), None)
         );
         turn.with(|conn| {
             assert!(ledger_repository::get_entry(conn, &scene.id).is_ok());

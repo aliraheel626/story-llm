@@ -46,8 +46,9 @@ pub(super) async fn run_turn(
     turn: Arc<TurnTx>,
     mode: String,
     content: String,
+    rejected: Option<String>,
 ) -> AppResult<SubmitTurnResult> {
-    let result = prepare_and_spawn(app, pool, &turn, mode, content).await;
+    let result = prepare_and_spawn(app, pool, &turn, mode, content, rejected).await;
     if result.is_err() {
         turn.rollback().await?;
     }
@@ -60,6 +61,7 @@ async fn prepare_and_spawn(
     turn: &Arc<TurnTx>,
     mode: String,
     content: String,
+    rejected: Option<String>,
 ) -> AppResult<SubmitTurnResult> {
     let story_id = turn.story_id().to_string();
     let content = content.trim();
@@ -135,6 +137,7 @@ async fn prepare_and_spawn(
         },
         target_entry_id: target_entry_id.clone(),
         turn_id: turn_id.clone(),
+        rejected_reply: rejected,
     })
     .await?;
     if !is_see {
@@ -284,5 +287,5 @@ pub(super) async fn submit_turn(
     let begin_gate = gate.clone();
     let begin_story_id = story_id.clone();
     let turn = blocking(move || TurnTx::begin(&begin_pool, &begin_gate, &begin_story_id)).await?;
-    run_turn(app, pool, turn, mode, content).await
+    run_turn(app, pool, turn, mode, content, None).await
 }

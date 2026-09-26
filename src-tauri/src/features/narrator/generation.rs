@@ -91,6 +91,7 @@ pub struct NarratorInputs<'a> {
     pub purpose: NarratorPurpose,
     pub target_entry_id: String,
     pub turn_id: String,
+    pub rejected_reply: Option<String>,
 }
 
 pub struct Prepared {
@@ -189,6 +190,7 @@ pub async fn prepare(inputs: NarratorInputs<'_>) -> AppResult<Prepared> {
                 injection: &injection,
                 entities: &entities,
                 tools: &descriptions,
+                rejected_reply: inputs.rejected_reply.as_deref(),
             })
         })
         .await?;
