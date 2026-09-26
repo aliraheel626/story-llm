@@ -1,33 +1,40 @@
 //! Ordered per-message context assembly for narrator requests.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use crate::ai::{HistoryTurn, TextModelConfig};
-use crate::features::{
-    entities,
-    ledger::{query, repository},
-    narrator::catalog::ToolSpec,
-    settings,
-    turn::TurnTx,
-};
+use crate::features::ledger::{query, repository};
 use crate::prompts;
-use crate::shared::db::Pool;
 use crate::shared::error::{AppError, AppResult};
 
 use super::raw_tail_boundary;
 
-struct EntityContextData {
-    entities: Vec<entities::model::Entity>,
-    attrs_by_entity: HashMap<String, Vec<entities::model::EntityAttributeValue>>,
+pub(crate) struct EntityDisplay {
+    pub id: String,
+    pub name: String,
+    pub kind: String,
+    pub appearance_anchor: Option<String>,
+    pub attributes: Vec<AttributeDisplay>,
+}
+
+pub(crate) struct AttributeDisplay {
+    pub canonical_name: String,
+    pub value: f64,
+}
+
+pub(crate) struct ToolDescription<'a> {
+    pub name: &'a str,
+    pub instruction: Option<&'a str>,
 }
 
 pub(crate) struct Inputs<'a> {
-    pub turn: &'a TurnTx,
-    pub settings_pool: &'a Pool,
+    pub conn: &'a rusqlite::Connection,
     pub story_id: &'a str,
     pub history: &'a [HistoryTurn],
     pub config: &'a TextModelConfig,
-    pub tool_specs: &'a [&'static ToolSpec],
+    pub entity_mode: &'a str,
+    pub entities: &'a [EntityDisplay],
+    pub tools: &'a [ToolDescription<'a>],
 }
 
 pub(crate) struct ContextPlan {
@@ -35,29 +42,12 @@ pub(crate) struct ContextPlan {
     pub full: String,
 }
 
-fn load_entity_context_data(
-    conn: &rusqlite::Connection,
-    story_id: &str,
-) -> AppResult<EntityContextData> {
-    let entities = entities::list_entities_sync(conn, story_id, None)?;
-    let entity_ids = entities.iter().map(|e| e.id.as_str()).collect::<Vec<_>>();
-    let attrs_by_entity = entities::attributes::list_entity_attributes_for_entities_sync(
-        conn,
-        story_id,
-        &entity_ids,
-    )?;
-    Ok(EntityContextData {
-        entities,
-        attrs_by_entity,
-    })
-}
-
 fn format_entity_context(
-    data: &EntityContextData,
+    data: &[EntityDisplay],
     detailed_entity_ids: Option<&HashSet<String>>,
 ) -> String {
     let mut lines = vec![prompts::ENTITY_CONTEXT_HEADER.to_string()];
-    for entity in &data.entities {
+    for entity in data {
         if detailed_entity_ids.is_some_and(|entity_ids| !entity_ids.contains(&entity.id)) {
             lines.push(format!("- {} ({})", entity.name, entity.kind));
             continue;
@@ -67,8 +57,8 @@ fn format_entity_context(
             .as_deref()
             .map(|a| format!("; appearance: {a}"))
             .unwrap_or_default();
-        let attributes = match data.attrs_by_entity.get(&entity.id) {
-            Some(attrs) if !attrs.is_empty() => format!(
+        let attributes = match &entity.attributes {
+            attrs if !attrs.is_empty() => format!(
                 "; attributes: {}",
                 attrs
                     .iter()
@@ -93,74 +83,15 @@ fn touched_entity_ids(
     let Some(first_id) = raw_tail
         .iter()
         .filter_map(|turn| turn.entry_id.as_deref())
-        .next() else {
+        .next()
+    else {
         return Ok(HashSet::new());
     };
     let first = repository::get_entry(conn, first_id)?;
     query::entities_touched_since(conn, &first.story_id, first.seq)
 }
 
-enum EntitiesFull {
-    None,
-    All(String),
-    Scoped {
-        data: EntityContextData,
-        full: String,
-    },
-}
-
-impl EntitiesFull {
-    fn full(&self) -> &str {
-        match self {
-            Self::None => "",
-            Self::All(full) | Self::Scoped { full, .. } => full,
-        }
-    }
-
-    async fn live(
-        self,
-        turn: &TurnTx,
-        history: &[HistoryTurn],
-        config: &TextModelConfig,
-        full: &str,
-    ) -> AppResult<String> {
-        match self {
-            Self::None => Ok(String::new()),
-            Self::All(dump) => Ok(dump),
-            Self::Scoped { data, .. } => {
-                let split =
-                    raw_tail_boundary(history, config, &prompts::narrator_system_prompt(), full);
-                let touched = turn
-                    .with(|conn| touched_entity_ids(conn, &history[split..]))
-                    .await?;
-                Ok(format_entity_context(&data, Some(&touched)))
-            }
-        }
-    }
-}
-
-async fn entities_full(
-    turn: &TurnTx,
-    settings_pool: &Pool,
-    story_id: &str,
-) -> AppResult<EntitiesFull> {
-    let context = settings::read_context_injection_settings(settings_pool)?;
-    if context.entity_context_mode == "none" {
-        return Ok(EntitiesFull::None);
-    }
-
-    let data = turn
-        .with(|conn| load_entity_context_data(conn, story_id))
-        .await?;
-    let full = format_entity_context(&data, None);
-    Ok(if context.entity_context_mode == "all" {
-        EntitiesFull::All(full)
-    } else {
-        EntitiesFull::Scoped { data, full }
-    })
-}
-
-fn tool_context(specs: &[&ToolSpec]) -> String {
+fn tool_context(specs: &[ToolDescription<'_>]) -> String {
     if specs.is_empty() {
         return String::new();
     }
@@ -193,46 +124,53 @@ pub(crate) fn combine_context_blocks(parts: &[String]) -> String {
         .join("\n\n")
 }
 
-pub(crate) async fn build_message_context(inputs: &Inputs<'_>) -> AppResult<ContextPlan> {
-    let entities = entities_full(inputs.turn, inputs.settings_pool, inputs.story_id).await?;
-    let author_note = inputs
-        .turn
-        .with(|conn| {
-            let raw: String = conn
-                .query_row(
-                    "SELECT settings_json FROM stories WHERE id = ?1",
-                    [inputs.story_id],
-                    |row| row.get(0),
-                )
-                .map_err(|_| AppError::NotFound(format!("story {} not found", inputs.story_id)))?;
-            let settings: serde_json::Value =
-                serde_json::from_str(&raw).unwrap_or_else(|_| serde_json::json!({}));
-            let enabled = settings
-                .get("author_note_enabled")
-                .and_then(serde_json::Value::as_bool)
-                .unwrap_or(true);
-            let note = settings
-                .get("author_note")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or_default()
-                .trim();
-            Ok(if enabled && !note.is_empty() {
-                format!("<author_note>{note}</author_note>")
-            } else {
-                String::new()
-            })
-        })
-        .await?;
-    let tools = tool_context(inputs.tool_specs);
+pub(crate) fn build_message_context(inputs: &Inputs<'_>) -> AppResult<ContextPlan> {
+    let entities_full = if inputs.entity_mode == "none" {
+        String::new()
+    } else {
+        format_entity_context(inputs.entities, None)
+    };
+    let author_note = {
+        let raw: String = inputs
+            .conn
+            .query_row(
+                "SELECT settings_json FROM stories WHERE id = ?1",
+                [inputs.story_id],
+                |row| row.get(0),
+            )
+            .map_err(|_| AppError::NotFound(format!("story {} not found", inputs.story_id)))?;
+        let settings: serde_json::Value =
+            serde_json::from_str(&raw).unwrap_or_else(|_| serde_json::json!({}));
+        let enabled = settings
+            .get("author_note_enabled")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(true);
+        let note = settings
+            .get("author_note")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .trim();
+        if enabled && !note.is_empty() {
+            format!("<author_note>{note}</author_note>")
+        } else {
+            String::new()
+        }
+    };
+    let tools = tool_context(inputs.tools);
 
-    let full = combine_context_blocks(&[
-        entities.full().to_string(),
-        author_note.clone(),
-        tools.clone(),
-    ]);
-    let entities_live = entities
-        .live(inputs.turn, inputs.history, inputs.config, &full)
-        .await?;
+    let full = combine_context_blocks(&[entities_full.clone(), author_note.clone(), tools.clone()]);
+    let entities_live = if inputs.entity_mode == "none" || inputs.entity_mode == "all" {
+        entities_full
+    } else {
+        let split = raw_tail_boundary(
+            inputs.history,
+            inputs.config,
+            &prompts::narrator_system_prompt(),
+            &full,
+        );
+        let touched = touched_entity_ids(inputs.conn, &inputs.history[split..])?;
+        format_entity_context(inputs.entities, Some(&touched))
+    };
     let live = combine_context_blocks(&[entities_live, author_note, tools]);
     Ok(ContextPlan { live, full })
 }
@@ -240,14 +178,17 @@ pub(crate) async fn build_message_context(inputs: &Inputs<'_>) -> AppResult<Cont
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::features::ledger::model::kind as ledger_kind;
     use crate::ai::HistoryTurnMarker;
+    use crate::features::ledger::model::kind as ledger_kind;
     use crate::features::{
+        entities,
         images::model::ImageRequest,
         ledger::repository::append_entry,
-        narrator::catalog::{self, ToolAvailability, ToolDeps},
+        narrator::catalog::{self, ToolAvailability, ToolDeps, ToolSpec},
         stories::settings::NarratorToolSettings,
+        turn::TurnTx,
     };
+    use crate::shared::db::Pool;
     use rig_agent::tool::PortableDynamicTool;
     use serde_json::json;
     use std::sync::Arc;
@@ -260,6 +201,45 @@ mod tests {
             api_key: "test".into(),
             context_window: 32_768,
         }
+    }
+
+    fn snapshot(conn: &rusqlite::Connection) -> Vec<EntityDisplay> {
+        let entities = entities::list_entities_sync(conn, "s", None).unwrap();
+        let ids = entities
+            .iter()
+            .map(|entity| entity.id.as_str())
+            .collect::<Vec<_>>();
+        let mut attrs =
+            entities::attributes::list_entity_attributes_for_entities_sync(conn, "s", &ids)
+                .unwrap();
+        entities
+            .into_iter()
+            .map(|entity| EntityDisplay {
+                attributes: attrs
+                    .remove(&entity.id)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|attr| AttributeDisplay {
+                        canonical_name: attr.canonical_name,
+                        value: attr.value,
+                    })
+                    .collect(),
+                id: entity.id,
+                name: entity.name,
+                kind: entity.kind,
+                appearance_anchor: entity.appearance_anchor,
+            })
+            .collect()
+    }
+
+    fn descriptions<'a>(specs: &'a [&'a ToolSpec]) -> Vec<ToolDescription<'a>> {
+        specs
+            .iter()
+            .map(|spec| ToolDescription {
+                name: spec.name,
+                instruction: spec.instruction,
+            })
+            .collect()
     }
 
     fn story_with_entity_query() -> (Pool, HistoryTurn) {
@@ -324,16 +304,20 @@ mod tests {
             illustrate: false,
         });
         let turn = TurnTx::begin(&pool, &Default::default(), "s").unwrap();
-        let plan = build_message_context(&Inputs {
-            turn: &turn,
-            settings_pool: &pool,
-            story_id: "s",
-            history: &history,
-            config: &config,
-            tool_specs: &tools,
-        })
-        .await
-        .unwrap();
+        let plan = turn
+            .with(|conn| {
+                build_message_context(&Inputs {
+                    conn,
+                    story_id: "s",
+                    history: &history,
+                    config: &config,
+                    entity_mode: "scoped",
+                    entities: &snapshot(conn),
+                    tools: &descriptions(&tools),
+                })
+            })
+            .await
+            .unwrap();
 
         assert!(plan
             .live
@@ -342,8 +326,8 @@ mod tests {
         let note = plan.live.find("<author_note>").unwrap();
         let tools_position = plan.live.find("<additional_instructions>").unwrap();
         assert!(entities < note && note < tools_position);
-        assert!(plan.live.contains(&tool_context(&tools)));
-        assert!(plan.full.contains(&tool_context(&tools)));
+        assert!(plan.live.contains(&tool_context(&descriptions(&tools))));
+        assert!(plan.full.contains(&tool_context(&descriptions(&tools))));
         assert!(plan.full.contains("<entities>"));
     }
 
@@ -363,16 +347,20 @@ mod tests {
             Ok(())
         }).await.unwrap();
         let history = vec![history_turn];
-        let plan = build_message_context(&Inputs {
-            turn: &turn,
-            settings_pool: &pool,
-            story_id: "s",
-            history: &history,
-            config: &config(),
-            tool_specs: &[],
-        })
-        .await
-        .unwrap();
+        let plan = turn
+            .with(|conn| {
+                build_message_context(&Inputs {
+                    conn,
+                    story_id: "s",
+                    history: &history,
+                    config: &config(),
+                    entity_mode: "scoped",
+                    entities: &snapshot(conn),
+                    tools: &[],
+                })
+            })
+            .await
+            .unwrap();
 
         assert!(plan
             .full
@@ -383,6 +371,7 @@ mod tests {
         assert!(plan
             .live
             .contains("Bob (character); appearance: a red cloak"));
+        assert!(plan.live.contains("Alice (character); appearance: a blue coat"));
         turn.rollback().await.unwrap();
     }
 
@@ -401,7 +390,7 @@ mod tests {
             image_enabled: false,
             illustrate: false,
         });
-        assert_eq!(tool_context(&none), "");
+        assert_eq!(tool_context(&descriptions(&none)), "");
 
         let image = catalog::enabled(&ToolAvailability {
             settings: &settings,
@@ -409,7 +398,7 @@ mod tests {
             illustrate: true,
         });
         assert_eq!(
-            tool_context(&image),
+            tool_context(&descriptions(&image)),
             format!(
                 "<additional_instructions>\nAvailable narrator tools for this turn: {}.\n{}\n</additional_instructions>",
                 prompts::ILLUSTRATE_SCENE_TOOL_NAME,
@@ -424,7 +413,7 @@ mod tests {
             illustrate: false,
         });
         assert_eq!(
-            tool_context(&roll),
+            tool_context(&descriptions(&roll)),
             format!(
                 "<additional_instructions>\nAvailable narrator tools for this turn: {}.\n{}\n</additional_instructions>",
                 prompts::ROLL_CHECK_TOOL_NAME,
@@ -499,7 +488,10 @@ mod tests {
                 .map(|tool| tool.name().to_string())
                 .collect::<Vec<_>>();
 
-            assert_eq!(built_names, names_from_tool_context(&tool_context(&specs)));
+            assert_eq!(
+                built_names,
+                names_from_tool_context(&tool_context(&descriptions(&specs)))
+            );
         }
     }
 }

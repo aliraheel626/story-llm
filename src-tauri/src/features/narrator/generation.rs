@@ -7,7 +7,7 @@ use tokio::sync::Mutex;
 use crate::ai::{HistoryTurn, TextModelConfig};
 use crate::features::{
     context::{self, ContextPlan},
-    images, settings, stories,
+    entities, images, settings, stories,
     turn::TurnTx,
 };
 use crate::shared::db::Pool;
@@ -15,6 +15,40 @@ use crate::shared::error::{AppError, AppResult};
 
 use super::catalog::{self, ToolAvailability, ToolDeps};
 use super::model::NarratorPurpose;
+
+fn entity_snapshot(
+    conn: &rusqlite::Connection,
+    story_id: &str,
+) -> AppResult<Vec<context::injection::EntityDisplay>> {
+    let entities = entities::list_entities_sync(conn, story_id, None)?;
+    let entity_ids = entities
+        .iter()
+        .map(|entity| entity.id.as_str())
+        .collect::<Vec<_>>();
+    let mut attrs = entities::attributes::list_entity_attributes_for_entities_sync(
+        conn,
+        story_id,
+        &entity_ids,
+    )?;
+    Ok(entities
+        .into_iter()
+        .map(|entity| context::injection::EntityDisplay {
+            attributes: attrs
+                .remove(&entity.id)
+                .unwrap_or_default()
+                .into_iter()
+                .map(|attribute| context::injection::AttributeDisplay {
+                    canonical_name: attribute.canonical_name,
+                    value: attribute.value,
+                })
+                .collect(),
+            id: entity.id,
+            name: entity.name,
+            kind: entity.kind,
+            appearance_anchor: entity.appearance_anchor,
+        })
+        .collect())
+}
 
 pub struct NarratorInputs<'a> {
     pub app: &'a AppHandle,
@@ -100,15 +134,34 @@ pub async fn prepare(inputs: NarratorInputs<'_>) -> AppResult<Prepared> {
         .iter()
         .map(|spec| DynamicTool::from_portable((spec.build)(&deps)))
         .collect();
-    let context = context::build_message_context(&context::injection::Inputs {
-        turn: &inputs.turn,
-        settings_pool: inputs.settings_pool,
-        story_id: inputs.story_id,
-        history: &inputs.transcript,
-        config: &config,
-        tool_specs: &enabled_tools,
-    })
-    .await?;
+    let entity_mode =
+        settings::read_context_injection_settings(inputs.settings_pool)?.entity_context_mode;
+    let descriptions = enabled_tools
+        .iter()
+        .map(|spec| context::injection::ToolDescription {
+            name: spec.name,
+            instruction: spec.instruction,
+        })
+        .collect::<Vec<_>>();
+    let context = inputs
+        .turn
+        .with(|conn| {
+            let entities = if entity_mode == "none" {
+                Vec::new()
+            } else {
+                entity_snapshot(conn, inputs.story_id)?
+            };
+            context::build_message_context(&context::injection::Inputs {
+                conn,
+                story_id: inputs.story_id,
+                history: &inputs.transcript,
+                config: &config,
+                entity_mode: &entity_mode,
+                entities: &entities,
+                tools: &descriptions,
+            })
+        })
+        .await?;
     Ok(Prepared {
         app: inputs.app.clone(),
         turn: inputs.turn,
@@ -123,4 +176,58 @@ pub async fn prepare(inputs: NarratorInputs<'_>) -> AppResult<Prepared> {
         reasoning_effort,
         image_requests,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn entity_snapshot_reads_uncommitted_attributes_on_turn_connection() {
+        let pool = crate::shared::db::test_pool();
+        let conn = pool.get().unwrap();
+        conn.execute(
+            "INSERT INTO stories (id, title, created_at, updated_at, settings_json) VALUES ('s', 'Story', 'now', 'now', '{}')",
+            [],
+        ).unwrap();
+        drop(conn);
+        let turn = TurnTx::begin(&pool, &Default::default(), "s").unwrap();
+        turn.with(|conn| {
+            entities::create_entity_with_id_sync(
+                conn,
+                "alice",
+                "s",
+                "character",
+                "Alice",
+                Some("blue coat"),
+                "test",
+                None,
+                None,
+            )?;
+            let attribute_id: String = conn.query_row(
+                "SELECT id FROM attribute_registry WHERE canonical_name = 'Accuracy'",
+                [],
+                |row| row.get(0),
+            )?;
+            entities::attributes::set_entity_attribute_sync(
+                conn,
+                "s",
+                "alice",
+                &attribute_id,
+                7.0,
+            )?;
+            let snapshot = entity_snapshot(conn, "s")?;
+            assert_eq!(snapshot.len(), 1);
+            assert_eq!(snapshot[0].id, "alice");
+            assert_eq!(snapshot[0].name, "Alice");
+            assert_eq!(snapshot[0].appearance_anchor.as_deref(), Some("blue coat"));
+            assert_eq!(snapshot[0].attributes.len(), 1);
+            assert_eq!(snapshot[0].attributes[0].canonical_name, "Accuracy");
+            assert_eq!(snapshot[0].attributes[0].value, 7.0);
+            Ok(())
+        })
+        .await
+        .unwrap();
+        turn.rollback().await.unwrap();
+    }
 }

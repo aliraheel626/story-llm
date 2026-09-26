@@ -4,9 +4,9 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 use uuid::Uuid;
 
-use crate::ai::{self, NarrateRequest, NarratorChunk, ToolActivityPhase};
+use crate::ai::{self, HistoryTurnMarker, NarrateRequest, NarratorChunk, ToolActivityPhase};
 use crate::features::{
-    context::{combine_context_blocks, prepare_history},
+    context::{self, combine_context_blocks, prepare_history},
     ledger::{model::kind as ledger_kind, repository as ledger_repository},
 };
 use crate::prompts;
@@ -72,16 +72,31 @@ where
         } = prepared;
         let result = async {
             let preamble = prompts::narrator_system_prompt();
-            let mut history = prepare_history(
-                &turn,
+            let carry_over = if transcript
+                .first()
+                .is_some_and(|turn| turn.marker == HistoryTurnMarker::Summary)
+                && context::raw_tail_boundary(&transcript, &config, &preamble, &context.full) > 0
+            {
+                turn.with(|conn| Ok(context::latest_summary_artifact(conn, &story_id)))
+                    .await
+                    .ok()
+                    .flatten()
+            } else {
+                None
+            };
+            let prepared_history = prepare_history(
                 &story_id,
                 &config,
                 &preamble,
                 &context.full,
                 transcript,
+                carry_over,
             )
-            .await
-            .turns;
+            .await;
+            if let Some(write) = &prepared_history.summary_write {
+                let _ = turn.with(|conn| write.persist(conn, &story_id)).await;
+            }
+            let mut history = prepared_history.turns;
             let mut action = history.pop().ok_or_else(|| {
                 AppError::Other("the narration history has no action turn".into())
             })?;

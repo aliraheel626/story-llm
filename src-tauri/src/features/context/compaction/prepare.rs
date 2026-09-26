@@ -3,48 +3,59 @@ use rig_memory::{HeuristicTokenCounter, MemoryPolicy, TokenCounter, TokenWindowM
 
 use crate::ai::{HistoryTurn, TextModelConfig};
 use crate::features::ledger::summaries;
-use crate::features::turn::TurnTx;
+use crate::shared::error::AppResult;
 
 use super::budget::{messages, raw_tail_boundary, FALLBACK_CONTEXT_WINDOW};
 use super::compactor::NarratorCompactor;
-use super::summary::{format_summary, latest_summary_artifact, SummaryArtifact};
+use super::summary::{format_summary, SummaryArtifact};
 
 pub(crate) struct PreparedHistory {
     pub turns: Vec<HistoryTurn>,
+    pub summary_write: Option<DeferredSummaryWrite>,
+}
+
+pub(crate) struct DeferredSummaryWrite {
+    through_entry_id: Option<String>,
+    summary_text: String,
+    summary: super::summary::ContextSummary,
+}
+
+impl DeferredSummaryWrite {
+    pub(crate) fn persist(&self, conn: &rusqlite::Connection, story_id: &str) -> AppResult<()> {
+        summaries::append(
+            conn,
+            story_id,
+            self.through_entry_id.as_deref(),
+            &self.summary_text,
+            &self.summary,
+        )
+    }
 }
 
 pub async fn prepare_history(
-    turn: &TurnTx,
     story_id: &str,
     config: &TextModelConfig,
     preamble: &str,
     prompt: &str,
     history: Vec<HistoryTurn>,
+    carry_over: Option<SummaryArtifact>,
 ) -> PreparedHistory {
     let compactor = NarratorCompactor::new(config.clone());
-    let result = prepare_history_with_compactor(
+    prepare_history_with_compactor(
         HistoryPreparation {
-            turn,
             story_id,
             config,
             preamble,
             prompt,
         },
         history,
+        carry_over,
         &compactor,
     )
-    .await;
-    PreparedHistory {
-        turns: result.turns,
-    }
-}
-
-struct PreparationResult {
-    turns: Vec<HistoryTurn>,
+    .await
 }
 
 struct HistoryPreparation<'a> {
-    turn: &'a TurnTx,
     story_id: &'a str,
     config: &'a TextModelConfig,
     preamble: &'a str,
@@ -54,13 +65,13 @@ struct HistoryPreparation<'a> {
 async fn prepare_history_with_compactor<C>(
     input: HistoryPreparation<'_>,
     history: Vec<HistoryTurn>,
+    carry_over: Option<SummaryArtifact>,
     compactor: &C,
-) -> PreparationResult
+) -> PreparedHistory
 where
     C: Compactor<Artifact = SummaryArtifact>,
 {
     let HistoryPreparation {
-        turn,
         story_id,
         config,
         preamble,
@@ -80,7 +91,10 @@ where
     let target_history_budget = (((context_window as f64) * 0.75) as usize).saturating_sub(fixed);
     let split = raw_tail_boundary(&history, config, preamble, prompt);
     if split == 0 {
-        return PreparationResult { turns: history };
+        return PreparedHistory {
+            turns: history,
+            summary_write: None,
+        };
     }
     let keep_count = history.len() - split;
     let through_entry_id = history[..split]
@@ -88,17 +102,6 @@ where
         .rev()
         .find_map(|turn| turn.entry_id.clone());
 
-    let carry_over = if history
-        .first()
-        .is_some_and(|turn| turn.marker == crate::ai::HistoryTurnMarker::Summary)
-    {
-        turn.with(|conn| Ok(latest_summary_artifact(conn, story_id)))
-            .await
-            .ok()
-            .flatten()
-    } else {
-        None
-    };
     let evict_from = usize::from(carry_over.is_some());
 
     match compactor
@@ -111,17 +114,11 @@ where
     {
         Ok(artifact) => {
             let summary_text = format_summary(&artifact.0);
-            let _ = turn
-                .with(|conn| {
-                    summaries::append(
-                        conn,
-                        story_id,
-                        through_entry_id.as_deref(),
-                        &summary_text,
-                        &artifact.0,
-                    )
-                })
-                .await;
+            let summary_write = Some(DeferredSummaryWrite {
+                through_entry_id,
+                summary_text: summary_text.clone(),
+                summary: artifact.0,
+            });
             let mut compacted = vec![HistoryTurn {
                 entry_id: None,
                 is_player: false,
@@ -129,7 +126,10 @@ where
                 marker: crate::ai::HistoryTurnMarker::Summary,
             }];
             compacted.extend(history.into_iter().skip(split));
-            PreparationResult { turns: compacted }
+            PreparedHistory {
+                turns: compacted,
+                summary_write,
+            }
         }
         Err(_) => {
             if history
@@ -155,11 +155,15 @@ where
                     .collect::<Vec<_>>();
                 recent.reverse();
                 fallback.extend(recent);
-                PreparationResult { turns: fallback }
+                PreparedHistory {
+                    turns: fallback,
+                    summary_write: None,
+                }
             } else {
                 let skip = history.len().saturating_sub(keep_count);
-                PreparationResult {
+                PreparedHistory {
                     turns: history.into_iter().skip(skip).collect(),
+                    summary_write: None,
                 }
             }
         }
@@ -179,6 +183,7 @@ mod tests {
     use super::*;
     use crate::features::context::compaction::summary::ContextSummary;
     use crate::features::ledger::{model::kind, repository};
+    use crate::features::turn::TurnTx;
 
     fn summary(prose: &str) -> ContextSummary {
         ContextSummary {
@@ -237,18 +242,15 @@ mod tests {
             carry_over: Arc::new(Mutex::new(None)),
             evicted_count: evicted_count.clone(),
         };
-        let pool = crate::shared::db::test_pool();
-        let turn = TurnTx::begin(&pool, &Default::default(), "story").unwrap();
-
         let compacted = prepare_history_with_compactor(
             HistoryPreparation {
-                turn: &turn,
                 story_id: "story",
                 config: &config,
                 preamble: "preamble",
                 prompt: "prompt",
             },
             history.clone(),
+            None,
             &compactor,
         )
         .await;
@@ -316,16 +318,25 @@ mod tests {
         };
         let result = prepare_history_with_compactor(
             HistoryPreparation {
-                turn: &turn,
                 story_id: "story",
                 config: &config,
                 preamble: "preamble",
                 prompt: "prompt",
             },
             history,
+            None,
             &compactor,
         )
         .await;
+        turn.with(|conn| {
+            result
+                .summary_write
+                .as_ref()
+                .unwrap()
+                .persist(conn, "story")
+        })
+        .await
+        .unwrap();
         assert!(result.turns[0].content.contains("new compacted context"));
         let summary_count = turn.with(|conn| Ok(conn.query_row(
             "SELECT COUNT(*) FROM ledger_entries WHERE story_id = 'story' AND kind = 'context_summary'",

@@ -33,7 +33,7 @@ pub(super) fn format_summary(summary: &ContextSummary) -> String {
     )
 }
 
-pub(super) fn latest_summary_artifact(
+pub(crate) fn latest_summary_artifact(
     conn: &rusqlite::Connection,
     story_id: &str,
 ) -> Option<SummaryArtifact> {
