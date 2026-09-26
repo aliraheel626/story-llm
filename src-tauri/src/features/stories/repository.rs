@@ -4,7 +4,7 @@ use uuid::Uuid;
 
 use super::model::Story;
 use super::settings::{normalize_reasoning_effort, NarratorToolSettings};
-use crate::features::ledger::turn_tx::{TurnGate, TurnTicket};
+use crate::features::turn::{TurnGate, TurnTicket};
 use crate::shared::db::{seed_player_entity, with_transaction, Pool};
 use crate::shared::error::{AppError, AppResult};
 

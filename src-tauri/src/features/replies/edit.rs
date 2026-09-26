@@ -3,8 +3,8 @@ use crate::features::{
     ledger::{
         model::{kind as ledger_kind, LedgerEntry},
         repository as ledger_repository,
-        turn_tx::TurnGate,
     },
+    turn::TurnGate,
 };
 use crate::shared::db::{with_transaction, Pool};
 use crate::shared::error::{AppError, AppResult};

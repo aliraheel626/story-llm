@@ -5,8 +5,8 @@ use serde_json::Value;
 use tokio::sync::Mutex;
 
 use crate::features::images::model::ImageRequest;
-use crate::features::ledger::turn_tx::TurnTx;
 use crate::features::stories::settings::NarratorToolSettings;
+use crate::features::turn::TurnTx;
 use crate::prompts;
 
 use super::dice;

@@ -1,7 +1,7 @@
 use tauri::{AppHandle, State};
 
 use crate::features::ledger::model::LedgerEntry;
-use crate::features::ledger::turn_tx::TurnGate;
+use crate::features::turn::TurnGate;
 use crate::shared::db::{blocking, Pool};
 use crate::shared::error::AppResult;
 

@@ -3,9 +3,9 @@ use tauri::{AppHandle, Emitter};
 use tokio::time::{timeout, Duration};
 use uuid::Uuid;
 
-use crate::features::ledger::turn_tx::TurnTx;
 use crate::features::ledger::{model::kind as ledger_kind, repository as ledger_repository};
 use crate::features::settings;
+use crate::features::turn::TurnTx;
 use crate::shared::db::Pool;
 use crate::shared::error::{AppError, AppResult};
 
@@ -185,7 +185,8 @@ pub(crate) async fn generate_in_turn(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::features::ledger::{repository as ledger_repository, turn_tx::TurnGate, turns};
+    use crate::features::ledger::{repository as ledger_repository, turns};
+    use crate::features::turn::TurnGate;
 
     async fn turn_fixture() -> (Pool, std::sync::Arc<TurnTx>, String, String) {
         let pool = crate::shared::db::test_pool();

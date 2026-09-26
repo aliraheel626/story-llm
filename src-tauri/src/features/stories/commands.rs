@@ -1,7 +1,7 @@
 use tauri::State;
 
 use super::{author_note, model::Story, repository, settings};
-use crate::features::ledger::turn_tx::TurnGate;
+use crate::features::turn::TurnGate;
 use crate::shared::db::{blocking, Pool};
 use crate::shared::error::AppResult;
 

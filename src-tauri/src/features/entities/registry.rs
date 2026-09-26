@@ -6,7 +6,7 @@ use rig_core::embeddings::distance::VectorDistance;
 use rig_core::providers::openrouter;
 use uuid::Uuid;
 
-use crate::features::ledger::turn_tx::TurnTx;
+use crate::features::turn::TurnTx;
 use crate::shared::error::{AppError, AppResult};
 
 use super::model::AttributeRegistryEntry;
@@ -277,7 +277,7 @@ async fn resolve_attribute_candidates(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::features::ledger::turn_tx::{TurnGate, TurnTx};
+    use crate::features::turn::{TurnGate, TurnTx};
 
     #[test]
     fn minted_attribute_remaps_when_name_becomes_an_alias_before_commit() {

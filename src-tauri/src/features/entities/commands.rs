@@ -1,6 +1,6 @@
 use tauri::State;
 
-use crate::features::ledger::turn_tx::TurnGate;
+use crate::features::turn::TurnGate;
 use crate::shared::db::{blocking, with_transaction, Pool};
 use crate::shared::error::AppResult;
 

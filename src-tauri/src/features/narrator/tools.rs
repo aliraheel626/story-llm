@@ -8,7 +8,7 @@ use tokio::sync::Mutex;
 
 use crate::features::entities::{self, attributes, registry};
 use crate::features::images::model::ImageRequest;
-use crate::features::ledger::turn_tx::TurnTx;
+use crate::features::turn::TurnTx;
 use crate::prompts;
 use crate::shared::error::AppError;
 
@@ -413,11 +413,9 @@ pub(super) fn adjust_entity_attribute_tool(
 mod turn_tests {
     use super::super::catalog::{self, ToolAvailability, ToolDeps};
     use super::*;
-    use crate::features::ledger::{
-        repository::append_entry,
-        turn_tx::{TurnGate, TurnTx},
-    };
+    use crate::features::ledger::repository::append_entry;
     use crate::features::stories::settings::NarratorToolSettings;
+    use crate::features::turn::TurnGate;
     use crate::shared::db::Pool;
 
     fn fixture() -> (Pool, Arc<TurnTx>, String, String) {

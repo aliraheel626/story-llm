@@ -338,8 +338,7 @@ mod tests {
             [],
         ).unwrap();
         drop(conn);
-        let turn = crate::features::ledger::turn_tx::TurnTx::begin(&pool, &Default::default(), "s")
-            .unwrap();
+        let turn = crate::features::turn::TurnTx::begin(&pool, &Default::default(), "s").unwrap();
         turn.with(|conn| {
             repository::append_entry(
                 conn,

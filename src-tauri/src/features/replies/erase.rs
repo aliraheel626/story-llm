@@ -4,10 +4,9 @@ use crate::features::{
     compaction, entities, images,
     ledger::{
         model::{kind as ledger_kind, LedgerEntry},
-        repository as ledger_repository,
-        turn_tx::{TurnGate, TurnTicket},
-        turns,
+        repository as ledger_repository, turns,
     },
+    turn::{TurnGate, TurnTicket},
 };
 use crate::shared::db::{with_transaction, Pool};
 use crate::shared::error::AppResult;
@@ -120,7 +119,7 @@ pub(super) fn erase_last_exchange(
 mod tests {
     use super::*;
     use crate::features::ledger::repository::append_entry;
-    use crate::features::ledger::turn_tx::TurnTx;
+    use crate::features::turn::TurnTx;
     use serde_json::json;
 
     #[tokio::test]

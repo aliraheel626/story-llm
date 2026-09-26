@@ -2,7 +2,8 @@ use rig_core::{completion::Message, memory::Compactor};
 use rig_memory::{HeuristicTokenCounter, MemoryPolicy, TokenCounter, TokenWindowMemory};
 
 use crate::ai::{HistoryTurn, TextModelConfig};
-use crate::features::ledger::{model::kind, repository, turn_tx::TurnTx};
+use crate::features::ledger::{model::kind, repository};
+use crate::features::turn::TurnTx;
 
 use super::budget::{messages, raw_tail_boundary, FALLBACK_CONTEXT_WINDOW};
 use super::compactor::NarratorCompactor;

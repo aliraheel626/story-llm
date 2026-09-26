@@ -8,9 +8,10 @@ use crate::ai;
 use crate::features::{
     ledger::{
         model::kind as ledger_kind, reducer as ledger_reducer, repository as ledger_repository,
-        turn_tx::TurnTx, turns,
+        turns,
     },
     settings as global_settings,
+    turn::TurnTx,
 };
 use crate::prompts;
 use crate::shared::db::Pool;
@@ -141,12 +142,8 @@ fn sanitize_title(raw: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::{needs_title, opening_exchange, sanitize_title, write_title};
-    use crate::features::ledger::{
-        model::kind,
-        repository as ledger_repository,
-        turn_tx::{TurnGate, TurnTx},
-        turns,
-    };
+    use crate::features::ledger::{model::kind, repository as ledger_repository, turns};
+    use crate::features::turn::{TurnGate, TurnTx};
     use crate::shared::db::test_pool;
 
     #[test]

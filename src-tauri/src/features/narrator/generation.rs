@@ -5,7 +5,7 @@ use tauri::AppHandle;
 use tokio::sync::Mutex;
 
 use crate::ai::{HistoryTurn, TextModelConfig};
-use crate::features::{images, ledger::turn_tx::TurnTx, settings, stories};
+use crate::features::{images, settings, stories, turn::TurnTx};
 use crate::shared::db::Pool;
 use crate::shared::error::{AppError, AppResult};
 

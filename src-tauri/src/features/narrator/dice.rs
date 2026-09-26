@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use crate::features::entities::{self, attributes};
 use crate::features::ledger;
-use crate::features::ledger::turn_tx::TurnTx;
+use crate::features::turn::TurnTx;
 use crate::prompts;
 use crate::shared::error::{AppError, AppResult};
 use rand::rngs::StdRng;
@@ -283,10 +283,8 @@ pub(super) fn roll_check_label(args: &serde_json::Value) -> String {
 #[cfg(test)]
 mod turn_tests {
     use super::*;
-    use crate::features::ledger::{
-        repository::append_entry,
-        turn_tx::{TurnGate, TurnTx},
-    };
+    use crate::features::ledger::repository::append_entry;
+    use crate::features::turn::TurnGate;
     use crate::shared::db::Pool;
 
     fn fixture() -> (Pool, Arc<TurnTx>, String, String) {

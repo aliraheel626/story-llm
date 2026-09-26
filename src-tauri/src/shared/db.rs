@@ -1212,7 +1212,7 @@ mod tests {
 
     #[tokio::test]
     async fn blocking_write_finishes_after_turn_commit() {
-        use crate::features::ledger::turn_tx::{TurnGate, TurnTx};
+        use crate::features::turn::{TurnGate, TurnTx};
 
         let pool = test_pool();
         let gate = TurnGate::default();
