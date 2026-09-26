@@ -68,8 +68,19 @@ export interface NarrationToolActivityPayload { stream_id: string; call_id: stri
 
 export interface TextModelSettings { provider: string; model: string; has_api_key: boolean; context_window: number; supports_images: boolean }
 export interface ImageModelSettings { model: string; enabled: boolean; style: string; has_api_key: boolean }
-export type EntityContextMode = "all" | "scoped" | "none";
-export interface ContextInjectionSettings { entity_context_mode: EntityContextMode }
+export interface ContextItem { key: string; group: string; label: string; enabled: boolean }
+export interface InjectionSettings {
+  entities: "none" | "all" | "scoped";
+  author_note_enabled: boolean;
+  author_note: string;
+  tool_instructions: boolean;
+}
+export interface ContextPreview {
+  system: string;
+  messages: { role: string; text: string; image_count: number; has_reasoning: boolean }[];
+  injected: string;
+  images_unsupported: boolean;
+}
 export interface StoryImage { id: string; entry_id: string; prompt: string; created_at: string }
 
 export type EntityKind = "character" | "object" | "location" | "relationship" | "campaign";

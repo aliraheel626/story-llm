@@ -2,21 +2,21 @@ import { AccordionPanel } from "../../shared/ui/AccordionPanel";
 import { StoriesPanel } from "../stories/StoriesPanel";
 import { CharactersPanel } from "../characters/CharactersPanel";
 import { NarratorToolsPanel } from "../narratorTools/NarratorToolsPanel";
-import { WritingStylePanel } from "../writingStyle/WritingStylePanel";
+import { ContextPanel } from "../context/ContextPanel";
+import { InjectionPanel } from "../context/InjectionPanel";
 import { TextModelPanel } from "../settings/TextModelPanel";
 import { ImageModelPanel } from "../settings/ImageModelPanel";
-import { ContextInjectionPanel } from "../settings/ContextInjectionPanel";
 import { PlaceholderPanel } from "./PlaceholderPanel";
 import { useAppShellStore } from "../../app/store";
 
 const PANEL_LABELS: Record<string, string> = {
   stories: "Stories",
   characters: "Characters",
-  writingStyle: "Writing Style",
   narratorTools: "Narrator Tools",
+  context: "Context",
+  injection: "Injection",
   textModel: "Text Model",
   imageModel: "Image Model",
-  contextInjection: "Context Injection",
   features: "Features",
 };
 
@@ -72,12 +72,16 @@ export function Sidebar() {
           <CharactersPanel />
         </AccordionPanel>
 
-        <AccordionPanel title={PANEL_LABELS.writingStyle} open={openPanels.writingStyle} onToggle={() => togglePanel("writingStyle")}>
-          <WritingStylePanel />
-        </AccordionPanel>
-
         <AccordionPanel title={PANEL_LABELS.narratorTools} open={openPanels.narratorTools} onToggle={() => togglePanel("narratorTools")}>
           <NarratorToolsPanel />
+        </AccordionPanel>
+
+        <AccordionPanel title={PANEL_LABELS.context} open={openPanels.context} onToggle={() => togglePanel("context")}>
+          <ContextPanel />
+        </AccordionPanel>
+
+        <AccordionPanel title={PANEL_LABELS.injection} open={openPanels.injection} onToggle={() => togglePanel("injection")}>
+          <InjectionPanel />
         </AccordionPanel>
 
         <AccordionPanel title={PANEL_LABELS.textModel} open={openPanels.textModel} onToggle={() => togglePanel("textModel")}>
@@ -86,10 +90,6 @@ export function Sidebar() {
 
         <AccordionPanel title={PANEL_LABELS.imageModel} open={openPanels.imageModel} onToggle={() => togglePanel("imageModel")}>
           <ImageModelPanel />
-        </AccordionPanel>
-
-        <AccordionPanel title={PANEL_LABELS.contextInjection} open={openPanels.contextInjection} onToggle={() => togglePanel("contextInjection")}>
-          <ContextInjectionPanel />
         </AccordionPanel>
 
         <AccordionPanel title={PANEL_LABELS.features} open={openPanels.features} onToggle={() => togglePanel("features")}>

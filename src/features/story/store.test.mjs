@@ -14,8 +14,13 @@ let nextToolsSave;
 let nextImageLoad;
 let nextLedgerLoad;
 let nextRetry;
+let nextContextLoad;
+let nextContextSave;
+let nextInjectionLoad;
+let nextInjectionSave;
 let server;
 let store;
+let contextStore;
 let RollDisclosure;
 let LedgerEntryView;
 let ImagePlaceholder;
@@ -58,6 +63,40 @@ globalThis.__storyTestInvoke = async (command, args = {}) => {
       return;
     case "get_story_reasoning_effort": return story.reasoning_effort ?? "";
     case "save_story_reasoning_effort": story.reasoning_effort = args.reasoningEffort; return;
+    case "get_story_context_settings": {
+      const items = [{ key: "images", group: "Images", label: "The images themselves", enabled: args.storyId === "B" }];
+      if (nextContextLoad) {
+        const wait = nextContextLoad;
+        nextContextLoad = null;
+        await wait;
+      }
+      return items;
+    }
+    case "save_story_context_settings": {
+      if (nextContextSave) {
+        const wait = nextContextSave;
+        nextContextSave = null;
+        await wait;
+      }
+      return [{ key: "images", group: "Images", label: "The images themselves", enabled: args.include.images }];
+    }
+    case "get_story_injection_settings": {
+      const settings = { entities: "all", author_note_enabled: true, author_note: `Note ${args.storyId}`, tool_instructions: true };
+      if (nextInjectionLoad) {
+        const wait = nextInjectionLoad;
+        nextInjectionLoad = null;
+        await wait;
+      }
+      return settings;
+    }
+    case "save_story_injection_settings": {
+      if (nextInjectionSave) {
+        const wait = nextInjectionSave;
+        nextInjectionSave = null;
+        await wait;
+      }
+      return;
+    }
     case "list_ledger_entries": {
       const snapshot = {
         visible: entries.get(args.storyId) ?? [], hidden: hiddenEntries.get(args.storyId) ?? [],
@@ -98,6 +137,7 @@ globalThis.window = { __TAURI_INTERNALS__: { invoke: globalThis.__storyTestInvok
 before(async () => {
   server = await createServer({ configFile: false, optimizeDeps: { noDiscovery: true }, server: { middlewareMode: true } });
   ({ useStoryStore: store } = await server.ssrLoadModule("/src/features/story/store.ts"));
+  ({ useContextStore: contextStore } = await server.ssrLoadModule("/src/features/context/store.ts"));
   ({ RollDisclosure } = await server.ssrLoadModule("/src/features/ledger/RollDisclosure.tsx"));
   ({ LedgerEntryView } = await server.ssrLoadModule("/src/features/ledger/LedgerEntryView.tsx"));
   ({ ImagePlaceholder } = await server.ssrLoadModule("/src/features/ledger/ImagePlaceholder.tsx"));
@@ -202,6 +242,52 @@ test("replacement keeps original through streaming and failure, then clears old 
   assert.doesNotMatch(html, /Old roll/);
   assert.equal(calls.some(({ command }) => command.startsWith("list_") && command.includes("roll")), false);
   assert.ok(calls.some(({ command }) => command === "list_entities"));
+});
+
+test("delayed context loads and failed saves for A cannot show A data in B", async () => {
+  const previousStoryId = store.getState().activeStoryId;
+  let releaseContext;
+  let releaseInjection;
+  nextContextLoad = new Promise((resolve) => { releaseContext = resolve; });
+  nextInjectionLoad = new Promise((resolve) => { releaseInjection = resolve; });
+  store.getState().setActiveStory("A");
+  const loadA = Promise.all([contextStore.getState().loadContext("A"), contextStore.getState().loadInjection("A")]);
+  store.getState().setActiveStory("B");
+  await Promise.all([contextStore.getState().loadContext("B"), contextStore.getState().loadInjection("B")]);
+  const visible = () => contextStore.getState().stories[store.getState().activeStoryId];
+  assert.equal(visible().items[0].enabled, true);
+  assert.equal(visible().noteDraft, "Note B");
+  contextStore.getState().setNoteDraft("B", "Unsent B draft");
+  releaseContext();
+  releaseInjection();
+  await loadA;
+  assert.equal(visible().items[0].enabled, true);
+  assert.equal(visible().noteDraft, "Unsent B draft");
+
+  let rejectContext;
+  let rejectInjection;
+  nextContextSave = new Promise((_, reject) => { rejectContext = reject; });
+  nextInjectionSave = new Promise((_, reject) => { rejectInjection = reject; });
+  store.getState().setActiveStory("A");
+  const contextSave = contextStore.getState().toggleContext("A", "images", true);
+  const injectionSave = contextStore.getState().saveInjection("A", { entities: "scoped" });
+  assert.equal(contextStore.getState().stories.A.items[0].enabled, true);
+  assert.equal(contextStore.getState().stories.A.injection.entities, "scoped");
+  await contextStore.getState().toggleContext("A", "images", false);
+  assert.equal(contextStore.getState().stories.A.items[0].enabled, true);
+  store.getState().setActiveStory("B");
+  rejectContext(new Error("A context failed"));
+  rejectInjection(new Error("A injection failed"));
+  await assert.rejects(contextSave, /A context failed/);
+  await assert.rejects(injectionSave, /A injection failed/);
+  assert.equal(visible().items[0].enabled, true);
+  assert.equal(visible().noteDraft, "Unsent B draft");
+  assert.equal(visible().injection.entities, "all");
+  assert.equal(contextStore.getState().stories.A.items[0].enabled, false);
+  assert.equal(contextStore.getState().stories.A.injection.entities, "all");
+  assert.deepEqual(calls.filter(({ command }) => command === "save_story_context_settings").at(-1).args,
+    { storyId: "A", include: { images: true } });
+  store.getState().setActiveStory(previousStoryId);
 });
 
 test("failed last turns render a status beside Retry", async () => {

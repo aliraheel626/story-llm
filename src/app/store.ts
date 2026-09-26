@@ -3,11 +3,11 @@ import { create } from "zustand";
 export const SIDEBAR_PANELS = [
   "stories",
   "characters",
-  "writingStyle",
   "narratorTools",
+  "context",
+  "injection",
   "textModel",
   "imageModel",
-  "contextInjection",
   "features",
 ] as const;
 
@@ -34,11 +34,11 @@ export const useAppShellStore = create<AppShellState>((set) => ({
   openPanels: {
     stories: true,
     characters: false,
-    writingStyle: false,
     narratorTools: false,
+    context: false,
+    injection: false,
     textModel: false,
     imageModel: false,
-    contextInjection: false,
     features: false,
   },
   togglePanel: (id) =>

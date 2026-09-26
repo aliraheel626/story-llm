@@ -16,7 +16,6 @@ import { charactersApi } from "../characters/api";
 import { narratorToolsApi } from "../narratorTools/api";
 import { storiesApi } from "../stories/api";
 import { ledgerApi } from "../ledger/api";
-import { writingStyleApi } from "../writingStyle/api";
 
 type ToolActivity = {
   callId: string;
@@ -69,9 +68,6 @@ export interface StoryBundle {
   reasoningEffort: ReasoningEffort | null;
   reasoningEffortLoaded: boolean;
   reasoningEffortError: string | null;
-  authorNote: string | null;
-  authorNoteLoading: boolean;
-  authorNoteSaving: boolean;
 }
 
 interface StoryStoreState {
@@ -118,9 +114,6 @@ interface StoryStoreState {
   saveNarratorTools: (storyId: string | null, patch: Partial<NarratorToolSettings>) => Promise<void>;
   loadReasoningEffort: (storyId: string) => Promise<void>;
   saveReasoningEffort: (storyId: string | null, value: ReasoningEffort | null) => Promise<void>;
-
-  loadAuthorNote: (storyId: string) => Promise<void>;
-  saveAuthorNote: (storyId: string, note: string) => Promise<void>;
 }
 
 const newBundle = (id: string): StoryBundle => ({
@@ -145,9 +138,6 @@ const newBundle = (id: string): StoryBundle => ({
   reasoningEffort: null,
   reasoningEffortLoaded: false,
   reasoningEffortError: null,
-  authorNote: null,
-  authorNoteLoading: false,
-  authorNoteSaving: false,
 });
 
 const patchBundle = (
@@ -708,29 +698,6 @@ export const useStoryStore = create<StoryStoreState>((set, get) => ({
         const reasoningEffort = await narratorToolsApi.getReasoningEffort(storyId);
         set((state) => ({ bundles: patchBundle(state.bundles, storyId, { reasoningEffort }) }));
       });
-      throw error;
-    }
-  },
-
-  loadAuthorNote: async (storyId) => {
-    set((state) => ({ bundles: patchBundle(state.bundles, storyId, { authorNoteLoading: true }) }));
-    try {
-      const authorNote = await writingStyleApi.getAuthorNote(storyId);
-      set((state) => ({ bundles: patchBundle(state.bundles, storyId, { authorNote, authorNoteLoading: false }) }));
-    } catch (error) {
-      console.error("failed to load author's note", error);
-      set((state) => ({ bundles: patchBundle(state.bundles, storyId, { authorNoteLoading: false }) }));
-    }
-  },
-  saveAuthorNote: async (storyId, note) => {
-    set((state) => ({ bundles: patchBundle(state.bundles, storyId, { authorNoteSaving: true }) }));
-    try {
-      await writingStyleApi.saveAuthorNote(storyId, note);
-      set((state) => ({
-        bundles: patchBundle(state.bundles, storyId, { authorNote: note.trim(), authorNoteSaving: false }),
-      }));
-    } catch (error) {
-      set((state) => ({ bundles: patchBundle(state.bundles, storyId, { authorNoteSaving: false }) }));
       throw error;
     }
   },
