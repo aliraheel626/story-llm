@@ -41,16 +41,24 @@ pub(super) async fn save_text_model_settings(
 
 /// The served context window and whether the model accepts image input.
 async fn model_capabilities(provider: &str, model: &str) -> (usize, bool) {
+    let (window, support) = model_capabilities_with_status(provider, model).await;
+    (window, support.unwrap_or(false))
+}
+
+/// `None` means the capability lookup failed, not that the model is text-only.
+async fn model_capabilities_with_status(provider: &str, model: &str) -> (usize, Option<bool>) {
     match provider {
-        "nous_portal" => fetch_context_window(
-            &format!("{}/models", crate::ai::NOUS_PORTAL_BASE_URL),
-            ("data", "id"),
-            model,
-            Some(crate::ai::NOUS_PORTAL_USER_AGENT),
-        )
-        .await
-        .map(|window| (window, false))
-        .unwrap_or((NOUS_PORTAL_DEFAULT_CONTEXT_WINDOW, false)),
+        "nous_portal" => (
+            fetch_context_window(
+                &format!("{}/models", crate::ai::NOUS_PORTAL_BASE_URL),
+                ("data", "id"),
+                model,
+                Some(crate::ai::NOUS_PORTAL_USER_AGENT),
+            )
+            .await
+            .unwrap_or(NOUS_PORTAL_DEFAULT_CONTEXT_WINDOW),
+            Some(false),
+        ),
         // Ollama serves a model with the context it was loaded with, not the
         // model's maximum, and silently truncates longer prompts. `/api/ps`
         // reports that loaded size, but only while the model is loaded.
@@ -72,8 +80,8 @@ async fn model_capabilities(provider: &str, model: &str) -> (usize, bool) {
                     .json::<serde_json::Value>()
                     .await
                     .ok()
-                    .is_some_and(|value| ollama_supports_images(&value)),
-                None => false,
+                    .map(|value| ollama_supports_images(&value)),
+                None => None,
             };
             (window, supports_images)
         }
@@ -92,20 +100,24 @@ async fn model_capabilities(provider: &str, model: &str) -> (usize, bool) {
                 .and_then(|value| value.as_u64())
                 .map(|n| n as usize)
                 .unwrap_or(32_768);
-            let supports_images = item.as_ref().is_some_and(openrouter_supports_images);
+            let supports_images = item.as_ref().map(openrouter_supports_images);
             (window, supports_images)
         }
     }
 }
 
+fn confirmed_image_support(support: Option<bool>) -> AppResult<bool> {
+    support.ok_or_else(|| AppError::Other("model image capability metadata unavailable".into()))
+}
+
 /// Settings saved before image support was recorded have no `supports_images`.
 /// Look it up once in the background without delaying app startup.
-pub async fn refresh_missing_capabilities(pool: Pool) {
-    let result: AppResult<()> = async {
+pub async fn refresh_missing_capabilities(pool: Pool) -> bool {
+    let result: AppResult<bool> = async {
         let read_pool = pool.clone();
         let stored = blocking(move || repository::stored_text_model_row(&read_pool)).await?;
         let Some(stored) = stored.filter(repository::needs_capability_refresh) else {
-            return Ok(());
+            return Ok(false);
         };
         let provider = stored
             .get("provider")
@@ -118,31 +130,20 @@ pub async fn refresh_missing_capabilities(pool: Pool) {
             .unwrap_or_default()
             .to_string();
         if model.is_empty() {
-            return Ok(());
+            return Ok(false);
         }
-        let context_window = stored
-            .get("context_window")
-            .and_then(|value| value.as_u64())
-            .unwrap_or(32_768) as usize;
-        let (_, supports_images) = model_capabilities(&provider, &model).await;
-        blocking(move || {
-            // A foreground save may have changed the model while metadata was fetched.
-            if repository::stored_text_model_row(&pool)?.as_ref() != Some(&stored) {
-                return Ok(());
-            }
-            repository::write_text_model_settings(
-                &pool,
-                &provider,
-                &model,
-                context_window,
-                supports_images,
-            )
-        })
-        .await
+        let (_, support) = model_capabilities_with_status(&provider, &model).await;
+        let supports_images = confirmed_image_support(support)?;
+        blocking(move || repository::write_missing_image_support(&pool, &stored, supports_images))
+            .await
     }
     .await;
-    if let Err(error) = result {
-        log::warn!("could not refresh saved text model image support: {error}");
+    match result {
+        Ok(updated) => updated,
+        Err(error) => {
+            log::warn!("could not refresh saved text model image support: {error}");
+            false
+        }
     }
 }
 
@@ -260,5 +261,12 @@ mod tests {
             &json!({"capabilities":["completion","vision"]})
         ));
         assert!(!ollama_supports_images(&json!({"capabilities":null})));
+    }
+
+    #[test]
+    fn unavailable_metadata_does_not_become_text_only() {
+        assert!(confirmed_image_support(None).is_err());
+        assert!(!confirmed_image_support(Some(false)).unwrap());
+        assert!(confirmed_image_support(Some(true)).unwrap());
     }
 }

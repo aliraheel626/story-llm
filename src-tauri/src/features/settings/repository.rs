@@ -31,6 +31,26 @@ pub(super) fn needs_capability_refresh(stored: &serde_json::Value) -> bool {
     stored.get("supports_images").is_none()
 }
 
+/// One atomic update preserves a foreground model save and unrelated JSON fields.
+pub(super) fn write_missing_image_support(
+    pool: &Pool,
+    stored: &serde_json::Value,
+    supports_images: bool,
+) -> AppResult<bool> {
+    let provider = stored.get("provider").and_then(|value| value.as_str()).unwrap_or("openrouter");
+    let model = stored.get("model").and_then(|value| value.as_str()).unwrap_or_default();
+    let context_window = stored.get("context_window").and_then(|value| value.as_i64()).unwrap_or(32_768);
+    let conn = pool.get()?;
+    Ok(conn.execute(
+        "UPDATE settings SET value = json_set(value, '$.supports_images', json(?1))
+         WHERE key = ?2 AND json_type(value, '$.supports_images') IS NULL
+           AND json_extract(value, '$.provider') = ?3
+           AND json_extract(value, '$.model') = ?4
+           AND COALESCE(json_extract(value, '$.context_window'), 32768) = ?5",
+        rusqlite::params![if supports_images { "true" } else { "false" }, SETTINGS_KEY_TEXT_MODEL, provider, model, context_window],
+    )? == 1)
+}
+
 /// Plain-`&Pool` variant of `get_text_model_settings` for callers that aren't
 /// Tauri commands (e.g. the narrator's config resolution and the auto-titler).
 pub fn read_text_model_settings(app: &AppHandle, pool: &Pool) -> AppResult<TextModelSettings> {
@@ -183,6 +203,31 @@ mod tests {
         assert!(!needs_capability_refresh(&json!({"supports_images":false})));
         let missing: Option<serde_json::Value> = None;
         assert!(!missing.as_ref().is_some_and(needs_capability_refresh));
+    }
+
+    #[test]
+    fn missing_image_support_update_is_atomic_and_preserves_other_settings() {
+        let pool = crate::shared::db::test_pool();
+        let legacy = json!({"provider":"openrouter","model":"legacy","context_window":1234,"custom":"kept"});
+        pool.get().unwrap().execute(
+            "INSERT INTO settings (key, value) VALUES (?1, ?2)",
+            rusqlite::params![SETTINGS_KEY_TEXT_MODEL, legacy.to_string()],
+        ).unwrap();
+        let stored = stored_text_model_row(&pool).unwrap().unwrap();
+        assert!(write_missing_image_support(&pool, &stored, true).unwrap());
+        assert_eq!(stored_text_model_row(&pool).unwrap().unwrap(), json!({
+            "provider":"openrouter","model":"legacy","context_window":1234,"custom":"kept","supports_images":true
+        }));
+
+        pool.get().unwrap().execute(
+            "UPDATE settings SET value = ?1 WHERE key = ?2",
+            rusqlite::params![legacy.to_string(), SETTINGS_KEY_TEXT_MODEL],
+        ).unwrap();
+        write_text_model_settings(&pool, "openrouter", "foreground", 5678, false).unwrap();
+        assert!(!write_missing_image_support(&pool, &stored, true).unwrap());
+        assert_eq!(stored_text_model_row(&pool).unwrap().unwrap(), json!({
+            "provider":"openrouter","model":"foreground","context_window":5678,"supports_images":false
+        }));
     }
 
     #[test]

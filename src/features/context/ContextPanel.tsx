@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { listen } from "@tauri-apps/api/event";
 import { useTextModelStore } from "../settings/textModelStore";
 import { useStoryStore } from "../story/store";
 import { useContextStore } from "./store";
@@ -15,7 +16,18 @@ export function ContextPanel() {
   useEffect(() => {
     if (storyId) load(storyId);
   }, [storyId, load]);
-  useEffect(() => { if (storyId && !model) loadModel(); }, [storyId, model, loadModel]);
+  useEffect(() => {
+    if (!storyId) return;
+    let active = true;
+    let unlisten: (() => void) | undefined;
+    listen("text-model-capabilities-refreshed", () => { if (active) void loadModel(); })
+      .then((dispose) => {
+        if (active) { unlisten = dispose; void loadModel(); }
+        else dispose();
+      })
+      .catch(() => { if (active) void loadModel(); });
+    return () => { active = false; unlisten?.(); };
+  }, [storyId, loadModel]);
 
   if (!storyId) return <p className="py-1 text-xs text-muted">Open a story first.</p>;
   if (!state?.items) return !state || state.contextLoading

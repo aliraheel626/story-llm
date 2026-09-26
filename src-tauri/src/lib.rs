@@ -3,7 +3,7 @@ mod features;
 mod prompts;
 mod shared;
 
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 use tauri_plugin_log::{Target, TargetKind};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -54,9 +54,14 @@ pub fn run() {
             let pool = shared::db::init_pool(&app_data_dir)?;
             let refresh_pool = pool.clone();
             app.manage(pool);
-            tauri::async_runtime::spawn(features::settings::refresh_missing_capabilities(
-                refresh_pool,
-            ));
+            let handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                if features::settings::refresh_missing_capabilities(refresh_pool).await {
+                    if let Err(error) = handle.emit("text-model-capabilities-refreshed", ()) {
+                        log::warn!("could not notify text model capability refresh: {error}");
+                    }
+                }
+            });
             app.manage(features::turn::TurnGate::default());
             Ok(())
         })
