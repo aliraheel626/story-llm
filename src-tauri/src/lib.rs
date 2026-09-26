@@ -62,9 +62,6 @@ pub fn run() {
                 metadata: features::narrator::preview_metadata,
             });
             app.manage(features::turn::TurnGate::default());
-            app.manage(features::ledger::erase::EraseReplay(
-                features::entities::projection::replay_after_erase,
-            ));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

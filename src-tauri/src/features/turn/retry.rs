@@ -2,12 +2,11 @@ use std::sync::Arc;
 
 use tauri::AppHandle;
 
-use crate::features::ledger::{
-    erase::{self, EraseReplay},
-    model::kind as ledger_kind,
-    repository as ledger_repository, turns,
-};
 use crate::features::turn::{TurnGate, TurnTx};
+use crate::features::{
+    entities,
+    ledger::{erase, model::kind as ledger_kind, query, repository as ledger_repository, turns},
+};
 use crate::shared::db::{blocking, Pool};
 use crate::shared::error::{AppError, AppResult};
 
@@ -16,7 +15,6 @@ use super::{model::RetryResult, submit};
 async fn prepare_retry(
     turn: &TurnTx,
     entry_id: &str,
-    replay: EraseReplay,
 ) -> AppResult<(String, String, Option<String>)> {
     turn.with(|conn| {
         let story_id = turn.story_id();
@@ -34,7 +32,7 @@ async fn prepare_retry(
                 "only the latest turn can be retried".into(),
             ));
         }
-        let entries = erase::entries_for_turn(conn, &old_turn.id)?;
+        let entries = query::entries_of_turn(conn, &old_turn.id)?;
         let player_id = entries
             .iter()
             .find(|entry| entry.kind == ledger_kind::PLAYER_MESSAGE)
@@ -58,7 +56,8 @@ async fn prepare_retry(
             })
             .transpose()?;
 
-        erase::remove_turn(conn, story_id, &old_turn.id, replay.0)?;
+        let removed = erase::remove_turn(conn, story_id, &old_turn.id)?;
+        entities::projection::replay_after_erase(conn, story_id, &removed.entries)?;
         Ok((mode, content, rejected))
     })
     .await
@@ -68,7 +67,6 @@ pub(super) async fn retry_narration(
     app: AppHandle,
     pool: &Pool,
     gate: &TurnGate,
-    replay: EraseReplay,
     story_id: String,
     entry_id: String,
 ) -> AppResult<RetryResult> {
@@ -76,7 +74,7 @@ pub(super) async fn retry_narration(
     let begin_gate = gate.clone();
     let begin_story_id = story_id.clone();
     let turn = blocking(move || TurnTx::begin(&begin_pool, &begin_gate, &begin_story_id)).await?;
-    let (mode, content, rejected) = match prepare_retry(&turn, &entry_id, replay).await {
+    let (mode, content, rejected) = match prepare_retry(&turn, &entry_id).await {
         Ok(input) => input,
         Err(error) => {
             if let Err(rollback_error) = turn.rollback().await {
@@ -96,12 +94,7 @@ pub(super) async fn retry_narration(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::features::entities::projection::replay_after_erase;
     use serde_json::json;
-
-    fn replay() -> EraseReplay {
-        EraseReplay(replay_after_erase)
-    }
 
     fn retry_fixture() -> (Pool, String, String, String) {
         let pool = crate::shared::db::test_pool();
@@ -201,7 +194,7 @@ mod tests {
 
         let gate = TurnGate::default();
         let turn = TurnTx::begin(&pool, &gate, "s").unwrap();
-        let (mode, content, rejected) = prepare_retry(&turn, &reply, replay()).await.unwrap();
+        let (mode, content, rejected) = prepare_retry(&turn, &reply).await.unwrap();
         assert_eq!(
             (mode.as_str(), content.as_str(), rejected.as_deref()),
             ("do", "I kick the door open", Some("An edited answer."))
@@ -237,7 +230,7 @@ mod tests {
 
         let gate = TurnGate::default();
         let turn = TurnTx::begin(&pool, &gate, "s").unwrap();
-        prepare_retry(&turn, &reply, replay()).await.unwrap();
+        prepare_retry(&turn, &reply).await.unwrap();
         turn.with(|conn| {
             assert!(turns::last_turn(conn, "s")?.is_none());
             assert!(ledger_repository::get_entry(conn, &action).is_err());
@@ -307,18 +300,16 @@ mod tests {
 
     #[tokio::test]
     async fn replay_failure_in_retry_restores_the_old_turn() {
-        fn fail_replay(
-            _: &rusqlite::Connection,
-            _: &str,
-            _: &[crate::features::ledger::model::LedgerEntry],
-        ) -> AppResult<()> {
-            Err(AppError::Other("replay failed".into()))
-        }
         let (pool, action, reply, _) = retry_fixture();
         let gate = TurnGate::default();
         let turn = TurnTx::begin(&pool, &gate, "s").unwrap();
         assert!(matches!(
-            prepare_retry(&turn, &reply, EraseReplay(fail_replay)).await,
+            turn.with(|conn| {
+                let old_turn = turns::turn_of(conn, &reply)?.unwrap();
+                let removed = erase::remove_turn(conn, "s", &old_turn.id)?;
+                assert!(!removed.entries.is_empty());
+                Err::<(), _>(AppError::Other("replay failed".into()))
+            }).await,
             Err(AppError::Other(message)) if message == "replay failed"
         ));
         turn.rollback().await.unwrap();
@@ -337,7 +328,7 @@ mod tests {
         let (pool, _, reply, old_turn) = retry_fixture();
         let gate = TurnGate::default();
         let turn = TurnTx::begin(&pool, &gate, "s").unwrap();
-        let (mode, content, rejected) = prepare_retry(&turn, &reply, replay()).await.unwrap();
+        let (mode, content, rejected) = prepare_retry(&turn, &reply).await.unwrap();
         assert_eq!(rejected.as_deref(), Some("Original"));
         turn.with(|conn| {
             let new_turn = turns::create_turn(conn, "s")?;
@@ -414,7 +405,7 @@ mod tests {
         let gate = TurnGate::default();
         let turn = TurnTx::begin(&pool, &gate, "s").unwrap();
         assert_eq!(
-            prepare_retry(&turn, &action.id, replay()).await.unwrap(),
+            prepare_retry(&turn, &action.id).await.unwrap(),
             ("continue".into(), "".into(), None)
         );
         turn.rollback().await.unwrap();
@@ -459,7 +450,7 @@ mod tests {
         let gate = TurnGate::default();
         let turn = TurnTx::begin(&pool, &gate, "s").unwrap();
         assert_eq!(
-            prepare_retry(&turn, &see.id, replay()).await.unwrap(),
+            prepare_retry(&turn, &see.id).await.unwrap(),
             ("see".into(), "".into(), None)
         );
         turn.with(|conn| {
@@ -479,7 +470,7 @@ mod tests {
         let gate = TurnGate::default();
         let turn = TurnTx::begin(&pool, &gate, "different").unwrap();
         assert!(
-            matches!(prepare_retry(&turn, &reply, replay()).await, Err(AppError::Invalid(message)) if message == "entry does not belong to the requested story")
+            matches!(prepare_retry(&turn, &reply).await, Err(AppError::Invalid(message)) if message == "entry does not belong to the requested story")
         );
         turn.rollback().await.unwrap();
         drop(turn);
@@ -487,7 +478,7 @@ mod tests {
         turns::create_turn(&pool.get().unwrap(), "s").unwrap();
         let turn = TurnTx::begin(&pool, &gate, "s").unwrap();
         assert!(
-            matches!(prepare_retry(&turn, &reply, replay()).await, Err(AppError::Invalid(message)) if message == "only the latest turn can be retried")
+            matches!(prepare_retry(&turn, &reply).await, Err(AppError::Invalid(message)) if message == "only the latest turn can be retried")
         );
         turn.rollback().await.unwrap();
         drop(turn);

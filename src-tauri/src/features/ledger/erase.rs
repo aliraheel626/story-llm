@@ -8,14 +8,9 @@ use super::{
 use crate::shared::error::AppResult;
 use chrono::Utc;
 
-#[derive(Clone, Copy)]
-pub(crate) struct EraseReplay(pub fn(&rusqlite::Connection, &str, &[LedgerEntry]) -> AppResult<()>);
-
-pub(crate) fn entries_for_turn(
-    conn: &rusqlite::Connection,
-    turn_id: &str,
-) -> AppResult<Vec<LedgerEntry>> {
-    query::entries_of_turn(conn, turn_id)
+pub(crate) struct RemovedTurn {
+    pub visible_ids: Vec<String>,
+    pub entries: Vec<LedgerEntry>,
 }
 
 pub(super) fn delete_turn_assets(
@@ -45,10 +40,9 @@ pub(crate) fn remove_turn(
     conn: &rusqlite::Connection,
     story_id: &str,
     turn_id: &str,
-    replay_fn: fn(&rusqlite::Connection, &str, &[LedgerEntry]) -> AppResult<()>,
-) -> AppResult<Vec<String>> {
-    let entries = entries_for_turn(conn, turn_id)?;
-    let removed = entries
+) -> AppResult<RemovedTurn> {
+    let entries = query::entries_of_turn(conn, turn_id)?;
+    let visible_ids = entries
         .iter()
         .filter(|entry| entry.visibility == "visible")
         .map(|entry| entry.id.clone())
@@ -64,24 +58,25 @@ pub(crate) fn remove_turn(
         rusqlite::params![turn_id, story_id],
     )?;
     let now = Utc::now().to_rfc3339();
-    replay_fn(conn, story_id, &entries)?;
     conn.execute(
         "UPDATE stories SET updated_at = ?1 WHERE id = ?2",
         rusqlite::params![now, story_id],
     )?;
 
-    Ok(removed)
+    Ok(RemovedTurn {
+        visible_ids,
+        entries,
+    })
 }
 
 pub(crate) fn erase_last_exchange_in_tx(
     tx: &rusqlite::Transaction<'_>,
     story_id: &str,
-    replay_fn: fn(&rusqlite::Connection, &str, &[LedgerEntry]) -> AppResult<()>,
-) -> AppResult<Vec<String>> {
+) -> AppResult<Option<RemovedTurn>> {
     let Some(last_turn) = turns::last_turn(tx, story_id)? else {
-        return Ok(vec![]);
+        return Ok(None);
     };
-    remove_turn(tx, story_id, &last_turn.id, replay_fn)
+    remove_turn(tx, story_id, &last_turn.id).map(Some)
 }
 
 #[cfg(test)]
@@ -92,31 +87,8 @@ mod tests {
     use crate::shared::db::with_transaction;
     use serde_json::json;
 
-    fn replay(
-        conn: &rusqlite::Connection,
-        story_id: &str,
-        entries: &[LedgerEntry],
-    ) -> AppResult<()> {
-        entities::projection::replay_after_erase(conn, story_id, entries)
-    }
-
     #[test]
     fn replay_failure_rolls_back_turn_assets_summaries_and_timestamp() {
-        fn fail_replay(
-            conn: &rusqlite::Connection,
-            _: &str,
-            entries: &[LedgerEntry],
-        ) -> AppResult<()> {
-            assert_eq!(entries.len(), 1);
-            assert_eq!(
-                conn.query_row("SELECT COUNT(*) FROM turns", [], |row| row.get::<_, i64>(0))?,
-                0
-            );
-            Err(crate::shared::error::AppError::Other(
-                "replay failed".into(),
-            ))
-        }
-
         let pool = crate::shared::db::test_pool();
         let conn = pool.get().unwrap();
         conn.execute("INSERT INTO stories (id, title, created_at, updated_at) VALUES ('s', 'story', 'now', 'before')", []).unwrap();
@@ -152,7 +124,15 @@ mod tests {
         drop(conn);
 
         assert!(matches!(
-            with_transaction(&pool, |tx| erase_last_exchange_in_tx(tx, "s", fail_replay)),
+            with_transaction(&pool, |tx| {
+                let removed = erase_last_exchange_in_tx(tx, "s")?.unwrap();
+                assert_eq!(removed.entries.len(), 1);
+                assert_eq!(
+                    tx.query_row("SELECT COUNT(*) FROM turns", [], |row| row.get::<_, i64>(0))?,
+                    0
+                );
+                Err::<(), _>(crate::shared::error::AppError::Other("replay failed".into()))
+            }),
             Err(crate::shared::error::AppError::Other(message)) if message == "replay failed"
         ));
         let conn = pool.get().unwrap();
@@ -214,8 +194,12 @@ mod tests {
             .unwrap();
             drop(conn);
 
-            let removed =
-                with_transaction(&pool, |tx| erase_last_exchange_in_tx(tx, "s", replay)).unwrap();
+            let removed = with_transaction(&pool, |tx| {
+                let removed = erase_last_exchange_in_tx(tx, "s")?.unwrap();
+                entities::projection::replay_after_erase(tx, "s", &removed.entries)?;
+                Ok(removed.visible_ids)
+            })
+            .unwrap();
             assert_eq!(removed, vec![action.id, response.id], "mode {mode}");
         }
     }
@@ -273,8 +257,12 @@ mod tests {
         .unwrap();
         drop(conn);
 
-        let removed =
-            with_transaction(&pool, |tx| erase_last_exchange_in_tx(tx, "s", replay)).unwrap();
+        let removed = with_transaction(&pool, |tx| {
+            let removed = erase_last_exchange_in_tx(tx, "s")?.unwrap();
+            entities::projection::replay_after_erase(tx, "s", &removed.entries)?;
+            Ok(removed.visible_ids)
+        })
+        .unwrap();
         assert_eq!(removed, vec![see.id]);
         let conn = pool.get().unwrap();
         assert_eq!(
@@ -517,8 +505,12 @@ mod tests {
         .unwrap();
         drop(conn);
 
-        let removed =
-            with_transaction(&pool, |tx| erase_last_exchange_in_tx(tx, "s", replay)).unwrap();
+        let removed = with_transaction(&pool, |tx| {
+            let removed = erase_last_exchange_in_tx(tx, "s")?.unwrap();
+            entities::projection::replay_after_erase(tx, "s", &removed.entries)?;
+            Ok(removed.visible_ids)
+        })
+        .unwrap();
         assert_eq!(removed, vec![player.id, narration.id]);
         let conn = pool.get().unwrap();
         assert_eq!(
@@ -663,8 +655,12 @@ mod tests {
             .unwrap();
         drop(conn);
 
-        let removed =
-            with_transaction(&pool, |tx| erase_last_exchange_in_tx(tx, "s", replay)).unwrap();
+        let removed = with_transaction(&pool, |tx| {
+            let removed = erase_last_exchange_in_tx(tx, "s")?.unwrap();
+            entities::projection::replay_after_erase(tx, "s", &removed.entries)?;
+            Ok(removed.visible_ids)
+        })
+        .unwrap();
         assert_eq!(removed, vec![action.id, narration.id]);
 
         let conn = pool.get().unwrap();
@@ -719,8 +715,12 @@ mod tests {
         .unwrap();
         drop(conn);
 
-        let removed =
-            with_transaction(&pool, |tx| erase_last_exchange_in_tx(tx, "s", replay)).unwrap();
+        let removed = with_transaction(&pool, |tx| {
+            let removed = erase_last_exchange_in_tx(tx, "s")?.unwrap();
+            entities::projection::replay_after_erase(tx, "s", &removed.entries)?;
+            Ok(removed.visible_ids)
+        })
+        .unwrap();
         assert_eq!(removed, vec![action.id.clone()]);
         assert!(ledger_repository::get_entry(&pool.get().unwrap(), &action.id).is_err());
     }

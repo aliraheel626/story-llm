@@ -1,6 +1,5 @@
 use tauri::{AppHandle, State};
 
-use crate::features::ledger::erase::EraseReplay;
 use crate::features::turn::TurnGate;
 use crate::shared::db::Pool;
 use crate::shared::error::AppResult;
@@ -27,17 +26,8 @@ pub async fn retry_narration(
     app: AppHandle,
     pool: State<'_, Pool>,
     gate: State<'_, TurnGate>,
-    replay: State<'_, EraseReplay>,
     story_id: String,
     entry_id: String,
 ) -> AppResult<RetryResult> {
-    retry::retry_narration(
-        app,
-        pool.inner(),
-        gate.inner(),
-        *replay.inner(),
-        story_id,
-        entry_id,
-    )
-    .await
+    retry::retry_narration(app, pool.inner(), gate.inner(), story_id, entry_id).await
 }

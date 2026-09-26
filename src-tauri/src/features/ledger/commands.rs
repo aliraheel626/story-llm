@@ -1,12 +1,14 @@
 use tauri::State;
 
 use super::{
-    edit,
-    erase::{self, EraseReplay},
+    edit, erase,
     model::{LedgerEntry, LedgerSnapshot},
     reducer, repository, turns,
 };
-use crate::features::turn::{TurnGate, TurnTicket};
+use crate::features::{
+    entities,
+    turn::{TurnGate, TurnTicket},
+};
 use crate::shared::db::{blocking, with_transaction, Pool};
 use crate::shared::error::{AppError, AppResult};
 
@@ -45,11 +47,14 @@ fn erase_with_ticket(
     gate: &TurnGate,
     ticket: TurnTicket,
     story_id: &str,
-    replay: EraseReplay,
 ) -> AppResult<Vec<String>> {
     with_transaction(pool, |tx| {
         gate.still_idle(&ticket)?;
-        erase::erase_last_exchange_in_tx(tx, story_id, replay.0)
+        let Some(removed) = erase::erase_last_exchange_in_tx(tx, story_id)? else {
+            return Ok(vec![]);
+        };
+        entities::projection::replay_after_erase(tx, story_id, &removed.entries)?;
+        Ok(removed.visible_ids)
     })
 }
 
@@ -78,20 +83,17 @@ pub async fn edit_ledger_entry(
 pub async fn erase_last_exchange(
     pool: State<'_, Pool>,
     gate: State<'_, TurnGate>,
-    replay: State<'_, EraseReplay>,
     story_id: String,
 ) -> AppResult<Vec<String>> {
     let ticket = gate.check_idle(&story_id)?;
     let pool = pool.inner().clone();
     let gate = gate.inner().clone();
-    let replay = *replay.inner();
-    blocking(move || erase_with_ticket(&pool, &gate, ticket, &story_id, replay)).await
+    blocking(move || erase_with_ticket(&pool, &gate, ticket, &story_id)).await
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::features::entities::projection::replay_after_erase;
     use crate::features::turn::TurnTx;
 
     #[test]
@@ -188,7 +190,7 @@ mod tests {
         turn.commit().await.unwrap();
 
         assert!(matches!(
-            erase_with_ticket(&pool, &gate, ticket, "s", EraseReplay(replay_after_erase)),
+            erase_with_ticket(&pool, &gate, ticket, "s"),
             Err(AppError::Invalid(message)) if message == "a turn is already generating"
         ));
         assert!(repository::get_entry(&pool.get().unwrap(), &entry_id).is_ok());
