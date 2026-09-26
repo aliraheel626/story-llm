@@ -30,7 +30,7 @@ impl Default for NarratorToolSettings {
     }
 }
 
-fn story_settings(conn: &rusqlite::Connection, story_id: &str) -> AppResult<Value> {
+pub(crate) fn story_settings(conn: &rusqlite::Connection, story_id: &str) -> AppResult<Value> {
     let raw: Option<String> = conn
         .query_row(
             "SELECT settings_json FROM stories WHERE id = ?1",
@@ -45,6 +45,18 @@ fn story_settings(conn: &rusqlite::Connection, story_id: &str) -> AppResult<Valu
         return Err(AppError::Other("story settings must be an object".into()));
     }
     Ok(value)
+}
+
+pub(crate) fn write_story_settings(
+    conn: &rusqlite::Connection,
+    story_id: &str,
+    settings: &Value,
+) -> AppResult<()> {
+    conn.execute(
+        "UPDATE stories SET settings_json = ?1, updated_at = ?2 WHERE id = ?3",
+        rusqlite::params![settings.to_string(), Utc::now().to_rfc3339(), story_id],
+    )?;
+    Ok(())
 }
 
 pub fn read_story_narrator_tools(pool: &Pool, story_id: &str) -> AppResult<NarratorToolSettings> {
@@ -72,11 +84,7 @@ pub(super) fn save_narrator_tools(
     with_transaction(pool, |tx| {
         let mut settings = story_settings(tx, story_id)?;
         settings["narrator_tools"] = json!(tools);
-        tx.execute(
-            "UPDATE stories SET settings_json = ?1, updated_at = ?2 WHERE id = ?3",
-            rusqlite::params![settings.to_string(), Utc::now().to_rfc3339(), story_id],
-        )?;
-        Ok(())
+        write_story_settings(tx, story_id, &settings)
     })
 }
 
@@ -131,11 +139,7 @@ pub(super) fn save_reasoning_effort(
                 settings.as_object_mut().unwrap().remove("reasoning_effort");
             }
         }
-        tx.execute(
-            "UPDATE stories SET settings_json = ?1, updated_at = ?2 WHERE id = ?3",
-            rusqlite::params![settings.to_string(), Utc::now().to_rfc3339(), story_id],
-        )?;
-        Ok(())
+        write_story_settings(tx, story_id, &settings)
     })
 }
 

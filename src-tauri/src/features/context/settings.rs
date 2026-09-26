@@ -1,11 +1,12 @@
 use std::collections::BTreeMap;
 
-use chrono::Utc;
-use rusqlite::OptionalExtension;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use crate::features::ledger::{model::kind, repository};
+use crate::features::{
+    ledger::{model::kind, repository},
+    stories::settings::{story_settings, write_story_settings},
+};
 use crate::shared::error::{AppError, AppResult};
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -136,6 +137,7 @@ pub enum EntityInjection {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
 pub struct InjectionSettings {
     pub entities: EntityInjection,
     pub author_note_enabled: bool,
@@ -152,23 +154,6 @@ impl Default for InjectionSettings {
             tool_instructions: true,
         }
     }
-}
-
-fn story_settings(conn: &rusqlite::Connection, story_id: &str) -> AppResult<Value> {
-    let raw: Option<String> = conn
-        .query_row(
-            "SELECT settings_json FROM stories WHERE id = ?1",
-            [story_id],
-            |row| row.get(0),
-        )
-        .optional()?;
-    let raw = raw.ok_or_else(|| AppError::NotFound(format!("story {story_id} not found")))?;
-    let value: Value = serde_json::from_str(&raw)
-        .map_err(|error| AppError::Other(format!("invalid story settings: {error}")))?;
-    if !value.is_object() {
-        return Err(AppError::Other("story settings must be an object".into()));
-    }
-    Ok(value)
 }
 
 pub fn read_context_settings(
@@ -192,41 +177,21 @@ pub fn write_context_settings(
     }
     let mut settings = story_settings(conn, story_id)?;
     settings["context"] = json!({"include": include});
-    conn.execute(
-        "UPDATE stories SET settings_json = ?1, updated_at = ?2 WHERE id = ?3",
-        rusqlite::params![settings.to_string(), Utc::now().to_rfc3339(), story_id],
-    )?;
-    Ok(())
+    write_story_settings(conn, story_id, &settings)
 }
 
+/// A wrong-typed field resets the whole injection object to its defaults.
 pub fn read_injection_settings(
     conn: &rusqlite::Connection,
     story_id: &str,
 ) -> AppResult<InjectionSettings> {
     let settings = story_settings(conn, story_id)?;
-    let mut injection = InjectionSettings::default();
-    if let Some(value) = settings.get("injection") {
-        if let Some(entities) = value
-            .get("entities")
-            .and_then(|v| serde_json::from_value(v.clone()).ok())
-        {
-            injection.entities = entities;
-        }
-        injection.author_note_enabled = value
-            .get("author_note_enabled")
-            .and_then(Value::as_bool)
-            .unwrap_or(true);
-        injection.author_note = value
-            .get("author_note")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .trim()
-            .to_string();
-        injection.tool_instructions = value
-            .get("tool_instructions")
-            .and_then(Value::as_bool)
-            .unwrap_or(true);
-    }
+    let mut injection: InjectionSettings = settings
+        .get("injection")
+        .cloned()
+        .map(|value| serde_json::from_value(value).unwrap_or_default())
+        .unwrap_or_default();
+    injection.author_note = injection.author_note.trim().to_string();
     Ok(injection)
 }
 
@@ -239,10 +204,7 @@ pub fn write_injection_settings(
     let mut settings = story_settings(conn, story_id)?;
     let previous = read_injection_settings(conn, story_id)?;
     settings["injection"] = json!(injection);
-    conn.execute(
-        "UPDATE stories SET settings_json = ?1, updated_at = ?2 WHERE id = ?3",
-        rusqlite::params![settings.to_string(), Utc::now().to_rfc3339(), story_id],
-    )?;
+    write_story_settings(conn, story_id, &settings)?;
     if previous.author_note != injection.author_note {
         repository::append_entry(
             conn,
@@ -390,6 +352,20 @@ mod tests {
             save_story_context_settings(&pool, "missing", defaults),
             Err(AppError::NotFound(_))
         ));
+    }
+
+    #[test]
+    fn partial_injection_uses_serde_defaults() {
+        let pool = stories();
+        let conn = pool.get().unwrap();
+        conn.execute("UPDATE stories SET settings_json = '{\"injection\":{\"author_note\":\"x\"}}' WHERE id = 'first'", []).unwrap();
+        assert_eq!(
+            read_injection_settings(&conn, "first").unwrap(),
+            InjectionSettings {
+                author_note: "x".into(),
+                ..InjectionSettings::default()
+            }
+        );
     }
 
     #[test]
