@@ -25,6 +25,34 @@ pub(crate) fn images_for_story(
     Ok(rows.collect::<Result<Vec<_>, _>>()?)
 }
 
+/// Fetch only the newest eligible image blobs for narration entries in this transcript.
+pub(crate) fn images_for_entries(
+    conn: &rusqlite::Connection,
+    story_id: &str,
+    after_seq: Option<i64>,
+    limit: usize,
+) -> AppResult<Vec<(String, String, Vec<u8>)>> {
+    if limit == 0 {
+        return Ok(Vec::new());
+    }
+    let mut stmt = conn.prepare(
+        "SELECT image_assets.entry_id, image_blobs.media_type, image_blobs.bytes
+         FROM image_assets
+         JOIN image_blobs ON image_blobs.asset_id = image_assets.id
+         JOIN ledger_entries ON ledger_entries.id = image_assets.entry_id
+         WHERE ledger_entries.story_id = ?1 AND ledger_entries.kind = ?2
+           AND (?3 IS NULL OR ledger_entries.seq > ?3)
+           AND image_blobs.media_type IN ('image/png', 'image/jpeg', 'image/webp', 'image/gif')
+         ORDER BY ledger_entries.seq DESC, image_assets.created_at DESC, image_assets.id DESC
+         LIMIT ?4",
+    )?;
+    let rows = stmt.query_map(
+        rusqlite::params![story_id, ledger_kind::NARRATION, after_seq, limit],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+    )?;
+    Ok(rows.collect::<Result<_, _>>()?)
+}
+
 pub(crate) fn insert_image(
     conn: &rusqlite::Connection,
     image: &StoryImage,

@@ -186,6 +186,7 @@ mod tests {
             model: "test".into(),
             api_key: "test".into(),
             context_window: 32_768,
+            supports_images: false,
         }
     }
 

@@ -18,7 +18,7 @@ pub(super) async fn save_text_model_settings(
             "unsupported text model provider: {provider}"
         )));
     }
-    let context_window = match provider.as_str() {
+    let (context_window, supports_images) = match provider.as_str() {
         "nous_portal" => fetch_context_window(
             &format!("{}/models", crate::ai::NOUS_PORTAL_BASE_URL),
             ("data", "id"),
@@ -26,34 +26,63 @@ pub(super) async fn save_text_model_settings(
             Some(crate::ai::NOUS_PORTAL_USER_AGENT),
         )
         .await
-        .unwrap_or(NOUS_PORTAL_DEFAULT_CONTEXT_WINDOW),
+        .map(|window| (window, false))
+        .unwrap_or((NOUS_PORTAL_DEFAULT_CONTEXT_WINDOW, false)),
         // Ollama serves a model with the context it was loaded with, not the
         // model's maximum, and silently truncates longer prompts. `/api/ps`
         // reports that loaded size, but only while the model is loaded.
-        "ollama" => fetch_context_window(
-            &format!(
-                "{}/api/ps",
-                crate::ai::OLLAMA_BASE_URL.trim_end_matches("/v1")
-            ),
-            ("models", "name"),
-            &model,
-            None,
-        )
-        .await
-        .unwrap_or(32_768),
-        _ => fetch_context_window(
-            "https://openrouter.ai/api/v1/models",
-            ("data", "id"),
-            &model,
-            None,
-        )
-        .await
-        .unwrap_or(32_768),
+        "ollama" => {
+            let base = crate::ai::OLLAMA_BASE_URL.trim_end_matches("/v1");
+            let window =
+                fetch_context_window(&format!("{base}/api/ps"), ("models", "name"), &model, None)
+                    .await
+                    .unwrap_or(32_768);
+            let supports_images = reqwest::Client::new()
+                .post(format!("{base}/api/show"))
+                .json(&serde_json::json!({"model":model}))
+                .send()
+                .await
+                .ok()
+                .and_then(|response| response.error_for_status().ok());
+            let supports_images = match supports_images {
+                Some(response) => response
+                    .json::<serde_json::Value>()
+                    .await
+                    .ok()
+                    .is_some_and(|value| ollama_supports_images(&value)),
+                None => false,
+            };
+            (window, supports_images)
+        }
+        _ => {
+            let item = fetch_model(
+                "https://openrouter.ai/api/v1/models",
+                ("data", "id"),
+                &model,
+                None,
+            )
+            .await
+            .ok();
+            let window = item
+                .as_ref()
+                .and_then(|value| value.get("context_length"))
+                .and_then(|value| value.as_u64())
+                .map(|n| n as usize)
+                .unwrap_or(32_768);
+            let supports_images = item.as_ref().is_some_and(openrouter_supports_images);
+            (window, supports_images)
+        }
     };
     let pool = pool.clone();
     let provider_for_write = provider.clone();
     blocking(move || {
-        repository::write_text_model_settings(&pool, &provider_for_write, &model, context_window)
+        repository::write_text_model_settings(
+            &pool,
+            &provider_for_write,
+            &model,
+            context_window,
+            supports_images,
+        )
     })
     .await?;
 
@@ -75,6 +104,34 @@ async fn fetch_context_window(
     model: &str,
     user_agent: Option<&str>,
 ) -> AppResult<usize> {
+    fetch_model(models_url, (list_field, id_field), model, user_agent)
+        .await?
+        .get("context_length")
+        .and_then(|v| v.as_u64())
+        .map(|n| n as usize)
+        .ok_or_else(|| AppError::NotFound(format!("context metadata for model {model} not found")))
+}
+
+fn openrouter_supports_images(value: &serde_json::Value) -> bool {
+    value
+        .pointer("/architecture/input_modalities")
+        .and_then(|v| v.as_array())
+        .is_some_and(|modalities| modalities.iter().any(|v| v.as_str() == Some("image")))
+}
+
+fn ollama_supports_images(value: &serde_json::Value) -> bool {
+    value
+        .get("capabilities")
+        .and_then(|v| v.as_array())
+        .is_some_and(|capabilities| capabilities.iter().any(|v| v.as_str() == Some("vision")))
+}
+
+async fn fetch_model(
+    models_url: &str,
+    (list_field, id_field): (&str, &str),
+    model: &str,
+    user_agent: Option<&str>,
+) -> AppResult<serde_json::Value> {
     let mut request = reqwest::Client::new().get(models_url);
     if let Some(user_agent) = user_agent {
         request = request.header(reqwest::header::USER_AGENT, user_agent);
@@ -96,10 +153,8 @@ async fn fetch_context_window(
                 .iter()
                 .find(|item| item.get(id_field).and_then(|v| v.as_str()) == Some(model))
         })
-        .and_then(|item| item.get("context_length"))
-        .and_then(|v| v.as_u64())
-        .map(|n| n as usize)
-        .ok_or_else(|| AppError::NotFound(format!("context metadata for model {model} not found")))
+        .cloned()
+        .ok_or_else(|| AppError::NotFound(format!("metadata for model {model} not found")))
 }
 
 /// Hermes 4 (70B and 405B) both document a 131,072-token context window;
@@ -128,5 +183,29 @@ pub fn resolve_text_model(app: &AppHandle, pool: &Pool) -> AppResult<TextModelCo
         model: settings.model,
         api_key,
         context_window: settings.context_window,
+        supports_images: settings.supports_images,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn image_metadata_parses_independently_of_context_length() {
+        assert!(openrouter_supports_images(
+            &json!({"architecture":{"input_modalities":["text","image"]}})
+        ));
+        assert!(!openrouter_supports_images(
+            &json!({"architecture":{"input_modalities":["text"]},"context_length":8192})
+        ));
+        assert!(!openrouter_supports_images(
+            &json!({"architecture":{"input_modalities":"image"}})
+        ));
+        assert!(ollama_supports_images(
+            &json!({"capabilities":["completion","vision"]})
+        ));
+        assert!(!ollama_supports_images(&json!({"capabilities":null})));
+    }
 }

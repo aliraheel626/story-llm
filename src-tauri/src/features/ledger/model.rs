@@ -76,14 +76,14 @@ pub mod kind {
     // boundary, and legacy DICEROLL_SETTINGS_CHANGED is not a transcript event.
     pub const RECORD_KINDS: &[&str] = &[
         DICEROLL,
+        IMAGE_GENERATED,
+        TOOL_CALL,
         ENTITY_CREATED,
         ENTITY_QUERIED,
         ENTITY_UPDATED,
         ENTITY_DELETED,
         ENTITY_ATTRIBUTE_CHANGED,
         ENTITY_ATTRIBUTE_REMOVED,
-        IMAGE_GENERATED,
-        TOOL_CALL,
         CONTEXT_NOTE_UPDATED,
     ];
 }

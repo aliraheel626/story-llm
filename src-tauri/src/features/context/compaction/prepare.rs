@@ -90,6 +90,10 @@ where
     let history_messages = messages(&history);
     let target_history_budget = (((context_window as f64) * 0.75) as usize).saturating_sub(fixed);
     let split = raw_tail_boundary(&history, config, preamble, prompt);
+    let mut history = history;
+    for turn in &mut history[..split] {
+        turn.images.clear();
+    }
     if split == 0 {
         return PreparedHistory {
             turns: history,
@@ -179,6 +183,7 @@ mod tests {
     };
 
     use super::*;
+    use crate::ai::HistoryImage;
     use crate::features::context::compaction::summary::ContextSummary;
     use crate::features::ledger::{model::kind, repository};
     use crate::features::turn::TurnTx;
@@ -238,6 +243,7 @@ mod tests {
             model: "test".into(),
             api_key: "test".into(),
             context_window: 256,
+            supports_images: false,
         };
         let expected = raw_tail_boundary(&history, &config, "preamble", "prompt");
         assert!(expected > 0);
@@ -261,6 +267,57 @@ mod tests {
 
         assert_eq!(*evicted_count.lock().unwrap(), Some(expected));
         assert_eq!(compacted.turns.len(), 1 + history.len() - expected);
+    }
+
+    #[tokio::test]
+    async fn compaction_removes_image_bytes_from_the_compacted_prefix() {
+        let history = (0..30)
+            .map(|index| HistoryTurn {
+                entry_id: Some(format!("entry-{index}")),
+                role: HistoryRole::Record,
+                content: format!("image event {index}: {}", "context ".repeat(40)),
+                marker: crate::ai::HistoryTurnMarker::Ledger,
+                images: vec![HistoryImage {
+                    media_type: "image/png".into(),
+                    bytes: vec![index as u8],
+                }],
+                reasoning: None,
+            })
+            .collect::<Vec<_>>();
+        let config = TextModelConfig {
+            provider: "openrouter".into(),
+            model: "test".into(),
+            api_key: "test".into(),
+            context_window: 256,
+            supports_images: true,
+        };
+        let split = raw_tail_boundary(&history, &config, "preamble", "prompt");
+        assert!(split > 0);
+        let compactor = RecordingCompactor {
+            carry_over: Arc::new(Mutex::new(None)),
+            evicted_count: Arc::new(Mutex::new(None)),
+        };
+        let result = prepare_history_with_compactor(
+            HistoryPreparation {
+                story_id: "story",
+                config: &config,
+                preamble: "preamble",
+                prompt: "prompt",
+            },
+            history.clone(),
+            None,
+            &compactor,
+        )
+        .await;
+        assert_eq!(result.turns[0].images.len(), 0);
+        assert_eq!(
+            result.turns[1].images[0].bytes,
+            history[split].images[0].bytes
+        );
+        assert_eq!(
+            result.turns.iter().flat_map(|turn| &turn.images).count(),
+            history.len() - split
+        );
     }
 
     #[tokio::test]
@@ -314,6 +371,7 @@ mod tests {
             model: "test".into(),
             api_key: "test".into(),
             context_window: 256,
+            supports_images: false,
         };
         let expected_boundary = raw_tail_boundary(&history, &config, "preamble", "prompt");
         assert!(expected_boundary > 0);

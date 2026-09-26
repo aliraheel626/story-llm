@@ -22,7 +22,7 @@ pub fn read_text_model_settings(app: &AppHandle, pool: &Pool) -> AppResult<TextM
         )
         .ok();
 
-    let (provider, model, context_window) = stored
+    let (provider, model, context_window, supports_images) = stored
         .and_then(|v| serde_json::from_str::<serde_json::Value>(&v).ok())
         .map(|v| {
             let provider = v
@@ -40,9 +40,10 @@ pub fn read_text_model_settings(app: &AppHandle, pool: &Pool) -> AppResult<TextM
                 .get("context_window")
                 .and_then(|n| n.as_u64())
                 .unwrap_or(32_768) as usize;
-            (provider, model, context_window)
+            let supports_images = stored_image_support(&v);
+            (provider, model, context_window, supports_images)
         })
-        .unwrap_or_else(|| ("openrouter".to_string(), String::new(), 32_768));
+        .unwrap_or_else(|| ("openrouter".to_string(), String::new(), 32_768, false));
 
     let has_api_key = has_api_key(app, &provider)?;
 
@@ -51,7 +52,15 @@ pub fn read_text_model_settings(app: &AppHandle, pool: &Pool) -> AppResult<TextM
         model,
         has_api_key,
         context_window,
+        supports_images,
     })
+}
+
+fn stored_image_support(value: &serde_json::Value) -> bool {
+    value
+        .get("supports_images")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false)
 }
 
 pub(super) fn write_text_model_settings(
@@ -59,9 +68,10 @@ pub(super) fn write_text_model_settings(
     provider: &str,
     model: &str,
     context_window: usize,
+    supports_images: bool,
 ) -> AppResult<()> {
     let conn = pool.get()?;
-    let value = json!({ "provider": provider, "model": model, "context_window": context_window })
+    let value = json!({ "provider": provider, "model": model, "context_window": context_window, "supports_images": supports_images })
         .to_string();
     conn.execute(
         "INSERT INTO settings (key, value) VALUES (?1, ?2)
@@ -137,4 +147,18 @@ pub(super) fn write_image_model_settings(
         rusqlite::params![SETTINGS_KEY_IMAGE_MODEL, value],
     )?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn legacy_and_invalid_image_support_default_to_false() {
+        assert!(!stored_image_support(
+            &json!({"provider":"openrouter","context_window":32768})
+        ));
+        assert!(!stored_image_support(&json!({"supports_images":"true"})));
+        assert!(stored_image_support(&json!({"supports_images":true})));
+    }
 }

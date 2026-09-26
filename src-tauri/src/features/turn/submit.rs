@@ -4,12 +4,10 @@ use tauri::{AppHandle, Emitter};
 use uuid::Uuid;
 
 use crate::features::{
-    context::load_transcript,
+    context::{load_transcript, settings::read_context_settings, ImagePolicy},
     images,
-    ledger::{
-        model::LedgerEntry, query as ledger_query, repository as ledger_repository, turns,
-    },
-    narrator, stories,
+    ledger::{model::LedgerEntry, query as ledger_query, repository as ledger_repository, turns},
+    narrator, settings, stories,
     turn::{TurnGate, TurnTx},
 };
 use crate::prompts;
@@ -72,6 +70,7 @@ async fn prepare_and_spawn(
         return Err(AppError::Invalid("content must not be empty".into()));
     }
 
+    let supports_images = settings::resolve_text_model(&app, pool)?.supports_images;
     let (turn_id, action, prior_narration, history) = turn
         .with(|conn| {
             let prior_narration = ledger_query::latest_narration_id(conn, &story_id)?;
@@ -90,7 +89,29 @@ async fn prepare_and_spawn(
                 None,
                 Some(&turn_id),
             )?;
-            let history = load_transcript(conn, &story_id)?;
+            let context_settings = read_context_settings(conn, &story_id)?;
+            let mut history = load_transcript(
+                conn,
+                &story_id,
+                &context_settings,
+                if supports_images {
+                    ImagePolicy::Allowed
+                } else {
+                    ImagePolicy::Unsupported
+                },
+            )?;
+            if history.last().and_then(|turn| turn.entry_id.as_deref()) != Some(action.id.as_str())
+            {
+                history.push(crate::ai::HistoryTurn {
+                    entry_id: Some(action.id.clone()),
+                    role: crate::ai::HistoryRole::Player,
+                    content: prompts::render_turn(&mode, content)
+                        .unwrap_or_else(|| content.to_string()),
+                    marker: crate::ai::HistoryTurnMarker::Ledger,
+                    images: Vec::new(),
+                    reasoning: None,
+                });
+            }
             Ok((turn_id, action, prior_narration, history))
         })
         .await?;

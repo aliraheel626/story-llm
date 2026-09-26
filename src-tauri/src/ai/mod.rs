@@ -46,6 +46,7 @@ pub struct TextModelConfig {
     pub model: String,
     pub api_key: String,
     pub context_window: usize,
+    pub supports_images: bool,
 }
 
 /// One turn of prior conversation, already resolved from the persisted ledger.
@@ -616,6 +617,18 @@ mod tests {
             bytes: vec![0],
         });
         assert!(history_message(&record).is_err());
+    }
+
+    #[test]
+    fn eligible_history_image_mimes_are_supported() {
+        for mime in ["image/png", "image/jpeg", "image/webp", "image/gif"] {
+            let mut record = turn(HistoryRole::Record);
+            record.images.push(HistoryImage {
+                media_type: mime.into(),
+                bytes: vec![1],
+            });
+            assert!(history_message(&record).is_ok(), "{mime}");
+        }
     }
 
     #[tokio::test]

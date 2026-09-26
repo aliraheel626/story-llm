@@ -66,7 +66,7 @@ export interface NarrationTextCompletePayload { stream_id: string }
 export interface NarrationErrorPayload { stream_id: string; message: string }
 export interface NarrationToolActivityPayload { stream_id: string; call_id: string; label: string; phase: "started" | "finished"; ok: boolean | null }
 
-export interface TextModelSettings { provider: string; model: string; has_api_key: boolean; context_window: number }
+export interface TextModelSettings { provider: string; model: string; has_api_key: boolean; context_window: number; supports_images: boolean }
 export interface ImageModelSettings { model: string; enabled: boolean; style: string; has_api_key: boolean }
 export type EntityContextMode = "all" | "scoped" | "none";
 export interface ContextInjectionSettings { entity_context_mode: EntityContextMode }

@@ -6,6 +6,8 @@ pub struct TextModelSettings {
     pub model: String,
     pub has_api_key: bool,
     pub context_window: usize,
+    #[serde(default)]
+    pub supports_images: bool,
 }
 
 pub const DEFAULT_IMAGE_STYLE: &str = "Digital painting, atmospheric scene illustration.";
