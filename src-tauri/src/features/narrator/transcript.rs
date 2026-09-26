@@ -1,8 +1,7 @@
 use std::collections::HashMap;
 
 use crate::ai::{HistoryTurn, HistoryTurnMarker};
-use crate::features::compaction;
-use crate::features::ledger::{model::kind, reducer, repository};
+use crate::features::ledger::{model::kind, reducer, repository, summaries};
 use crate::shared::error::AppResult;
 
 /// Reconstructs model history from the story ledger. The latest
@@ -12,7 +11,7 @@ use crate::shared::error::AppResult;
 /// a long, already-compacted story doesn't reload and re-decode everything
 /// before it on every turn.
 pub fn load_transcript(conn: &rusqlite::Connection, story_id: &str) -> AppResult<Vec<HistoryTurn>> {
-    let since_seq = compaction::boundary_for(conn, story_id)?.map(|boundary| boundary.through_seq);
+    let since_seq = summaries::latest_boundary(conn, story_id)?.map(|boundary| boundary.through_seq);
     let raw = match since_seq {
         Some(seq) => repository::list_logical_entries_since(conn, story_id, seq)?,
         None => repository::list_logical_entries(conn, story_id)?,

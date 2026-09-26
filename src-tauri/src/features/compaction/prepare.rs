@@ -2,7 +2,7 @@ use rig_core::{completion::Message, memory::Compactor};
 use rig_memory::{HeuristicTokenCounter, MemoryPolicy, TokenCounter, TokenWindowMemory};
 
 use crate::ai::{HistoryTurn, TextModelConfig};
-use crate::features::ledger::{model::kind, repository};
+use crate::features::ledger::summaries;
 use crate::features::turn::TurnTx;
 
 use super::budget::{messages, raw_tail_boundary, FALLBACK_CONTEXT_WINDOW};
@@ -111,26 +111,17 @@ where
     {
         Ok(artifact) => {
             let summary_text = format_summary(&artifact.0);
-            let _ = turn.with(|conn| {
-                let boundary = through_entry_id
-                    .as_deref()
-                    .and_then(|id| repository::get_entry(conn, id).ok());
-                if let Some(boundary) = boundary {
-                    repository::append_entry(
+            let _ = turn
+                .with(|conn| {
+                    summaries::append(
                         conn,
                         story_id,
-                        kind::CONTEXT_SUMMARY,
-                        "hidden",
-                        Some(&summary_text),
-                        &serde_json::json!({"through_seq": boundary.seq, "through_entry_id": boundary.id, "prose": artifact.0.prose, "facts": artifact.0.facts,
-                            "entity_notes": artifact.0.entity_notes, "open_threads": artifact.0.open_threads,
-                            "unresolved_mechanics": artifact.0.unresolved_mechanics}),
-                        None,
-                        None,
-                    )?;
-                }
-                Ok(())
-            }).await;
+                        through_entry_id.as_deref(),
+                        &summary_text,
+                        &artifact.0,
+                    )
+                })
+                .await;
             let mut compacted = vec![HistoryTurn {
                 entry_id: None,
                 is_player: false,
@@ -187,6 +178,7 @@ mod tests {
 
     use super::*;
     use crate::features::compaction::summary::ContextSummary;
+    use crate::features::ledger::{model::kind, repository};
 
     fn summary(prose: &str) -> ContextSummary {
         ContextSummary {
@@ -311,7 +303,13 @@ mod tests {
             api_key: "test".into(),
             context_window: 256,
         };
-        assert!(raw_tail_boundary(&history, &config, "preamble", "prompt") > 0);
+        let expected_boundary = raw_tail_boundary(&history, &config, "preamble", "prompt");
+        assert!(expected_boundary > 0);
+        let boundary_id = history[expected_boundary - 1].entry_id.clone().unwrap();
+        let boundary_seq = turn
+            .with(|conn| Ok(repository::get_entry(conn, &boundary_id)?.seq))
+            .await
+            .unwrap();
         let compactor = RecordingCompactor {
             carry_over: Arc::new(Mutex::new(None)),
             evicted_count: Arc::new(Mutex::new(None)),
@@ -334,6 +332,15 @@ mod tests {
             [], |row| row.get::<_, i64>(0),
         )?)).await.unwrap();
         assert_eq!(summary_count, 1);
+        let payload: String = turn.with(|conn| Ok(conn.query_row(
+            "SELECT payload_json FROM ledger_entries WHERE story_id = 'story' AND kind = 'context_summary'",
+            [], |row| row.get(0),
+        )?)).await.unwrap();
+        let payload: serde_json::Value = serde_json::from_str(&payload).unwrap();
+        assert_eq!(payload["prose"], "new compacted context");
+        assert_eq!(payload["through_seq"], boundary_seq);
+        assert_eq!(payload["through_entry_id"], boundary_id);
+        assert_eq!(payload["facts"], serde_json::json!([]));
         turn.rollback().await.unwrap();
         let committed_count: i64 = pool.get().unwrap().query_row(
             "SELECT COUNT(*) FROM ledger_entries WHERE story_id = 'story' AND kind = 'context_summary'",
