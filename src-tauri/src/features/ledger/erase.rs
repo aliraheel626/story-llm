@@ -1,32 +1,21 @@
 use std::collections::HashSet;
 
-use crate::features::{
-    context::prune_summaries_covering,
-    entities,
-    ledger::{
-        attachments,
-        model::{kind as ledger_kind, LedgerEntry},
-        query, turns,
-    },
-    turn::{TurnGate, TurnTicket},
+use super::{
+    attachments,
+    model::{kind as ledger_kind, LedgerEntry},
+    query, summaries, turns,
 };
-use crate::shared::db::{with_transaction, Pool};
 use crate::shared::error::AppResult;
 use chrono::Utc;
+
+#[derive(Clone, Copy)]
+pub(crate) struct EraseReplay(pub fn(&rusqlite::Connection, &str, &[LedgerEntry]) -> AppResult<()>);
 
 pub(crate) fn entries_for_turn(
     conn: &rusqlite::Connection,
     turn_id: &str,
 ) -> AppResult<Vec<LedgerEntry>> {
     query::entries_of_turn(conn, turn_id)
-}
-
-pub(super) fn touched_entities(entries: &[LedgerEntry]) -> HashSet<String> {
-    entries
-        .iter()
-        .filter_map(entities::events::EntityEvent::from_entry)
-        .map(|event| event.entity_id().to_string())
-        .collect()
 }
 
 pub(super) fn delete_turn_assets(
@@ -56,6 +45,7 @@ pub(crate) fn remove_turn(
     conn: &rusqlite::Connection,
     story_id: &str,
     turn_id: &str,
+    replay_fn: fn(&rusqlite::Connection, &str, &[LedgerEntry]) -> AppResult<()>,
 ) -> AppResult<Vec<String>> {
     let entries = entries_for_turn(conn, turn_id)?;
     let removed = entries
@@ -68,14 +58,13 @@ pub(crate) fn remove_turn(
         .iter()
         .map(|entry| entry.id.clone())
         .collect::<HashSet<_>>();
-    let affected_entities = touched_entities(&entries);
-    prune_summaries_covering(conn, story_id, &doomed_ids)?;
+    summaries::prune_covering(conn, story_id, &doomed_ids)?;
     conn.execute(
         "DELETE FROM turns WHERE id = ?1 AND story_id = ?2",
         rusqlite::params![turn_id, story_id],
     )?;
     let now = Utc::now().to_rfc3339();
-    entities::projection::replay(conn, story_id, &affected_entities, None)?;
+    replay_fn(conn, story_id, &entries)?;
     conn.execute(
         "UPDATE stories SET updated_at = ?1 WHERE id = ?2",
         rusqlite::params![now, story_id],
@@ -84,82 +73,105 @@ pub(crate) fn remove_turn(
     Ok(removed)
 }
 
-fn erase_last_exchange_in_tx(
+pub(crate) fn erase_last_exchange_in_tx(
     tx: &rusqlite::Transaction<'_>,
     story_id: &str,
+    replay_fn: fn(&rusqlite::Connection, &str, &[LedgerEntry]) -> AppResult<()>,
 ) -> AppResult<Vec<String>> {
     let Some(last_turn) = turns::last_turn(tx, story_id)? else {
         return Ok(vec![]);
     };
-    remove_turn(tx, story_id, &last_turn.id)
-}
-
-/// "Erase": removes the most recent exchange — the latest narration plus the
-/// player message (or story draft) that triggered it. Returns the IDs removed
-/// so the frontend can splice locally.
-pub(super) fn erase_last_exchange(
-    pool: &Pool,
-    gate: &TurnGate,
-    ticket: TurnTicket,
-    story_id: &str,
-) -> AppResult<Vec<String>> {
-    with_transaction(pool, |tx| {
-        gate.still_idle(&ticket)?;
-        erase_last_exchange_in_tx(tx, story_id)
-    })
+    remove_turn(tx, story_id, &last_turn.id, replay_fn)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::features::entities;
     use crate::features::ledger::repository::{self as ledger_repository, append_entry};
-    use crate::features::turn::TurnTx;
+    use crate::shared::db::with_transaction;
     use serde_json::json;
 
-    #[tokio::test]
-    async fn erase_rejects_a_turn_started_since_the_idle_check() {
+    fn replay(
+        conn: &rusqlite::Connection,
+        story_id: &str,
+        entries: &[LedgerEntry],
+    ) -> AppResult<()> {
+        entities::projection::replay_after_erase(conn, story_id, entries)
+    }
+
+    #[test]
+    fn replay_failure_rolls_back_turn_assets_summaries_and_timestamp() {
+        fn fail_replay(
+            conn: &rusqlite::Connection,
+            _: &str,
+            entries: &[LedgerEntry],
+        ) -> AppResult<()> {
+            assert_eq!(entries.len(), 1);
+            assert_eq!(
+                conn.query_row("SELECT COUNT(*) FROM turns", [], |row| row.get::<_, i64>(0))?,
+                0
+            );
+            Err(crate::shared::error::AppError::Other(
+                "replay failed".into(),
+            ))
+        }
+
         let pool = crate::shared::db::test_pool();
-        let gate = TurnGate::default();
-        pool.get().unwrap().execute(
-            "INSERT INTO stories (id, title, created_at, updated_at) VALUES ('s', 'story', 'now', 'now')",
-            [],
-        ).unwrap();
-        let ticket = gate.check_idle("s").unwrap();
-        let turn = TurnTx::begin(&pool, &gate, "s").unwrap();
-        let entry_id = turn
-            .with(|conn| {
-                let turn_id = turns::create_turn(conn, "s")?;
-                let entry = append_entry(
-                    conn,
-                    "s",
-                    ledger_kind::PLAYER_MESSAGE,
-                    "visible",
-                    Some("action"),
-                    &json!({"input_mode":"do"}),
-                    None,
-                    Some(&turn_id),
-                )?;
-                append_entry(
-                    conn,
-                    "s",
-                    ledger_kind::NARRATION,
-                    "visible",
-                    Some("new response"),
-                    &json!({"input_mode":"generated"}),
-                    None,
-                    Some(&turn_id),
-                )?;
-                Ok(entry.id)
+        let conn = pool.get().unwrap();
+        conn.execute("INSERT INTO stories (id, title, created_at, updated_at) VALUES ('s', 'story', 'now', 'before')", []).unwrap();
+        let turn_id = turns::create_turn(&conn, "s").unwrap();
+        let entry = append_entry(
+            &conn,
+            "s",
+            ledger_kind::NARRATION,
+            "visible",
+            Some("scene"),
+            &json!({}),
+            None,
+            Some(&turn_id),
+        )
+        .unwrap();
+        conn.execute("INSERT INTO image_assets (id, entry_id, path, prompt, created_at) VALUES ('image', ?1, '', '', 'now')", [&entry.id]).unwrap();
+        let summary = append_entry(
+            &conn,
+            "s",
+            ledger_kind::CONTEXT_SUMMARY,
+            "hidden",
+            Some("summary"),
+            &json!({"through_entry_id":entry.id}),
+            None,
+            None,
+        )
+        .unwrap();
+        let updated_at: String = conn
+            .query_row("SELECT updated_at FROM stories WHERE id = 's'", [], |row| {
+                row.get(0)
             })
-            .await
             .unwrap();
-        turn.commit().await.unwrap();
+        drop(conn);
 
         assert!(matches!(
-            erase_last_exchange(&pool, &gate, ticket, "s"),
-            Err(crate::shared::error::AppError::Invalid(message)) if message == "a turn is already generating"
+            with_transaction(&pool, |tx| erase_last_exchange_in_tx(tx, "s", fail_replay)),
+            Err(crate::shared::error::AppError::Other(message)) if message == "replay failed"
         ));
-        assert!(ledger_repository::get_entry(&pool.get().unwrap(), &entry_id).is_ok());
+        let conn = pool.get().unwrap();
+        assert!(turns::last_turn(&conn, "s").unwrap().is_some());
+        assert!(ledger_repository::get_entry(&conn, &entry.id).is_ok());
+        assert!(ledger_repository::get_entry(&conn, &summary.id).is_ok());
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM image_assets", [], |row| row
+                .get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            conn.query_row("SELECT updated_at FROM stories WHERE id = 's'", [], |row| {
+                row.get::<_, String>(0)
+            })
+            .unwrap(),
+            updated_at
+        );
     }
 
     #[test]
@@ -202,7 +214,8 @@ mod tests {
             .unwrap();
             drop(conn);
 
-            let removed = with_transaction(&pool, |tx| erase_last_exchange_in_tx(tx, "s")).unwrap();
+            let removed =
+                with_transaction(&pool, |tx| erase_last_exchange_in_tx(tx, "s", replay)).unwrap();
             assert_eq!(removed, vec![action.id, response.id], "mode {mode}");
         }
     }
@@ -260,7 +273,8 @@ mod tests {
         .unwrap();
         drop(conn);
 
-        let removed = with_transaction(&pool, |tx| erase_last_exchange_in_tx(tx, "s")).unwrap();
+        let removed =
+            with_transaction(&pool, |tx| erase_last_exchange_in_tx(tx, "s", replay)).unwrap();
         assert_eq!(removed, vec![see.id]);
         let conn = pool.get().unwrap();
         assert_eq!(
@@ -503,7 +517,8 @@ mod tests {
         .unwrap();
         drop(conn);
 
-        let removed = with_transaction(&pool, |tx| erase_last_exchange_in_tx(tx, "s")).unwrap();
+        let removed =
+            with_transaction(&pool, |tx| erase_last_exchange_in_tx(tx, "s", replay)).unwrap();
         assert_eq!(removed, vec![player.id, narration.id]);
         let conn = pool.get().unwrap();
         assert_eq!(
@@ -648,7 +663,8 @@ mod tests {
             .unwrap();
         drop(conn);
 
-        let removed = with_transaction(&pool, |tx| erase_last_exchange_in_tx(tx, "s")).unwrap();
+        let removed =
+            with_transaction(&pool, |tx| erase_last_exchange_in_tx(tx, "s", replay)).unwrap();
         assert_eq!(removed, vec![action.id, narration.id]);
 
         let conn = pool.get().unwrap();
@@ -703,7 +719,8 @@ mod tests {
         .unwrap();
         drop(conn);
 
-        let removed = with_transaction(&pool, |tx| erase_last_exchange_in_tx(tx, "s")).unwrap();
+        let removed =
+            with_transaction(&pool, |tx| erase_last_exchange_in_tx(tx, "s", replay)).unwrap();
         assert_eq!(removed, vec![action.id.clone()]);
         assert!(ledger_repository::get_entry(&pool.get().unwrap(), &action.id).is_err());
     }

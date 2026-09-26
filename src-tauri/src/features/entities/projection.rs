@@ -183,6 +183,19 @@ pub fn replay(
     Ok(())
 }
 
+pub fn replay_after_erase(
+    conn: &rusqlite::Connection,
+    story_id: &str,
+    entries: &[LedgerEntry],
+) -> AppResult<()> {
+    let affected = entries
+        .iter()
+        .filter_map(EntityEvent::from_entry)
+        .map(|event| event.entity_id().to_string())
+        .collect();
+    replay(conn, story_id, &affected, None)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

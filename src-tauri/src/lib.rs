@@ -54,6 +54,9 @@ pub fn run() {
             let pool = shared::db::init_pool(&app_data_dir)?;
             app.manage(pool);
             app.manage(features::turn::TurnGate::default());
+            app.manage(features::ledger::erase::EraseReplay(
+                features::entities::projection::replay_after_erase,
+            ));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
