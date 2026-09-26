@@ -1,15 +1,7 @@
-use serde::{Deserialize, Serialize};
+pub use crate::features::ledger::model::StoryImage;
 
 #[derive(Debug, Clone)]
 pub struct ImageRequest {
     pub description: String,
     pub character_ids: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StoryImage {
-    pub id: String,
-    pub entry_id: String,
-    pub prompt: String,
-    pub created_at: String,
 }

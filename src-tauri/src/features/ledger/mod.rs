@@ -1,3 +1,4 @@
+pub(crate) mod attachments;
 mod commands;
 mod edit;
 pub(crate) mod erase;

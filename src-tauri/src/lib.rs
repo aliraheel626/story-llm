@@ -32,12 +32,9 @@ pub fn run() {
             let pool = ctx.app_handle().state::<shared::db::Pool>().inner().clone();
             tauri::async_runtime::spawn_blocking(move || {
                 let image = pool.get().ok().and_then(|conn| {
-                    conn.query_row(
-                        "SELECT media_type, bytes FROM image_blobs WHERE asset_id = ?1",
-                        [&id],
-                        |row| Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?)),
-                    )
-                    .ok()
+                    features::ledger::attachments::image_blob(&conn, &id)
+                        .ok()
+                        .flatten()
                 });
                 let response = match image {
                     Some((media_type, bytes)) => http::Response::builder()

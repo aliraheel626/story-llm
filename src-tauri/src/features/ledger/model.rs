@@ -1,6 +1,14 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StoryImage {
+    pub id: String,
+    pub entry_id: String,
+    pub prompt: String,
+    pub created_at: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct LedgerEntry {
     pub id: String,

@@ -1,6 +1,6 @@
 use crate::features::{
-    images,
     ledger::{
+        attachments,
         model::{kind as ledger_kind, LedgerEntry},
         repository as ledger_repository,
     },
@@ -27,7 +27,7 @@ pub(super) fn edit_ledger_entry(
     with_transaction(pool, |tx| {
         gate.still_idle(&ticket)?;
         let target = ledger_repository::get_entry(tx, &entry_id)?;
-        images::detach_from_entry(tx, &entry_id)?;
+        attachments::detach_from_entry(tx, &entry_id)?;
         ledger_repository::append_entry(
             tx,
             &target.story_id,

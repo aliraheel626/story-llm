@@ -1,7 +1,7 @@
-use crate::features::ledger::model::kind as ledger_kind;
 use crate::shared::error::AppResult;
+use rusqlite::OptionalExtension;
 
-use super::model::StoryImage;
+use super::model::{kind as ledger_kind, StoryImage};
 
 fn row_to_image(row: &rusqlite::Row) -> rusqlite::Result<StoryImage> {
     Ok(StoryImage {
@@ -12,7 +12,7 @@ fn row_to_image(row: &rusqlite::Row) -> rusqlite::Result<StoryImage> {
     })
 }
 
-pub(super) fn list_for_story(
+pub(crate) fn images_for_story(
     conn: &rusqlite::Connection,
     story_id: &str,
 ) -> AppResult<Vec<StoryImage>> {
@@ -25,7 +25,7 @@ pub(super) fn list_for_story(
     Ok(rows.collect::<Result<Vec<_>, _>>()?)
 }
 
-pub(super) fn insert_asset(
+pub(crate) fn insert_image(
     conn: &rusqlite::Connection,
     image: &StoryImage,
     media_type: &str,
@@ -48,12 +48,30 @@ fn delete_for_entry(tx: &rusqlite::Transaction<'_>, entry_id: &str) -> AppResult
     Ok(())
 }
 
+pub(crate) fn image_ids_for_entry(
+    conn: &rusqlite::Connection,
+    entry_id: &str,
+) -> AppResult<Vec<String>> {
+    let mut stmt = conn.prepare("SELECT id FROM image_assets WHERE entry_id = ?1")?;
+    let rows = stmt.query_map([entry_id], |row| row.get(0))?;
+    Ok(rows.collect::<Result<_, _>>()?)
+}
+
+pub(crate) fn image_blob(
+    conn: &rusqlite::Connection,
+    id: &str,
+) -> AppResult<Option<(String, Vec<u8>)>> {
+    Ok(conn
+        .query_row(
+            "SELECT media_type, bytes FROM image_blobs WHERE asset_id = ?1",
+            [id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()?)
+}
+
 pub fn detach_from_entry(tx: &rusqlite::Transaction<'_>, entry_id: &str) -> AppResult<()> {
-    let asset_ids = {
-        let mut stmt = tx.prepare("SELECT id FROM image_assets WHERE entry_id = ?1")?;
-        let rows = stmt.query_map([entry_id], |row| row.get::<_, String>(0))?;
-        rows.collect::<Result<Vec<_>, _>>()?
-    };
+    let asset_ids = image_ids_for_entry(tx, entry_id)?;
     if !asset_ids.is_empty() {
         let events = {
             let mut stmt =
@@ -106,6 +124,16 @@ mod tests {
                       ('event-5', 's', 7, 'image_generated', 'hidden', '{"asset_id":"asset-2"}', 'now');"#,
         )
         .unwrap();
+
+        assert_eq!(
+            image_ids_for_entry(&conn, "entry-1").unwrap(),
+            vec!["asset-1"]
+        );
+        assert_eq!(
+            image_blob(&conn, "asset-1").unwrap(),
+            Some(("image/png".into(), vec![1, 2]))
+        );
+        assert_eq!(image_blob(&conn, "missing").unwrap(), None);
 
         let tx = conn.transaction().unwrap();
         detach_from_entry(&tx, "entry-1").unwrap();

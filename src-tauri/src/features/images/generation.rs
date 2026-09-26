@@ -3,14 +3,16 @@ use tauri::{AppHandle, Emitter};
 use tokio::time::{timeout, Duration};
 use uuid::Uuid;
 
-use crate::features::ledger::{model::kind as ledger_kind, repository as ledger_repository};
+use crate::features::ledger::{
+    attachments, model::kind as ledger_kind, repository as ledger_repository,
+};
 use crate::features::settings;
 use crate::features::turn::TurnTx;
 use crate::shared::db::Pool;
 use crate::shared::error::{AppError, AppResult};
 
 use super::model::{ImageRequest, StoryImage};
-use super::{openrouter, repository};
+use super::openrouter;
 
 const IMAGE_TIMEOUT: Duration = Duration::from_secs(120);
 
@@ -128,7 +130,7 @@ fn persist_image_record(
     image: &StoryImage,
     generated: &openrouter::GeneratedImage,
 ) -> AppResult<()> {
-    repository::insert_asset(conn, image, &generated.media_type, &generated.bytes)?;
+    attachments::insert_image(conn, image, &generated.media_type, &generated.bytes)?;
     let base = ledger_repository::get_entry(conn, &target.entry_id)?;
     ledger_repository::append_entry(
         conn,

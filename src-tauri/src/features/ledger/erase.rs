@@ -1,8 +1,9 @@
 use std::collections::HashSet;
 
 use crate::features::{
-    compaction, entities, images,
+    compaction, entities,
     ledger::{
+        attachments,
         model::{kind as ledger_kind, LedgerEntry},
         repository as ledger_repository, turns,
     },
@@ -39,9 +40,7 @@ pub(super) fn delete_turn_assets(
 ) -> AppResult<()> {
     let mut asset_ids = HashSet::new();
     for entry in entries {
-        let mut stmt = conn.prepare("SELECT id FROM image_assets WHERE entry_id = ?1")?;
-        let rows = stmt.query_map([&entry.id], |row| row.get::<_, String>(0))?;
-        asset_ids.extend(rows.collect::<Result<Vec<_>, _>>()?);
+        asset_ids.extend(attachments::image_ids_for_entry(conn, &entry.id)?);
         if entry.kind == ledger_kind::IMAGE_GENERATED {
             if let Some(asset_id) = entry
                 .payload
@@ -53,7 +52,7 @@ pub(super) fn delete_turn_assets(
         }
     }
     for asset_id in asset_ids {
-        images::delete_asset_by_id(conn, &asset_id)?;
+        attachments::delete_asset_by_id(conn, &asset_id)?;
     }
     Ok(())
 }
