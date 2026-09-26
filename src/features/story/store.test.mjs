@@ -207,9 +207,66 @@ test("settings store ignores a load started before a foreground save", async () 
   }, "text model");
   const old = store.getState().load();
   await store.getState().save();
+  assert.equal(store.getState().loading, false);
   resolveOld({ supports_images: false });
   await old;
   assert.equal(store.getState().settings.supports_images, true);
+  assert.equal(store.getState().loading, false);
+  assert.equal(store.getState().saving, false);
+});
+
+test("settings save clears a load started while the save was pending", async () => {
+  const { createSettingsStore } = await server.ssrLoadModule("/src/features/settings/settingsStore.ts");
+  let releaseSave;
+  let resolveDuring;
+  let gets = 0;
+  const store = createSettingsStore({
+    get: () => gets++ === 0 ? new Promise((resolve) => { resolveDuring = resolve; }) : Promise.resolve({ supports_images: true }),
+    save: () => new Promise((resolve) => { releaseSave = resolve; }),
+  }, "text model");
+  const saving = store.getState().save();
+  const during = store.getState().load();
+  assert.equal(store.getState().loading, true);
+  releaseSave();
+  await saving;
+  assert.equal(store.getState().loading, false);
+  resolveDuring({ supports_images: false });
+  await during;
+  assert.equal(store.getState().settings.supports_images, true);
+  assert.equal(store.getState().loading, false);
+});
+
+test("failed settings save clears a superseded initial load", async () => {
+  const { createSettingsStore } = await server.ssrLoadModule("/src/features/settings/settingsStore.ts");
+  let resolveOld;
+  const store = createSettingsStore({
+    get: () => new Promise((resolve) => { resolveOld = resolve; }),
+    save: async () => { throw new Error("save failed"); },
+  }, "text model");
+  const old = store.getState().load();
+  await assert.rejects(store.getState().save(), /save failed/);
+  assert.equal(store.getState().loading, false);
+  resolveOld({ supports_images: false });
+  await old;
+  assert.equal(store.getState().settings, null);
+  assert.equal(store.getState().loading, false);
+  assert.equal(store.getState().saving, false);
+});
+
+test("failed post-save settings read does not strand loading", async () => {
+  const { createSettingsStore } = await server.ssrLoadModule("/src/features/settings/settingsStore.ts");
+  let resolveOld;
+  let gets = 0;
+  const store = createSettingsStore({
+    get: () => gets++ === 0 ? new Promise((resolve) => { resolveOld = resolve; }) : Promise.reject(new Error("read failed")),
+    save: async () => {},
+  }, "text model");
+  const old = store.getState().load();
+  await assert.rejects(store.getState().save(), /read failed/);
+  resolveOld({ supports_images: false });
+  await old;
+  assert.equal(store.getState().settings, null);
+  assert.equal(store.getState().loading, false);
   assert.equal(store.getState().saving, false);
 });
 

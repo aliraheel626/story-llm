@@ -39,10 +39,11 @@ export function createSettingsStore<T, Args extends unknown[]>(
     },
     save: async (...args) => {
       ++requestVersion;
-      set({ saving: true });
+      set({ saving: true, loading: false });
       try {
         await api.save(...args);
         const version = ++requestVersion;
+        set({ loading: false });
         const settings = await api.get();
         if (version === requestVersion) set({ settings, saving: false });
         else set({ saving: false });
