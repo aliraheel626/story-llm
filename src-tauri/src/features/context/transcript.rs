@@ -128,15 +128,7 @@ fn history_from_entries_with_settings(
             continue;
         }
         if let Some(visible) = active.get(&entry.id) {
-            if visible.kind != kind::NARRATION
-                || settings.includes("narration")
-                || (settings.includes("narration.thoughts")
-                    && visible
-                        .payload
-                        .get("thoughts")
-                        .and_then(|value| value.as_str())
-                        .is_some_and(|thoughts| !thoughts.is_empty()))
-            {
+            if visible.kind != kind::NARRATION || settings.includes("narration") {
                 let mode = visible
                     .payload
                     .get("input_mode")
@@ -159,11 +151,7 @@ fn history_from_entries_with_settings(
                     } else {
                         HistoryRole::Narrator
                     },
-                    content: if visible.kind == kind::NARRATION && !settings.includes("narration") {
-                        String::new()
-                    } else {
-                        content
-                    },
+                    content,
                     marker: HistoryTurnMarker::Ledger,
                     images: Vec::new(),
                     reasoning: (visible.kind == kind::NARRATION
@@ -761,20 +749,21 @@ mod tests {
         settings.include.insert("record.tool_call".into(), true);
         let history = load(&settings);
         assert_eq!(history[0].content, "<see/>");
-        assert_eq!(history[1].content, "");
-        assert_eq!(history[1].reasoning.as_deref(), Some("hidden thought"));
-        assert!(history[2].content.contains("image_generated]\nprompt"));
+        assert!(!history.iter().any(|turn| turn.role == HistoryRole::Narrator));
+        assert!(history[1].content.contains("image_generated]\nprompt"));
         assert_eq!(
-            history[3].content,
+            history[2].content,
             "[Authoritative story event: tool_call]\nfind({\"name\":\"é\"}) → [1]"
         );
         assert!(!history
             .iter()
             .any(|turn| turn.content.contains("bootstrap")));
+        settings.include.insert("narration".into(), true);
+        let history = load(&settings);
+        assert_eq!(history[1].content, "scene");
+        assert_eq!(history[1].reasoning.as_deref(), Some("hidden thought"));
         settings.include.insert("narration.thoughts".into(), false);
-        assert!(!load(&settings)
-            .iter()
-            .any(|turn| turn.role == HistoryRole::Narrator));
+        assert!(load(&settings)[1].reasoning.is_none());
     }
 
     #[test]
