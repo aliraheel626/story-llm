@@ -103,6 +103,7 @@ globalThis.__storyTestInvoke = async (command, args = {}) => {
       }
       return;
     }
+    case "preview_story_context": return { system: "test system", messages: [], injected: "", images_unsupported: false };
     case "list_ledger_entries": {
       const snapshot = {
         visible: entries.get(args.storyId) ?? [], hidden: hiddenEntries.get(args.storyId) ?? [],
@@ -432,6 +433,38 @@ test("a failed save restores previous items and shows the error", async () => {
   assert.equal(contextStore.getState().stories[storyId].injection.entities, "all");
   assert.match(contextStore.getState().stories[storyId].contextError, /context failed/);
   assert.match(contextStore.getState().stories[storyId].injectionError, /injection failed/);
+});
+
+test("preview is not loaded while an injection save is in flight", async () => {
+  const storyId = "preview-injection-save";
+  await Promise.all([contextStore.getState().loadContext(storyId), contextStore.getState().loadInjection(storyId)]);
+  let releaseSave;
+  nextInjectionSave = new Promise((resolve) => { releaseSave = resolve; });
+  const save = contextStore.getState().saveInjection(storyId, { entities: "none" });
+  await contextStore.getState().loadPreview(storyId);
+  assert.equal(calls.filter(({ command, args }) => command === "preview_story_context" && args.storyId === storyId).length, 0);
+  assert.equal(contextStore.getState().stories[storyId].preview, null);
+  releaseSave();
+  await save;
+  await contextStore.getState().loadPreview(storyId);
+  assert.equal(calls.filter(({ command, args }) => command === "preview_story_context" && args.storyId === storyId).length, 1);
+  assert.equal(contextStore.getState().stories[storyId].preview.system, "test system");
+});
+
+test("preview is not loaded while a context save is in flight", async () => {
+  const storyId = "preview-context-save";
+  await contextStore.getState().loadContext(storyId);
+  let releaseSave;
+  nextContextSave = new Promise((resolve) => { releaseSave = resolve; });
+  const save = contextStore.getState().toggleContext(storyId, "images", true);
+  await contextStore.getState().loadPreview(storyId);
+  assert.equal(calls.filter(({ command, args }) => command === "preview_story_context" && args.storyId === storyId).length, 0);
+  assert.equal(contextStore.getState().stories[storyId].preview, null);
+  releaseSave();
+  await save;
+  await contextStore.getState().loadPreview(storyId);
+  assert.equal(calls.filter(({ command, args }) => command === "preview_story_context" && args.storyId === storyId).length, 1);
+  assert.equal(contextStore.getState().stories[storyId].preview.system, "test system");
 });
 
 test("failed last turns render a status beside Retry", async () => {

@@ -4,15 +4,21 @@ import { contextApi } from "./api";
 
 interface StoryContextState {
   items: ContextItem[] | null; contextLoading: boolean; contextSaving: boolean; contextError: string | null;
-  injection: InjectionSettings | null; injectionLoading: boolean; injectionSaving: boolean; injectionError: string | null;
+  injection: InjectionSettings | null;
+  injectionLoading: boolean;
+  injectionSaving: boolean;
+  injectionError: string | null;
   noteDraft: string; preview: ContextPreview | null; previewLoading: boolean; previewError: string | null;
 }
 
 interface ContextStore {
   stories: Record<string, StoryContextState>;
-  loadContext: (storyId: string) => Promise<void>; toggleContext: (storyId: string, key: string, enabled: boolean) => Promise<void>;
+  loadContext: (storyId: string) => Promise<void>;
+  toggleContext: (storyId: string, key: string, enabled: boolean) => Promise<void>;
   loadInjection: (storyId: string) => Promise<void>; setNoteDraft: (storyId: string, text: string) => void;
-  saveInjection: (storyId: string, patch: Partial<InjectionSettings>) => Promise<void>; saveNote: (storyId: string) => Promise<void>; loadPreview: (storyId: string) => Promise<void>;
+  saveInjection: (storyId: string, patch: Partial<InjectionSettings>) => Promise<void>;
+  saveNote: (storyId: string) => Promise<void>;
+  loadPreview: (storyId: string) => Promise<void>;
 }
 const empty = (): StoryContextState => ({
   items: null, contextLoading: false, contextSaving: false, contextError: null,
@@ -21,10 +27,12 @@ const empty = (): StoryContextState => ({
 });
 
 export const useContextStore = create<ContextStore>((set, get) => {
-  const patch = (storyId: string, change: Partial<StoryContextState>) => set((state) => ({ stories: { ...state.stories, [storyId]: { ...(state.stories[storyId] ?? empty()), ...change } } }));
+  const patch = (storyId: string, change: Partial<StoryContextState>) =>
+    set((state) => ({ stories: { ...state.stories, [storyId]: { ...(state.stories[storyId] ?? empty()), ...change } } }));
   const previewVersions = new Map<string, number>();
   const invalidatePreview = (storyId: string) => {
-    previewVersions.set(storyId, (previewVersions.get(storyId) ?? 0) + 1); patch(storyId, { preview: null, previewLoading: false, previewError: null });
+    previewVersions.set(storyId, (previewVersions.get(storyId) ?? 0) + 1);
+    patch(storyId, { preview: null, previewLoading: false, previewError: null });
   };
   const persistInjection = async (storyId: string, settings: InjectionSettings, note?: string) => {
     const current = get().stories[storyId];
@@ -36,7 +44,9 @@ export const useContextStore = create<ContextStore>((set, get) => {
       await contextApi.saveInjection(storyId, settings);
       const confirmed = { ...settings, author_note: settings.author_note.trim() };
       patch(storyId, { injection: confirmed });
-      if (note !== undefined && get().stories[storyId]?.noteDraft === note) patch(storyId, { noteDraft: confirmed.author_note });
+      if (note !== undefined && get().stories[storyId]?.noteDraft === note) {
+        patch(storyId, { noteDraft: confirmed.author_note });
+      }
     } catch (error) { patch(storyId, { injection: previous, injectionError: String(error) }); throw error; }
     finally { patch(storyId, { injectionSaving: false }); }
   };
@@ -86,7 +96,8 @@ export const useContextStore = create<ContextStore>((set, get) => {
       }
     },
     loadPreview: async (storyId) => {
-      if (!get().stories[storyId]?.items) return;
+      const current = get().stories[storyId];
+      if (!current?.items || current.contextSaving || current.injectionSaving) return;
       const version = (previewVersions.get(storyId) ?? 0) + 1;
       previewVersions.set(storyId, version);
       patch(storyId, { previewLoading: true, previewError: null, preview: null });

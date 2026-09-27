@@ -58,7 +58,7 @@ export function ContextPanel() {
       {state.items.some((item) => item.key === "images" && item.enabled) && model?.supports_images === false &&
         <p className="text-muted">Your text model doesn't accept images, so this has no effect.</p>}
       {state.contextError && <p role="alert" className="text-danger">{state.contextError}</p>}
-      <button onClick={() => loadPreview(storyId)} disabled={state.contextSaving || state.previewLoading}
+      <button onClick={() => loadPreview(storyId)} disabled={state.contextSaving || state.injectionSaving || state.previewLoading}
         className="rounded bg-accent px-2 py-1.5 font-medium text-bg hover:bg-accent-hover disabled:opacity-40 transition-colors">
         {state.previewLoading ? "Loading..." : "Preview next request"}
       </button>
