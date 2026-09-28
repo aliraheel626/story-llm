@@ -139,6 +139,7 @@ where
             let stream_id_for_chunks = sid.clone();
             let (visible, thoughts, tool_calls) =
                 ai::stream_narration(req, move |chunk| match chunk {
+                    ai::NarratorChunk::Usage(_) => {}
                     NarratorChunk::Text(text) => {
                         let _ = app_for_chunks.emit(
                             "narration-delta",

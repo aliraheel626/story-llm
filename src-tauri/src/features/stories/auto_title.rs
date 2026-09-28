@@ -107,7 +107,7 @@ pub async fn title_in_turn(app: &AppHandle, settings_pool: &Pool, turn: &TurnTx)
         .collect();
 
     let prompt = format!("The story opens:\n\n{opening_text}\n\nGive it a title.");
-    let generated = tokio::time::timeout(
+    let (generated, _usage) = tokio::time::timeout(
         Duration::from_secs(30),
         ai::prompt_typed::<GeneratedTitle>(&config, prompts::TITLE_SYSTEM_PROMPT, prompt),
     )

@@ -42,7 +42,7 @@ impl Compactor for NarratorCompactor {
                 prompt,
             )
             .await
-            .map(SummaryArtifact)
+            .map(|(summary, _usage)| SummaryArtifact(summary))
             .map_err(|e| MemoryError::Policy(e.to_string()))
         })
     }

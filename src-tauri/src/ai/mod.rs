@@ -62,6 +62,20 @@ pub struct CallUsage {
     pub cost_usd: Option<f64>,
 }
 
+fn call_usage(call: &rig_agent::agent::CompletionCall) -> CallUsage {
+    CallUsage {
+        response_id: call.response_id.clone(),
+        input_tokens: call.usage.input_tokens,
+        output_tokens: call.usage.output_tokens,
+        cached_input_tokens: call.usage.cached_input_tokens,
+        cache_write_tokens: call.usage.cache_creation_input_tokens,
+        cost_usd: call
+            .raw
+            .pointer("/usage/cost")
+            .and_then(serde_json::Value::as_f64),
+    }
+}
+
 /// One turn of prior conversation, already resolved from the persisted ledger.
 #[derive(Debug, Clone)]
 pub struct HistoryTurn {
@@ -152,6 +166,8 @@ pub enum ToolActivityPhase {
 pub enum NarratorChunk {
     Text(String),
     Reasoning(String),
+    #[allow(dead_code)] // Recorded by the turn in S3.
+    Usage(CallUsage),
     ToolActivity {
         call_id: String,
         tool_name: String,
@@ -439,6 +455,15 @@ where
                 thoughts.push_str(&reasoning);
                 on_chunk(NarratorChunk::Reasoning(reasoning));
             }
+            Ok(MultiTurnStreamItem::CompletionCall(call)) => {
+                let tail = text_stripper.finalize();
+                if !tail.is_empty() {
+                    visible.push_str(&tail);
+                    on_chunk(NarratorChunk::Text(tail));
+                }
+                text_stripper = ReasoningStripper::new();
+                on_chunk(NarratorChunk::Usage(call_usage(&call)));
+            }
             Ok(_) => {}
             Err(e) if is_expected_tool_stop(stop_reason, &e) => break,
             Err(e) => {
@@ -467,14 +492,21 @@ pub async fn prompt_typed<T>(
     config: &TextModelConfig,
     preamble: &str,
     prompt: String,
-) -> AppResult<T>
+) -> AppResult<(T, Vec<CallUsage>)>
 where
     T: schemars::JsonSchema + serde::de::DeserializeOwned + Send + 'static,
 {
     let agent = build_agent(config, preamble, Vec::new(), None)?;
     agent
         .prompt_typed::<T>(prompt)
+        .extended_details()
         .await
+        .map(|response| {
+            (
+                response.output,
+                response.completion_calls.iter().map(call_usage).collect(),
+            )
+        })
         .map_err(|e| AppError::Other(format!("structured prompt failed: {e}")))
 }
 
@@ -562,6 +594,100 @@ fn build_agent(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rig_agent::agent::CompletionCall;
+    use rig_core::completion::{message::Text, Usage};
+
+    fn sample_call(index: usize, raw: serde_json::Value) -> CompletionCall {
+        CompletionCall::new(
+            index,
+            Usage {
+                input_tokens: 1000,
+                output_tokens: 200,
+                cached_input_tokens: 600,
+                cache_creation_input_tokens: 100,
+                ..Usage::new()
+            },
+        )
+        .with_raw(raw)
+    }
+
+    #[test]
+    fn openrouter_cost_survives_rigs_wire_type() {
+        let wire: openai::completion::streaming::StreamingCompletionResponse<openrouter::Usage> =
+            serde_json::from_value(serde_json::json!({
+                "usage": {"prompt_tokens":1000,"completion_tokens":200,"total_tokens":1200,
+                    "cost":0.0123,"prompt_tokens_details":{"cached_tokens":600,"cache_write_tokens":100}}
+            })).unwrap();
+        let call = sample_call(0, serde_json::to_value(wire).unwrap());
+        let usage = call_usage(&call);
+        assert_eq!(usage.cost_usd, Some(0.0123));
+        assert_eq!(
+            (
+                usage.input_tokens,
+                usage.output_tokens,
+                usage.cached_input_tokens,
+                usage.cache_write_tokens
+            ),
+            (1000, 200, 600, 100)
+        );
+    }
+
+    #[test]
+    fn openai_compatible_call_has_no_cost() {
+        let call = sample_call(
+            0,
+            serde_json::json!({"usage": {"prompt_tokens":10,"completion_tokens":2,"total_tokens":12}}),
+        );
+        assert_eq!(call_usage(&call).cost_usd, None);
+    }
+
+    #[tokio::test]
+    async fn completion_calls_reach_on_chunk() {
+        let first = sample_call(0, serde_json::json!({"usage":{"cost":0.01}}));
+        let second = sample_call(1, serde_json::json!({"usage":{"cost":0.02}}));
+        let stream: rig_agent::agent::StreamingResult = Box::pin(futures::stream::iter(vec![
+            Ok(MultiTurnStreamItem::CompletionCall(first)),
+            Ok(MultiTurnStreamItem::StreamAssistantItem(
+                StreamedAssistantContent::Text(Text::new("x")),
+            )),
+            Ok(MultiTurnStreamItem::CompletionCall(second)),
+        ]));
+        let mut chunks = Vec::new();
+        consume_narration_stream(stream, false, None, &Mutex::new(Vec::new()), |chunk| {
+            chunks.push(chunk)
+        })
+        .await
+        .unwrap();
+        assert!(
+            matches!(chunks.as_slice(), [NarratorChunk::Usage(a), NarratorChunk::Text(text), NarratorChunk::Usage(b)] if a.cost_usd == Some(0.01) && text == "x" && b.cost_usd == Some(0.02))
+        );
+    }
+
+    #[tokio::test]
+    async fn usage_before_a_stream_error_is_still_reported() {
+        let error =
+            rig_agent::agent::StreamingError::Prompt(Box::new(PromptError::PromptCancelled {
+                chat_history: Vec::new(),
+                reason: "unexpected".into(),
+            }));
+        let stream: rig_agent::agent::StreamingResult = Box::pin(futures::stream::iter(vec![
+            Ok(MultiTurnStreamItem::CompletionCall(sample_call(
+                0,
+                serde_json::json!({"usage":{"cost":0.01}}),
+            ))),
+            Err(error),
+        ]));
+        let mut chunks = Vec::new();
+        assert!(
+            consume_narration_stream(stream, false, None, &Mutex::new(Vec::new()), |chunk| chunks
+                .push(chunk))
+            .await
+            .is_err()
+        );
+        assert!(
+            matches!(chunks.as_slice(), [NarratorChunk::Usage(usage)] if usage.cost_usd == Some(0.01))
+        );
+    }
 
     fn turn(role: HistoryRole) -> HistoryTurn {
         HistoryTurn {
