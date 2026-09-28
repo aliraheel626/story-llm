@@ -4,13 +4,14 @@ use std::time::Duration;
 use tauri::AppHandle;
 
 use super::repository::DEFAULT_STORY_TITLE;
-use crate::ai;
+use crate::ai::{self, CallUsage};
 use crate::features::{
     ledger::{
         model::kind as ledger_kind, query as ledger_query, turns,
     },
     settings as global_settings,
     stats::model::{UsageKind, UsageRecord},
+    stats::repository::{record_late, LATE_REPLY_LIMIT},
     turn::TurnTx,
 };
 use crate::prompts;
@@ -108,12 +109,36 @@ pub async fn title_in_turn(app: &AppHandle, settings_pool: &Pool, turn: &TurnTx)
         .collect();
 
     let prompt = format!("The story opens:\n\n{opening_text}\n\nGive it a title.");
-    let (generated, usage) = tokio::time::timeout(
-        Duration::from_secs(30),
-        ai::prompt_typed::<GeneratedTitle>(&config, prompts::TITLE_SYSTEM_PROMPT, prompt),
-    )
-    .await
-    .ok()?;
+    let mut request = tauri::async_runtime::spawn({
+        let config = config.clone();
+        async move {
+            ai::prompt_typed::<GeneratedTitle>(&config, prompts::TITLE_SYSTEM_PROMPT, prompt).await
+        }
+    });
+    let (generated, usage) = match tokio::time::timeout(Duration::from_secs(30), &mut request).await
+    {
+        Ok(joined) => joined.ok()?,
+        Err(_) => {
+            let (pool, story_id, config) =
+                (settings_pool.clone(), story_id.to_string(), config.clone());
+            tauri::async_runtime::spawn(async move {
+                let usage = match tokio::time::timeout(LATE_REPLY_LIMIT, &mut request).await {
+                    Ok(Ok((_, usage))) => usage,
+                    Ok(Err(_)) => Vec::new(),
+                    Err(_) => vec![CallUsage::default()],
+                };
+                for call in usage {
+                    record_late(
+                        pool.clone(),
+                        story_id.clone(),
+                        UsageRecord::text(UsageKind::Title, &config, call),
+                    )
+                    .await;
+                }
+            });
+            return None;
+        }
+    };
     for call in usage {
         turn.record_usage(UsageRecord::text(UsageKind::Title, &config, call));
     }

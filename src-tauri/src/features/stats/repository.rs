@@ -1,10 +1,27 @@
 use chrono::Utc;
 use rusqlite::{params, Connection};
+use std::time::Duration;
 use uuid::Uuid;
 
+use crate::shared::db::{self, Pool};
 use crate::shared::error::AppResult;
 
 use super::model::{StoryStats, UsageRecord};
+
+pub const LATE_REPLY_LIMIT: Duration = Duration::from_secs(600);
+
+/// Writes usage that arrived after its turn ended (a request that outlived
+/// its timeout). The turn's transaction is gone, so this uses the pool.
+pub async fn record_late(pool: Pool, story_id: String, record: UsageRecord) {
+    let result = db::blocking(move || {
+        let conn = pool.get()?;
+        insert(&conn, &story_id, &record)
+    })
+    .await;
+    if let Err(error) = result {
+        log::warn!("could not record late usage: {error}");
+    }
+}
 
 pub fn insert(conn: &Connection, story_id: &str, record: &UsageRecord) -> AppResult<()> {
     let usage = &record.usage;
@@ -67,6 +84,7 @@ mod tests {
     use super::*;
     use crate::ai::{CallUsage, TextModelConfig};
     use crate::features::stats::model::UsageKind;
+    use crate::features::turn::{TurnGate, TurnTx};
     use crate::shared::{db, test_support};
 
     fn text(
@@ -99,6 +117,46 @@ mod tests {
 
     fn near(actual: f64, expected: f64) {
         assert!((actual - expected).abs() < 1e-9, "{actual} != {expected}");
+    }
+
+    #[tokio::test]
+    async fn record_late_writes_through_the_pool() {
+        let pool = db::test_pool();
+        test_support::story(&pool.get().unwrap(), "s");
+        record_late(
+            pool.clone(),
+            "s".into(),
+            UsageRecord::image("m", Some(0.02)),
+        )
+        .await;
+        let conn = pool.get().unwrap();
+        let stats = story_stats(&conn, "s").unwrap();
+        near(stats.image_cost_usd, 0.02);
+        assert_eq!(stats.image_count, 1);
+    }
+
+    #[tokio::test]
+    async fn record_late_waits_for_an_open_turn_without_failing() {
+        let pool = db::test_pool();
+        let conn = pool.get().unwrap();
+        test_support::story(&conn, "s");
+        test_support::story(&conn, "other");
+        drop(conn);
+        let gate = TurnGate::default();
+        let turn = TurnTx::begin(&pool, &gate, "other").unwrap();
+        let mut late = tokio::spawn(record_late(
+            pool.clone(),
+            "s".into(),
+            UsageRecord::image("m", Some(0.02)),
+        ));
+        tokio::task::yield_now().await;
+        assert!(tokio::time::timeout(Duration::from_millis(75), &mut late)
+            .await
+            .is_err());
+        turn.commit().await.unwrap();
+        late.await.unwrap();
+        let conn = pool.get().unwrap();
+        near(story_stats(&conn, "s").unwrap().image_cost_usd, 0.02);
     }
 
     #[test]

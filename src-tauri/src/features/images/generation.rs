@@ -8,6 +8,7 @@ use crate::features::ledger::{
 };
 use crate::features::settings;
 use crate::features::stats::model::UsageRecord;
+use crate::features::stats::repository::{record_late, LATE_REPLY_LIMIT};
 use crate::features::turn::TurnTx;
 use crate::shared::db::Pool;
 use crate::shared::error::{AppError, AppResult};
@@ -84,24 +85,40 @@ async fn generate_from_description(
     }
     let api_key = settings::read_api_key(app, "openrouter")?;
 
-    let characters = turn
+    let (story_id, characters) = turn
         .with(|conn| {
             let story_id = ledger_repository::get_entry(conn, &target.entry_id)?.story_id;
-            characters_by_ids(conn, &story_id, character_ids)
+            let characters = characters_by_ids(conn, &story_id, character_ids)?;
+            Ok((story_id, characters))
         })
         .await?;
     let matched: Vec<&(String, String)> = characters.iter().collect();
     let prompt = compose_image_prompt(&settings.style, description, &matched);
-    let generated = match timeout(
-        IMAGE_TIMEOUT,
-        openrouter::generate_image(&api_key, &settings.model, &prompt),
-    )
-    .await
-    {
-        Ok(result) => result?,
+    let mut request = tauri::async_runtime::spawn({
+        let (key, model, prompt) = (api_key.clone(), settings.model.clone(), prompt.clone());
+        async move { openrouter::generate_image(&key, &model, &prompt).await }
+    });
+    let generated = match timeout(IMAGE_TIMEOUT, &mut request).await {
+        Ok(joined) => joined.map_err(|e| AppError::Other(format!("image task failed: {e}")))??,
         Err(_) => {
-            // The provider may finish and bill a request after our timeout.
-            turn.record_usage(UsageRecord::image(&settings.model, None));
+            let pool = settings_pool.clone();
+            let model = settings.model.clone();
+            tauri::async_runtime::spawn(async move {
+                match timeout(LATE_REPLY_LIMIT, &mut request).await {
+                    Ok(Ok(Ok(generated))) => {
+                        record_late(
+                            pool,
+                            story_id,
+                            UsageRecord::image(&model, generated.cost_usd),
+                        )
+                        .await;
+                    }
+                    Err(_) => {
+                        record_late(pool, story_id, UsageRecord::image(&model, None)).await;
+                    }
+                    Ok(Ok(Err(_)) | Err(_)) => {}
+                }
+            });
             return Err(AppError::Other("image generation timed out".into()));
         }
     };
