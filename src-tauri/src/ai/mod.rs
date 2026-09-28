@@ -838,6 +838,38 @@ mod tests {
         assert_eq!(usage[0].cost_usd, Some(0.01));
     }
 
+    #[tokio::test]
+    async fn each_call_gets_a_fresh_reasoning_filter() {
+        let stream: rig_agent::agent::StreamingResult = Box::pin(futures::stream::iter(vec![
+            Ok(MultiTurnStreamItem::StreamAssistantItem(
+                StreamedAssistantContent::Text(Text::new("Hello <think>never closed")),
+            )),
+            Ok(MultiTurnStreamItem::CompletionCall(sample_call(
+                0,
+                serde_json::json!({"usage":{"cost":0.01}}),
+            ))),
+            Ok(MultiTurnStreamItem::StreamAssistantItem(
+                StreamedAssistantContent::Text(Text::new(" world")),
+            )),
+        ]));
+        let mut chunks = Vec::new();
+        let (visible, _) =
+            consume_narration_stream(stream, false, None, &Mutex::new(Vec::new()), |chunk| {
+                chunks.push(chunk)
+            })
+            .await
+            .unwrap();
+        let streamed: String = chunks
+            .iter()
+            .filter_map(|chunk| match chunk {
+                NarratorChunk::Text(text) => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(visible, "Hello  world");
+        assert_eq!(streamed, visible);
+    }
+
     fn turn(role: HistoryRole) -> HistoryTurn {
         HistoryTurn {
             entry_id: None,

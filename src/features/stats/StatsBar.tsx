@@ -19,17 +19,17 @@ export function StatsBar({ storyId }: { storyId: string }) {
     : totalTooltip;
 
   return (
-    <div className="flex shrink-0 items-center justify-end gap-2 overflow-x-auto whitespace-nowrap border-b border-border px-3 py-3 text-xs text-muted tabular-nums sm:gap-4 sm:px-6">
+    <div className="flex h-12 shrink-0 items-center justify-end gap-2 overflow-x-auto whitespace-nowrap border-b border-border px-3 text-xs text-muted tabular-nums sm:gap-4 sm:px-6">
       <span title="Narration, context summaries and titles">Text {stats ? formatUsd(stats.text_cost_usd) : "—"}</span>
       <span title={stats ? `${stats.image_count} scene images` : "Scene images"}>
         Images {stats ? `${formatUsd(stats.image_cost_usd)} (${stats.image_count})` : "—"}
       </span>
-      <span className="hidden md:inline" title={stats
+      <span title={stats
         ? `${stats.cached_input_tokens.toLocaleString()} of ${stats.input_tokens.toLocaleString()} input tokens (${cachedPercent}%) were read from the provider's cache`
         : "Cached input tokens"}>
         Cached input {stats ? formatTokens(stats.cached_input_tokens) : "—"}
       </span>
-      <span className="hidden md:inline" title="Input tokens written to the provider's cache">
+      <span title="Input tokens written to the provider's cache">
         Cache write {stats ? formatTokens(stats.cache_write_tokens) : "—"}
       </span>
       <span className="font-medium text-text" title={totalTitle}>
