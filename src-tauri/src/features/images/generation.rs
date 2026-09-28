@@ -7,6 +7,7 @@ use crate::features::ledger::{
     attachments, model::kind as ledger_kind, repository as ledger_repository,
 };
 use crate::features::settings;
+use crate::features::stats::model::UsageRecord;
 use crate::features::turn::TurnTx;
 use crate::shared::db::Pool;
 use crate::shared::error::{AppError, AppResult};
@@ -91,12 +92,20 @@ async fn generate_from_description(
         .await?;
     let matched: Vec<&(String, String)> = characters.iter().collect();
     let prompt = compose_image_prompt(&settings.style, description, &matched);
-    let generated = timeout(
+    let generated = match timeout(
         IMAGE_TIMEOUT,
         openrouter::generate_image(&api_key, &settings.model, &prompt),
     )
     .await
-    .map_err(|_| AppError::Other("image generation timed out".into()))??;
+    {
+        Ok(result) => result?,
+        Err(_) => {
+            // The provider may finish and bill a request after our timeout.
+            turn.record_usage(UsageRecord::image(&settings.model, None));
+            return Err(AppError::Other("image generation timed out".into()));
+        }
+    };
+    turn.record_usage(UsageRecord::image(&settings.model, generated.cost_usd));
     turn.with_savepoint(|conn| {
         persist_and_store_image(conn, target, description, prompt, generated)
     })
@@ -226,6 +235,7 @@ mod tests {
         let generated = openrouter::GeneratedImage {
             bytes: vec![1, 2, 3],
             media_type: "image/webp".into(),
+            cost_usd: None,
         };
         let expected_bytes = generated.bytes.clone();
         let image = turn
@@ -305,6 +315,7 @@ mod tests {
         let generated = openrouter::GeneratedImage {
             bytes: vec![1, 2, 3],
             media_type: "image/png".into(),
+            cost_usd: None,
         };
 
         assert!(turn

@@ -7,7 +7,6 @@ pub enum UsageKind {
     Narration,
     Summary,
     Title,
-    #[allow(dead_code)] // Image generation is wired in S4.
     Image,
 }
 
@@ -40,7 +39,6 @@ impl UsageRecord {
         }
     }
 
-    #[allow(dead_code)] // Image generation is wired in S4.
     pub fn image(model: &str, cost_usd: Option<f64>) -> Self {
         Self {
             kind: UsageKind::Image,

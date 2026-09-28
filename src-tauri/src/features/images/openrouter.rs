@@ -14,6 +14,7 @@ pub const DEFAULT_IMAGE_MODEL: &str = "google/gemini-3.1-flash-image-preview";
 pub struct GeneratedImage {
     pub bytes: Vec<u8>,
     pub media_type: String,
+    pub cost_usd: Option<f64>,
 }
 
 /// No `resolution` is sent: the model's own default is its lowest supported
@@ -29,7 +30,15 @@ struct ImageRequestBody<'a> {
 struct ImageResponseBody {
     data: Option<Vec<ImageDataEntry>>,
     #[serde(default)]
+    usage: Option<ImageUsage>,
+    #[serde(default)]
     error: Option<ImageResponseError>,
+}
+
+#[derive(Deserialize)]
+struct ImageUsage {
+    #[serde(default)]
+    cost: Option<f64>,
 }
 
 #[derive(Deserialize)]
@@ -88,5 +97,29 @@ pub async fn generate_image(api_key: &str, model: &str, prompt: &str) -> AppResu
         .map_err(|e| AppError::Other(format!("failed to decode image data: {e}")))?;
     let media_type = entry.media_type.unwrap_or_else(|| "image/png".to_string());
 
-    Ok(GeneratedImage { bytes, media_type })
+    Ok(GeneratedImage {
+        bytes,
+        media_type,
+        cost_usd: body.usage.and_then(|usage| usage.cost),
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn image_response_cost_is_optional() {
+        let with_usage: ImageResponseBody = serde_json::from_value(serde_json::json!({
+            "created":1,"data":[{"b64_json":"iVBORw==","media_type":"image/png"}],
+            "usage":{"prompt_tokens":10,"completion_tokens":1290,"total_tokens":1300,"cost":0.039}
+        }))
+        .unwrap();
+        assert_eq!(with_usage.usage.and_then(|usage| usage.cost), Some(0.039));
+        let without_usage: ImageResponseBody = serde_json::from_value(serde_json::json!({
+            "created":1,"data":[{"b64_json":"iVBORw==","media_type":"image/png"}]
+        }))
+        .unwrap();
+        assert!(without_usage.usage.is_none());
+    }
 }
