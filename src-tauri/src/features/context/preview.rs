@@ -3,13 +3,13 @@
 use serde::Serialize;
 
 use crate::ai::{HistoryRole, HistoryTurn, HistoryTurnMarker, TextModelConfig};
+use crate::features::{ledger::history::{self, ImagePolicy}, stories::settings};
 use crate::prompts;
 use crate::shared::error::AppResult;
 
 use super::{
     build_message_context, combine_context_blocks,
     injection::{Inputs, ToolDescription},
-    load_transcript, settings, ImagePolicy,
 };
 
 #[derive(Serialize, Debug, PartialEq, Eq)]
@@ -34,7 +34,7 @@ pub fn build_preview(
     model: &TextModelConfig,
     tools: &[ToolDescription<'_>],
 ) -> AppResult<ContextPreview> {
-    let settings = settings::read_context_settings(conn, story_id)?;
+    let settings = settings::read_transcript_settings(conn, story_id)?;
     let injection = settings::read_injection_settings(conn, story_id)?;
     let images_unsupported = settings.includes("images") && !model.supports_images;
     let policy = if model.supports_images {
@@ -42,7 +42,7 @@ pub fn build_preview(
     } else {
         ImagePolicy::Unsupported
     };
-    let mut history = load_transcript(conn, story_id, &settings, policy)?;
+    let mut history = history::for_model(conn, story_id, &settings, policy)?;
     history.push(HistoryTurn {
         entry_id: None,
         role: HistoryRole::Player,
@@ -208,9 +208,9 @@ mod tests {
         for supports_images in [true, false] {
             let config = config(supports_images);
             let preview = build_preview(&conn, "s", &config, &tools()).unwrap();
-            let settings = settings::read_context_settings(&conn, "s").unwrap();
+            let settings = settings::read_transcript_settings(&conn, "s").unwrap();
             let injection = settings::read_injection_settings(&conn, "s").unwrap();
-            let mut history = load_transcript(
+            let mut history = history::for_model(
                 &conn,
                 "s",
                 &settings,

@@ -111,7 +111,7 @@ pub async fn prepare(inputs: NarratorInputs<'_>) -> AppResult<Prepared> {
     let context = inputs
         .turn
         .with(|conn| {
-            let injection = context::settings::read_injection_settings(conn, inputs.story_id)?;
+            let injection = stories::settings::read_injection_settings(conn, inputs.story_id)?;
             context::build_message_context(&context::injection::Inputs {
                 conn,
                 story_id: inputs.story_id,

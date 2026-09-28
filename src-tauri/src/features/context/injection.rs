@@ -8,13 +8,11 @@ use crate::features::entities::{
     model::{Entity, EntityAttributeValue},
 };
 use crate::features::ledger::{query, repository};
+use crate::features::stories::settings::{EntityInjection, InjectionSettings};
 use crate::prompts;
 use crate::shared::error::AppResult;
 
-use super::{
-    raw_tail_boundary,
-    settings::{EntityInjection, InjectionSettings},
-};
+use super::raw_tail_boundary;
 
 pub(crate) struct ToolDescription<'a> {
     pub name: &'a str,
@@ -267,7 +265,7 @@ mod tests {
         let turn = TurnTx::begin(&pool, &Default::default(), "s").unwrap();
         let plan = turn
             .with(|conn| {
-                let injection = super::super::settings::read_injection_settings(conn, "s")?;
+                let injection = crate::features::stories::settings::read_injection_settings(conn, "s")?;
                 build_message_context(&Inputs {
                     conn,
                     story_id: "s",
@@ -311,7 +309,7 @@ mod tests {
         let history = vec![history_turn];
         let plan = turn
             .with(|conn| {
-                let injection = super::super::settings::read_injection_settings(conn, "s")?;
+                let injection = crate::features::stories::settings::read_injection_settings(conn, "s")?;
                 build_message_context(&Inputs {
                     conn,
                     story_id: "s",
@@ -452,7 +450,7 @@ mod tests {
         let (pool, history_turn) = story_with_entity_query();
         let turn = TurnTx::begin(&pool, &Default::default(), "s").unwrap();
         turn.with(|conn| {
-            let injection = super::super::settings::read_injection_settings(conn, "s")?;
+            let injection = crate::features::stories::settings::read_injection_settings(conn, "s")?;
             let tools = [ToolDescription {
                 name: "get_entities",
                 instruction: Some("Look up characters."),

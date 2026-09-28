@@ -2,6 +2,8 @@ pub(crate) mod attachments;
 mod commands;
 mod edit;
 pub(crate) mod erase;
+pub mod filter;
+pub mod history;
 pub mod model;
 pub mod query;
 pub mod reducer;

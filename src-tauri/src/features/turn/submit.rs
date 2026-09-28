@@ -4,9 +4,8 @@ use tauri::{AppHandle, Emitter};
 use uuid::Uuid;
 
 use crate::features::{
-    context::{load_transcript, settings::read_context_settings, ImagePolicy},
     images,
-    ledger::{model::LedgerEntry, query as ledger_query, repository as ledger_repository, turns},
+    ledger::{history::{self, ImagePolicy}, model::LedgerEntry, query as ledger_query, repository as ledger_repository, turns},
     narrator, settings, stories,
     turn::{TurnGate, TurnTx},
 };
@@ -91,11 +90,11 @@ async fn prepare_and_spawn(
                 None,
                 Some(&turn_id),
             )?;
-            let context_settings = read_context_settings(conn, &story_id)?;
-            let mut history = load_transcript(
+            let transcript_settings = stories::settings::read_transcript_settings(conn, &story_id)?;
+            let mut history = history::for_model(
                 conn,
                 &story_id,
-                &context_settings,
+                &transcript_settings,
                 if supports_images {
                     ImagePolicy::Allowed
                 } else {

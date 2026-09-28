@@ -4,7 +4,7 @@ use crate::ai::{HistoryImage, HistoryRole, HistoryTurn, HistoryTurnMarker};
 use crate::features::ledger::{attachments, model::kind, query, reducer, summaries};
 use crate::shared::error::AppResult;
 
-use super::settings::ContextSettings;
+use super::filter::TranscriptSettings;
 
 pub const MAX_CONTEXT_IMAGES: usize = 4;
 
@@ -14,16 +14,16 @@ pub enum ImagePolicy {
     Unsupported,
 }
 
-/// Reconstructs model history from the story ledger. The latest
+/// Reconstructs model history from the story's transcript. The latest
 /// durable summary replaces its covered prefix; later revisions and hidden
 /// authoritative events are replayed in chronological order. When a summary
 /// already exists, only entries from its boundary onward are even fetched —
 /// a long, already-compacted story doesn't reload and re-decode everything
 /// before it on every turn.
-pub fn load_transcript(
+pub fn for_model(
     conn: &rusqlite::Connection,
     story_id: &str,
-    settings: &ContextSettings,
+    settings: &TranscriptSettings,
     images: ImagePolicy,
 ) -> AppResult<Vec<HistoryTurn>> {
     let boundary = summaries::latest_boundary(conn, story_id)?;
@@ -74,12 +74,12 @@ pub fn load_transcript(
 
 #[cfg(test)]
 fn history_from_entries(raw: &[crate::features::ledger::model::LedgerEntry]) -> Vec<HistoryTurn> {
-    history_from_entries_with_settings(raw, &ContextSettings::default(), None, &mut HashMap::new())
+    history_from_entries_with_settings(raw, &TranscriptSettings::default(), None, &mut HashMap::new())
 }
 
 fn history_from_entries_with_settings(
     raw: &[crate::features::ledger::model::LedgerEntry],
-    settings: &ContextSettings,
+    settings: &TranscriptSettings,
     boundary: Option<(&str, i64)>,
     images: &mut HashMap<String, Vec<HistoryImage>>,
 ) -> Vec<HistoryTurn> {
@@ -456,7 +456,7 @@ mod tests {
     }
 
     #[test]
-    fn load_transcript_ignores_legacy_dice_roll_preference() {
+    fn for_model_ignores_legacy_dice_roll_preference() {
         let pool = crate::shared::db::test_pool();
         let conn = pool.get().unwrap();
         crate::shared::test_support::story(&conn, "s");
@@ -470,10 +470,10 @@ mod tests {
         )
         .unwrap();
         drop(conn);
-        let history = load_transcript(
+        let history = for_model(
             &pool.get().unwrap(),
             "s",
-            &ContextSettings::default(),
+            &TranscriptSettings::default(),
             ImagePolicy::Unsupported,
         )
         .unwrap();
@@ -482,7 +482,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn load_transcript_reads_uncommitted_player_entry() {
+    async fn for_model_reads_uncommitted_player_entry() {
         let pool = crate::shared::db::test_pool();
         let conn = pool.get().unwrap();
         crate::shared::test_support::story(&conn, "s");
@@ -499,10 +499,10 @@ mod tests {
                 None,
                 None,
             )?;
-            let history = load_transcript(
+            let history = for_model(
                 conn,
                 "s",
-                &ContextSettings::default(),
+                &TranscriptSettings::default(),
                 ImagePolicy::Unsupported,
             )?;
             assert_eq!(history.last().unwrap().content, "<do>I enter</do>");
@@ -511,10 +511,10 @@ mod tests {
         .await
         .unwrap();
         turn.rollback().await.unwrap();
-        assert!(load_transcript(
+        assert!(for_model(
             &pool.get().unwrap(),
             "s",
-            &ContextSettings::default(),
+            &TranscriptSettings::default(),
             ImagePolicy::Unsupported
         )
         .unwrap()
@@ -656,10 +656,10 @@ mod tests {
         assert_eq!(query_count, 0);
         drop(conn);
 
-        let history = load_transcript(
+        let history = for_model(
             &pool.get().unwrap(),
             "s",
-            &ContextSettings::default(),
+            &TranscriptSettings::default(),
             ImagePolicy::Unsupported,
         )
         .unwrap();
@@ -699,9 +699,9 @@ mod tests {
             Some("display label"),
             json!({"tool":"find","args":{"name":"é"},"result":[1]}),
         );
-        let defaults = ContextSettings::default();
-        let load = |settings: &ContextSettings| {
-            load_transcript(&conn, "s", settings, ImagePolicy::Unsupported).unwrap()
+        let defaults = TranscriptSettings::default();
+        let load = |settings: &TranscriptSettings| {
+            for_model(&conn, "s", settings, ImagePolicy::Unsupported).unwrap()
         };
         let history = load(&defaults);
         assert_eq!(
@@ -748,7 +748,7 @@ mod tests {
 
     #[test]
     fn tool_arguments_and_results_are_capped_by_unicode_characters() {
-        let mut settings = ContextSettings::default();
+        let mut settings = TranscriptSettings::default();
         settings.include.insert("record.tool_call".into(), true);
         let row = entry(
             "tool",
@@ -834,9 +834,9 @@ mod tests {
         )
         .unwrap();
         attach(&last.id, "bad", "application/octet-stream");
-        let mut settings = ContextSettings::default();
+        let mut settings = TranscriptSettings::default();
         settings.include.insert("images".into(), true);
-        let allowed = load_transcript(&conn, "s", &settings, ImagePolicy::Allowed).unwrap();
+        let allowed = for_model(&conn, "s", &settings, ImagePolicy::Allowed).unwrap();
         let images = allowed
             .iter()
             .filter(|turn| !turn.images.is_empty())
@@ -859,14 +859,14 @@ mod tests {
         }
         assert!(allowed[0].content.contains("prior"));
         assert!(
-            load_transcript(&conn, "s", &settings, ImagePolicy::Unsupported)
+            for_model(&conn, "s", &settings, ImagePolicy::Unsupported)
                 .unwrap()
                 .iter()
                 .all(|turn| turn.images.is_empty())
         );
         settings.include.insert("narration".into(), false);
         assert_eq!(
-            load_transcript(&conn, "s", &settings, ImagePolicy::Allowed)
+            for_model(&conn, "s", &settings, ImagePolicy::Allowed)
                 .unwrap()
                 .iter()
                 .filter(|turn| !turn.images.is_empty())
@@ -874,7 +874,7 @@ mod tests {
             4
         );
         settings.include.insert("images".into(), false);
-        assert!(load_transcript(&conn, "s", &settings, ImagePolicy::Allowed)
+        assert!(for_model(&conn, "s", &settings, ImagePolicy::Allowed)
             .unwrap()
             .iter()
             .all(|turn| turn.images.is_empty()));
@@ -918,9 +918,9 @@ mod tests {
             None,
         )
         .unwrap();
-        let mut settings = ContextSettings::default();
+        let mut settings = TranscriptSettings::default();
         settings.include.insert("action.do".into(), false);
-        let history = load_transcript(&conn, "s", &settings, ImagePolicy::Unsupported).unwrap();
+        let history = for_model(&conn, "s", &settings, ImagePolicy::Unsupported).unwrap();
         assert_eq!(history.len(), 2);
         assert_eq!(history[0].marker, HistoryTurnMarker::Summary);
         assert!(history[0].content.contains("summary"));
