@@ -8,6 +8,7 @@ import { TextModelPanel } from "../settings/TextModelPanel";
 import { ImageModelPanel } from "../settings/ImageModelPanel";
 import { PlaceholderPanel } from "./PlaceholderPanel";
 import { useAppShellStore } from "../../app/store";
+import { useStoryStore } from "../story/store";
 
 const PANEL_LABELS: Record<string, string> = {
   stories: "Stories",
@@ -25,6 +26,8 @@ export function Sidebar() {
   const togglePanel = useAppShellStore((s) => s.togglePanel);
   const sidebarOpen = useAppShellStore((s) => s.sidebarOpen);
   const toggleSidebar = useAppShellStore((s) => s.toggleSidebar);
+  const newStory = useStoryStore((s) => s.newStory);
+  const creatingStory = useStoryStore((s) => s.creatingStory);
 
   const toggleLabel = `${sidebarOpen ? "Close" : "Open"} sidebar (Ctrl+B)`;
 
@@ -50,6 +53,22 @@ export function Sidebar() {
         </button>
         {sidebarOpen && <span className="truncate font-prose text-sm tracking-wide text-text">story-llm</span>}
       </div>
+
+      {!sidebarOpen && (
+        <button
+          type="button"
+          aria-label="New story"
+          title="New story"
+          disabled={creatingStory}
+          onClick={() => newStory().catch((err) => console.error("failed to open a new story", err))}
+          className="mx-auto mt-2 shrink-0 rounded p-2 text-muted hover:bg-bg hover:text-text disabled:opacity-40"
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M12 20h9" />
+            <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
+          </svg>
+        </button>
+      )}
 
       {sidebarOpen && (
         <div id="sidebar-panels" className="w-64 flex-1 overflow-y-auto">
