@@ -37,7 +37,7 @@ export function Composer({ storyId }: { storyId: string }) {
   const consumeRestoreDraft = useStoryStore((s) => s.consumeRestoreDraft);
   const streaming = useStoryStore((s) => s.bundles[storyId]?.streaming);
   const requestPending = useStoryStore((s) => s.bundles[storyId]?.requestPending ?? false);
-  const ledgerLoading = useStoryStore((s) => s.bundles[storyId]?.ledgerLoading ?? false);
+  const transcriptLoading = useStoryStore((s) => s.bundles[storyId]?.transcriptLoading ?? false);
   const turnError = useStoryStore((s) => s.bundles[storyId]?.turnError);
   const imageError = useStoryStore((s) => s.bundles[storyId]?.imageError);
   const restoreDraft = useStoryStore((s) => s.bundles[storyId]?.restoreDraft);
@@ -61,7 +61,7 @@ export function Composer({ storyId }: { storyId: string }) {
     }
   };
 
-  const busy = submitting || requestPending || !!streaming || ledgerLoading;
+  const busy = submitting || requestPending || !!streaming || transcriptLoading;
   const lastEntry = entries && entries.length > 0 ? entries[entries.length - 1] : undefined;
   const lastNarration = entries?.slice().reverse().find((entry) => entry.kind === "narration");
   const imageBusy = !!lastNarration && (imagePendingFor?.includes(lastNarration.id) ?? false);

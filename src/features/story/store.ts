@@ -8,13 +8,13 @@ import type {
   ReasoningEffort,
   Story,
   StoryImage,
-  LedgerEntry,
+  TranscriptEntry,
   TurnSummary,
 } from "../../shared/types";
 import { charactersApi } from "../characters/api";
 import { narratorToolsApi } from "../narratorTools/api";
 import { storiesApi } from "../stories/api";
-import { ledgerApi } from "../ledger/api";
+import { transcriptApi } from "../transcript/api";
 
 type ToolActivity = {
   callId: string;
@@ -33,7 +33,7 @@ interface StreamingState {
   mode: "append" | "replace";
   targetEntryId?: string;
   turnId?: string;
-  pendingEntry?: LedgerEntry;
+  pendingEntry?: TranscriptEntry;
   submittedDraft?: { mode: ActionMode; content: string };
   toolActivity?: ToolActivity | null;
   toolLog: ToolActivity[];
@@ -47,10 +47,10 @@ interface TurnActivity {
 
 export interface StoryBundle {
   id: string;
-  entries: LedgerEntry[];
-  hidden: LedgerEntry[];
+  entries: TranscriptEntry[];
+  hidden: TranscriptEntry[];
   turns: TurnSummary[];
-  ledgerLoading: boolean;
+  transcriptLoading: boolean;
   requestPending: boolean;
   streaming: StreamingState | null;
   turnError: string | null;
@@ -83,7 +83,7 @@ interface StoryStoreState {
   applyStoryTitle: (storyId: string, title: string) => void;
   setActiveStory: (storyId: string) => void;
 
-  loadLedger: (storyId: string) => Promise<void>;
+  loadTranscript: (storyId: string) => Promise<void>;
   submitTurn: (storyId: string, mode: ActionMode, content: string) => Promise<void>;
   consumeRestoreDraft: (storyId: string) => { mode: ActionMode; content: string } | null;
   retryNarration: (storyId: string, entryId: string) => Promise<void>;
@@ -116,7 +116,7 @@ const newBundle = (id: string): StoryBundle => ({
   entries: [],
   hidden: [],
   turns: [],
-  ledgerLoading: false,
+  transcriptLoading: false,
   requestPending: false,
   streaming: null,
   turnError: null,
@@ -144,7 +144,7 @@ const patchBundle = (
   return { ...bundles, [storyId]: { ...bundle, ...(typeof patch === "function" ? patch(bundle) : patch) } };
 };
 
-const replaceEntry = (entries: LedgerEntry[], id: string, next: LedgerEntry) =>
+const replaceEntry = (entries: TranscriptEntry[], id: string, next: TranscriptEntry) =>
   entries.map((entry) => (entry.id === id ? next : entry));
 
 const removeOne = (items: string[], value: string) => {
@@ -188,7 +188,7 @@ const closeTool = (log: ToolActivity[], callId: string, ok: boolean | null): Too
     : log.map((tool, index) => (index === open ? { ...tool, phase: "finished" as const, ok } : tool));
 };
 
-const ledgerGenerations = new Map<string, number>();
+const transcriptGenerations = new Map<string, number>();
 const imageGenerations = new Map<string, number>();
 const imageEventGenerations = new Map<string, number>();
 const advanceGeneration = (generations: Map<string, number>, key: string) => {
@@ -262,12 +262,12 @@ export const useStoryStore = create<StoryStoreState>((set, get) => ({
     if (get().activeStoryId !== storyId) set({ activeStoryId: storyId });
   },
 
-  loadLedger: async (storyId) => {
-    const generation = advanceGeneration(ledgerGenerations, storyId);
-    set((state) => ({ bundles: patchBundle(state.bundles, storyId, { ledgerLoading: true }) }));
+  loadTranscript: async (storyId) => {
+    const generation = advanceGeneration(transcriptGenerations, storyId);
+    set((state) => ({ bundles: patchBundle(state.bundles, storyId, { transcriptLoading: true }) }));
     try {
-      const snapshot = await ledgerApi.list(storyId);
-      if (!isCurrentGeneration(ledgerGenerations, storyId, generation)) return;
+      const snapshot = await transcriptApi.list(storyId);
+      if (!isCurrentGeneration(transcriptGenerations, storyId, generation)) return;
       set((state) => ({
         bundles: patchBundle(state.bundles, storyId, (bundle) => {
           const pendingEntry = bundle.streaming?.pendingEntry;
@@ -280,24 +280,24 @@ export const useStoryStore = create<StoryStoreState>((set, get) => ({
           };
         }),
       }));
-      if (isCurrentGeneration(ledgerGenerations, storyId, generation)) {
-        set((state) => ({ bundles: patchBundle(state.bundles, storyId, { ledgerLoading: false }) }));
+      if (isCurrentGeneration(transcriptGenerations, storyId, generation)) {
+        set((state) => ({ bundles: patchBundle(state.bundles, storyId, { transcriptLoading: false }) }));
       }
     } catch (error) {
-      console.error("failed to load ledger", error);
-      if (isCurrentGeneration(ledgerGenerations, storyId, generation)) {
-        set((state) => ({ bundles: patchBundle(state.bundles, storyId, { ledgerLoading: false }) }));
+      console.error("failed to load transcript", error);
+      if (isCurrentGeneration(transcriptGenerations, storyId, generation)) {
+        set((state) => ({ bundles: patchBundle(state.bundles, storyId, { transcriptLoading: false }) }));
       }
     }
   },
   submitTurn: async (storyId, mode, content) => {
     if (get().bundles[storyId]?.requestPending || get().bundles[storyId]?.streaming) throw new Error("A narration request is already in progress");
     set((state) => ({ bundles: patchBundle(state.bundles, storyId, { requestPending: true }) }));
-    advanceGeneration(ledgerGenerations, storyId);
-    set((state) => ({ bundles: patchBundle(state.bundles, storyId, { turnError: null, restoreDraft: null, ledgerLoading: false }) }));
+    advanceGeneration(transcriptGenerations, storyId);
+    set((state) => ({ bundles: patchBundle(state.bundles, storyId, { turnError: null, restoreDraft: null, transcriptLoading: false }) }));
     try {
       await Promise.all([settingsQueues.get(storyId), reasoningQueues.get(storyId)]);
-      const result = await ledgerApi.submitTurn(storyId, mode, content);
+      const result = await transcriptApi.submitTurn(storyId, mode, content);
       set((state) => ({
         bundles: patchBundle(state.bundles, storyId, (bundle) => ({
           entries: bundle.entries.some((entry) => entry.id === result.entry.id)
@@ -308,11 +308,11 @@ export const useStoryStore = create<StoryStoreState>((set, get) => ({
             pendingEntry: result.entry,
             submittedDraft: { mode, content },
           },
-          ledgerLoading: false,
+          transcriptLoading: false,
         })),
       }));
     } catch (error) {
-      await get().loadLedger(storyId);
+      await get().loadTranscript(storyId);
       throw error;
     } finally {
       set((state) => ({ bundles: patchBundle(state.bundles, storyId, { requestPending: false }) }));
@@ -329,7 +329,7 @@ export const useStoryStore = create<StoryStoreState>((set, get) => ({
     const appends = get().bundles[storyId]?.entries.find((entry) => entry.id === entryId)?.kind === "player_message";
     try {
       await Promise.all([settingsQueues.get(storyId), reasoningQueues.get(storyId)]);
-      const result = await ledgerApi.retry(storyId, entryId);
+      const result = await transcriptApi.retry(storyId, entryId);
       set((state) => ({
         bundles: patchBundle(state.bundles, storyId, {
           streaming: newStream(
@@ -349,9 +349,9 @@ export const useStoryStore = create<StoryStoreState>((set, get) => ({
     }
   },
   eraseLastExchange: async (storyId) => {
-    const ids = await ledgerApi.eraseLastExchange(storyId);
+    const ids = await transcriptApi.eraseLastExchange(storyId);
     if (!ids.length) return;
-    advanceGeneration(ledgerGenerations, storyId);
+    advanceGeneration(transcriptGenerations, storyId);
     advanceGeneration(imageGenerations, storyId);
     set((state) => ({
       bundles: patchBundle(state.bundles, storyId, (bundle) => {
@@ -372,7 +372,7 @@ export const useStoryStore = create<StoryStoreState>((set, get) => ({
           turns: bundle.turns.filter((turn) => !removedTurnIds.has(turn.id)),
           imagesByEntry,
           imagePendingFor: bundle.imagePendingFor.filter((entryId) => !ids.includes(entryId)),
-          ledgerLoading: false,
+          transcriptLoading: false,
         };
       }),
     }));
@@ -380,13 +380,13 @@ export const useStoryStore = create<StoryStoreState>((set, get) => ({
     await get().loadImagesForStory(storyId);
   },
   editEntry: async (storyId, entryId, content) => {
-    const entry = await ledgerApi.edit(entryId, content);
-    advanceGeneration(ledgerGenerations, storyId);
+    const entry = await transcriptApi.edit(entryId, content);
+    advanceGeneration(transcriptGenerations, storyId);
     set((state) => ({
       bundles: patchBundle(state.bundles, storyId, (bundle) => ({
         entries: replaceEntry(bundle.entries, entryId, entry),
         imagesByEntry: { ...bundle.imagesByEntry, [entryId]: [] },
-        ledgerLoading: false,
+        transcriptLoading: false,
       })),
     }));
   },
@@ -394,7 +394,7 @@ export const useStoryStore = create<StoryStoreState>((set, get) => ({
     const generation = advanceGeneration(imageGenerations, storyId);
     const eventGeneration = imageEventGenerations.get(storyId);
     try {
-      const images = await ledgerApi.listImages(storyId);
+      const images = await transcriptApi.listImages(storyId);
       if (!isCurrentGeneration(imageGenerations, storyId, generation)) return;
       const grouped: Record<string, StoryImage[]> = {};
       images.forEach((image) => (grouped[image.entry_id] ??= []).push(image));
@@ -467,7 +467,7 @@ export const useStoryStore = create<StoryStoreState>((set, get) => ({
     const found = findStream(get().bundles, payload.stream_id);
     if (!found) return;
     const [storyId, current] = found;
-    advanceGeneration(ledgerGenerations, storyId);
+    advanceGeneration(transcriptGenerations, storyId);
     advanceGeneration(imageGenerations, storyId);
     set((state) => ({
       bundles: patchBundle(state.bundles, storyId, (bundle) => {
@@ -489,11 +489,11 @@ export const useStoryStore = create<StoryStoreState>((set, get) => ({
           turnActivity: payload.entry.kind === "narration"
             ? { entryId: payload.entry.id, thoughts: current.thoughts, tools: current.toolLog }
             : null,
-          ledgerLoading: false,
+          transcriptLoading: false,
         };
       }),
     }));
-    get().loadLedger(storyId);
+    get().loadTranscript(storyId);
     get().loadImagesForStory(storyId);
     get().loadCharacters(storyId);
   },
@@ -502,7 +502,7 @@ export const useStoryStore = create<StoryStoreState>((set, get) => ({
     if (!found) return;
     const [storyId, current] = found;
     const pendingEntry = current.pendingEntry;
-    advanceGeneration(ledgerGenerations, storyId);
+    advanceGeneration(transcriptGenerations, storyId);
     set((state) => ({
       bundles: patchBundle(state.bundles, storyId, (bundle) => ({
         entries: pendingEntry
@@ -515,10 +515,10 @@ export const useStoryStore = create<StoryStoreState>((set, get) => ({
           : null,
         turnError: message,
         restoreDraft: current.mode === "append" ? current.submittedDraft ?? null : null,
-        ledgerLoading: false,
+        transcriptLoading: false,
       })),
     }));
-    get().loadLedger(storyId);
+    get().loadTranscript(storyId);
   },
   _textComplete: (streamId) => {
     const found = findStream(get().bundles, streamId);
@@ -574,7 +574,7 @@ export const useStoryStore = create<StoryStoreState>((set, get) => ({
         ...(bundle.streaming ? { streaming: { ...bundle.streaming, imagePending: false } } : {}),
       })),
     }));
-    get().loadLedger(storyId);
+    get().loadTranscript(storyId);
   },
 
   loadCharacters: async (storyId) => {

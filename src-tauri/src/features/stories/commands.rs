@@ -71,7 +71,7 @@ pub async fn save_story_reasoning_effort(
 }
 
 #[tauri::command]
-pub fn get_story_context_settings(
+pub fn get_story_transcript_settings(
     pool: State<Pool>,
     story_id: String,
 ) -> AppResult<Vec<TranscriptItem>> {
@@ -80,7 +80,7 @@ pub fn get_story_context_settings(
 }
 
 #[tauri::command]
-pub async fn save_story_context_settings(
+pub async fn save_story_transcript_settings(
     pool: State<'_, Pool>,
     story_id: String,
     include: BTreeMap<String, bool>,
@@ -96,7 +96,7 @@ pub async fn save_story_context_settings(
 }
 
 #[tauri::command]
-pub fn get_story_injection_settings(
+pub fn get_story_context_settings(
     pool: State<Pool>,
     story_id: String,
 ) -> AppResult<settings::ContextSettings> {
@@ -105,7 +105,7 @@ pub fn get_story_injection_settings(
 }
 
 #[tauri::command]
-pub async fn save_story_injection_settings(
+pub async fn save_story_context_settings(
     pool: State<'_, Pool>,
     story_id: String,
     settings: settings::ContextSettings,

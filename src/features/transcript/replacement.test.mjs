@@ -8,7 +8,7 @@ const entry = { id: "old-reply", content: "Original reply" };
 
 before(async () => {
   server = await createServer({ server: { middlewareMode: true }, appType: "custom", logLevel: "silent" });
-  ({ entryDisplay } = await server.ssrLoadModule("/src/features/ledger/replacement.ts"));
+  ({ entryDisplay } = await server.ssrLoadModule("/src/features/transcript/replacement.ts"));
 });
 after(async () => { await server?.close(); });
 

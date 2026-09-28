@@ -1,14 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { isPlayerEntry, ledgerInputMode, type ActionMode, type LedgerEntry, type Roll, type StoryImage } from "../../shared/types";
+import { isPlayerEntry, transcriptInputMode, type ActionMode, type TranscriptEntry, type Roll, type StoryImage } from "../../shared/types";
 import { useStoryStore } from "../story/store";
 import { ImagePlaceholder } from "./ImagePlaceholder";
 import { RollDisclosure } from "./RollDisclosure";
 import { modeDefinition } from "./Composer";
 import { entryDisplay } from "./replacement";
 
-interface LedgerEntryViewProps {
-  entry: LedgerEntry;
+interface TranscriptEntryViewProps {
+  entry: TranscriptEntry;
   storyId: string;
   isLast: boolean;
   retryEntryId: string;
@@ -18,7 +18,7 @@ interface LedgerEntryViewProps {
   rolls?: Roll[];
 }
 
-export function LedgerEntryView({ entry, storyId, isLast, retryEntryId, canRetry = true, turnFailed = false, images, rolls }: LedgerEntryViewProps) {
+export function TranscriptEntryView({ entry, storyId, isLast, retryEntryId, canRetry = true, turnFailed = false, images, rolls }: TranscriptEntryViewProps) {
   const streaming = useStoryStore((s) => s.bundles[storyId]?.streaming);
   const requestPending = useStoryStore((s) => s.bundles[storyId]?.requestPending ?? false);
   const retryNarration = useStoryStore((s) => s.retryNarration);
@@ -31,7 +31,7 @@ export function LedgerEntryView({ entry, storyId, isLast, retryEntryId, canRetry
   const [actionBusy, setActionBusy] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  const inputMode = ledgerInputMode(entry);
+  const inputMode = transcriptInputMode(entry);
   const isBeingReplaced = streaming?.mode === "replace" && streaming.targetEntryId === entry.id;
   const anyStreamBusy = requestPending || !!streaming;
 

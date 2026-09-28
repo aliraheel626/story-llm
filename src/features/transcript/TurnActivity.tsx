@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { rollFromEntry, type LedgerEntry } from "../../shared/types";
+import { rollFromEntry, type TranscriptEntry } from "../../shared/types";
 
 export interface ToolCall { key: string; label: string; done: boolean; ok: boolean | null }
 export interface TurnActivityData { thoughts?: string | null; tools: ToolCall[] }
@@ -16,7 +16,7 @@ const TOOL_EVENT_KINDS = new Set([
   "image_generated",
 ]);
 
-const eventLabel = (entry: LedgerEntry): string => {
+const eventLabel = (entry: TranscriptEntry): string => {
   if (entry.kind === "diceroll") {
     const roll = rollFromEntry(entry);
     if (roll) return `Roll${roll.reason ? ` for ${roll.reason}` : ""}: ${roll.outcome}`;
@@ -25,13 +25,13 @@ const eventLabel = (entry: LedgerEntry): string => {
 };
 
 /** The tool calls committed against one narration revision, in call order. */
-export function toolCallsFromEvents(entryId: string, hidden: LedgerEntry[] | undefined): ToolCall[] {
+export function toolCallsFromEvents(entryId: string, hidden: TranscriptEntry[] | undefined): ToolCall[] {
   if (!hidden) return [];
   const targeted = hidden
     .filter((event) => event.target_entry_id === entryId)
     .sort((a, b) => a.seq - b.seq);
   const captured = targeted.filter(
-    (event): event is Extract<LedgerEntry, { kind: "tool_call" }> => event.kind === "tool_call",
+    (event): event is Extract<TranscriptEntry, { kind: "tool_call" }> => event.kind === "tool_call",
   );
   if (captured.length > 0) {
     return captured.map((event) => ({

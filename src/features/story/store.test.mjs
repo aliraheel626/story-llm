@@ -12,17 +12,17 @@ const entries = new Map();
 let failTools = false;
 let nextToolsSave;
 let nextImageLoad;
-let nextLedgerLoad;
+let nextTranscriptLoad;
 let nextRetry;
+let nextTranscriptSettingsLoad;
+let nextTranscriptSave;
 let nextContextLoad;
 let nextContextSave;
-let nextInjectionLoad;
-let nextInjectionSave;
 let server;
 let store;
 let contextStore;
 let RollDisclosure;
-let LedgerEntryView;
+let TranscriptEntryView;
 let ImagePlaceholder;
 let rollFromEntry;
 let groupRollsByEntry;
@@ -36,7 +36,7 @@ const rollEvent = (id, target_entry_id, payload) => ({
 const renderedReply = (storyId) => {
   const bundle = store.getState().bundles[storyId];
   const entry = bundle.entries.find((item) => item.kind === "narration");
-  return renderToStaticMarkup(createElement(LedgerEntryView, {
+  return renderToStaticMarkup(createElement(TranscriptEntryView, {
     entry, storyId, isLast: true, retryEntryId: entry.id,
     rolls: groupRollsByEntry(bundle.hidden)[entry.id],
   }));
@@ -68,22 +68,22 @@ globalThis.__storyTestInvoke = async (command, args = {}) => {
       return;
     case "get_story_reasoning_effort": return story.reasoning_effort ?? "";
     case "save_story_reasoning_effort": story.reasoning_effort = args.reasoningEffort; return;
-    case "get_story_context_settings": {
+    case "get_story_transcript_settings": {
       const items = [
         { key: "images", group: "Images", label: "The images themselves", enabled: args.storyId === "B" },
         { key: "narration", group: "Narration", label: "Narration text", enabled: true },
       ];
-      if (nextContextLoad) {
-        const wait = nextContextLoad;
-        nextContextLoad = null;
+      if (nextTranscriptSettingsLoad) {
+        const wait = nextTranscriptSettingsLoad;
+        nextTranscriptSettingsLoad = null;
         await wait;
       }
       return items;
     }
-    case "save_story_context_settings": {
-      if (nextContextSave) {
-        const wait = nextContextSave;
-        nextContextSave = null;
+    case "save_story_transcript_settings": {
+      if (nextTranscriptSave) {
+        const wait = nextTranscriptSave;
+        nextTranscriptSave = null;
         await wait;
       }
       return [
@@ -91,32 +91,32 @@ globalThis.__storyTestInvoke = async (command, args = {}) => {
         { key: "narration", group: "Narration", label: "Narration text", enabled: args.include.narration },
       ];
     }
-    case "get_story_injection_settings": {
+    case "get_story_context_settings": {
       const settings = { entities: "all", author_note_enabled: true, author_note: `Note ${args.storyId}`, tool_instructions: true };
-      if (nextInjectionLoad) {
-        const wait = nextInjectionLoad;
-        nextInjectionLoad = null;
+      if (nextContextLoad) {
+        const wait = nextContextLoad;
+        nextContextLoad = null;
         await wait;
       }
       return settings;
     }
-    case "save_story_injection_settings": {
-      if (nextInjectionSave) {
-        const wait = nextInjectionSave;
-        nextInjectionSave = null;
+    case "save_story_context_settings": {
+      if (nextContextSave) {
+        const wait = nextContextSave;
+        nextContextSave = null;
         await wait;
       }
       return;
     }
     case "preview_story_context": return { system: "test system", messages: [], injected: "", images_unsupported: false };
-    case "list_ledger_entries": {
+    case "list_transcript_entries": {
       const snapshot = {
         visible: entries.get(args.storyId) ?? [], hidden: hiddenEntries.get(args.storyId) ?? [],
         turns: (entries.get(args.storyId) ?? []).filter((entry) => entry.turn_id).map((entry) => ({ id: entry.turn_id, status: entry.turn_status ?? "complete" })),
       };
-      if (nextLedgerLoad) {
-        const wait = nextLedgerLoad;
-        nextLedgerLoad = null;
+      if (nextTranscriptLoad) {
+        const wait = nextTranscriptLoad;
+        nextTranscriptLoad = null;
         await wait;
       }
       return snapshot;
@@ -150,10 +150,10 @@ before(async () => {
   server = await createServer({ configFile: false, optimizeDeps: { noDiscovery: true }, server: { middlewareMode: true } });
   ({ useStoryStore: store } = await server.ssrLoadModule("/src/features/story/store.ts"));
   ({ useContextStore: contextStore } = await server.ssrLoadModule("/src/features/context/store.ts"));
-  ({ RollDisclosure } = await server.ssrLoadModule("/src/features/ledger/RollDisclosure.tsx"));
-  ({ LedgerEntryView } = await server.ssrLoadModule("/src/features/ledger/LedgerEntryView.tsx"));
-  ({ ImagePlaceholder } = await server.ssrLoadModule("/src/features/ledger/ImagePlaceholder.tsx"));
-  ({ toolCallsFromEvents } = await server.ssrLoadModule("/src/features/ledger/TurnActivity.tsx"));
+  ({ RollDisclosure } = await server.ssrLoadModule("/src/features/transcript/RollDisclosure.tsx"));
+  ({ TranscriptEntryView } = await server.ssrLoadModule("/src/features/transcript/TranscriptEntryView.tsx"));
+  ({ ImagePlaceholder } = await server.ssrLoadModule("/src/features/transcript/ImagePlaceholder.tsx"));
+  ({ toolCallsFromEvents } = await server.ssrLoadModule("/src/features/transcript/TurnActivity.tsx"));
   ({ rollFromEntry, groupRollsByEntry } = await server.ssrLoadModule("/src/shared/types.ts"));
 });
 
@@ -329,7 +329,7 @@ test("replacement keeps original through streaming and failure, then clears old 
   entries.set(storyId, [original]);
   hiddenEntries.set(storyId, [rollEvent("old-roll", original.id, { chance_percent: 50, roll: 90, needed: 50, outcome: "success", seed: 1, reason: "Old roll" })]);
   images.set(storyId, [{ id: "old-image", entry_id: original.id }]);
-  await Promise.all([store.getState().loadLedger(storyId), store.getState().loadImagesForStory(storyId)]);
+  await Promise.all([store.getState().loadTranscript(storyId), store.getState().loadImagesForStory(storyId)]);
   await store.getState().retryNarration(storyId, original.id);
   let stream = store.getState().bundles[storyId].streaming.streamId;
   store.getState()._appendDelta(stream, "Partial replacement");
@@ -350,7 +350,7 @@ test("replacement keeps original through streaming and failure, then clears old 
   assert.equal(store.getState().bundles[storyId].imagesByEntry[original.id], undefined);
   assert.equal(groupRollsByEntry(store.getState().bundles[storyId].hidden)[original.id], undefined);
   assert.doesNotMatch(renderedReply(storyId), /Old roll/);
-  await store.getState().loadLedger(storyId);
+  await store.getState().loadTranscript(storyId);
   assert.deepEqual(store.getState().bundles[storyId].turns, [{ id: "turn-replacement", status: "complete" }]);
   assert.equal(store.getState().bundles[storyId].entries.some((entry) => entry.turn_id === "turn-original"), false);
   assert.equal(groupRollsByEntry(store.getState().bundles[storyId].hidden)[replacement.id][0].id, "new-roll");
@@ -361,104 +361,104 @@ test("replacement keeps original through streaming and failure, then clears old 
   assert.ok(calls.some(({ command }) => command === "list_entities"));
 });
 
-test("delayed context loads and failed saves for A cannot show A data in B", async () => {
+test("delayed transcript and context loads for A cannot show A data in B", async () => {
   const previousStoryId = store.getState().activeStoryId;
+  let releaseTranscript;
   let releaseContext;
-  let releaseInjection;
+  nextTranscriptSettingsLoad = new Promise((resolve) => { releaseTranscript = resolve; });
   nextContextLoad = new Promise((resolve) => { releaseContext = resolve; });
-  nextInjectionLoad = new Promise((resolve) => { releaseInjection = resolve; });
   store.getState().setActiveStory("A");
-  const loadA = Promise.all([contextStore.getState().loadContext("A"), contextStore.getState().loadInjection("A")]);
+  const loadA = Promise.all([contextStore.getState().loadTranscriptSettings("A"), contextStore.getState().loadContextSettings("A")]);
   store.getState().setActiveStory("B");
-  await Promise.all([contextStore.getState().loadContext("B"), contextStore.getState().loadInjection("B")]);
+  await Promise.all([contextStore.getState().loadTranscriptSettings("B"), contextStore.getState().loadContextSettings("B")]);
   const visible = () => contextStore.getState().stories[store.getState().activeStoryId];
   assert.equal(visible().items[0].enabled, true);
   assert.equal(visible().noteDraft, "Note B");
   contextStore.getState().setNoteDraft("B", "Unsent B draft");
+  releaseTranscript();
   releaseContext();
-  releaseInjection();
   await loadA;
   assert.equal(visible().items[0].enabled, true);
   assert.equal(visible().noteDraft, "Unsent B draft");
 
+  let rejectTranscript;
   let rejectContext;
-  let rejectInjection;
+  nextTranscriptSave = new Promise((_, reject) => { rejectTranscript = reject; });
   nextContextSave = new Promise((_, reject) => { rejectContext = reject; });
-  nextInjectionSave = new Promise((_, reject) => { rejectInjection = reject; });
   store.getState().setActiveStory("A");
-  const contextSave = contextStore.getState().toggleContext("A", "images", true);
-  const injectionSave = contextStore.getState().saveInjection("A", { entities: "scoped" });
+  const transcriptSave = contextStore.getState().toggleTranscriptItem("A", "images", true);
+  const contextSave = contextStore.getState().saveContextSettings("A", { entities: "scoped" });
   assert.equal(contextStore.getState().stories.A.items[0].enabled, true);
-  assert.equal(contextStore.getState().stories.A.injection.entities, "scoped");
+  assert.equal(contextStore.getState().stories.A.context.entities, "scoped");
   store.getState().setActiveStory("B");
+  rejectTranscript(new Error("A transcript failed"));
   rejectContext(new Error("A context failed"));
-  rejectInjection(new Error("A injection failed"));
-  await assert.rejects(contextSave, /A context failed/);
-  const secondContextSave = contextStore.getState().toggleContext("A", "images", false);
+  await assert.rejects(transcriptSave, /A transcript failed/);
+  const secondTranscriptSave = contextStore.getState().toggleTranscriptItem("A", "images", false);
   assert.equal(contextStore.getState().stories.A.items[0].enabled, false);
-  await secondContextSave;
-  await assert.rejects(injectionSave, /A injection failed/);
+  await secondTranscriptSave;
+  await assert.rejects(contextSave, /A context failed/);
   assert.equal(visible().items[0].enabled, true);
   assert.equal(visible().noteDraft, "Unsent B draft");
-  assert.equal(visible().injection.entities, "all");
+  assert.equal(visible().context.entities, "all");
   assert.equal(contextStore.getState().stories.A.items[0].enabled, false);
-  assert.equal(contextStore.getState().stories.A.injection.entities, "all");
-  assert.deepEqual(calls.filter(({ command, args }) => command === "save_story_context_settings" && args.storyId === "A").slice(-2).map(({ args }) => args.include),
+  assert.equal(contextStore.getState().stories.A.context.entities, "all");
+  assert.deepEqual(calls.filter(({ command, args }) => command === "save_story_transcript_settings" && args.storyId === "A").slice(-2).map(({ args }) => args.include),
     [{ images: true, narration: true }, { images: false, narration: true }]);
   store.getState().setActiveStory(previousStoryId);
 });
 
 test("a second toggle while a save is in flight is ignored", async () => {
   const storyId = "queued-settings-story";
-  await Promise.all([contextStore.getState().loadContext(storyId), contextStore.getState().loadInjection(storyId)]);
+  await Promise.all([contextStore.getState().loadTranscriptSettings(storyId), contextStore.getState().loadContextSettings(storyId)]);
+  let releaseTranscript;
   let releaseContext;
-  let releaseInjection;
+  nextTranscriptSave = new Promise((resolve) => { releaseTranscript = resolve; });
   nextContextSave = new Promise((resolve) => { releaseContext = resolve; });
-  nextInjectionSave = new Promise((resolve) => { releaseInjection = resolve; });
-  const firstContext = contextStore.getState().toggleContext(storyId, "images", true);
-  const secondContext = contextStore.getState().toggleContext(storyId, "narration", false);
-  const firstInjection = contextStore.getState().saveInjection(storyId, { entities: "scoped" });
-  const secondInjection = contextStore.getState().saveInjection(storyId, { tool_instructions: false });
+  const firstTranscript = contextStore.getState().toggleTranscriptItem(storyId, "images", true);
+  const secondTranscript = contextStore.getState().toggleTranscriptItem(storyId, "narration", false);
+  const firstContext = contextStore.getState().saveContextSettings(storyId, { entities: "scoped" });
+  const secondContext = contextStore.getState().saveContextSettings(storyId, { tool_instructions: false });
   assert.deepEqual(contextStore.getState().stories[storyId].items.map((item) => item.enabled), [true, true]);
-  assert.equal(contextStore.getState().stories[storyId].injection.entities, "scoped");
-  assert.equal(contextStore.getState().stories[storyId].injection.tool_instructions, true);
+  assert.equal(contextStore.getState().stories[storyId].context.entities, "scoped");
+  assert.equal(contextStore.getState().stories[storyId].context.tool_instructions, true);
+  releaseTranscript();
   releaseContext();
-  releaseInjection();
-  await Promise.all([firstContext, secondContext, firstInjection, secondInjection]);
-  assert.deepEqual(calls.filter(({ command, args }) => command === "save_story_context_settings" && args.storyId === storyId).map(({ args }) => args.include),
+  await Promise.all([firstTranscript, secondTranscript, firstContext, secondContext]);
+  assert.deepEqual(calls.filter(({ command, args }) => command === "save_story_transcript_settings" && args.storyId === storyId).map(({ args }) => args.include),
     [{ images: true, narration: true }]);
-  assert.deepEqual(calls.filter(({ command, args }) => command === "save_story_injection_settings" && args.storyId === storyId).map(({ args }) => [args.settings.entities, args.settings.tool_instructions]),
+  assert.deepEqual(calls.filter(({ command, args }) => command === "save_story_context_settings" && args.storyId === storyId).map(({ args }) => [args.settings.entities, args.settings.tool_instructions]),
     [["scoped", true]]);
   assert.deepEqual(contextStore.getState().stories[storyId].items.map((item) => item.enabled), [true, true]);
+  assert.equal(contextStore.getState().stories[storyId].transcriptSaving, false);
   assert.equal(contextStore.getState().stories[storyId].contextSaving, false);
-  assert.equal(contextStore.getState().stories[storyId].injectionSaving, false);
 });
 
 test("a failed save restores previous items and shows the error", async () => {
   const storyId = "failed-settings-story";
-  await Promise.all([contextStore.getState().loadContext(storyId), contextStore.getState().loadInjection(storyId)]);
+  await Promise.all([contextStore.getState().loadTranscriptSettings(storyId), contextStore.getState().loadContextSettings(storyId)]);
+  let rejectTranscript;
   let rejectContext;
-  let rejectInjection;
+  nextTranscriptSave = new Promise((_, reject) => { rejectTranscript = reject; });
   nextContextSave = new Promise((_, reject) => { rejectContext = reject; });
-  nextInjectionSave = new Promise((_, reject) => { rejectInjection = reject; });
-  const failedContext = contextStore.getState().toggleContext(storyId, "images", true);
-  const failedInjection = contextStore.getState().saveInjection(storyId, { entities: "scoped" });
+  const failedTranscript = contextStore.getState().toggleTranscriptItem(storyId, "images", true);
+  const failedContext = contextStore.getState().saveContextSettings(storyId, { entities: "scoped" });
+  rejectTranscript(new Error("transcript failed"));
   rejectContext(new Error("context failed"));
-  rejectInjection(new Error("injection failed"));
+  await assert.rejects(failedTranscript, /transcript failed/);
   await assert.rejects(failedContext, /context failed/);
-  await assert.rejects(failedInjection, /injection failed/);
   assert.deepEqual(contextStore.getState().stories[storyId].items.map((item) => item.enabled), [false, true]);
-  assert.equal(contextStore.getState().stories[storyId].injection.entities, "all");
+  assert.equal(contextStore.getState().stories[storyId].context.entities, "all");
+  assert.match(contextStore.getState().stories[storyId].transcriptError, /transcript failed/);
   assert.match(contextStore.getState().stories[storyId].contextError, /context failed/);
-  assert.match(contextStore.getState().stories[storyId].injectionError, /injection failed/);
 });
 
-test("preview is not loaded while an injection save is in flight", async () => {
-  const storyId = "preview-injection-save";
-  await Promise.all([contextStore.getState().loadContext(storyId), contextStore.getState().loadInjection(storyId)]);
+test("preview is not loaded while a context save is in flight", async () => {
+  const storyId = "preview-context-save";
+  await Promise.all([contextStore.getState().loadTranscriptSettings(storyId), contextStore.getState().loadContextSettings(storyId)]);
   let releaseSave;
-  nextInjectionSave = new Promise((resolve) => { releaseSave = resolve; });
-  const save = contextStore.getState().saveInjection(storyId, { entities: "none" });
+  nextContextSave = new Promise((resolve) => { releaseSave = resolve; });
+  const save = contextStore.getState().saveContextSettings(storyId, { entities: "none" });
   await contextStore.getState().loadPreview(storyId);
   assert.equal(calls.filter(({ command, args }) => command === "preview_story_context" && args.storyId === storyId).length, 0);
   assert.equal(contextStore.getState().stories[storyId].preview, null);
@@ -469,12 +469,12 @@ test("preview is not loaded while an injection save is in flight", async () => {
   assert.equal(contextStore.getState().stories[storyId].preview.system, "test system");
 });
 
-test("preview is not loaded while a context save is in flight", async () => {
-  const storyId = "preview-context-save";
-  await contextStore.getState().loadContext(storyId);
+test("preview is not loaded while a transcript save is in flight", async () => {
+  const storyId = "preview-transcript-save";
+  await contextStore.getState().loadTranscriptSettings(storyId);
   let releaseSave;
-  nextContextSave = new Promise((resolve) => { releaseSave = resolve; });
-  const save = contextStore.getState().toggleContext(storyId, "images", true);
+  nextTranscriptSave = new Promise((resolve) => { releaseSave = resolve; });
+  const save = contextStore.getState().toggleTranscriptItem(storyId, "images", true);
   await contextStore.getState().loadPreview(storyId);
   assert.equal(calls.filter(({ command, args }) => command === "preview_story_context" && args.storyId === storyId).length, 0);
   assert.equal(contextStore.getState().stories[storyId].preview, null);
@@ -489,21 +489,21 @@ test("failed last turns render a status beside Retry", async () => {
   const storyId = store.getState().activeStoryId;
   const failed = { id: "failed-action", story_id: storyId, kind: "player_message", payload: { input_mode: "do" }, content: "Try", turn_id: "failed-turn", turn_status: "failed" };
   entries.set(storyId, [failed]);
-  await store.getState().loadLedger(storyId);
+  await store.getState().loadTranscript(storyId);
   assert.deepEqual(store.getState().bundles[storyId].turns, [{ id: "failed-turn", status: "failed" }]);
-  const html = renderToStaticMarkup(createElement(LedgerEntryView, {
+  const html = renderToStaticMarkup(createElement(TranscriptEntryView, {
     entry: failed, storyId, isLast: true, retryEntryId: failed.id, turnFailed: true,
   }));
   assert.match(html, /Retry/);
   assert.match(html, /Failed/);
   entries.set(storyId, [{ id: "replacement", story_id: storyId, kind: "narration", payload: { input_mode: "generated" }, content: "Replacement", turn_id: "turn-original" }]);
-  await store.getState().loadLedger(storyId);
+  await store.getState().loadTranscript(storyId);
 });
 
 test("an uncommitted player entry survives refresh during streaming without inventing a turn", async () => {
   const storyId = "pending-refresh-story";
   entries.set(storyId, []);
-  await store.getState().loadLedger(storyId);
+  await store.getState().loadTranscript(storyId);
   await store.getState().submitTurn(storyId, "say", "Open the gate");
   const { streaming, entries: optimisticEntries, turns } = store.getState().bundles[storyId];
   const pending = streaming.pendingEntry;
@@ -511,14 +511,14 @@ test("an uncommitted player entry survives refresh during streaming without inve
   assert.equal(optimisticEntries[0].id, pending.id);
   assert.deepEqual(turns, []);
 
-  await store.getState().loadLedger(storyId);
+  await store.getState().loadTranscript(storyId);
   assert.deepEqual(store.getState().bundles[storyId].entries, [pending]);
   entries.set(storyId, [pending]);
-  await store.getState().loadLedger(storyId);
+  await store.getState().loadTranscript(storyId);
   assert.deepEqual(store.getState().bundles[storyId].entries, [pending]);
 
   entries.set(storyId, []);
-  await store.getState().loadLedger(storyId);
+  await store.getState().loadTranscript(storyId);
   store.getState()._fail(streaming.streamId, "narration failed");
   const failed = store.getState().bundles[storyId];
   assert.deepEqual(failed.entries, []);
@@ -535,21 +535,21 @@ test("a refresh in flight cannot reintroduce a player entry after narration fail
   await store.getState().submitTurn(storyId, "do", "Try again");
   const streamId = store.getState().bundles[storyId].streaming.streamId;
   let releaseLoad;
-  nextLedgerLoad = new Promise((resolve) => { releaseLoad = resolve; });
-  const refreshing = store.getState().loadLedger(storyId);
+  nextTranscriptLoad = new Promise((resolve) => { releaseLoad = resolve; });
+  const refreshing = store.getState().loadTranscript(storyId);
   await Promise.resolve();
   store.getState()._fail(streamId, "connection lost");
   releaseLoad();
   await refreshing;
   assert.deepEqual(store.getState().bundles[storyId].entries, []);
-  assert.equal(store.getState().bundles[storyId].ledgerLoading, false);
+  assert.equal(store.getState().bundles[storyId].transcriptLoading, false);
 });
 
 test("image failure surfaces an error and a new request clears it", async () => {
   const storyId = "image-failure-story";
   const narration = { id: "failed-image-scene", story_id: storyId, kind: "narration", payload: { input_mode: "generated" }, content: "Scene" };
   entries.set(storyId, [narration]);
-  await store.getState().loadLedger(storyId);
+  await store.getState().loadTranscript(storyId);
 
   store.getState()._imagePending(narration.id);
   assert.deepEqual(store.getState().bundles[storyId].imagePendingFor, [narration.id]);
@@ -617,7 +617,7 @@ test("image pending during replacement marks the stream without replacing the or
   const storyId = (await store.getState().newStory()).id;
   const original = { id: "replace-image-original", story_id: storyId, kind: "narration", payload: { input_mode: "generated" }, content: "Original", turn_id: "replace-image-turn" };
   entries.set(storyId, [original]);
-  await store.getState().loadLedger(storyId);
+  await store.getState().loadTranscript(storyId);
   await store.getState().retryNarration(storyId, original.id);
   store.getState()._imagePending("replace-image-next");
   assert.equal(store.getState().bundles[storyId].entries[0].content, "Original");
@@ -649,7 +649,7 @@ test("retry failure leaves snapshot-provided legacy failed status and does not r
   const storyId = "legacy-failure-story";
   const failed = { id: "old-action", story_id: storyId, kind: "player_message", payload: { input_mode: "do" }, content: "Old input", turn_id: "old-turn", turn_status: "failed" };
   entries.set(storyId, [failed]);
-  await store.getState().loadLedger(storyId);
+  await store.getState().loadTranscript(storyId);
   await store.getState().retryNarration(storyId, failed.id);
   const streamId = store.getState().bundles[storyId].streaming.streamId;
   store.getState()._fail(streamId, "retry failed");

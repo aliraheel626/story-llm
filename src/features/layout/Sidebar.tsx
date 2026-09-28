@@ -2,8 +2,8 @@ import { AccordionPanel } from "../../shared/ui/AccordionPanel";
 import { StoriesPanel } from "../stories/StoriesPanel";
 import { CharactersPanel } from "../characters/CharactersPanel";
 import { NarratorToolsPanel } from "../narratorTools/NarratorToolsPanel";
+import { TranscriptPanel } from "../context/TranscriptPanel";
 import { ContextPanel } from "../context/ContextPanel";
-import { InjectionPanel } from "../context/InjectionPanel";
 import { TextModelPanel } from "../settings/TextModelPanel";
 import { ImageModelPanel } from "../settings/ImageModelPanel";
 import { PlaceholderPanel } from "./PlaceholderPanel";
@@ -14,8 +14,8 @@ const PANEL_LABELS: Record<string, string> = {
   stories: "Stories",
   characters: "Characters",
   narratorTools: "Narrator Tools",
+  transcript: "Transcript",
   context: "Context",
-  injection: "Injection",
   textModel: "Text Model",
   imageModel: "Image Model",
   features: "Features",
@@ -84,12 +84,12 @@ export function Sidebar() {
             <NarratorToolsPanel />
           </AccordionPanel>
 
-          <AccordionPanel title={PANEL_LABELS.context} open={openPanels.context} onToggle={() => togglePanel("context")}>
-            <ContextPanel />
+          <AccordionPanel title={PANEL_LABELS.transcript} open={openPanels.transcript} onToggle={() => togglePanel("transcript")}>
+            <TranscriptPanel />
           </AccordionPanel>
 
-          <AccordionPanel title={PANEL_LABELS.injection} open={openPanels.injection} onToggle={() => togglePanel("injection")}>
-            <InjectionPanel />
+          <AccordionPanel title={PANEL_LABELS.context} open={openPanels.context} onToggle={() => togglePanel("context")}>
+            <ContextPanel />
           </AccordionPanel>
 
           <AccordionPanel title={PANEL_LABELS.textModel} open={openPanels.textModel} onToggle={() => togglePanel("textModel")}>

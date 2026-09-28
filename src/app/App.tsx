@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { Sidebar } from "../features/layout/Sidebar";
-import { StoryView } from "../features/ledger/StoryView";
+import { StoryView } from "../features/transcript/StoryView";
 import { useNarrationEvents } from "./useNarrationEvents";
 import { useAppShellStore } from "./store";
 

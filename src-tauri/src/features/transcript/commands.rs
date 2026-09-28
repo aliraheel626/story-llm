@@ -68,7 +68,7 @@ pub fn list_transcript_entries(pool: State<Pool>, story_id: String) -> AppResult
 }
 
 #[tauri::command]
-pub async fn edit_ledger_entry(
+pub async fn edit_transcript_entry(
     pool: State<'_, Pool>,
     gate: State<'_, TurnGate>,
     entry_id: String,

@@ -1,15 +1,15 @@
 import { useEffect, useMemo, useRef } from "react";
-import { groupRollsByEntry, ledgerInputMode, type ActionMode } from "../../shared/types";
-import type { LedgerEntry, NarrativePayload } from "../../shared/types";
+import { groupRollsByEntry, transcriptInputMode, type ActionMode } from "../../shared/types";
+import type { TranscriptEntry, NarrativePayload } from "../../shared/types";
 import { useStoryStore } from "../story/store";
 import { StatsBar } from "../stats/StatsBar";
 import { EditableStoryTitle } from "../stories/EditableStoryTitle";
-import { LedgerEntryView } from "./LedgerEntryView";
+import { TranscriptEntryView } from "./TranscriptEntryView";
 import { ImagePlaceholder } from "./ImagePlaceholder";
 import { TurnActivity, toolCallsFromEvents, type TurnActivityData } from "./TurnActivity";
 import { Composer, modeDefinition } from "./Composer";
 
-const EMPTY_ENTRIES: LedgerEntry[] = [];
+const EMPTY_ENTRIES: TranscriptEntry[] = [];
 
 function usePrefersReducedMotion() {
   return typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -21,7 +21,7 @@ export function StoryView() {
   const activeStory = stories.find((s) => s.id === activeStoryId);
 
   const entries = useStoryStore((s) => activeStoryId ? (s.bundles[activeStoryId]?.entries ?? EMPTY_ENTRIES) : EMPTY_ENTRIES);
-  const loadLedger = useStoryStore((s) => s.loadLedger);
+  const loadTranscript = useStoryStore((s) => s.loadTranscript);
   const loadImagesForStory = useStoryStore((s) => s.loadImagesForStory);
   const imagesByEntry = useStoryStore((s) => activeStoryId ? s.bundles[activeStoryId]?.imagesByEntry : undefined);
   const streaming = useStoryStore((s) => activeStoryId ? s.bundles[activeStoryId]?.streaming : undefined);
@@ -39,7 +39,7 @@ export function StoryView() {
    * panel survives a reload); the newest turn also falls back to the
    * in-session snapshot for anything the fetched events don't cover yet.
    */
-  const activityFor = (entry: LedgerEntry, isLastEntry: boolean): TurnActivityData | undefined => {
+  const activityFor = (entry: TranscriptEntry, isLastEntry: boolean): TurnActivityData | undefined => {
     if (entry.kind !== "narration") return undefined;
     const thoughts = (entry.payload as NarrativePayload).thoughts;
     const tools = toolCallsFromEvents(entry.id, hidden);
@@ -57,15 +57,15 @@ export function StoryView() {
 
   useEffect(() => {
     if (activeStoryId) {
-      loadLedger(activeStoryId);
+      loadTranscript(activeStoryId);
       loadImagesForStory(activeStoryId);
     }
-  }, [activeStoryId, loadLedger, loadImagesForStory]);
+  }, [activeStoryId, loadTranscript, loadImagesForStory]);
 
   const isStreamingAppend = streaming?.mode === "append";
   const isStreamingReplace = streaming?.mode === "replace";
   const displayedEntries = entries.filter((entry) => {
-    const inputMode = ledgerInputMode(entry);
+    const inputMode = transcriptInputMode(entry);
     return inputMode === "generated" || modeDefinition(inputMode as ActionMode).display !== "hidden";
   });
   const actualLastEntry = entries[entries.length - 1];
@@ -116,7 +116,7 @@ export function StoryView() {
               : activityFor(entry, isLastEntry);
             const hiddenTrailingAction = isLastEntry
               && actualLastEntry?.kind === "player_message"
-              && modeDefinition(ledgerInputMode(actualLastEntry) as ActionMode).display === "hidden"
+              && modeDefinition(transcriptInputMode(actualLastEntry) as ActionMode).display === "hidden"
               ? actualLastEntry
               : undefined;
             const retryEntryId = hiddenTrailingAction?.id ?? entry.id;
@@ -124,7 +124,7 @@ export function StoryView() {
             return (
               <div key={entry.id} ref={pinHere ? pinRef : undefined}>
                 {activity && <TurnActivity activity={activity} live={replacingEntry} />}
-                <LedgerEntryView
+                <TranscriptEntryView
                   entry={entry}
                   storyId={activeStory.id}
                   isLast={isLastEntry}

@@ -1,4 +1,4 @@
-import type { LedgerEntry } from "../../shared/types";
+import type { TranscriptEntry } from "../../shared/types";
 
 export interface EntryDisplay {
   text: string;
@@ -8,7 +8,7 @@ export interface EntryDisplay {
 
 /** The old entry stays in the store, so clearing a failed stream restores it. */
 export function entryDisplay(
-  entry: LedgerEntry,
+  entry: TranscriptEntry,
   streaming: { mode: string; targetEntryId?: string; text: string; textComplete?: boolean } | null | undefined,
 ): EntryDisplay {
   const replacing = streaming?.mode === "replace" && streaming.targetEntryId === entry.id;

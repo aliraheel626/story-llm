@@ -9,67 +9,67 @@ export interface StoryTitleUpdatedPayload { story_id: string; title: string }
 
 export type ActionMode = "do" | "say" | "story" | "guide" | "see" | "continue";
 export type InputMode = ActionMode | "generated";
-export type LedgerVisibility = "visible" | "hidden";
-export type LedgerEntryKind =
+export type TranscriptVisibility = "visible" | "hidden";
+export type TranscriptEntryKind =
   | "player_message" | "narration" | "content_edited"
   | "diceroll" | "tool_call" | "entity_created" | "entity_queried" | "entity_updated" | "entity_deleted"
   | "entity_attribute_changed" | "entity_attribute_removed" | "image_generated"
   | "context_summary";
 
-interface LedgerPayloadBase extends Record<string, unknown> {
+interface TranscriptPayloadBase extends Record<string, unknown> {
   input_mode?: InputMode;
   entity_id?: string;
   attribute_id?: string;
   source?: "user" | "mechanics" | "inferred" | string;
   through_entry_id?: string;
 }
-export interface NarrativePayload extends LedgerPayloadBase { input_mode: InputMode; thoughts?: string }
-export interface ContentEditedPayload extends LedgerPayloadBase { reason: "user_edit" | string }
-export interface EntityEventPayload extends LedgerPayloadBase {
+export interface NarrativePayload extends TranscriptPayloadBase { input_mode: InputMode; thoughts?: string }
+export interface ContentEditedPayload extends TranscriptPayloadBase { reason: "user_edit" | string }
+export interface EntityEventPayload extends TranscriptPayloadBase {
   entity_id: string; name?: string; kind?: EntityKind; appearance_anchor?: string | null;
   before?: Record<string, unknown> | null; after?: Record<string, unknown> | null;
 }
-export interface EntityAttributeEventPayload extends LedgerPayloadBase {
+export interface EntityAttributeEventPayload extends TranscriptPayloadBase {
   entity_id: string; attribute_id: string; attribute_name?: string;
   before?: number | null; after?: number | null; source: "user" | "mechanics" | "inferred" | string;
 }
-export interface ImageGeneratedPayload extends LedgerPayloadBase { asset_id: string; prompt: string }
-export interface ContextSummaryPayload extends LedgerPayloadBase {
+export interface ImageGeneratedPayload extends TranscriptPayloadBase { asset_id: string; prompt: string }
+export interface ContextSummaryPayload extends TranscriptPayloadBase {
   through_entry_id: string; facts?: string[]; entity_notes?: string[];
   open_threads?: string[]; unresolved_mechanics?: string[];
 }
 
-interface LedgerEntryBase {
-  id: string; story_id: string; seq: number; visibility: LedgerVisibility;
+interface TranscriptEntryBase {
+  id: string; story_id: string; seq: number; visibility: TranscriptVisibility;
   content: string | null; target_entry_id: string | null; turn_id: string | null; created_at: string;
 }
 export interface ToolCallPayload {
   tool: string; args: unknown; result: unknown; ok: boolean;
 }
-export type LedgerEntry =
-  | (LedgerEntryBase & { kind: "player_message" | "narration"; payload: NarrativePayload })
-  | (LedgerEntryBase & { kind: "content_edited"; payload: ContentEditedPayload })
-  | (LedgerEntryBase & { kind: "entity_created" | "entity_updated" | "entity_deleted"; payload: EntityEventPayload })
-  | (LedgerEntryBase & { kind: "entity_attribute_changed" | "entity_attribute_removed"; payload: EntityAttributeEventPayload })
-  | (LedgerEntryBase & { kind: "image_generated"; payload: ImageGeneratedPayload })
-  | (LedgerEntryBase & { kind: "context_summary"; payload: ContextSummaryPayload })
-  | (LedgerEntryBase & { kind: "tool_call"; payload: ToolCallPayload })
-  | (LedgerEntryBase & { kind: "diceroll" | "entity_queried"; payload: LedgerPayloadBase });
+export type TranscriptEntry =
+  | (TranscriptEntryBase & { kind: "player_message" | "narration"; payload: NarrativePayload })
+  | (TranscriptEntryBase & { kind: "content_edited"; payload: ContentEditedPayload })
+  | (TranscriptEntryBase & { kind: "entity_created" | "entity_updated" | "entity_deleted"; payload: EntityEventPayload })
+  | (TranscriptEntryBase & { kind: "entity_attribute_changed" | "entity_attribute_removed"; payload: EntityAttributeEventPayload })
+  | (TranscriptEntryBase & { kind: "image_generated"; payload: ImageGeneratedPayload })
+  | (TranscriptEntryBase & { kind: "context_summary"; payload: ContextSummaryPayload })
+  | (TranscriptEntryBase & { kind: "tool_call"; payload: ToolCallPayload })
+  | (TranscriptEntryBase & { kind: "diceroll" | "entity_queried"; payload: TranscriptPayloadBase });
 export interface TurnSummary { id: string; status: "pending" | "complete" | "failed" }
-export interface LedgerSnapshot { visible: LedgerEntry[]; hidden: LedgerEntry[]; turns: TurnSummary[] }
+export interface TranscriptSnapshot { visible: TranscriptEntry[]; hidden: TranscriptEntry[]; turns: TurnSummary[] }
 
-export interface SubmitTurnResult { entry: LedgerEntry; stream_id: string }
+export interface SubmitTurnResult { entry: TranscriptEntry; stream_id: string }
 export interface RetryResult { entry_id: string; stream_id: string }
 export interface NarrationDeltaPayload { stream_id: string; text: string }
-export interface NarrationDonePayload { stream_id: string; entry: LedgerEntry }
+export interface NarrationDonePayload { stream_id: string; entry: TranscriptEntry }
 export interface NarrationTextCompletePayload { stream_id: string }
 export interface NarrationErrorPayload { stream_id: string; message: string }
 export interface NarrationToolActivityPayload { stream_id: string; call_id: string; label: string; phase: "started" | "finished"; ok: boolean | null }
 
 export interface TextModelSettings { provider: string; model: string; has_api_key: boolean; context_window: number; supports_images: boolean }
 export interface ImageModelSettings { model: string; enabled: boolean; style: string; has_api_key: boolean }
-export interface ContextItem { key: string; group: string; label: string; enabled: boolean }
-export interface InjectionSettings {
+export interface TranscriptItem { key: string; group: string; label: string; enabled: boolean }
+export interface ContextSettings {
   entities: "none" | "all" | "scoped";
   author_note_enabled: boolean;
   author_note: string;
@@ -132,10 +132,10 @@ export interface EntityAttributeValue {
 export type RollFactor = RollPayload["factors"][number];
 export type Roll = RollPayload & { id: string; entry_id: string; created_at: string };
 
-export function ledgerInputMode(entry: LedgerEntry): InputMode {
+export function transcriptInputMode(entry: TranscriptEntry): InputMode {
   return ("input_mode" in entry.payload ? entry.payload.input_mode as InputMode | undefined : undefined) ?? "generated";
 }
-export function rollFromEntry(entry: LedgerEntry): Roll | null {
+export function rollFromEntry(entry: TranscriptEntry): Roll | null {
   if (entry.payload === null || typeof entry.payload !== "object" || Array.isArray(entry.payload)) return null;
   const p = entry.payload as unknown as Record<string, unknown>;
   const { chance_percent: chance, roll, needed, outcome, seed } = p;
@@ -169,7 +169,7 @@ export function rollFromEntry(entry: LedgerEntry): Roll | null {
   };
 }
 
-export function groupRollsByEntry(hidden: readonly LedgerEntry[]): Record<string, Roll[]> {
+export function groupRollsByEntry(hidden: readonly TranscriptEntry[]): Record<string, Roll[]> {
   const grouped: Record<string, Roll[]> = Object.create(null);
   for (const entry of hidden) {
     if (entry.kind !== "diceroll") continue;
@@ -178,4 +178,4 @@ export function groupRollsByEntry(hidden: readonly LedgerEntry[]): Record<string
   }
   return grouped;
 }
-export function isPlayerEntry(entry: LedgerEntry): boolean { return entry.kind === "player_message" }
+export function isPlayerEntry(entry: TranscriptEntry): boolean { return entry.kind === "player_message" }
