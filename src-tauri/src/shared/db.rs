@@ -425,6 +425,22 @@ fn run_migrations(conn: &mut PooledConn) -> AppResult<()> {
             bytes BLOB NOT NULL
         );
 
+        CREATE TABLE IF NOT EXISTS usage_records (
+            id TEXT PRIMARY KEY,
+            story_id TEXT NOT NULL REFERENCES stories(id) ON DELETE CASCADE,
+            kind TEXT NOT NULL CHECK (kind IN ('narration', 'summary', 'title', 'image')),
+            provider TEXT NOT NULL,
+            model TEXT NOT NULL,
+            response_id TEXT,
+            input_tokens INTEGER NOT NULL DEFAULT 0,
+            output_tokens INTEGER NOT NULL DEFAULT 0,
+            cached_input_tokens INTEGER NOT NULL DEFAULT 0,
+            cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+            cost_usd REAL,
+            created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_usage_story ON usage_records(story_id);
+
         CREATE TABLE IF NOT EXISTS settings (
             key TEXT PRIMARY KEY,
             value TEXT NOT NULL

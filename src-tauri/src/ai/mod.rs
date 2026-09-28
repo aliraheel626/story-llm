@@ -49,6 +49,19 @@ pub struct TextModelConfig {
     pub supports_images: bool,
 }
 
+/// Usage one model call reported. `cost_usd` is `None` when the provider sent
+/// no cost (Nous Portal, Ollama), never a guessed zero.
+#[derive(Debug, Clone, Default, PartialEq)]
+#[allow(dead_code)] // Wired into turn recording in S3.
+pub struct CallUsage {
+    pub response_id: Option<String>,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub cached_input_tokens: u64,
+    pub cache_write_tokens: u64,
+    pub cost_usd: Option<f64>,
+}
+
 /// One turn of prior conversation, already resolved from the persisted ledger.
 #[derive(Debug, Clone)]
 pub struct HistoryTurn {

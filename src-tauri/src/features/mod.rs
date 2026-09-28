@@ -4,5 +4,6 @@ pub mod images;
 pub mod ledger;
 pub mod narrator;
 pub mod settings;
+pub mod stats;
 pub mod stories;
 pub mod turn;
