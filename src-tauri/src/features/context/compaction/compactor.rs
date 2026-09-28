@@ -40,20 +40,19 @@ impl Compactor for NarratorCompactor {
             let prompt = format!(
                 "Previous summary:\n{prior}\n\nOlder ledger messages to compact:\n{transcript}"
             );
-            ai::prompt_typed::<ContextSummary>(
+            let (result, usage) = ai::prompt_typed::<ContextSummary>(
                 &self.config,
                 prompts::COMPACTION_SUMMARY_SYSTEM_PROMPT,
                 prompt,
             )
-            .await
-            .map(|(summary, usage)| {
-                self.usage
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .extend(usage);
-                SummaryArtifact(summary)
-            })
-            .map_err(|e| MemoryError::Policy(e.to_string()))
+            .await;
+            self.usage
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .extend(usage);
+            result
+                .map(SummaryArtifact)
+                .map_err(|e| MemoryError::Policy(e.to_string()))
         })
     }
 }

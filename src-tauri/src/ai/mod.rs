@@ -11,7 +11,7 @@ use std::{
 
 use base64::{engine::general_purpose::STANDARD, Engine};
 use futures::StreamExt;
-use rig_agent::agent::{ToolCall, ToolResultEvent};
+use rig_agent::agent::{CompletionResponseEvent, ObservationAction, ToolCall, ToolResultEvent};
 use rig_agent::prelude::*;
 use rig_agent::tool::{DynamicTool, ToolOutput, ToolResult};
 use rig_core::completion::{AssistantContent, Message};
@@ -61,17 +61,59 @@ pub struct CallUsage {
     pub cost_usd: Option<f64>,
 }
 
-fn call_usage(call: &rig_agent::agent::CompletionCall) -> CallUsage {
+fn usage_from(
+    usage: &rig_core::completion::Usage,
+    response_id: Option<String>,
+    raw: &serde_json::Value,
+) -> CallUsage {
     CallUsage {
-        response_id: call.response_id.clone(),
-        input_tokens: call.usage.input_tokens,
-        output_tokens: call.usage.output_tokens,
-        cached_input_tokens: call.usage.cached_input_tokens,
-        cache_write_tokens: call.usage.cache_creation_input_tokens,
-        cost_usd: call
-            .raw
+        response_id,
+        input_tokens: usage.input_tokens,
+        output_tokens: usage.output_tokens,
+        cached_input_tokens: usage.cached_input_tokens,
+        cache_write_tokens: usage.cache_creation_input_tokens,
+        cost_usd: raw
             .pointer("/usage/cost")
             .and_then(serde_json::Value::as_f64),
+    }
+}
+
+fn call_usage(call: &rig_agent::agent::CompletionCall) -> CallUsage {
+    usage_from(&call.usage, call.response_id.clone(), &call.raw)
+}
+
+/// Records each completion's usage as it arrives, before the typed reply is
+/// parsed, so a reply that fails to parse still has its cost counted.
+struct UsageHook {
+    sink: Arc<Mutex<Vec<CallUsage>>>,
+}
+
+impl UsageHook {
+    fn record(
+        &self,
+        usage: &rig_core::completion::Usage,
+        identity: &rig_core::completion::ResponseIdentity,
+        raw: &serde_json::Value,
+    ) {
+        self.sink
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(usage_from(usage, identity.response_id.clone(), raw));
+    }
+}
+
+impl AgentHook for UsageHook {
+    async fn on_completion_response(
+        &self,
+        _ctx: &HookContext,
+        event: CompletionResponseEvent<'_>,
+    ) -> ObservationAction {
+        self.record(&event.usage, event.identity, event.raw);
+        ObservationAction::Continue
+    }
+
+    fn observes(&self, kind: rig_agent::agent::StepEventKind) -> bool {
+        kind == rig_agent::agent::StepEventKind::CompletionResponse
     }
 }
 
@@ -490,22 +532,22 @@ pub async fn prompt_typed<T>(
     config: &TextModelConfig,
     preamble: &str,
     prompt: String,
-) -> AppResult<(T, Vec<CallUsage>)>
+) -> (AppResult<T>, Vec<CallUsage>)
 where
     T: schemars::JsonSchema + serde::de::DeserializeOwned + Send + 'static,
 {
-    let agent = build_agent(config, preamble, Vec::new(), None)?;
-    agent
+    let agent = match build_agent(config, preamble, Vec::new(), None) {
+        Ok(agent) => agent,
+        Err(error) => return (Err(error), Vec::new()),
+    };
+    let sink = Arc::new(Mutex::new(Vec::new()));
+    let output = agent
         .prompt_typed::<T>(prompt)
-        .extended_details()
+        .add_hook(UsageHook { sink: sink.clone() })
         .await
-        .map(|response| {
-            (
-                response.output,
-                response.completion_calls.iter().map(call_usage).collect(),
-            )
-        })
-        .map_err(|e| AppError::Other(format!("structured prompt failed: {e}")))
+        .map_err(|e| AppError::Other(format!("structured prompt failed: {e}")));
+    let usage = std::mem::take(&mut *sink.lock().unwrap_or_else(|e| e.into_inner()));
+    (output, usage)
 }
 
 /// Model round-trips a tool-calling turn may take. Rig's builder defaults to
@@ -607,6 +649,31 @@ mod tests {
             },
         )
         .with_raw(raw)
+    }
+
+    #[test]
+    fn usage_hook_records_each_completion_response() {
+        let sink = Arc::new(Mutex::new(Vec::new()));
+        let hook = UsageHook { sink: sink.clone() };
+        let call = sample_call(0, serde_json::json!({"usage":{"cost":0.01}}));
+        let identity = rig_core::completion::ResponseIdentity {
+            response_id: Some("gen-1".into()),
+            ..Default::default()
+        };
+        hook.record(&call.usage, &identity, &call.raw);
+        let recorded = sink.lock().unwrap();
+        assert_eq!(recorded.len(), 1);
+        assert_eq!(recorded[0].response_id.as_deref(), Some("gen-1"));
+        assert_eq!(recorded[0].cost_usd, Some(0.01));
+        assert_eq!(
+            (
+                recorded[0].input_tokens,
+                recorded[0].output_tokens,
+                recorded[0].cached_input_tokens,
+                recorded[0].cache_write_tokens
+            ),
+            (1000, 200, 600, 100)
+        );
     }
 
     #[test]

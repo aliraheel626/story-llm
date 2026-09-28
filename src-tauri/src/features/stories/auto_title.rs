@@ -113,11 +113,11 @@ pub async fn title_in_turn(app: &AppHandle, settings_pool: &Pool, turn: &TurnTx)
         ai::prompt_typed::<GeneratedTitle>(&config, prompts::TITLE_SYSTEM_PROMPT, prompt),
     )
     .await
-    .ok()?
     .ok()?;
     for call in usage {
         turn.record_usage(UsageRecord::text(UsageKind::Title, &config, call));
     }
+    let generated = generated.ok()?;
     let title = sanitize_title(&generated.title)?;
     match turn.with(|conn| write_title(conn, story_id, &title)).await {
         Ok(true) => Some(title),
