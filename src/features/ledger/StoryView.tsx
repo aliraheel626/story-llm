@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef } from "react";
 import { DEFAULT_STORY_TITLE, groupRollsByEntry, ledgerInputMode, type ActionMode } from "../../shared/types";
 import type { LedgerEntry, NarrativePayload } from "../../shared/types";
 import { useStoryStore } from "../story/store";
+import { StatsBar } from "../stats/StatsBar";
 import { EditableStoryTitle } from "../stories/EditableStoryTitle";
 import { LedgerEntryView } from "./LedgerEntryView";
 import { ImagePlaceholder } from "./ImagePlaceholder";
@@ -95,6 +96,7 @@ export function StoryView() {
 
   return (
     <div className="flex h-full flex-1 flex-col overflow-hidden">
+      {activeStory && <StatsBar storyId={activeStory.id} />}
       <div ref={scrollRef} className="flex-1 overflow-y-auto">
         <div className="mx-auto flex w-full max-w-measure flex-col gap-5 px-6 py-10">
           {drafting ? (
