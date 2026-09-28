@@ -1,7 +1,7 @@
 # story-llm
 
 story-llm is a local-first AI storytelling desktop app built with Tauri, React,
-TypeScript, and Rust. Stories, ledger entries, characters, writing-style notes,
+TypeScript, and Rust. Stories, transcript entries, characters, writing-style notes,
 rolls, model settings, and generated-image metadata live in a local SQLite
 database. Text generation supports OpenRouter and Nous Portal; image generation
 uses OpenRouter when configured.
@@ -50,8 +50,9 @@ src/
   app/                 application shell and event wiring
   features/
     characters/
+    context/
     layout/
-    ledger/
+    transcript/
     narratorTools/
     settings/
     stories/
@@ -63,9 +64,10 @@ src-tauri/src/
   ai/                   shared model client and stream parsing
   features/
     compaction/
+    context/
     entities/
     images/
-    ledger/
+    transcript/
     narrator/
     replies/
     settings/
@@ -77,12 +79,14 @@ Frontend feature APIs are deliberately thin wrappers around Tauri commands.
 Zustand stores coordinate feature state and streamed narration events. On the
 backend, Tauri commands form the feature boundary, while repositories and
 feature-local helpers contain persistence and domain behavior.
+The Transcript panel controls which story entries enter model history. The
+Context panel manages the entity block, author's note, and tool instructions.
 
 The narrator prepares a transcript, tools, and a staged candidate, then streams
 generation events. Replies owns submit, Retry, edit, and erase transactions;
 Retry replaces the old reply and its effects only after successful generation.
-Rolls are hidden `diceroll` ledger entries and are displayed directly from the
-ledger snapshot. Images and entity projections follow their owning events.
+Rolls are hidden `diceroll` transcript entries and are displayed directly from the
+transcript snapshot. Images and entity projections follow their owning events.
 
 ## Local data
 

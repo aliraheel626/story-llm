@@ -1,3 +1,5 @@
+//! The story's record of every entry, visible and hidden (table `transcript_entries`; called the ledger before 2026-09).
+
 pub(crate) mod attachments;
 mod commands;
 mod edit;
