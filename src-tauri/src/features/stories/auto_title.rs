@@ -6,8 +6,8 @@ use tauri::AppHandle;
 use super::repository::DEFAULT_STORY_TITLE;
 use crate::ai::{self, CallUsage};
 use crate::features::{
-    ledger::{
-        model::kind as ledger_kind, query as ledger_query, turns,
+    transcript::{
+        model::kind as transcript_kind, query as transcript_query, turns,
     },
     settings as global_settings,
     stats::model::{UsageKind, UsageRecord},
@@ -53,9 +53,9 @@ pub fn opening_exchange(
     conn: &rusqlite::Connection,
     story_id: &str,
 ) -> AppResult<Vec<(String, String)>> {
-    Ok(ledger_query::select(conn, story_id, &Default::default())?
+    Ok(transcript_query::select(conn, story_id, &Default::default())?
         .into_iter()
-        .filter(|entry| entry.kind == ledger_kind::PLAYER_MESSAGE || entry.kind == ledger_kind::NARRATION)
+        .filter(|entry| entry.kind == transcript_kind::PLAYER_MESSAGE || entry.kind == transcript_kind::NARRATION)
         .take(2)
         .map(|e| (e.kind, e.content.unwrap_or_default()))
         .collect())
@@ -94,7 +94,7 @@ pub async fn title_in_turn(app: &AppHandle, settings_pool: &Pool, turn: &TurnTx)
         .map(|(role, content)| {
             format!(
                 "{}: {}",
-                if role == ledger_kind::PLAYER_MESSAGE {
+                if role == transcript_kind::PLAYER_MESSAGE {
                     "Player"
                 } else {
                     "Narrator"
@@ -170,7 +170,7 @@ fn sanitize_title(raw: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::{needs_title, opening_exchange, sanitize_title, write_title};
-    use crate::features::ledger::{model::kind, repository as ledger_repository, turns};
+    use crate::features::transcript::{model::kind, repository as transcript_repository, turns};
     use crate::features::turn::{TurnGate, TurnTx};
     use crate::shared::db::test_pool;
 
@@ -275,7 +275,7 @@ mod tests {
         let turn = TurnTx::begin(&pool, &TurnGate::default(), "s").unwrap();
         let opening = turn
             .with(|conn| {
-                ledger_repository::append_story_message(
+                transcript_repository::append_story_message(
                     conn,
                     "s",
                     "player",
@@ -284,7 +284,7 @@ mod tests {
                     None,
                     None,
                 )?;
-                ledger_repository::append_story_message(
+                transcript_repository::append_story_message(
                     conn,
                     "s",
                     "narrator",
@@ -308,7 +308,7 @@ mod tests {
             ]
         );
         assert!(
-            ledger_repository::list_logical_entries(&pool.get().unwrap(), "s")
+            transcript_repository::list_logical_entries(&pool.get().unwrap(), "s")
                 .unwrap()
                 .is_empty()
         );

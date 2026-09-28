@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::ai::{HistoryImage, HistoryRole, HistoryTurn, HistoryTurnMarker};
-use crate::features::ledger::{attachments, model::kind, query, reducer, summaries};
+use crate::features::transcript::{attachments, model::kind, query, reducer, summaries};
 use crate::shared::error::AppResult;
 
 use super::filter::TranscriptSettings;
@@ -43,7 +43,7 @@ pub fn for_model(
     let raw = query::select(
         conn,
         story_id,
-        &query::LedgerQuery {
+        &query::TranscriptQuery {
             since_seq,
             kinds: Some(&kinds),
             input_modes: Some(&modes),
@@ -73,12 +73,12 @@ pub fn for_model(
 }
 
 #[cfg(test)]
-fn history_from_entries(raw: &[crate::features::ledger::model::LedgerEntry]) -> Vec<HistoryTurn> {
+fn history_from_entries(raw: &[crate::features::transcript::model::TranscriptEntry]) -> Vec<HistoryTurn> {
     history_from_entries_with_settings(raw, &TranscriptSettings::default(), None, &mut HashMap::new())
 }
 
 fn history_from_entries_with_settings(
-    raw: &[crate::features::ledger::model::LedgerEntry],
+    raw: &[crate::features::transcript::model::TranscriptEntry],
     settings: &TranscriptSettings,
     boundary: Option<(&str, i64)>,
     images: &mut HashMap<String, Vec<HistoryImage>>,
@@ -152,7 +152,7 @@ fn history_from_entries_with_settings(
                         HistoryRole::Narrator
                     },
                     content,
-                    marker: HistoryTurnMarker::Ledger,
+                    marker: HistoryTurnMarker::Transcript,
                     images: Vec::new(),
                     reasoning: (visible.kind == kind::NARRATION
                         && settings.includes("narration.thoughts"))
@@ -173,7 +173,7 @@ fn history_from_entries_with_settings(
                         entry_id: Some(entry.id.clone()),
                         role: HistoryRole::Record,
                         content: "[Authoritative story event: image]".into(),
-                        marker: HistoryTurnMarker::Ledger,
+                        marker: HistoryTurnMarker::Transcript,
                         images: vec![image],
                         reasoning: None,
                     });
@@ -223,7 +223,7 @@ fn history_from_entries_with_settings(
             entry_id: Some(entry.id.clone()),
             role: HistoryRole::Record,
             content,
-            marker: HistoryTurnMarker::Ledger,
+            marker: HistoryTurnMarker::Transcript,
             images: Vec::new(),
             reasoning: None,
         });
@@ -234,8 +234,8 @@ fn history_from_entries_with_settings(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::features::ledger::model::LedgerEntry;
-    use crate::features::ledger::repository;
+    use crate::features::transcript::model::TranscriptEntry;
+    use crate::features::transcript::repository;
     use crate::prompts;
     use serde_json::json;
 
@@ -245,8 +245,8 @@ mod tests {
         event_kind: &str,
         content: Option<&str>,
         payload: serde_json::Value,
-    ) -> LedgerEntry {
-        LedgerEntry {
+    ) -> TranscriptEntry {
+        TranscriptEntry {
             id: id.into(),
             story_id: "s".into(),
             seq,
@@ -785,7 +785,7 @@ mod tests {
         let attach = |entry_id: &str, id: &str, mime: &str| {
             attachments::insert_image(
                 &conn,
-                &crate::features::ledger::model::StoryImage {
+                &crate::features::transcript::model::StoryImage {
                     id: id.into(),
                     entry_id: entry_id.into(),
                     prompt: "prompt".into(),

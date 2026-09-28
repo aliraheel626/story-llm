@@ -1,6 +1,6 @@
 use tauri::State;
 
-use crate::features::ledger::attachments;
+use crate::features::transcript::attachments;
 use crate::shared::db::Pool;
 use crate::shared::error::AppResult;
 

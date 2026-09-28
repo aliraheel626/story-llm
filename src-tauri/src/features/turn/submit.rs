@@ -5,7 +5,7 @@ use uuid::Uuid;
 
 use crate::features::{
     images,
-    ledger::{history::{self, ImagePolicy}, model::LedgerEntry, query as ledger_query, repository as ledger_repository, turns},
+    transcript::{history::{self, ImagePolicy}, model::TranscriptEntry, query as transcript_query, repository as transcript_repository, turns},
     narrator, settings, stories,
     turn::{TurnGate, TurnTx},
 };
@@ -74,14 +74,14 @@ async fn prepare_and_spawn(
     let supports_images = settings::resolve_text_model(&app, pool)?.supports_images;
     let (turn_id, action, prior_narration, history) = turn
         .with(|conn| {
-            let prior_narration = ledger_query::latest_narration_id(conn, &story_id)?;
+            let prior_narration = transcript_query::latest_narration_id(conn, &story_id)?;
             if mode == "see" && prior_narration.is_none() {
                 return Err(AppError::Invalid(
                     "there is no narrated scene to illustrate".into(),
                 ));
             }
             let turn_id = turns::create_turn(conn, &story_id)?;
-            let action = ledger_repository::append_story_message(
+            let action = transcript_repository::append_story_message(
                 conn,
                 &story_id,
                 "player",
@@ -108,7 +108,7 @@ async fn prepare_and_spawn(
                     role: crate::ai::HistoryRole::Player,
                     content: prompts::render_turn(&mode, content)
                         .unwrap_or_else(|| content.to_string()),
-                    marker: crate::ai::HistoryTurnMarker::Ledger,
+                    marker: crate::ai::HistoryTurnMarker::Transcript,
                     images: Vec::new(),
                     reasoning: None,
                 });
@@ -141,7 +141,7 @@ async fn prepare_and_spawn(
     .await?;
     if !is_see {
         turn.with(|conn| {
-            ledger_repository::append_placeholder_narration(
+            transcript_repository::append_placeholder_narration(
                 conn,
                 &story_id,
                 &turn_id,
@@ -189,7 +189,7 @@ async fn complete_turn(
     turn: &TurnTx,
     turn_id: &str,
     target_entry_id: &str,
-    action: &LedgerEntry,
+    action: &TranscriptEntry,
     prior_narration: Option<String>,
     is_see: bool,
     stream_id: String,
@@ -230,7 +230,7 @@ async fn complete_turn(
     }
     let entry = turn
         .with(|conn| {
-            ledger_repository::finish_narration(
+            transcript_repository::finish_narration(
                 conn,
                 target_entry_id,
                 &visible,

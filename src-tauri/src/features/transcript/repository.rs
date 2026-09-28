@@ -4,11 +4,11 @@ use uuid::Uuid;
 
 use crate::shared::error::{AppError, AppResult};
 
-use super::model::{kind, LedgerEntry};
+use super::model::{kind, TranscriptEntry};
 
-pub(crate) fn row_to_entry(row: &rusqlite::Row) -> rusqlite::Result<LedgerEntry> {
+pub(crate) fn row_to_entry(row: &rusqlite::Row) -> rusqlite::Result<TranscriptEntry> {
     let raw: String = row.get(6)?;
-    Ok(LedgerEntry {
+    Ok(TranscriptEntry {
         id: row.get(0)?,
         story_id: row.get(1)?,
         seq: row.get(2)?,
@@ -40,7 +40,7 @@ pub fn append_entry(
     payload: &Value,
     target_entry_id: Option<&str>,
     turn_id: Option<&str>,
-) -> AppResult<LedgerEntry> {
+) -> AppResult<TranscriptEntry> {
     append_entry_with_id(
         conn,
         Uuid::new_v4().to_string(),
@@ -65,10 +65,10 @@ fn append_entry_with_id(
     payload: &Value,
     target_entry_id: Option<&str>,
     turn_id: Option<&str>,
-) -> AppResult<LedgerEntry> {
+) -> AppResult<TranscriptEntry> {
     if visibility != "visible" && visibility != "hidden" {
         return Err(AppError::Invalid(format!(
-            "invalid ledger visibility: {visibility}"
+            "invalid transcript visibility: {visibility}"
         )));
     }
     if let Some(target_id) = target_entry_id {
@@ -79,7 +79,7 @@ fn append_entry_with_id(
         )?;
         if !target_belongs_to_story {
             return Err(AppError::Invalid(format!(
-                "target ledger entry {target_id} does not belong to story {story_id}"
+                "target transcript entry {target_id} does not belong to story {story_id}"
             )));
         }
     }
@@ -98,7 +98,7 @@ fn append_entry_with_id(
     let seq = next_seq(conn, story_id)?;
     let now = Utc::now().to_rfc3339();
     let payload_json = serde_json::to_string(payload)
-        .map_err(|e| AppError::Other(format!("ledger payload serialization failed: {e}")))?;
+        .map_err(|e| AppError::Other(format!("transcript payload serialization failed: {e}")))?;
     conn.execute(
         "INSERT INTO ledger_entries
          (id, story_id, seq, kind, visibility, content, payload_json, target_entry_id, turn_id, created_at)
@@ -120,7 +120,7 @@ fn append_entry_with_id(
         "UPDATE stories SET updated_at = ?1 WHERE id = ?2",
         rusqlite::params![now, story_id],
     )?;
-    Ok(LedgerEntry {
+    Ok(TranscriptEntry {
         id,
         story_id: story_id.to_string(),
         seq,
@@ -139,7 +139,7 @@ pub fn append_placeholder_narration(
     story_id: &str,
     turn_id: &str,
     entry_id: String,
-) -> AppResult<LedgerEntry> {
+) -> AppResult<TranscriptEntry> {
     append_entry_with_id(
         conn,
         entry_id,
@@ -153,21 +153,21 @@ pub fn append_placeholder_narration(
     )
 }
 
-pub fn get_entry(conn: &rusqlite::Connection, id: &str) -> AppResult<LedgerEntry> {
+pub fn get_entry(conn: &rusqlite::Connection, id: &str) -> AppResult<TranscriptEntry> {
     conn.query_row(
         "SELECT id, story_id, seq, kind, visibility, content, payload_json, target_entry_id, turn_id, created_at
          FROM ledger_entries WHERE id = ?1",
         [id],
         row_to_entry,
     )
-    .map_err(|_| AppError::NotFound(format!("ledger entry {id} not found")))
+    .map_err(|_| AppError::NotFound(format!("transcript entry {id} not found")))
 }
 
 fn entries(
     conn: &rusqlite::Connection,
     story_id: &str,
     since_seq: Option<i64>,
-) -> AppResult<Vec<LedgerEntry>> {
+) -> AppResult<Vec<TranscriptEntry>> {
     let mut stmt = conn.prepare(
         "SELECT id, story_id, seq, kind, visibility, content, payload_json, target_entry_id, turn_id, created_at
          FROM ledger_entries WHERE story_id = ?1 AND seq >= ?2 ORDER BY seq ASC",
@@ -182,7 +182,7 @@ fn entries(
 pub fn list_logical_entries(
     conn: &rusqlite::Connection,
     story_id: &str,
-) -> AppResult<Vec<LedgerEntry>> {
+) -> AppResult<Vec<TranscriptEntry>> {
     entries(conn, story_id, None)
 }
 
@@ -190,17 +190,17 @@ pub fn list_logical_entries_since(
     conn: &rusqlite::Connection,
     story_id: &str,
     since_seq: i64,
-) -> AppResult<Vec<LedgerEntry>> {
+) -> AppResult<Vec<TranscriptEntry>> {
     entries(conn, story_id, Some(since_seq))
 }
 
-pub fn active_entry(conn: &rusqlite::Connection, entry_id: &str) -> AppResult<LedgerEntry> {
+pub fn active_entry(conn: &rusqlite::Connection, entry_id: &str) -> AppResult<TranscriptEntry> {
     let base = get_entry(conn, entry_id)?;
     let entries = list_logical_entries(conn, &base.story_id)?;
     super::reducer::active_visible_entries(&entries)
         .into_iter()
         .find(|entry| entry.id == entry_id)
-        .ok_or_else(|| AppError::NotFound(format!("active ledger entry {entry_id} not found")))
+        .ok_or_else(|| AppError::NotFound(format!("active transcript entry {entry_id} not found")))
 }
 
 pub fn append_story_message(
@@ -211,7 +211,7 @@ pub fn append_story_message(
     content: &str,
     thoughts: Option<&str>,
     turn_id: Option<&str>,
-) -> AppResult<LedgerEntry> {
+) -> AppResult<TranscriptEntry> {
     let event_kind = if role == "player" {
         kind::PLAYER_MESSAGE
     } else {
@@ -241,7 +241,7 @@ pub fn finish_narration(
     entry_id: &str,
     content: &str,
     thoughts: Option<&str>,
-) -> AppResult<LedgerEntry> {
+) -> AppResult<TranscriptEntry> {
     let thoughts = thoughts
         .map(str::trim)
         .filter(|thoughts| !thoughts.is_empty());
@@ -421,7 +421,7 @@ mod tests {
             error,
             AppError::Invalid(message)
                 if message == format!(
-                     "target ledger entry {} does not belong to story second",
+                     "target transcript entry {} does not belong to story second",
                     target.id
                 )
         ));

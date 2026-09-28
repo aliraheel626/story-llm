@@ -7,7 +7,7 @@ use crate::features::entities::{
     self,
     model::{Entity, EntityAttributeValue},
 };
-use crate::features::ledger::{query, repository};
+use crate::features::transcript::{query, repository};
 use crate::features::stories::settings::{EntityInjection, InjectionSettings};
 use crate::prompts;
 use crate::shared::error::AppResult;
@@ -175,7 +175,7 @@ pub(crate) fn build_message_context(inputs: &Inputs<'_>) -> AppResult<ContextPla
 mod tests {
     use super::*;
     use crate::ai::{HistoryRole, HistoryTurnMarker};
-    use crate::features::ledger::model::kind as ledger_kind;
+    use crate::features::transcript::model::kind as transcript_kind;
     use crate::features::{
         entities,
         images::model::ImageRequest,
@@ -228,7 +228,7 @@ mod tests {
         )
         .unwrap();
         let query_id = crate::shared::test_support::record(
-            &conn, "s", ledger_kind::ENTITY_QUERIED, Some("Looked up: Bob"),
+            &conn, "s", transcript_kind::ENTITY_QUERIED, Some("Looked up: Bob"),
             json!({"entity_ids":["bob"]}), None, None,
         );
         conn.execute(
@@ -244,7 +244,7 @@ mod tests {
                 entry_id: Some(query_id),
                 role: HistoryRole::Narrator,
                 content: "[Authoritative story event: entity_queried]\nLooked up: Bob".into(),
-                marker: HistoryTurnMarker::Ledger,
+                marker: HistoryTurnMarker::Transcript,
                 images: Vec::new(),
                 reasoning: None,
             },

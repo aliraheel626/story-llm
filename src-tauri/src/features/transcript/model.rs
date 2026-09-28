@@ -10,7 +10,7 @@ pub struct StoryImage {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct LedgerEntry {
+pub struct TranscriptEntry {
     pub id: String,
     pub story_id: String,
     pub seq: i64,
@@ -23,7 +23,7 @@ pub struct LedgerEntry {
     pub created_at: String,
 }
 
-impl LedgerEntry {
+impl TranscriptEntry {
     #[allow(dead_code)]
     pub fn role(&self) -> &str {
         if self.kind == kind::PLAYER_MESSAGE {
@@ -43,9 +43,9 @@ impl LedgerEntry {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LedgerSnapshot {
-    pub visible: Vec<LedgerEntry>,
-    pub hidden: Vec<LedgerEntry>,
+pub struct TranscriptSnapshot {
+    pub visible: Vec<TranscriptEntry>,
+    pub hidden: Vec<TranscriptEntry>,
     pub turns: Vec<TurnSummary>,
 }
 
@@ -95,7 +95,7 @@ mod tests {
 
     #[test]
     fn role_and_input_mode_follow_story_entry_defaults() {
-        let mut entry = LedgerEntry {
+        let mut entry = TranscriptEntry {
             id: "entry".into(),
             story_id: "story".into(),
             seq: 0,

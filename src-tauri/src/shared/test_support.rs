@@ -1,7 +1,7 @@
 use rusqlite::Connection;
 use serde_json::Value;
 
-use crate::features::ledger::{repository, turns};
+use crate::features::transcript::{repository, turns};
 
 pub fn story(conn: &Connection, id: &str) -> String {
     story_with_settings(conn, id, serde_json::json!({}))

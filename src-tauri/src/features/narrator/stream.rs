@@ -9,7 +9,7 @@ use crate::ai::{
 };
 use crate::features::{
     context::{self, combine_context_blocks, prepare_history},
-    ledger::{model::kind as ledger_kind, repository as ledger_repository},
+    transcript::{model::kind as transcript_kind, repository as transcript_repository},
     stats::model::{UsageKind, UsageRecord},
 };
 use crate::prompts;
@@ -198,10 +198,10 @@ where
                 };
                 let label = tools::friendly_tool_label(&call.tool, &args_for_label);
                 turn.with(|conn| {
-                    ledger_repository::append_entry(
+                    transcript_repository::append_entry(
                         conn,
                         &story_id,
-                        ledger_kind::TOOL_CALL,
+                        transcript_kind::TOOL_CALL,
                         "hidden",
                         Some(&label),
                         &serde_json::json!({

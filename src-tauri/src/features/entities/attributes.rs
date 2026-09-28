@@ -61,7 +61,7 @@ pub fn clamp_delta(
 }
 
 /// Applies a proposed delta with clamping and rate-limiting, and logs an
-/// append-only ledger event. Returns `(before, after)`.
+/// append-only transcript event. Returns `(before, after)`.
 #[allow(clippy::too_many_arguments)]
 pub fn apply_attribute_delta(
     conn: &rusqlite::Connection,
@@ -271,7 +271,7 @@ pub(crate) fn remove_entity_attribute_sync(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::features::ledger::model::kind as ledger_kind;
+    use crate::features::transcript::model::kind as transcript_kind;
     use crate::shared::db::Pool;
     use serde_json::json;
 
@@ -333,7 +333,7 @@ mod tests {
             )
             .unwrap();
         let payloads = stmt
-            .query_map([ledger_kind::ENTITY_ATTRIBUTE_CHANGED], |row| {
+            .query_map([transcript_kind::ENTITY_ATTRIBUTE_CHANGED], |row| {
                 row.get::<_, String>(0)
             })
             .unwrap()
@@ -371,7 +371,7 @@ mod tests {
         let removal_events: i64 = conn
             .query_row(
                 "SELECT COUNT(*) FROM ledger_entries WHERE kind = ?1",
-                [ledger_kind::ENTITY_ATTRIBUTE_REMOVED],
+                [transcript_kind::ENTITY_ATTRIBUTE_REMOVED],
                 |row| row.get(0),
             )
             .unwrap();
@@ -399,7 +399,7 @@ mod tests {
         let changed_events: i64 = conn
             .query_row(
                 "SELECT COUNT(*) FROM ledger_entries WHERE kind = ?1",
-                [ledger_kind::ENTITY_ATTRIBUTE_CHANGED],
+                [transcript_kind::ENTITY_ATTRIBUTE_CHANGED],
                 |row| row.get(0),
             )
             .unwrap();
@@ -410,7 +410,7 @@ mod tests {
     fn first_inferred_delta_records_one_event_from_the_midpoint() {
         let (pool, attribute_id) = attribute_helper_fixture();
         let conn = pool.get().unwrap();
-        let passage = crate::features::ledger::repository::append_story_message(
+        let passage = crate::features::transcript::repository::append_story_message(
             &conn,
             "story",
             "narrator",
@@ -435,10 +435,10 @@ mod tests {
         )
         .unwrap();
 
-        let entries = crate::features::ledger::repository::list_logical_entries(&conn, "story")
+        let entries = crate::features::transcript::repository::list_logical_entries(&conn, "story")
             .unwrap()
             .into_iter()
-            .filter(|entry| entry.kind == ledger_kind::ENTITY_ATTRIBUTE_CHANGED)
+            .filter(|entry| entry.kind == transcript_kind::ENTITY_ATTRIBUTE_CHANGED)
             .collect::<Vec<_>>();
         assert_eq!((before, after), (5.0, 7.0));
         assert_eq!(entries.len(), 1);

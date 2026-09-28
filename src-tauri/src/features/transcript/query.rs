@@ -5,13 +5,13 @@ use rusqlite::OptionalExtension;
 use crate::shared::error::{AppError, AppResult};
 
 use super::{
-    model::{kind, LedgerEntry},
+    model::{kind, TranscriptEntry},
     reducer, repository,
 };
 
-/// Which ledger content to return. `None` means no filter on that field.
+/// Which transcript content to return. `None` means no filter on that field.
 #[derive(Debug, Clone, Default)]
-pub struct LedgerQuery<'a> {
+pub struct TranscriptQuery<'a> {
     pub since_seq: Option<i64>,
     pub kinds: Option<&'a [&'a str]>,
     pub input_modes: Option<&'a [&'a str]>,
@@ -23,8 +23,8 @@ pub struct LedgerQuery<'a> {
 pub fn select(
     conn: &rusqlite::Connection,
     story_id: &str,
-    query: &LedgerQuery<'_>,
-) -> AppResult<Vec<LedgerEntry>> {
+    query: &TranscriptQuery<'_>,
+) -> AppResult<Vec<TranscriptEntry>> {
     let raw = match query.since_seq {
         Some(seq) => repository::list_logical_entries_since(conn, story_id, seq)?,
         None => repository::list_logical_entries(conn, story_id)?,
@@ -84,7 +84,7 @@ pub fn entities_touched_since(
     let mut touched = HashSet::new();
     for row in rows {
         let payload = serde_json::from_str::<serde_json::Value>(&row?)
-            .map_err(|error| AppError::Other(format!("invalid ledger payload JSON: {error}")))?;
+            .map_err(|error| AppError::Other(format!("invalid transcript payload JSON: {error}")))?;
         if let Some(id) = payload.get("entity_id").and_then(serde_json::Value::as_str) {
             touched.insert(id.to_string());
         }
@@ -114,7 +114,7 @@ pub fn latest_narration_id(
 }
 
 /// The entries of one turn, in sequence order.
-pub fn entries_of_turn(conn: &rusqlite::Connection, turn_id: &str) -> AppResult<Vec<LedgerEntry>> {
+pub fn entries_of_turn(conn: &rusqlite::Connection, turn_id: &str) -> AppResult<Vec<TranscriptEntry>> {
     let mut stmt = conn.prepare(
         "SELECT id, story_id, seq, kind, visibility, content, payload_json,
                 target_entry_id, turn_id, created_at
@@ -142,7 +142,7 @@ mod tests {
         content: Option<&str>,
         payload: serde_json::Value,
         target: Option<&str>,
-    ) -> LedgerEntry {
+    ) -> TranscriptEntry {
         let id = test_support::record(conn, "story", kind, content, payload, target, None);
         repository::get_entry(conn, &id).unwrap()
     }
@@ -173,7 +173,7 @@ mod tests {
             json!({}),
             Some(&narration.id),
         );
-        let rows = select(&conn, "story", &LedgerQuery::default()).unwrap();
+        let rows = select(&conn, "story", &TranscriptQuery::default()).unwrap();
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].content.as_deref(), Some("edited action"));
         assert_eq!(rows[1].content.as_deref(), Some("edited narration"));
@@ -194,7 +194,7 @@ mod tests {
         let rows = select(
             &conn,
             "story",
-            &LedgerQuery {
+            &TranscriptQuery {
                 kinds: Some(&[kind::DICEROLL]),
                 ..Default::default()
             },
@@ -228,7 +228,7 @@ mod tests {
         let rows = select(
             &conn,
             "story",
-            &LedgerQuery {
+            &TranscriptQuery {
                 input_modes: Some(&["do"]),
                 ..Default::default()
             },
@@ -256,7 +256,7 @@ mod tests {
         let rows = select(
             &conn,
             "story",
-            &LedgerQuery {
+            &TranscriptQuery {
                 since_seq: Some(boundary.seq),
                 ..Default::default()
             },
@@ -279,7 +279,7 @@ mod tests {
         let rows = select(
             &conn,
             "story",
-            &LedgerQuery {
+            &TranscriptQuery {
                 entry_ids: Some(&ids),
                 ..Default::default()
             },

@@ -105,7 +105,7 @@ mod tests {
                 bytes: vec![1, 2, 3],
             }],
             reasoning: Some("not for compaction".into()),
-            marker: HistoryTurnMarker::Ledger,
+            marker: HistoryTurnMarker::Transcript,
         }];
         let wire = serde_json::to_value(&messages(&history)[0]).unwrap();
         assert_eq!(wire["role"], "user");
@@ -123,7 +123,7 @@ mod tests {
             content: "Short reply".into(),
             images: vec![],
             reasoning: Some("private thought ".repeat(500)),
-            marker: HistoryTurnMarker::Ledger,
+            marker: HistoryTurnMarker::Transcript,
         };
         let text_cost =
             HeuristicTokenCounter::openai().count(&messages(std::slice::from_ref(&turn))[0]);
@@ -152,7 +152,7 @@ mod tests {
                 content: "Scene".into(),
                 images: vec![],
                 reasoning: Some("thinking ".repeat(300)),
-                marker: HistoryTurnMarker::Ledger,
+                marker: HistoryTurnMarker::Transcript,
             })
             .collect::<Vec<_>>();
         history.push(HistoryTurn {
@@ -161,7 +161,7 @@ mod tests {
             content: "<continue/>".into(),
             images: vec![],
             reasoning: None,
-            marker: HistoryTurnMarker::Ledger,
+            marker: HistoryTurnMarker::Transcript,
         });
         let config = TextModelConfig {
             provider: "openrouter".into(),

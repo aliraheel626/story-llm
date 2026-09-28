@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use super::{
     attachments,
-    model::{kind as ledger_kind, LedgerEntry},
+    model::{kind as transcript_kind, TranscriptEntry},
     query, summaries, turns,
 };
 use crate::shared::error::AppResult;
@@ -10,17 +10,17 @@ use chrono::Utc;
 
 pub(crate) struct RemovedTurn {
     pub visible_ids: Vec<String>,
-    pub entries: Vec<LedgerEntry>,
+    pub entries: Vec<TranscriptEntry>,
 }
 
 pub(super) fn delete_turn_assets(
     conn: &rusqlite::Connection,
-    entries: &[LedgerEntry],
+    entries: &[TranscriptEntry],
 ) -> AppResult<()> {
     let mut asset_ids = HashSet::new();
     for entry in entries {
         asset_ids.extend(attachments::image_ids_for_entry(conn, &entry.id)?);
-        if entry.kind == ledger_kind::IMAGE_GENERATED {
+        if entry.kind == transcript_kind::IMAGE_GENERATED {
             if let Some(asset_id) = entry
                 .payload
                 .get("asset_id")
@@ -83,7 +83,7 @@ pub(crate) fn erase_last_exchange_in_tx(
 mod tests {
     use super::*;
     use crate::features::entities;
-    use crate::features::ledger::repository::{self as ledger_repository, append_entry};
+    use crate::features::transcript::repository::{self as transcript_repository, append_entry};
     use crate::shared::db::with_transaction;
     use crate::shared::test_support;
     use serde_json::json;
@@ -97,7 +97,7 @@ mod tests {
         let entry = append_entry(
             &conn,
             "s",
-            ledger_kind::NARRATION,
+            transcript_kind::NARRATION,
             "visible",
             Some("scene"),
             &json!({}),
@@ -109,7 +109,7 @@ mod tests {
         let summary = append_entry(
             &conn,
             "s",
-            ledger_kind::CONTEXT_SUMMARY,
+            transcript_kind::CONTEXT_SUMMARY,
             "hidden",
             Some("summary"),
             &json!({"through_entry_id":entry.id}),
@@ -138,8 +138,8 @@ mod tests {
         ));
         let conn = pool.get().unwrap();
         assert!(turns::last_turn(&conn, "s").unwrap().is_some());
-        assert!(ledger_repository::get_entry(&conn, &entry.id).is_ok());
-        assert!(ledger_repository::get_entry(&conn, &summary.id).is_ok());
+        assert!(transcript_repository::get_entry(&conn, &entry.id).is_ok());
+        assert!(transcript_repository::get_entry(&conn, &summary.id).is_ok());
         assert_eq!(
             conn.query_row("SELECT COUNT(*) FROM image_assets", [], |row| row
                 .get::<_, i64>(0))
@@ -172,8 +172,8 @@ mod tests {
                 },
                 Some("response"),
             );
-            let action = ledger_repository::get_entry(&conn, &action_id).unwrap();
-            let response = ledger_repository::get_entry(&conn, &response_id.unwrap()).unwrap();
+            let action = transcript_repository::get_entry(&conn, &action_id).unwrap();
+            let response = transcript_repository::get_entry(&conn, &response_id.unwrap()).unwrap();
             drop(conn);
 
             let removed = with_transaction(&pool, |tx| {
@@ -195,7 +195,7 @@ mod tests {
         let narration = append_entry(
             &conn,
             "s",
-            ledger_kind::NARRATION,
+            transcript_kind::NARRATION,
             "visible",
             Some("A moonlit harbor."),
             &json!({"input_mode":"generated"}),
@@ -207,7 +207,7 @@ mod tests {
         let see = append_entry(
             &conn,
             "s",
-            ledger_kind::PLAYER_MESSAGE,
+            transcript_kind::PLAYER_MESSAGE,
             "visible",
             Some(""),
             &json!({"input_mode":"see"}),
@@ -224,7 +224,7 @@ mod tests {
         let image_event = append_entry(
             &conn,
             "s",
-            ledger_kind::IMAGE_GENERATED,
+            transcript_kind::IMAGE_GENERATED,
             "hidden",
             Some("image"),
             &json!({"asset_id":"image"}),
@@ -277,7 +277,7 @@ mod tests {
         let baseline = append_entry(
             &conn,
             "s",
-            ledger_kind::NARRATION,
+            transcript_kind::NARRATION,
             "visible",
             Some("Earlier scene"),
             &json!({"input_mode":"generated"}),
@@ -363,7 +363,7 @@ mod tests {
         let older_summary = append_entry(
             &conn,
             "s",
-            ledger_kind::CONTEXT_SUMMARY,
+            transcript_kind::CONTEXT_SUMMARY,
             "hidden",
             Some("older summary"),
             &json!({"through_entry_id":baseline.id}),
@@ -374,8 +374,8 @@ mod tests {
 
         let (turn_id, player_id, narration_id) =
             test_support::exchange(&conn, "s", "do", "act", Some("result"));
-        let player = ledger_repository::get_entry(&conn, &player_id).unwrap();
-        let narration = ledger_repository::get_entry(&conn, &narration_id.unwrap()).unwrap();
+        let player = transcript_repository::get_entry(&conn, &player_id).unwrap();
+        let narration = transcript_repository::get_entry(&conn, &narration_id.unwrap()).unwrap();
         crate::features::entities::update_entity_sync(
             &conn,
             "s",
@@ -414,7 +414,7 @@ mod tests {
         let query = append_entry(
             &conn,
             "s",
-            ledger_kind::ENTITY_QUERIED,
+            transcript_kind::ENTITY_QUERIED,
             "hidden",
             Some("Looked up Mira"),
             &json!({"entity_ids":["mira"]}),
@@ -423,9 +423,9 @@ mod tests {
         )
         .unwrap();
         for kind in [
-            ledger_kind::DICEROLL,
-            ledger_kind::CONTENT_EDITED,
-            ledger_kind::IMAGE_GENERATED,
+            transcript_kind::DICEROLL,
+            transcript_kind::CONTENT_EDITED,
+            transcript_kind::IMAGE_GENERATED,
         ] {
             append_entry(
                 &conn,
@@ -442,7 +442,7 @@ mod tests {
         let doomed_summary = append_entry(
             &conn,
             "s",
-            ledger_kind::CONTEXT_SUMMARY,
+            transcript_kind::CONTEXT_SUMMARY,
             "hidden",
             Some("summary"),
             &json!({"through_entry_id":query.id}),
@@ -559,8 +559,8 @@ mod tests {
         test_support::story(&conn, "s");
         let (turn_id, action_id, narration_id) =
             test_support::exchange(&conn, "s", "do", "act", Some("result"));
-        let action = ledger_repository::get_entry(&conn, &action_id).unwrap();
-        let narration = ledger_repository::get_entry(&conn, &narration_id.unwrap()).unwrap();
+        let action = transcript_repository::get_entry(&conn, &action_id).unwrap();
+        let narration = transcript_repository::get_entry(&conn, &narration_id.unwrap()).unwrap();
         entities::create_entity_with_id_sync(
             &conn,
             "temporary",
@@ -607,7 +607,7 @@ mod tests {
         assert_eq!(
             conn.query_row(
                 "SELECT COUNT(*) FROM ledger_entries WHERE kind = ?1",
-                [ledger_kind::ENTITY_ATTRIBUTE_CHANGED],
+                [transcript_kind::ENTITY_ATTRIBUTE_CHANGED],
                 |row| row.get::<_, i64>(0),
             )
             .unwrap(),
@@ -621,7 +621,7 @@ mod tests {
         let conn = pool.get().unwrap();
         test_support::story(&conn, "s");
         let (turn_id, action_id, _) = test_support::exchange(&conn, "s", "do", "act", None);
-        let action = ledger_repository::get_entry(&conn, &action_id).unwrap();
+        let action = transcript_repository::get_entry(&conn, &action_id).unwrap();
         conn.execute(
             "UPDATE turns SET status = 'failed' WHERE id = ?1",
             [&turn_id],
@@ -636,6 +636,6 @@ mod tests {
         })
         .unwrap();
         assert_eq!(removed, vec![action.id.clone()]);
-        assert!(ledger_repository::get_entry(&pool.get().unwrap(), &action.id).is_err());
+        assert!(transcript_repository::get_entry(&pool.get().unwrap(), &action.id).is_err());
     }
 }

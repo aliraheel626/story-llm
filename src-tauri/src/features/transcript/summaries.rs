@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use crate::shared::error::{AppError, AppResult};
 
-use super::{model::kind as ledger_kind, repository};
+use super::{model::kind as transcript_kind, repository};
 
 #[derive(Debug, Clone)]
 pub(crate) struct SummaryBoundary {
@@ -20,7 +20,7 @@ pub(crate) fn latest_boundary(
          WHERE story_id = ?1 AND kind = ?2 ORDER BY seq DESC",
     )?;
     let rows = stmt.query_map(
-        rusqlite::params![story_id, ledger_kind::CONTEXT_SUMMARY],
+        rusqlite::params![story_id, transcript_kind::CONTEXT_SUMMARY],
         |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
     )?;
     for row in rows {
@@ -81,7 +81,7 @@ pub(crate) fn append(
         repository::append_entry(
             conn,
             story_id,
-            ledger_kind::CONTEXT_SUMMARY,
+            transcript_kind::CONTEXT_SUMMARY,
             "hidden",
             Some(summary_text),
             &payload,
@@ -101,7 +101,7 @@ pub(crate) fn prune_covering(
         .prepare("SELECT id, payload_json FROM ledger_entries WHERE story_id = ?1 AND kind = ?2")?;
     let summaries: Vec<(String, String)> = stmt
         .query_map(
-            rusqlite::params![story_id, ledger_kind::CONTEXT_SUMMARY],
+            rusqlite::params![story_id, transcript_kind::CONTEXT_SUMMARY],
             |row| Ok((row.get(0)?, row.get(1)?)),
         )?
         .collect::<Result<_, _>>()?;

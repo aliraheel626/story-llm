@@ -3,8 +3,8 @@ use tauri::{AppHandle, Emitter};
 use tokio::time::{timeout, Duration};
 use uuid::Uuid;
 
-use crate::features::ledger::{
-    attachments, model::kind as ledger_kind, repository as ledger_repository,
+use crate::features::transcript::{
+    attachments, model::kind as transcript_kind, repository as transcript_repository,
 };
 use crate::features::settings;
 use crate::features::stats::model::UsageRecord;
@@ -87,7 +87,7 @@ async fn generate_from_description(
 
     let (story_id, characters) = turn
         .with(|conn| {
-            let story_id = ledger_repository::get_entry(conn, &target.entry_id)?.story_id;
+            let story_id = transcript_repository::get_entry(conn, &target.entry_id)?.story_id;
             let characters = characters_by_ids(conn, &story_id, character_ids)?;
             Ok((story_id, characters))
         })
@@ -157,11 +157,11 @@ fn persist_image_record(
     generated: &openrouter::GeneratedImage,
 ) -> AppResult<()> {
     attachments::insert_image(conn, image, &generated.media_type, &generated.bytes)?;
-    let base = ledger_repository::get_entry(conn, &target.entry_id)?;
-    ledger_repository::append_entry(
+    let base = transcript_repository::get_entry(conn, &target.entry_id)?;
+    transcript_repository::append_entry(
         conn,
         &base.story_id,
-        ledger_kind::IMAGE_GENERATED,
+        transcript_kind::IMAGE_GENERATED,
         "hidden",
         Some(&format!(
             "A scene image was generated depicting: {description}"
@@ -213,7 +213,7 @@ pub(crate) async fn generate_in_turn(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::features::ledger::{repository as ledger_repository, turns};
+    use crate::features::transcript::{repository as transcript_repository, turns};
     use crate::features::turn::TurnGate;
 
     async fn turn_fixture() -> (Pool, std::sync::Arc<TurnTx>, String, String) {
@@ -230,7 +230,7 @@ mod tests {
         let (turn_id, entry_id) = turn
             .with(|conn| {
                 let turn_id = turns::create_turn(conn, "s")?;
-                let entry = ledger_repository::append_story_message(
+                let entry = transcript_repository::append_story_message(
                     conn,
                     "s",
                     "narrator",
@@ -307,7 +307,7 @@ mod tests {
             .query_row(
                 "SELECT turn_id, json_extract(payload_json, '$.asset_id')
              FROM ledger_entries WHERE kind = ?1",
-                [ledger_kind::IMAGE_GENERATED],
+                [transcript_kind::IMAGE_GENERATED],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .unwrap();
@@ -356,10 +356,10 @@ mod tests {
                     .get::<_, i64>(0))?,
                 0
             );
-            ledger_repository::append_entry(
+            transcript_repository::append_entry(
                 conn,
                 "s",
-                ledger_kind::CONTENT_EDITED,
+                transcript_kind::CONTENT_EDITED,
                 "hidden",
                 Some("turn remains writable"),
                 &serde_json::json!({}),
@@ -383,7 +383,7 @@ mod tests {
         assert_eq!(
             conn.query_row(
                 "SELECT COUNT(*) FROM ledger_entries WHERE kind = ?1",
-                [ledger_kind::IMAGE_GENERATED],
+                [transcript_kind::IMAGE_GENERATED],
                 |row| row.get::<_, i64>(0),
             )
             .unwrap(),

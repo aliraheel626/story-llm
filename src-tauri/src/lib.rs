@@ -32,7 +32,7 @@ pub fn run() {
             let pool = ctx.app_handle().state::<shared::db::Pool>().inner().clone();
             tauri::async_runtime::spawn_blocking(move || {
                 let image = pool.get().ok().and_then(|conn| {
-                    features::ledger::attachments::image_blob(&conn, &id)
+                    features::transcript::attachments::image_blob(&conn, &id)
                         .ok()
                         .flatten()
                 });
@@ -75,11 +75,11 @@ pub fn run() {
             features::stories::get_story_injection_settings,
             features::stories::save_story_injection_settings,
             features::narrator::preview_story_context,
-            features::ledger::list_ledger_entries,
+            features::transcript::list_ledger_entries,
             features::turn::submit_turn,
             features::turn::retry_narration,
-            features::ledger::edit_ledger_entry,
-            features::ledger::erase_last_exchange,
+            features::transcript::edit_ledger_entry,
+            features::transcript::erase_last_exchange,
             features::stories::get_story_narrator_tools,
             features::stories::save_story_narrator_tools,
             features::stories::get_story_reasoning_effort,

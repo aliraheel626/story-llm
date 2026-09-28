@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use chrono::Utc;
 
-use crate::features::ledger::{model::LedgerEntry, repository};
+use crate::features::transcript::{model::TranscriptEntry, repository};
 use crate::shared::error::{AppError, AppResult};
 
 use super::events::EntityEvent;
@@ -118,7 +118,7 @@ pub fn record(
     content: &str,
     event: &EntityEvent,
     turn_id: Option<&str>,
-) -> AppResult<LedgerEntry> {
+) -> AppResult<TranscriptEntry> {
     let entry = repository::append_entry(
         conn,
         story_id,
@@ -186,7 +186,7 @@ pub fn replay(
 pub fn replay_after_erase(
     conn: &rusqlite::Connection,
     story_id: &str,
-    entries: &[LedgerEntry],
+    entries: &[TranscriptEntry],
 ) -> AppResult<()> {
     let affected = entries
         .iter()
@@ -201,7 +201,7 @@ mod tests {
     use super::*;
     use crate::features::{
         entities::{attributes, repository as entity_repository},
-        ledger::repository as ledger_repository,
+        transcript::repository as transcript_repository,
     };
 
     type StateSnapshot = Vec<(String, String, Option<String>, i64, String)>;
@@ -262,7 +262,7 @@ mod tests {
             [],
         )
         .unwrap();
-        let passage = ledger_repository::append_story_message(
+        let passage = transcript_repository::append_story_message(
             &conn,
             "story",
             "narrator",

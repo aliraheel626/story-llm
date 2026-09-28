@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use tauri::State;
 
 use super::{model::Story, repository, settings};
-use crate::features::ledger::filter::TranscriptItem;
+use crate::features::transcript::filter::TranscriptItem;
 use crate::features::turn::TurnGate;
 use crate::shared::db::{blocking, with_transaction, Pool};
 use crate::shared::error::AppResult;

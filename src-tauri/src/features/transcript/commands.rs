@@ -2,7 +2,7 @@ use tauri::State;
 
 use super::{
     edit, erase,
-    model::{LedgerEntry, LedgerSnapshot},
+    model::{TranscriptEntry, TranscriptSnapshot},
     reducer, repository, turns,
 };
 use crate::features::{
@@ -17,7 +17,7 @@ fn edit_with_gate(
     gate: &TurnGate,
     entry_id: &str,
     content: &str,
-) -> AppResult<LedgerEntry> {
+) -> AppResult<TranscriptEntry> {
     let content = content.trim();
     if content.is_empty() {
         return Err(AppError::Invalid("content must not be empty".into()));
@@ -35,10 +35,10 @@ fn edit_with_ticket(
     ticket: TurnTicket,
     entry_id: &str,
     content: &str,
-) -> AppResult<LedgerEntry> {
+) -> AppResult<TranscriptEntry> {
     with_transaction(pool, |tx| {
         gate.still_idle(&ticket)?;
-        edit::edit_ledger_entry(tx, entry_id, content)
+        edit::edit_transcript_entry(tx, entry_id, content)
     })
 }
 
@@ -59,7 +59,7 @@ fn erase_with_ticket(
 }
 
 #[tauri::command]
-pub fn list_ledger_entries(pool: State<Pool>, story_id: String) -> AppResult<LedgerSnapshot> {
+pub fn list_ledger_entries(pool: State<Pool>, story_id: String) -> AppResult<TranscriptSnapshot> {
     let conn = pool.get()?;
     Ok(reducer::snapshot(
         repository::list_logical_entries(&conn, &story_id)?,
@@ -73,7 +73,7 @@ pub async fn edit_ledger_entry(
     gate: State<'_, TurnGate>,
     entry_id: String,
     content: String,
-) -> AppResult<LedgerEntry> {
+) -> AppResult<TranscriptEntry> {
     let pool = pool.inner().clone();
     let gate = gate.inner().clone();
     blocking(move || edit_with_gate(&pool, &gate, &entry_id, &content)).await

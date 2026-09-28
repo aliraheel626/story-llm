@@ -117,7 +117,7 @@ impl AgentHook for UsageHook {
     }
 }
 
-/// One turn of prior conversation, already resolved from the persisted ledger.
+/// One turn of prior conversation, already resolved from the persisted transcript.
 #[derive(Debug, Clone)]
 pub struct HistoryTurn {
     pub entry_id: Option<String>,
@@ -143,7 +143,7 @@ pub struct HistoryImage {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HistoryTurnMarker {
-    Ledger,
+    Transcript,
     Summary,
 }
 
@@ -877,7 +877,7 @@ mod tests {
             content: "Visible story text".into(),
             images: Vec::new(),
             reasoning: None,
-            marker: HistoryTurnMarker::Ledger,
+            marker: HistoryTurnMarker::Transcript,
         }
     }
 

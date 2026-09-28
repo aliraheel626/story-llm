@@ -2,7 +2,7 @@ use rig_core::completion::Message;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::features::ledger::summaries;
+use crate::features::transcript::summaries;
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ContextSummary {

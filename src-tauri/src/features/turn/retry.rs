@@ -5,7 +5,7 @@ use tauri::AppHandle;
 use crate::features::turn::{TurnGate, TurnTx};
 use crate::features::{
     entities,
-    ledger::{erase, model::kind as ledger_kind, query, repository as ledger_repository, turns},
+    transcript::{erase, model::kind as transcript_kind, query, repository as transcript_repository, turns},
 };
 use crate::shared::db::{blocking, Pool};
 use crate::shared::error::{AppError, AppResult};
@@ -35,10 +35,10 @@ async fn prepare_retry(
         let entries = query::entries_of_turn(conn, &old_turn.id)?;
         let player_id = entries
             .iter()
-            .find(|entry| entry.kind == ledger_kind::PLAYER_MESSAGE)
+            .find(|entry| entry.kind == transcript_kind::PLAYER_MESSAGE)
             .map(|entry| entry.id.clone())
             .ok_or_else(|| AppError::Invalid("turn has no player action".into()))?;
-        let player = ledger_repository::active_entry(conn, &player_id)?;
+        let player = transcript_repository::active_entry(conn, &player_id)?;
         let mode = player
             .payload
             .get("input_mode")
@@ -49,9 +49,9 @@ async fn prepare_retry(
         let rejected = entries
             .iter()
             .rev()
-            .find(|entry| entry.kind == ledger_kind::NARRATION)
+            .find(|entry| entry.kind == transcript_kind::NARRATION)
             .map(|entry| {
-                ledger_repository::active_entry(conn, &entry.id)
+                transcript_repository::active_entry(conn, &entry.id)
                     .map(|active| active.content.unwrap_or_default())
             })
             .transpose()?;
@@ -134,7 +134,7 @@ mod tests {
         crate::shared::test_support::record(
             &conn,
             "s",
-            ledger_kind::DICEROLL,
+            transcript_kind::DICEROLL,
             Some("Old roll"),
             json!({"roll":99,"chance_percent":50,"seed":123,"outcome":"success"}),
             Some(&reply_id),
@@ -151,7 +151,7 @@ mod tests {
         crate::shared::test_support::record(
             &conn,
             "s",
-            ledger_kind::CONTENT_EDITED,
+            transcript_kind::CONTENT_EDITED,
             Some("I kick the door open"),
             json!({"reason":"user_edit"}),
             Some(&action),
@@ -160,7 +160,7 @@ mod tests {
         crate::shared::test_support::record(
             &conn,
             "s",
-            ledger_kind::CONTENT_EDITED,
+            transcript_kind::CONTENT_EDITED,
             Some("An edited answer."),
             json!({"reason":"user_edit"}),
             Some(&reply),
@@ -177,14 +177,14 @@ mod tests {
         );
         turn.with(|conn| {
             assert!(turns::turn_of(conn, &reply)?.is_none());
-            assert!(ledger_repository::get_entry(conn, &action).is_err());
+            assert!(transcript_repository::get_entry(conn, &action).is_err());
             Ok(())
         })
         .await
         .unwrap();
         turn.rollback().await.unwrap();
         assert_eq!(
-            ledger_repository::active_entry(&pool.get().unwrap(), &action)
+            transcript_repository::active_entry(&pool.get().unwrap(), &action)
                 .unwrap()
                 .content
                 .as_deref(),
@@ -209,8 +209,8 @@ mod tests {
         prepare_retry(&turn, &reply).await.unwrap();
         turn.with(|conn| {
             assert!(turns::last_turn(conn, "s")?.is_none());
-            assert!(ledger_repository::get_entry(conn, &action).is_err());
-            assert!(ledger_repository::get_entry(conn, &reply).is_err());
+            assert!(transcript_repository::get_entry(conn, &action).is_err());
+            assert!(transcript_repository::get_entry(conn, &reply).is_err());
             assert_eq!(
                 conn.query_row("SELECT COUNT(*) FROM image_assets", [], |row| row
                     .get::<_, i64>(0))?,
@@ -230,7 +230,7 @@ mod tests {
             turn_id
         );
         assert_eq!(
-            ledger_repository::active_entry(&visible, &reply)
+            transcript_repository::active_entry(&visible, &reply)
                 .unwrap()
                 .content
                 .as_deref(),
@@ -252,16 +252,16 @@ mod tests {
             turns::COMPLETE
         );
         assert_eq!(
-            ledger_repository::active_entry(&conn, &reply)
+            transcript_repository::active_entry(&conn, &reply)
                 .unwrap()
                 .content
                 .as_deref(),
             Some("Original")
         );
-        assert!(ledger_repository::list_logical_entries(&conn, "s")
+        assert!(transcript_repository::list_logical_entries(&conn, "s")
             .unwrap()
             .iter()
-            .any(|entry| entry.kind == ledger_kind::DICEROLL));
+            .any(|entry| entry.kind == transcript_kind::DICEROLL));
         assert_eq!(
             conn.query_row("SELECT COUNT(*) FROM image_assets", [], |row| row
                 .get::<_, i64>(0))
@@ -290,8 +290,8 @@ mod tests {
         ));
         turn.rollback().await.unwrap();
         let conn = pool.get().unwrap();
-        assert!(ledger_repository::get_entry(&conn, &action).is_ok());
-        assert!(ledger_repository::get_entry(&conn, &reply).is_ok());
+        assert!(transcript_repository::get_entry(&conn, &action).is_ok());
+        assert!(transcript_repository::get_entry(&conn, &reply).is_ok());
         assert_eq!(
             crate::features::entities::list_entities_sync(&conn, "s", None).unwrap()[0].name,
             "Mira Changed"
@@ -308,7 +308,7 @@ mod tests {
         assert_eq!(rejected.as_deref(), Some("Original"));
         turn.with(|conn| {
             let new_turn = turns::create_turn(conn, "s")?;
-            ledger_repository::append_story_message(
+            transcript_repository::append_story_message(
                 conn,
                 "s",
                 "player",
@@ -317,7 +317,7 @@ mod tests {
                 None,
                 Some(&new_turn),
             )?;
-            ledger_repository::append_story_message(
+            transcript_repository::append_story_message(
                 conn,
                 "s",
                 "narrator",
@@ -339,8 +339,8 @@ mod tests {
         );
         turn.commit().await.unwrap();
         let conn = pool.get().unwrap();
-        assert!(ledger_repository::get_entry(&conn, &reply).is_err());
-        assert!(ledger_repository::list_logical_entries(&conn, "s")
+        assert!(transcript_repository::get_entry(&conn, &reply).is_err());
+        assert!(transcript_repository::list_logical_entries(&conn, "s")
             .unwrap()
             .iter()
             .any(|entry| entry.content.as_deref() == Some("New outcome")));
@@ -356,7 +356,7 @@ mod tests {
         let conn = pool.get().unwrap();
         crate::shared::test_support::story(&conn, "s");
         let turn_id = turns::create_turn(&conn, "s").unwrap();
-        let action = ledger_repository::append_story_message(
+        let action = transcript_repository::append_story_message(
             &conn,
             "s",
             "player",
@@ -395,7 +395,7 @@ mod tests {
         let conn = pool.get().unwrap();
         crate::shared::test_support::story(&conn, "s");
         let scene_turn = turns::create_turn(&conn, "s").unwrap();
-        let scene = ledger_repository::append_story_message(
+        let scene = transcript_repository::append_story_message(
             &conn,
             "s",
             "narrator",
@@ -406,7 +406,7 @@ mod tests {
         )
         .unwrap();
         let see_turn = turns::create_turn(&conn, "s").unwrap();
-        let see = ledger_repository::append_story_message(
+        let see = transcript_repository::append_story_message(
             &conn,
             "s",
             "player",
@@ -425,14 +425,14 @@ mod tests {
             ("see".into(), "".into(), None)
         );
         turn.with(|conn| {
-            assert!(ledger_repository::get_entry(conn, &scene.id).is_ok());
-            assert!(ledger_repository::get_entry(conn, &see.id).is_err());
+            assert!(transcript_repository::get_entry(conn, &scene.id).is_ok());
+            assert!(transcript_repository::get_entry(conn, &see.id).is_err());
             Ok(())
         })
         .await
         .unwrap();
         turn.rollback().await.unwrap();
-        assert!(ledger_repository::get_entry(&pool.get().unwrap(), &see.id).is_ok());
+        assert!(transcript_repository::get_entry(&pool.get().unwrap(), &see.id).is_ok());
     }
 
     #[tokio::test]
@@ -454,6 +454,6 @@ mod tests {
         turn.rollback().await.unwrap();
         drop(turn);
 
-        assert!(ledger_repository::get_entry(&pool.get().unwrap(), &reply).is_ok());
+        assert!(transcript_repository::get_entry(&pool.get().unwrap(), &reply).is_ok());
     }
 }

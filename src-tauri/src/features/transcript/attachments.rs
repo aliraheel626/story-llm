@@ -1,7 +1,7 @@
 use crate::shared::error::AppResult;
 use rusqlite::OptionalExtension;
 
-use super::model::{kind as ledger_kind, StoryImage};
+use super::model::{kind as transcript_kind, StoryImage};
 
 fn row_to_image(row: &rusqlite::Row) -> rusqlite::Result<StoryImage> {
     Ok(StoryImage {
@@ -47,7 +47,7 @@ pub(crate) fn images_for_entries(
          LIMIT ?4",
     )?;
     let rows = stmt.query_map(
-        rusqlite::params![story_id, ledger_kind::NARRATION, after_seq, limit],
+        rusqlite::params![story_id, transcript_kind::NARRATION, after_seq, limit],
         |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
     )?;
     Ok(rows.collect::<Result<_, _>>()?)
@@ -104,7 +104,7 @@ pub fn detach_from_entry(tx: &rusqlite::Transaction<'_>, entry_id: &str) -> AppR
         let events = {
             let mut stmt =
                 tx.prepare("SELECT id, payload_json FROM ledger_entries WHERE kind = ?1")?;
-            let rows = stmt.query_map([ledger_kind::IMAGE_GENERATED], |row| {
+            let rows = stmt.query_map([transcript_kind::IMAGE_GENERATED], |row| {
                 Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
             })?;
             rows.collect::<Result<Vec<_>, _>>()?

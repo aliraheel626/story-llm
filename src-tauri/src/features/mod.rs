@@ -1,7 +1,7 @@
 pub(crate) mod context;
 pub mod entities;
 pub mod images;
-pub mod ledger;
+pub mod transcript;
 pub mod narrator;
 pub mod settings;
 pub mod stats;

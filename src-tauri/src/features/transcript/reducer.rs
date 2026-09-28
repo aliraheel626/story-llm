@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
-use super::model::{kind, LedgerEntry, LedgerSnapshot, TurnSummary};
+use super::model::{kind, TranscriptEntry, TranscriptSnapshot, TurnSummary};
 
-fn edits_by_target(entries: &[LedgerEntry]) -> HashMap<String, String> {
+fn edits_by_target(entries: &[TranscriptEntry]) -> HashMap<String, String> {
     let mut edits = HashMap::new();
     for entry in entries {
         if entry.kind != kind::CONTENT_EDITED {
@@ -15,7 +15,7 @@ fn edits_by_target(entries: &[LedgerEntry]) -> HashMap<String, String> {
     edits
 }
 
-pub fn active_visible_entries(entries: &[LedgerEntry]) -> Vec<LedgerEntry> {
+pub fn active_visible_entries(entries: &[TranscriptEntry]) -> Vec<TranscriptEntry> {
     let edits = edits_by_target(entries);
 
     entries
@@ -31,8 +31,8 @@ pub fn active_visible_entries(entries: &[LedgerEntry]) -> Vec<LedgerEntry> {
         .collect()
 }
 
-pub fn snapshot(entries: Vec<LedgerEntry>, turns: Vec<TurnSummary>) -> LedgerSnapshot {
-    LedgerSnapshot {
+pub fn snapshot(entries: Vec<TranscriptEntry>, turns: Vec<TurnSummary>) -> TranscriptSnapshot {
+    TranscriptSnapshot {
         visible: active_visible_entries(&entries),
         hidden: entries
             .into_iter()
@@ -53,8 +53,8 @@ mod tests {
         content: Option<&str>,
         target: Option<&str>,
         payload: serde_json::Value,
-    ) -> LedgerEntry {
-        LedgerEntry {
+    ) -> TranscriptEntry {
+        TranscriptEntry {
             id: id.into(),
             story_id: "s".into(),
             seq: 0,

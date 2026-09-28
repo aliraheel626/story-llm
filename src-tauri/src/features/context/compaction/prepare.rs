@@ -2,7 +2,7 @@ use rig_core::{completion::Message, memory::Compactor};
 use rig_memory::{HeuristicTokenCounter, TokenCounter};
 
 use crate::ai::{CallUsage, HistoryRole, HistoryTurn, TextModelConfig};
-use crate::features::ledger::summaries;
+use crate::features::transcript::summaries;
 use crate::shared::error::AppResult;
 
 use super::budget::{kept_count, messages, raw_tail_boundary, FALLBACK_CONTEXT_WINDOW};
@@ -187,7 +187,7 @@ mod tests {
     use super::*;
     use crate::ai::HistoryImage;
     use crate::features::context::compaction::summary::ContextSummary;
-    use crate::features::ledger::{model::kind, repository};
+    use crate::features::transcript::{model::kind, repository};
     use crate::features::turn::TurnTx;
 
     fn summary(prose: &str) -> ContextSummary {
@@ -235,7 +235,7 @@ mod tests {
                     HistoryRole::Narrator
                 },
                 content: format!("Long historical turn {index}: {}", "context ".repeat(40)),
-                marker: crate::ai::HistoryTurnMarker::Ledger,
+                marker: crate::ai::HistoryTurnMarker::Transcript,
                 images: Vec::new(),
                 reasoning: None,
             })
@@ -278,7 +278,7 @@ mod tests {
                 entry_id: Some(format!("entry-{index}")),
                 role: HistoryRole::Record,
                 content: format!("image event {index}: {}", "context ".repeat(40)),
-                marker: crate::ai::HistoryTurnMarker::Ledger,
+                marker: crate::ai::HistoryTurnMarker::Transcript,
                 images: vec![HistoryImage {
                     media_type: "image/png".into(),
                     bytes: vec![index as u8],
@@ -356,7 +356,7 @@ mod tests {
                                 HistoryRole::Narrator
                             },
                             content,
-                            marker: crate::ai::HistoryTurnMarker::Ledger,
+                            marker: crate::ai::HistoryTurnMarker::Transcript,
                             images: Vec::new(),
                             reasoning: None,
                         })

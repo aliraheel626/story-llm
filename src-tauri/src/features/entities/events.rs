@@ -1,6 +1,6 @@
 use serde_json::{json, Value};
 
-use crate::features::ledger::model::{kind, LedgerEntry};
+use crate::features::transcript::model::{kind, TranscriptEntry};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct NameAnchor {
@@ -139,7 +139,7 @@ impl EntityEvent {
         }
     }
 
-    pub fn from_entry(entry: &LedgerEntry) -> Option<Self> {
+    pub fn from_entry(entry: &TranscriptEntry) -> Option<Self> {
         let string = |value: Option<&Value>| value.and_then(Value::as_str).map(str::to_string);
         let entity_id = string(entry.payload.get("entity_id"))?;
         match entry.kind.as_str() {
@@ -216,8 +216,8 @@ impl EntityEvent {
 mod tests {
     use super::*;
 
-    fn entry(kind: &str, payload: Value) -> LedgerEntry {
-        LedgerEntry {
+    fn entry(kind: &str, payload: Value) -> TranscriptEntry {
+        TranscriptEntry {
             id: "event".into(),
             story_id: "story".into(),
             seq: 0,
@@ -227,7 +227,7 @@ mod tests {
             payload,
             target_entry_id: None,
             turn_id: None,
-            created_at: "ledger-created-at".into(),
+            created_at: "transcript-created-at".into(),
         }
     }
 
@@ -258,7 +258,7 @@ mod tests {
     }
 
     #[test]
-    fn parser_uses_ledger_creation_time_and_legacy_attribute_source() {
+    fn parser_uses_transcript_creation_time_and_legacy_attribute_source() {
         let created = EntityEvent::from_entry(&entry(
             kind::ENTITY_CREATED,
             json!({
@@ -272,7 +272,7 @@ mod tests {
         .unwrap();
         assert!(matches!(
             created,
-            EntityEvent::Created { created_at, .. } if created_at == "ledger-created-at"
+            EntityEvent::Created { created_at, .. } if created_at == "transcript-created-at"
         ));
 
         let changed = EntityEvent::from_entry(&entry(

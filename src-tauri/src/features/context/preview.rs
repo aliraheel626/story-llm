@@ -3,7 +3,7 @@
 use serde::Serialize;
 
 use crate::ai::{HistoryRole, HistoryTurn, HistoryTurnMarker, TextModelConfig};
-use crate::features::{ledger::history::{self, ImagePolicy}, stories::settings};
+use crate::features::{transcript::history::{self, ImagePolicy}, stories::settings};
 use crate::prompts;
 use crate::shared::error::AppResult;
 
@@ -47,7 +47,7 @@ pub fn build_preview(
         entry_id: None,
         role: HistoryRole::Player,
         content: prompts::render_turn("continue", "").expect("continue is a valid turn mode"),
-        marker: HistoryTurnMarker::Ledger,
+        marker: HistoryTurnMarker::Transcript,
         images: Vec::new(),
         reasoning: None,
     });
@@ -87,7 +87,7 @@ mod tests {
     use super::*;
     use crate::features::{
         entities,
-        ledger::{attachments, model::kind, repository},
+        transcript::{attachments, model::kind, repository},
     };
     use crate::shared::test_support;
     use serde_json::json;
@@ -174,7 +174,7 @@ mod tests {
         );
         attachments::insert_image(
             &conn,
-            &crate::features::ledger::model::StoryImage {
+            &crate::features::transcript::model::StoryImage {
                 id: "asset".into(),
                 entry_id: narration.id,
                 prompt: "picture".into(),
@@ -233,7 +233,7 @@ mod tests {
                 entry_id: None,
                 role: HistoryRole::Player,
                 content: "<continue/>".into(),
-                marker: HistoryTurnMarker::Ledger,
+                marker: HistoryTurnMarker::Transcript,
                 images: Vec::new(),
                 reasoning: None,
             });

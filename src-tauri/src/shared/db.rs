@@ -8,7 +8,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Component, Path, PathBuf};
 use uuid::Uuid;
 
-use crate::features::ledger::{model::kind, repository};
+use crate::features::transcript::{model::kind, repository};
 use crate::features::stories::settings::NarratorToolSettings;
 use crate::shared::error::{AppError, AppResult};
 
@@ -742,6 +742,7 @@ fn migrate_turns_v1(conn: &mut rusqlite::Connection) -> AppResult<()> {
     Ok(())
 }
 
+// Historical migration (the transcript table was called the ledger then).
 fn migrate_ledger_schema(conn: &mut rusqlite::Connection) -> AppResult<()> {
     let old_exists: bool = conn.query_row(
         "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'timeline_entries')",
@@ -782,6 +783,7 @@ fn migrate_ledger_schema(conn: &mut rusqlite::Connection) -> AppResult<()> {
     Ok(())
 }
 
+// Historical migration (the transcript table was called the ledger then).
 fn migrate_ledger_retention_settings(conn: &mut rusqlite::Connection) -> AppResult<()> {
     let tx = conn.transaction()?;
     tx.execute(

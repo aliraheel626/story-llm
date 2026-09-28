@@ -5,7 +5,7 @@ use rusqlite::OptionalExtension;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use crate::features::ledger::{filter::TranscriptSettings, model::kind, repository};
+use crate::features::transcript::{filter::TranscriptSettings, model::kind, repository};
 use crate::shared::db::{with_transaction, Pool};
 use crate::shared::error::{AppError, AppResult};
 

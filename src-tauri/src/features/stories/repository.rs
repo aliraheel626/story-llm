@@ -242,7 +242,7 @@ mod tests {
         let pool = test_pool();
         let played = new_or_blank_story(&pool).unwrap();
         with_transaction(&pool, |tx| {
-            crate::features::ledger::turns::create_turn(tx, &played.id).map(|_| ())
+            crate::features::transcript::turns::create_turn(tx, &played.id).map(|_| ())
         })
         .unwrap();
         let fresh = new_or_blank_story(&pool).unwrap();

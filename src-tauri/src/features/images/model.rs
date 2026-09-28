@@ -1,4 +1,4 @@
-pub use crate::features::ledger::model::StoryImage;
+pub use crate::features::transcript::model::StoryImage;
 
 #[derive(Debug, Clone)]
 pub struct ImageRequest {

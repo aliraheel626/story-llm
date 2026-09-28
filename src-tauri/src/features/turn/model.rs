@@ -1,10 +1,10 @@
 use serde::Serialize;
 
-use crate::features::ledger::model::LedgerEntry;
+use crate::features::transcript::model::TranscriptEntry;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct SubmitTurnResult {
-    pub entry: LedgerEntry,
+    pub entry: TranscriptEntry,
     pub stream_id: String,
 }
 
@@ -17,7 +17,7 @@ pub struct RetryResult {
 #[derive(Debug, Clone, Serialize)]
 pub(super) struct NarrationDonePayload {
     pub(super) stream_id: String,
-    pub(super) entry: LedgerEntry,
+    pub(super) entry: TranscriptEntry,
 }
 
 #[derive(Debug, Clone, Serialize)]

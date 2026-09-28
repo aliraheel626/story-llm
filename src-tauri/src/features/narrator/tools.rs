@@ -413,7 +413,7 @@ pub(super) fn adjust_entity_attribute_tool(
 mod turn_tests {
     use super::super::catalog::{self, ToolAvailability, ToolDeps};
     use super::*;
-    use crate::features::ledger::repository::append_entry;
+    use crate::features::transcript::repository::append_entry;
     use crate::features::stories::settings::NarratorToolSettings;
     use crate::features::turn::TurnGate;
     use crate::shared::db::Pool;
@@ -423,11 +423,11 @@ mod turn_tests {
         let conn = pool.get().unwrap();
         let story_id = uuid::Uuid::new_v4().to_string();
         conn.execute("INSERT INTO stories(id, title, created_at, updated_at, settings_json) VALUES (?1, 't', 'now', 'now', '{}')", [&story_id]).unwrap();
-        let turn_id = crate::features::ledger::turns::create_turn(&conn, &story_id).unwrap();
+        let turn_id = crate::features::transcript::turns::create_turn(&conn, &story_id).unwrap();
         let target = append_entry(
             &conn,
             &story_id,
-            crate::features::ledger::model::kind::NARRATION,
+            crate::features::transcript::model::kind::NARRATION,
             "visible",
             Some("scene"),
             &json!({}),
