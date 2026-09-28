@@ -83,6 +83,19 @@ export interface ContextPreview {
 }
 export interface StoryImage { id: string; entry_id: string; prompt: string; created_at: string }
 
+export interface StoryStats {
+  text_cost_usd: number;
+  image_cost_usd: number;
+  total_cost_usd: number;
+  input_tokens: number;
+  output_tokens: number;
+  cached_input_tokens: number;
+  cache_write_tokens: number;
+  image_count: number;
+  unpriced_calls: number;
+  since: string | null;
+}
+
 export type EntityKind = "character" | "object" | "location" | "relationship" | "campaign";
 export interface Entity {
   id: string; story_id: string; kind: EntityKind; name: string;
