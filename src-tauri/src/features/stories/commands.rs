@@ -11,13 +11,9 @@ pub fn list_stories(pool: State<Pool>) -> AppResult<Vec<Story>> {
 }
 
 #[tauri::command]
-pub async fn create_story(
-    pool: State<'_, Pool>,
-    title: Option<String>,
-    settings: Option<serde_json::Value>,
-) -> AppResult<Story> {
+pub async fn new_story(pool: State<'_, Pool>) -> AppResult<Story> {
     let pool = pool.inner().clone();
-    blocking(move || repository::create_story_in_pool(&pool, title, settings)).await
+    blocking(move || repository::new_or_blank_story(&pool)).await
 }
 
 #[tauri::command]

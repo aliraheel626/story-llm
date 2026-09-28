@@ -67,7 +67,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             features::stories::list_stories,
-            features::stories::create_story,
+            features::stories::new_story,
             features::stories::rename_story,
             features::stories::delete_story,
             features::context::get_story_context_settings,

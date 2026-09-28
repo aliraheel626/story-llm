@@ -1,4 +1,5 @@
 use chrono::Utc;
+use rusqlite::OptionalExtension;
 use serde_json::json;
 use uuid::Uuid;
 
@@ -12,21 +13,23 @@ use crate::shared::error::{AppError, AppResult};
 /// mirrors `DEFAULT_STORY_TITLE` in `src/lib/types.ts`.
 pub(super) const DEFAULT_STORY_TITLE: &str = "New story";
 
+fn story_row(row: &rusqlite::Row) -> rusqlite::Result<Story> {
+    Ok(Story {
+        id: row.get(0)?,
+        title: row.get(1)?,
+        created_at: row.get(2)?,
+        updated_at: row.get(3)?,
+        settings_json: row.get(4)?,
+    })
+}
+
 pub(super) fn list_stories(pool: &Pool) -> AppResult<Vec<Story>> {
     let conn = pool.get()?;
     let mut stmt = conn.prepare(
         "SELECT id, title, created_at, updated_at, settings_json
          FROM stories ORDER BY updated_at DESC",
     )?;
-    let rows = stmt.query_map([], |row| {
-        Ok(Story {
-            id: row.get(0)?,
-            title: row.get(1)?,
-            created_at: row.get(2)?,
-            updated_at: row.get(3)?,
-            settings_json: row.get(4)?,
-        })
-    })?;
+    let rows = stmt.query_map([], story_row)?;
     let mut out = Vec::new();
     for r in rows {
         out.push(r?);
@@ -34,9 +37,27 @@ pub(super) fn list_stories(pool: &Pool) -> AppResult<Vec<Story>> {
     Ok(out)
 }
 
-/// `settings` carries mechanics choices made while the story was still a
-/// frontend draft, so they are written in the same transaction as the story
-/// itself rather than a follow-up save that could fail on its own.
+/// "New story" reopens the newest story that still has the placeholder title
+/// and no submitted turn, so repeated clicks don't pile up empty stories.
+pub(super) fn new_or_blank_story(pool: &Pool) -> AppResult<Story> {
+    let blank = pool
+        .get()?
+        .query_row(
+            "SELECT id, title, created_at, updated_at, settings_json FROM stories s
+             WHERE s.title = ?1 AND NOT EXISTS (SELECT 1 FROM turns t WHERE t.story_id = s.id)
+             ORDER BY s.created_at DESC LIMIT 1",
+            [DEFAULT_STORY_TITLE],
+            story_row,
+        )
+        .optional()?;
+    match blank {
+        Some(story) => Ok(story),
+        None => create_story_in_pool(pool, None, None),
+    }
+}
+
+/// `settings`, when given, is validated and written in the same transaction
+/// as the story itself.
 pub(super) fn create_story_in_pool(
     pool: &Pool,
     title: Option<String>,
@@ -198,5 +219,59 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM stories", [], |row| row.get(0))
             .unwrap();
         assert_eq!(count, 2);
+    }
+
+    fn story_count(pool: &Pool) -> i64 {
+        pool.get()
+            .unwrap()
+            .query_row("SELECT COUNT(*) FROM stories", [], |row| row.get(0))
+            .unwrap()
+    }
+
+    #[test]
+    fn new_story_reuses_the_newest_blank_story() {
+        let pool = test_pool();
+        let first = new_or_blank_story(&pool).unwrap();
+        let second = new_or_blank_story(&pool).unwrap();
+        assert_eq!(first.id, second.id);
+        assert_eq!(story_count(&pool), 1);
+    }
+
+    #[test]
+    fn new_story_skips_stories_with_turns() {
+        let pool = test_pool();
+        let played = new_or_blank_story(&pool).unwrap();
+        with_transaction(&pool, |tx| {
+            crate::features::ledger::turns::create_turn(tx, &played.id).map(|_| ())
+        })
+        .unwrap();
+        let fresh = new_or_blank_story(&pool).unwrap();
+        assert_ne!(fresh.id, played.id);
+        assert_eq!(story_count(&pool), 2);
+    }
+
+    #[test]
+    fn new_story_skips_renamed_stories() {
+        let pool = test_pool();
+        let named = new_or_blank_story(&pool).unwrap();
+        rename_story(&pool, &named.id, "Mine").unwrap();
+        assert_ne!(new_or_blank_story(&pool).unwrap().id, named.id);
+    }
+
+    #[test]
+    fn new_story_picks_the_newest_blank() {
+        let pool = test_pool();
+        let january = create_story_in_pool(&pool, None, None).unwrap();
+        let february = create_story_in_pool(&pool, None, None).unwrap();
+        let conn = pool.get().unwrap();
+        for (id, created) in [(&january.id, "2026-01-01"), (&february.id, "2026-02-01")] {
+            conn.execute(
+                "UPDATE stories SET created_at = ?1 WHERE id = ?2",
+                rusqlite::params![created, id],
+            )
+            .unwrap();
+        }
+        drop(conn);
+        assert_eq!(new_or_blank_story(&pool).unwrap().id, february.id);
     }
 }
