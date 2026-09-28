@@ -5,7 +5,10 @@ use tauri::AppHandle;
 use crate::shared::db::Pool;
 use crate::shared::error::{AppError, AppResult};
 
-use super::model::{ImageModelSettings, TextModelSettings, DEFAULT_IMAGE_STYLE};
+use super::model::{
+    ImageModelSettings, TextModelSettings, DEFAULT_IMAGE_STYLE, DEFAULT_TEXT_CONTEXT_WINDOW,
+    DEFAULT_TEXT_MODEL, DEFAULT_TEXT_PROVIDER, DEFAULT_TEXT_SUPPORTS_IMAGES,
+};
 use super::secrets::has_api_key;
 
 const SETTINGS_KEY_TEXT_MODEL: &str = "text_model_default";
@@ -63,8 +66,22 @@ pub fn read_text_model_settings(app: &AppHandle, pool: &Pool) -> AppResult<TextM
         )
         .ok();
 
-    let (provider, model, context_window, supports_images) = stored
-        .and_then(|v| serde_json::from_str::<serde_json::Value>(&v).ok())
+    let (provider, model, context_window, supports_images) = text_model_fields(stored.as_deref());
+
+    let has_api_key = has_api_key(app, &provider)?;
+
+    Ok(TextModelSettings {
+        provider,
+        model,
+        has_api_key,
+        context_window,
+        supports_images,
+    })
+}
+
+fn text_model_fields(stored: Option<&str>) -> (String, String, usize, bool) {
+    stored
+        .and_then(|v| serde_json::from_str::<serde_json::Value>(v).ok())
         .map(|v| {
             let provider = v
                 .get("provider")
@@ -84,17 +101,14 @@ pub fn read_text_model_settings(app: &AppHandle, pool: &Pool) -> AppResult<TextM
             let supports_images = stored_image_support(&v);
             (provider, model, context_window, supports_images)
         })
-        .unwrap_or_else(|| ("openrouter".to_string(), String::new(), 32_768, false));
-
-    let has_api_key = has_api_key(app, &provider)?;
-
-    Ok(TextModelSettings {
-        provider,
-        model,
-        has_api_key,
-        context_window,
-        supports_images,
-    })
+        .unwrap_or_else(|| {
+            (
+                DEFAULT_TEXT_PROVIDER.to_string(),
+                DEFAULT_TEXT_MODEL.to_string(),
+                DEFAULT_TEXT_CONTEXT_WINDOW,
+                DEFAULT_TEXT_SUPPORTS_IMAGES,
+            )
+        })
 }
 
 fn stored_image_support(value: &serde_json::Value) -> bool {
@@ -193,6 +207,35 @@ pub(super) fn write_image_model_settings(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn new_install_uses_grok_4_7_without_a_settings_row() {
+        let pool = crate::shared::db::test_pool();
+        assert!(stored_text_model_row(&pool).unwrap().is_none());
+        assert_eq!(
+            text_model_fields(None),
+            ("openrouter".into(), "x-ai/grok-4.7".into(), 500_000, true)
+        );
+    }
+
+    #[test]
+    fn saved_text_model_keeps_its_own_settings() {
+        let pool = crate::shared::db::test_pool();
+        write_text_model_settings(&pool, "openrouter", "x-ai/grok-4.3", 131_072, false).unwrap();
+        let row = pool
+            .get()
+            .unwrap()
+            .query_row(
+                "SELECT value FROM settings WHERE key = ?1",
+                [SETTINGS_KEY_TEXT_MODEL],
+                |row| row.get::<_, String>(0),
+            )
+            .unwrap();
+        assert_eq!(
+            text_model_fields(Some(&row)),
+            ("openrouter".into(), "x-ai/grok-4.3".into(), 131_072, false)
+        );
+    }
 
     #[test]
     fn capability_refresh_only_applies_to_legacy_rows() {

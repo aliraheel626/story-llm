@@ -11,6 +11,10 @@ pub struct TextModelSettings {
 }
 
 pub const DEFAULT_IMAGE_STYLE: &str = "Digital painting, atmospheric scene illustration.";
+pub const DEFAULT_TEXT_PROVIDER: &str = "openrouter";
+pub const DEFAULT_TEXT_MODEL: &str = "x-ai/grok-4.7";
+pub const DEFAULT_TEXT_CONTEXT_WINDOW: usize = 500_000;
+pub const DEFAULT_TEXT_SUPPORTS_IMAGES: bool = true;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ImageModelSettings {

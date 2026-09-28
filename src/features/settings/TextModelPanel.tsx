@@ -10,6 +10,7 @@ const PROVIDERS: { value: string; label: string }[] = [
 
 const MODELS_BY_PROVIDER: Record<string, { slug: string; label: string }[]> = {
   openrouter: [
+    { slug: "x-ai/grok-4.7", label: "Grok 4.7" },
     { slug: "x-ai/grok-4.3", label: "Grok 4.3" },
     { slug: "anthropic/claude-sonnet-4.5", label: "Claude Sonnet 4.5" },
     { slug: "nousresearch/hermes-4-70b", label: "Hermes 4 70B" },
@@ -55,7 +56,7 @@ export function TextModelPanel() {
 
   // Switching provider clears the model field rather than leaving whatever
   // was typed for the other provider (their model namespaces don't overlap —
-  // an OpenRouter slug like "x-ai/grok-4.3" means nothing to Nous Portal).
+  // an OpenRouter slug like "x-ai/grok-4.7" means nothing to Nous Portal).
   const onProviderChange = (nextProvider: string) => {
     setProvider(nextProvider);
     const presets = MODELS_BY_PROVIDER[nextProvider] ?? [];
