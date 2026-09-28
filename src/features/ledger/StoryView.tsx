@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef } from "react";
-import { DEFAULT_STORY_TITLE, groupRollsByEntry, ledgerInputMode, type ActionMode } from "../../shared/types";
+import { groupRollsByEntry, ledgerInputMode, type ActionMode } from "../../shared/types";
 import type { LedgerEntry, NarrativePayload } from "../../shared/types";
 import { useStoryStore } from "../story/store";
 import { StatsBar } from "../stats/StatsBar";
@@ -18,7 +18,6 @@ function usePrefersReducedMotion() {
 export function StoryView() {
   const activeStoryId = useStoryStore((s) => s.activeStoryId);
   const stories = useStoryStore((s) => s.stories);
-  const draft = useStoryStore((s) => s.draft);
   const activeStory = stories.find((s) => s.id === activeStoryId);
 
   const entries = useStoryStore((s) => activeStoryId ? (s.bundles[activeStoryId]?.entries ?? EMPTY_ENTRIES) : EMPTY_ENTRIES);
@@ -81,9 +80,7 @@ export function StoryView() {
     pinRef.current?.scrollIntoView({ block: "start", behavior: reducedMotion ? "auto" : "smooth" });
   }, [pinKey, reducedMotion]);
 
-  // A draft is composed client-side and created on first submit.
-  const drafting = draft && !activeStory;
-  if (!activeStory && !drafting) {
+  if (!activeStory) {
     return (
       <div className="flex h-full flex-1 items-center justify-center">
         <div className="text-center">
@@ -96,14 +93,10 @@ export function StoryView() {
 
   return (
     <div className="flex h-full flex-1 flex-col overflow-hidden">
-      {activeStory && <StatsBar storyId={activeStory.id} />}
+      <StatsBar storyId={activeStory.id} />
       <div ref={scrollRef} className="flex-1 overflow-y-auto">
         <div className="mx-auto flex w-full max-w-measure flex-col gap-5 px-6 py-10">
-          {drafting ? (
-            <h1 className="font-prose text-2xl italic text-muted">{DEFAULT_STORY_TITLE}</h1>
-          ) : (
-            <EditableStoryTitle storyId={activeStory!.id} />
-          )}
+          <EditableStoryTitle storyId={activeStory.id} />
 
           {displayedEntries.length === 0 && !isStreamingAppend && (
             <p className="font-prose text-base italic leading-8 text-muted">
@@ -133,7 +126,7 @@ export function StoryView() {
                 {activity && <TurnActivity activity={activity} live={replacingEntry} />}
                 <LedgerEntryView
                   entry={entry}
-                  storyId={activeStoryId!}
+                  storyId={activeStory.id}
                   isLast={isLastEntry}
                   retryEntryId={retryEntryId}
                   turnFailed={isLastEntry && !!retryTurnId && turns?.some((turn) => turn.id === retryTurnId && turn.status === "failed")}
@@ -163,7 +156,7 @@ export function StoryView() {
         </div>
       </div>
 
-      <Composer storyId={activeStoryId} />
+      <Composer storyId={activeStory.id} />
     </div>
   );
 }

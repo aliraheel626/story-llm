@@ -26,36 +26,32 @@ export const MODES: readonly ModeDefinition[] = [
 
 export const modeDefinition = (mode: ActionMode) => MODES.find((candidate) => candidate.id === mode)!;
 
-/** `storyId` is null while composing a not-yet-persisted draft story; the
- *  first submit creates the story (see `ensureStory`), so an
- *  abandoned draft never leaves an empty story behind. */
-export function Composer({ storyId }: { storyId: string | null }) {
+export function Composer({ storyId }: { storyId: string }) {
   const [mode, setMode] = useState<ActionMode>("do");
   const [text, setText] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  const createStory = useStoryStore((s) => s.createStory);
   const submitTurn = useStoryStore((s) => s.submitTurn);
   const consumeRestoreDraft = useStoryStore((s) => s.consumeRestoreDraft);
-  const streaming = useStoryStore((s) => storyId ? s.bundles[storyId]?.streaming : undefined);
-  const requestPending = useStoryStore((s) => storyId ? (s.bundles[storyId]?.requestPending ?? false) : false);
-  const ledgerLoading = useStoryStore((s) => storyId ? (s.bundles[storyId]?.ledgerLoading ?? false) : false);
-  const turnError = useStoryStore((s) => storyId ? s.bundles[storyId]?.turnError : null);
-  const imageError = useStoryStore((s) => storyId ? s.bundles[storyId]?.imageError : null);
-  const restoreDraft = useStoryStore((s) => storyId ? s.bundles[storyId]?.restoreDraft : null);
-  const entries = useStoryStore((s) => storyId ? s.bundles[storyId]?.entries : undefined);
-  const imagePendingFor = useStoryStore((s) => storyId ? s.bundles[storyId]?.imagePendingFor : undefined);
+  const streaming = useStoryStore((s) => s.bundles[storyId]?.streaming);
+  const requestPending = useStoryStore((s) => s.bundles[storyId]?.requestPending ?? false);
+  const ledgerLoading = useStoryStore((s) => s.bundles[storyId]?.ledgerLoading ?? false);
+  const turnError = useStoryStore((s) => s.bundles[storyId]?.turnError);
+  const imageError = useStoryStore((s) => s.bundles[storyId]?.imageError);
+  const restoreDraft = useStoryStore((s) => s.bundles[storyId]?.restoreDraft);
+  const entries = useStoryStore((s) => s.bundles[storyId]?.entries);
+  const imagePendingFor = useStoryStore((s) => s.bundles[storyId]?.imagePendingFor);
   const imageSettings = useImageModelStore((s) => s.settings);
   const loadImageSettings = useImageModelStore((s) => s.load);
   const saveReasoningEffort = useStoryStore((s) => s.saveReasoningEffort);
   const loadReasoningEffort = useStoryStore((s) => s.loadReasoningEffort);
   const loadNarratorTools = useStoryStore((s) => s.loadNarratorTools);
-  const reasoningEffort = useStoryStore((s) => storyId ? s.bundles[storyId]?.reasoningEffort : s.draftReasoningEffort);
-  const reasoningEffortLoaded = useStoryStore((s) => storyId ? (s.bundles[storyId]?.reasoningEffortLoaded ?? false) : true);
-  const reasoningEffortError = useStoryStore((s) => storyId ? s.bundles[storyId]?.reasoningEffortError : null);
-  const tools = useStoryStore((s) => storyId ? s.bundles[storyId]?.narratorTools : s.draftNarratorTools);
+  const reasoningEffort = useStoryStore((s) => s.bundles[storyId]?.reasoningEffort);
+  const reasoningEffortLoaded = useStoryStore((s) => s.bundles[storyId]?.reasoningEffortLoaded ?? false);
+  const reasoningEffortError = useStoryStore((s) => s.bundles[storyId]?.reasoningEffortError);
+  const tools = useStoryStore((s) => s.bundles[storyId]?.narratorTools);
 
   const changeReasoningEffort = async (value: string) => {
     try {
@@ -76,14 +72,12 @@ export function Composer({ storyId }: { storyId: string | null }) {
   }, [loadImageSettings]);
 
   useEffect(() => {
-    if (storyId) {
-      loadNarratorTools(storyId);
-      loadReasoningEffort(storyId);
-    }
+    loadNarratorTools(storyId);
+    loadReasoningEffort(storyId);
   }, [storyId, loadNarratorTools, loadReasoningEffort]);
 
   useEffect(() => {
-    if (!storyId || !restoreDraft) return;
+    if (!restoreDraft) return;
     const draft = consumeRestoreDraft(storyId);
     if (draft) {
       setMode(draft.mode);
@@ -99,13 +93,6 @@ export function Composer({ storyId }: { storyId: string | null }) {
     el.style.height = `${Math.min(el.scrollHeight, maxHeight)}px`;
   }, [text, mode]);
 
-  /** Lazily persists the story on first submit. No-op once it exists. */
-  const ensureStory = async (): Promise<string> => {
-    if (storyId) return storyId;
-    const story = await createStory();
-    return story.id;
-  };
-
   const onSubmit = async () => {
     if (busy) return;
     setError(null);
@@ -113,11 +100,10 @@ export function Composer({ storyId }: { storyId: string | null }) {
     const trimmed = text.trim();
     const definition = modeDefinition(mode);
     if (definition.textRequired && !trimmed) return;
-    if (mode === "see" && (!storyId || !lastNarration || imageBusy || imagesDisabled)) return;
+    if (mode === "see" && (!lastNarration || imageBusy || imagesDisabled)) return;
     setSubmitting(true);
     try {
-      const persistedStoryId = mode === "see" ? storyId! : await ensureStory();
-      await submitTurn(persistedStoryId, mode, trimmed);
+      await submitTurn(storyId, mode, trimmed);
       setText("");
     } catch (e) {
       setError(String(e));
@@ -127,7 +113,7 @@ export function Composer({ storyId }: { storyId: string | null }) {
   };
 
   const onContinue = async () => {
-    if (busy || !storyId || !lastEntry) return;
+    if (busy || !lastEntry) return;
     setSubmitting(true);
     setError(null);
     try {
@@ -151,7 +137,7 @@ export function Composer({ storyId }: { storyId: string | null }) {
 
   const submitDisabled = busy
     || (activeMode.textRequired && !text.trim())
-    || (activeMode.disabledWhen === "image-unavailable" && (!storyId || !lastNarration || imageBusy || imagesDisabled));
+    || (activeMode.disabledWhen === "image-unavailable" && (!lastNarration || imageBusy || imagesDisabled));
 
   const submitLabel = mode === "see" ? (imageBusy ? "Generating..." : "Generate") : busy ? "Writing..." : "Send";
 
@@ -200,7 +186,7 @@ export function Composer({ storyId }: { storyId: string | null }) {
           onKeyDown={onKeyDown}
           placeholder={activeMode.placeholder}
           rows={2}
-          disabled={busy || (mode === "see" && (imagesDisabled || !storyId || !lastNarration))}
+          disabled={busy || (mode === "see" && (imagesDisabled || !lastNarration))}
           className="w-full resize-none overflow-y-auto rounded border border-border bg-bg px-3 py-2 font-prose text-sm leading-6 text-text placeholder:text-muted focus:outline-none focus:border-accent disabled:opacity-60"
         />
         <div className="mt-2 flex items-center justify-between gap-2">
@@ -226,7 +212,7 @@ export function Composer({ storyId }: { storyId: string | null }) {
                 ))}
               </select>
             </label>
-            {reasoningEffortError && storyId && !reasoningEffortLoaded && (
+            {reasoningEffortError && !reasoningEffortLoaded && (
               <button onClick={() => loadReasoningEffort(storyId)} className="text-xs text-danger underline">Retry effort</button>
             )}
             <button

@@ -6,9 +6,9 @@ export function StoriesPanel() {
   const stories = useStoryStore((s) => s.stories);
   const storiesLoading = useStoryStore((s) => s.storiesLoading);
   const activeStoryId = useStoryStore((s) => s.activeStoryId);
-  const draft = useStoryStore((s) => s.draft);
   const loadStories = useStoryStore((s) => s.loadStories);
-  const startDraft = useStoryStore((s) => s.startDraft);
+  const newStory = useStoryStore((s) => s.newStory);
+  const creatingStory = useStoryStore((s) => s.creatingStory);
   const setActiveStory = useStoryStore((s) => s.setActiveStory);
   const deleteStory = useStoryStore((s) => s.deleteStory);
 
@@ -34,19 +34,16 @@ export function StoriesPanel() {
   return (
     <div className="flex flex-col gap-2">
       <button
-        onClick={startDraft}
-        className={`w-full rounded border border-dashed px-2 py-1.5 text-xs transition-colors ${
-          draft
-            ? "border-accent text-text bg-surface-hover"
-            : "border-border text-muted hover:text-text hover:border-accent"
-        }`}
+        onClick={() => newStory().catch((err) => console.error("failed to open a new story", err))}
+        disabled={creatingStory}
+        className="w-full rounded border border-dashed border-border px-2 py-1.5 text-xs text-muted transition-colors hover:border-accent hover:text-text disabled:opacity-40"
       >
         + New story
       </button>
 
       <div className="flex flex-col gap-0.5 mt-1">
         {storiesLoading && <div className="text-xs text-muted px-1 py-1">Loading...</div>}
-        {!storiesLoading && stories.length === 0 && !draft && (
+        {!storiesLoading && stories.length === 0 && (
           <div className="text-xs text-muted px-1 py-1">No stories yet.</div>
         )}
         {stories.map((story) => (

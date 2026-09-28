@@ -46,11 +46,16 @@ globalThis.__storyTestInvoke = async (command, args = {}) => {
   calls.push({ command, args });
   const story = stories.get(args.storyId);
   switch (command) {
-    case "create_story": {
-      const created = { id: `story-${stories.size + 1}`, title: "New story", settings_json: JSON.stringify(args.settings) };
-      stories.set(created.id, { ...args.settings });
-      return created;
+    case "new_story": {
+      // Mirrors the backend: reuse the newest story still titled "New story" with no submitted turn.
+      const blank = [...stories].reverse().find(([id, saved]) => saved.title === "New story" && !saved.played && !entries.get(id)?.length);
+      if (blank) return { id: blank[0], title: "New story", settings_json: "{}" };
+      const id = `story-${stories.size + 1}`;
+      const tools = { get_entities: true, create_entity: true, update_entity: true, adjust_entity_attribute: true, roll_check: true, illustrate_scene: true };
+      stories.set(id, { title: "New story", narrator_tools: tools });
+      return { id, title: "New story", settings_json: "{}" };
     }
+    case "rename_story": story.title = args.title; return;
     case "get_story_narrator_tools": return { ...story.narrator_tools };
     case "save_story_narrator_tools":
       if (nextToolsSave) {
@@ -132,7 +137,7 @@ globalThis.__storyTestInvoke = async (command, args = {}) => {
       }
       return { entry_id: args.entryId, stream_id: `stream-${calls.length}` };
     case "erase_last_exchange": images.set(args.storyId, []); return ["see-action"];
-    case "submit_turn": return {
+    case "submit_turn": if (story) story.played = true; return {
       entry: { id: `action-${calls.length}`, story_id: args.storyId, kind: "player_message", payload: { input_mode: args.mode }, content: args.content, turn_id: `turn-${calls.length}` },
       stream_id: `stream-${calls.length}`,
     };
@@ -271,22 +276,35 @@ test("failed post-save settings read does not strand loading", async () => {
   assert.equal(store.getState().saving, false);
 });
 
-test("draft defaults are all on and first create persists selected tools and effort", async () => {
-  store.getState().startDraft();
-  assert.ok(Object.values(store.getState().draftNarratorTools).every(Boolean));
-  await store.getState().saveNarratorTools(null, { roll_check: false });
-  await store.getState().saveReasoningEffort(null, "high");
-  const story = await store.getState().createStory();
+test("new story is created and active at once", async () => {
+  const story = await store.getState().newStory();
+  assert.equal(store.getState().activeStoryId, story.id);
+  assert.equal(store.getState().stories[0].id, story.id);
+  await store.getState().loadNarratorTools(story.id);
+  await store.getState().loadReasoningEffort(story.id);
+  await store.getState().saveNarratorTools(story.id, { roll_check: false });
+  await store.getState().saveReasoningEffort(story.id, "high");
   const saved = stories.get(story.id);
   assert.equal(saved.narrator_tools.roll_check, false);
   assert.equal(saved.narrator_tools.illustrate_scene, true);
   assert.equal(saved.reasoning_effort, "high");
 });
 
+test("new story twice reuses the blank story", async () => {
+  const count = store.getState().stories.length;
+  const first = await store.getState().newStory();
+  const second = await store.getState().newStory();
+  assert.equal(second.id, first.id);
+  assert.equal(store.getState().stories.length, count);
+  assert.equal(store.getState().stories.filter((story) => story.id === first.id).length, 1);
+});
+
 test("rapid independent toggles remain isolated by story and failed saves roll back", async () => {
   const first = store.getState().activeStoryId;
-  store.getState().startDraft();
-  const second = (await store.getState().createStory()).id;
+  await store.getState().renameStory(first, "First");
+  const second = (await store.getState().newStory()).id;
+  assert.notEqual(second, first);
+  await store.getState().loadNarratorTools(second);
   assert.equal(stories.get(second).reasoning_effort, undefined);
   await Promise.all([
     store.getState().saveNarratorTools(first, { get_entities: false }),
@@ -545,8 +563,7 @@ test("image failure surfaces an error and a new request clears it", async () => 
 
 test("image pending before narration finalize remains through finalize and clears when generated", async () => {
   const previousStoryId = store.getState().activeStoryId;
-  store.getState().startDraft();
-  const storyId = (await store.getState().createStory()).id;
+  const storyId = (await store.getState().newStory()).id;
   entries.set(storyId, []);
   await store.getState().submitTurn(storyId, "do", "Enter the forest");
   const { streaming } = store.getState().bundles[storyId];
@@ -577,8 +594,7 @@ test("image pending before narration finalize remains through finalize and clear
 
 test("text completion stops the cursor without changing streamed narration", async () => {
   const previousStoryId = store.getState().activeStoryId;
-  store.getState().startDraft();
-  const storyId = (await store.getState().createStory()).id;
+  const storyId = (await store.getState().newStory()).id;
   entries.set(storyId, []);
   await store.getState().submitTurn(storyId, "do", "Enter the forest");
   const streamId = store.getState().bundles[storyId].streaming.streamId;
@@ -598,8 +614,7 @@ test("text completion stops the cursor without changing streamed narration", asy
 
 test("image pending during replacement marks the stream without replacing the original reply", async () => {
   const previousStoryId = store.getState().activeStoryId;
-  store.getState().startDraft();
-  const storyId = (await store.getState().createStory()).id;
+  const storyId = (await store.getState().newStory()).id;
   const original = { id: "replace-image-original", story_id: storyId, kind: "narration", payload: { input_mode: "generated" }, content: "Original", turn_id: "replace-image-turn" };
   entries.set(storyId, [original]);
   await store.getState().loadLedger(storyId);

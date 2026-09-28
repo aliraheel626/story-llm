@@ -1,5 +1,4 @@
 import { create } from "zustand";
-import { DEFAULT_NARRATOR_TOOLS } from "../../shared/types";
 import type {
   ActionMode,
   Entity,
@@ -75,14 +74,10 @@ interface StoryStoreState {
   storiesLoading: boolean;
   creatingStory: boolean;
   activeStoryId: string | null;
-  draft: boolean;
-  draftNarratorTools: NarratorToolSettings;
-  draftReasoningEffort: ReasoningEffort | null;
   bundles: Record<string, StoryBundle>;
 
   loadStories: () => Promise<void>;
-  startDraft: () => void;
-  createStory: () => Promise<Story>;
+  newStory: () => Promise<Story>;
   renameStory: (storyId: string, title: string) => Promise<void>;
   deleteStory: (storyId: string) => Promise<void>;
   applyStoryTitle: (storyId: string, title: string) => void;
@@ -111,9 +106,9 @@ interface StoryStoreState {
   deleteCharacter: (storyId: string, entityId: string) => Promise<void>;
 
   loadNarratorTools: (storyId: string) => Promise<void>;
-  saveNarratorTools: (storyId: string | null, patch: Partial<NarratorToolSettings>) => Promise<void>;
+  saveNarratorTools: (storyId: string, patch: Partial<NarratorToolSettings>) => Promise<void>;
   loadReasoningEffort: (storyId: string) => Promise<void>;
-  saveReasoningEffort: (storyId: string | null, value: ReasoningEffort | null) => Promise<void>;
+  saveReasoningEffort: (storyId: string, value: ReasoningEffort | null) => Promise<void>;
 }
 
 const newBundle = (id: string): StoryBundle => ({
@@ -221,9 +216,6 @@ export const useStoryStore = create<StoryStoreState>((set, get) => ({
   storiesLoading: false,
   creatingStory: false,
   activeStoryId: null,
-  draft: false,
-  draftNarratorTools: { ...DEFAULT_NARRATOR_TOOLS },
-  draftReasoningEffort: null,
   bundles: {},
 
   loadStories: async () => {
@@ -235,22 +227,13 @@ export const useStoryStore = create<StoryStoreState>((set, get) => ({
       set({ storiesLoading: false });
     }
   },
-  startDraft: () => set({ activeStoryId: null, draft: true, draftNarratorTools: { ...DEFAULT_NARRATOR_TOOLS }, draftReasoningEffort: null }),
-  createStory: async () => {
-    const { draftNarratorTools, draftReasoningEffort } = get();
+  newStory: async () => {
     set({ creatingStory: true });
     try {
-      const story = await storiesApi.create(undefined, {
-        narrator_tools: draftNarratorTools,
-        ...(draftReasoningEffort ? { reasoning_effort: draftReasoningEffort } : {}),
-      });
+      const story = await storiesApi.openNew();
       set((state) => ({
-        stories: [story, ...state.stories],
+        stories: state.stories.some((known) => known.id === story.id) ? state.stories : [story, ...state.stories],
         activeStoryId: story.id,
-        draft: false,
-        draftNarratorTools: { ...DEFAULT_NARRATOR_TOOLS },
-        draftReasoningEffort: null,
-        bundles: patchBundle(state.bundles, story.id, { narratorTools: draftNarratorTools, reasoningEffort: draftReasoningEffort, reasoningEffortLoaded: true }),
       }));
       return story;
     } finally {
@@ -276,9 +259,7 @@ export const useStoryStore = create<StoryStoreState>((set, get) => ({
   applyStoryTitle: (storyId, title) =>
     set((state) => ({ stories: state.stories.map((story) => (story.id === storyId ? { ...story, title } : story)) })),
   setActiveStory: (storyId) => {
-    if (get().activeStoryId !== storyId || get().draft) {
-      set({ activeStoryId: storyId, draft: false, draftNarratorTools: { ...DEFAULT_NARRATOR_TOOLS }, draftReasoningEffort: null });
-    }
+    if (get().activeStoryId !== storyId) set({ activeStoryId: storyId });
   },
 
   loadLedger: async (storyId) => {
@@ -647,10 +628,6 @@ export const useStoryStore = create<StoryStoreState>((set, get) => ({
     return load;
   },
   saveNarratorTools: async (storyId, patch) => {
-    if (!storyId) {
-      set((state) => ({ draftNarratorTools: { ...state.draftNarratorTools, ...patch } }));
-      return;
-    }
     const loaded = get().bundles[storyId]?.narratorTools;
     if (!loaded) throw new Error("Narrator tools are not loaded yet");
     set((state) => ({ bundles: patchBundle(state.bundles, storyId, (bundle) => ({
@@ -684,10 +661,6 @@ export const useStoryStore = create<StoryStoreState>((set, get) => ({
     return load;
   },
   saveReasoningEffort: async (storyId, value) => {
-    if (!storyId) {
-      set({ draftReasoningEffort: value });
-      return;
-    }
     if (!get().bundles[storyId]?.reasoningEffortLoaded) throw new Error("Reasoning effort is not loaded yet");
     set((state) => ({ bundles: patchBundle(state.bundles, storyId, { reasoningEffort: value, reasoningEffortError: null }) }));
     try {

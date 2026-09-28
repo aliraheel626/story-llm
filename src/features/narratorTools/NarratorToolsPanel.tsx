@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { DEFAULT_NARRATOR_TOOLS, type NarratorToolSettings } from "../../shared/types";
+import type { NarratorToolSettings } from "../../shared/types";
 import { useStoryStore } from "../story/store";
 
 const GROUPS: { title: string; items: { key: keyof NarratorToolSettings; label: string; description: string }[] }[] = [
@@ -28,10 +28,7 @@ const GROUPS: { title: string; items: { key: keyof NarratorToolSettings; label: 
 
 export function NarratorToolsPanel() {
   const storyId = useStoryStore((s) => s.activeStoryId);
-  const draft = useStoryStore((s) => s.draft);
-  const creating = useStoryStore((s) => s.creatingStory);
   const loaded = useStoryStore((s) => storyId ? s.bundles[storyId]?.narratorTools : null);
-  const draftTools = useStoryStore((s) => s.draftNarratorTools);
   const loading = useStoryStore((s) => storyId ? s.bundles[storyId]?.narratorToolsLoading : false);
   const error = useStoryStore((s) => storyId ? s.bundles[storyId]?.narratorToolsError : null);
   const load = useStoryStore((s) => s.loadNarratorTools);
@@ -41,14 +38,14 @@ export function NarratorToolsPanel() {
     if (storyId) load(storyId);
   }, [storyId, load]);
 
-  if (!storyId && !draft) return <p className="text-xs text-muted">Open or start a story to choose its narrator tools.</p>;
-  if (storyId && !loaded) {
+  if (!storyId) return <p className="text-xs text-muted">Open or start a story to choose its narrator tools.</p>;
+  if (!loaded) {
     return loading
       ? <p className="text-xs text-muted">Loading narrator tools...</p>
       : <div className="text-xs text-danger">{error ?? "Narrator tools could not be loaded."} <button className="underline" onClick={() => load(storyId)}>Retry</button></div>;
   }
 
-  const tools = storyId ? loaded! : draftTools ?? DEFAULT_NARRATOR_TOOLS;
+  const tools = loaded;
 
   return (
     <div className="flex flex-col gap-3 text-xs">
@@ -63,7 +60,6 @@ export function NarratorToolsPanel() {
               <input
                 type="checkbox"
                 checked={tools[item.key]}
-                disabled={creating}
                 onChange={(event) => {
                   save(storyId, { [item.key]: event.target.checked }).catch((cause) => console.error("failed to save narrator tools", cause));
                 }}

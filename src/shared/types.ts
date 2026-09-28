@@ -109,14 +109,6 @@ export interface NarratorToolSettings {
   roll_check: boolean;
   illustrate_scene: boolean;
 }
-export const DEFAULT_NARRATOR_TOOLS: NarratorToolSettings = {
-  get_entities: true,
-  create_entity: true,
-  update_entity: true,
-  adjust_entity_attribute: true,
-  roll_check: true,
-  illustrate_scene: true,
-};
 export type ReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 export const REASONING_EFFORT_OPTIONS: ReadonlyArray<{ value: ReasoningEffort | ""; label: string }> = [
   { value: "", label: "Default" },
