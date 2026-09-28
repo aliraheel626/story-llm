@@ -1,7 +1,7 @@
 use rig_core::{completion::Message, memory::Compactor};
 use rig_memory::{HeuristicTokenCounter, TokenCounter};
 
-use crate::ai::{HistoryRole, HistoryTurn, TextModelConfig};
+use crate::ai::{CallUsage, HistoryRole, HistoryTurn, TextModelConfig};
 use crate::features::ledger::summaries;
 use crate::shared::error::AppResult;
 
@@ -39,9 +39,9 @@ pub async fn prepare_history(
     prompt: &str,
     history: Vec<HistoryTurn>,
     carry_over: Option<SummaryArtifact>,
-) -> PreparedHistory {
+) -> (PreparedHistory, Vec<CallUsage>) {
     let compactor = NarratorCompactor::new(config.clone());
-    prepare_history_with_compactor(
+    let prepared = prepare_history_with_compactor(
         HistoryPreparation {
             story_id,
             config,
@@ -52,7 +52,9 @@ pub async fn prepare_history(
         carry_over,
         &compactor,
     )
-    .await
+    .await;
+    let usage = std::mem::take(&mut *compactor.usage.lock().unwrap_or_else(|e| e.into_inner()));
+    (prepared, usage)
 }
 
 struct HistoryPreparation<'a> {

@@ -10,6 +10,7 @@ use crate::ai::{
 use crate::features::{
     context::{self, combine_context_blocks, prepare_history},
     ledger::{model::kind as ledger_kind, repository as ledger_repository},
+    stats::model::{UsageKind, UsageRecord},
 };
 use crate::prompts;
 use crate::shared::error::{AppError, AppResult};
@@ -86,7 +87,7 @@ where
             } else {
                 None
             };
-            let prepared_history = prepare_history(
+            let (prepared_history, summary_usage) = prepare_history(
                 &story_id,
                 &config,
                 &preamble,
@@ -95,6 +96,9 @@ where
                 carry_over,
             )
             .await;
+            for usage in summary_usage {
+                turn.record_usage(UsageRecord::text(UsageKind::Summary, &config, usage));
+            }
             if let Some(write) = &prepared_history.summary_write {
                 let _ = turn.with(|conn| write.persist(conn, &story_id)).await;
             }
@@ -125,6 +129,7 @@ where
                     .collect::<Vec<_>>(),
                 action.content,
             );
+            let usage_config = config.clone();
             let req = NarrateRequest {
                 config,
                 preamble,
@@ -137,9 +142,14 @@ where
 
             let app_for_chunks = app.clone();
             let stream_id_for_chunks = sid.clone();
+            let turn_for_usage = std::sync::Arc::clone(&turn);
             let (visible, thoughts, tool_calls) =
                 ai::stream_narration(req, move |chunk| match chunk {
-                    ai::NarratorChunk::Usage(_) => {}
+                    NarratorChunk::Usage(usage) => turn_for_usage.record_usage(UsageRecord::text(
+                        UsageKind::Narration,
+                        &usage_config,
+                        usage,
+                    )),
                     NarratorChunk::Text(text) => {
                         let _ = app_for_chunks.emit(
                             "narration-delta",

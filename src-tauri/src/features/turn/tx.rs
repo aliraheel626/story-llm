@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex as StdMutex};
 use tokio::sync::Mutex;
 
 use super::gate::{GateGuard, TurnGate};
+use crate::features::stats::{model::UsageRecord, repository as stats_repository};
 use crate::shared::db::{open_connection, Pool};
 use crate::shared::error::{AppError, AppResult};
 
@@ -15,6 +16,16 @@ pub struct TurnTx {
     conn: Mutex<rusqlite::Connection>,
     done: AtomicBool,
     gate: StdMutex<Option<GateGuard>>,
+    usage: StdMutex<Vec<UsageRecord>>,
+}
+
+fn flush_usage(story_id: &str, usage: &StdMutex<Vec<UsageRecord>>, conn: &rusqlite::Connection) {
+    let records = std::mem::take(&mut *usage.lock().unwrap_or_else(|e| e.into_inner()));
+    for record in records {
+        if let Err(error) = stats_repository::insert(conn, story_id, &record) {
+            log::warn!("could not record usage for story {story_id}: {error}");
+        }
+    }
 }
 
 impl TurnTx {
@@ -27,6 +38,7 @@ impl TurnTx {
             conn: Mutex::new(conn),
             done: AtomicBool::new(false),
             gate: StdMutex::new(Some(guard)),
+            usage: StdMutex::new(Vec::new()),
         }))
     }
 
@@ -35,6 +47,18 @@ impl TurnTx {
             .lock()
             .unwrap_or_else(|error| error.into_inner())
             .take();
+    }
+
+    pub fn record_usage(&self, record: UsageRecord) {
+        let mut usage = self.usage.lock().unwrap_or_else(|e| e.into_inner());
+        if self.done.load(Ordering::Acquire) {
+            log::warn!(
+                "usage reported after turn finished for story {}",
+                self.story_id
+            );
+            return;
+        }
+        usage.push(record);
     }
 
     pub async fn with<R>(
@@ -79,6 +103,7 @@ impl TurnTx {
                 "turn transaction is already finished".into(),
             ));
         }
+        flush_usage(&self.story_id, &self.usage, &conn);
         conn.execute_batch("COMMIT")?;
         self.done.store(true, Ordering::Release);
         self.release_gate();
@@ -93,6 +118,7 @@ impl TurnTx {
             ));
         }
         conn.execute_batch("ROLLBACK")?;
+        flush_usage(&self.story_id, &self.usage, &conn);
         self.done.store(true, Ordering::Release);
         self.release_gate();
         Ok(())
@@ -107,6 +133,7 @@ impl Drop for TurnTx {
     fn drop(&mut self) {
         if !self.done.load(Ordering::Acquire) {
             let _ = self.conn.get_mut().execute_batch("ROLLBACK");
+            flush_usage(&self.story_id, &self.usage, self.conn.get_mut());
         }
     }
 }
@@ -114,7 +141,97 @@ impl Drop for TurnTx {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::features::stats::model::UsageRecord;
     use crate::shared::test_support;
+
+    async fn setup_story(pool: &Pool, gate: &TurnGate) {
+        let turn = TurnTx::begin(pool, gate, "s").unwrap();
+        turn.with(|conn| {
+            test_support::story(conn, "s");
+            Ok(())
+        })
+        .await
+        .unwrap();
+        turn.commit().await.unwrap();
+    }
+
+    fn usage_count(pool: &Pool) -> i64 {
+        pool.get()
+            .unwrap()
+            .query_row(
+                "SELECT COUNT(*) FROM usage_records WHERE story_id = 's'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn usage_is_written_with_the_commit() {
+        let pool = crate::shared::db::test_pool();
+        let gate = TurnGate::default();
+        setup_story(&pool, &gate).await;
+        let turn = TurnTx::begin(&pool, &gate, "s").unwrap();
+        turn.record_usage(UsageRecord::image("image", Some(0.01)));
+        turn.record_usage(UsageRecord::image("image", Some(0.02)));
+        assert_eq!(usage_count(&pool), 0);
+        turn.commit().await.unwrap();
+        assert_eq!(usage_count(&pool), 2);
+    }
+
+    #[tokio::test]
+    async fn usage_survives_rollback() {
+        let pool = crate::shared::db::test_pool();
+        let gate = TurnGate::default();
+        setup_story(&pool, &gate).await;
+        let turn = TurnTx::begin(&pool, &gate, "s").unwrap();
+        turn.with(|conn| {
+            conn.execute(
+                "INSERT INTO settings (key, value) VALUES ('discarded', 'value')",
+                [],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+        turn.record_usage(UsageRecord::image("image", Some(0.01)));
+        turn.rollback().await.unwrap();
+        assert_eq!(usage_count(&pool), 1);
+        let count: i64 = pool
+            .get()
+            .unwrap()
+            .query_row(
+                "SELECT COUNT(*) FROM settings WHERE key = 'discarded'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[tokio::test]
+    async fn usage_survives_drop() {
+        let pool = crate::shared::db::test_pool();
+        let gate = TurnGate::default();
+        setup_story(&pool, &gate).await;
+        let turn = TurnTx::begin(&pool, &gate, "s").unwrap();
+        turn.record_usage(UsageRecord::image("image", Some(0.01)));
+        drop(turn);
+        assert_eq!(usage_count(&pool), 1);
+    }
+
+    #[tokio::test]
+    async fn gate_opens_after_usage_is_flushed() {
+        let pool = crate::shared::db::test_pool();
+        let gate = TurnGate::default();
+        setup_story(&pool, &gate).await;
+        let turn = TurnTx::begin(&pool, &gate, "s").unwrap();
+        turn.record_usage(UsageRecord::image("image", None));
+        turn.rollback().await.unwrap();
+        let next = TurnTx::begin(&pool, &gate, "s").unwrap();
+        assert_eq!(usage_count(&pool), 1);
+        next.rollback().await.unwrap();
+    }
 
     #[tokio::test]
     async fn writes_are_private_until_commit() {

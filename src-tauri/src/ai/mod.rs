@@ -52,7 +52,6 @@ pub struct TextModelConfig {
 /// Usage one model call reported. `cost_usd` is `None` when the provider sent
 /// no cost (Nous Portal, Ollama), never a guessed zero.
 #[derive(Debug, Clone, Default, PartialEq)]
-#[allow(dead_code)] // Wired into turn recording in S3.
 pub struct CallUsage {
     pub response_id: Option<String>,
     pub input_tokens: u64,
@@ -166,7 +165,6 @@ pub enum ToolActivityPhase {
 pub enum NarratorChunk {
     Text(String),
     Reasoning(String),
-    #[allow(dead_code)] // Recorded by the turn in S3.
     Usage(CallUsage),
     ToolActivity {
         call_id: String,

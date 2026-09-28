@@ -3,15 +3,14 @@ use serde::Serialize;
 use crate::ai::{CallUsage, TextModelConfig};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)] // Wired into turn recording in S3.
 pub enum UsageKind {
     Narration,
     Summary,
     Title,
+    #[allow(dead_code)] // Image generation is wired in S4.
     Image,
 }
 
-#[allow(dead_code)]
 impl UsageKind {
     pub fn as_str(self) -> &'static str {
         match self {
@@ -24,7 +23,6 @@ impl UsageKind {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-#[allow(dead_code)]
 pub struct UsageRecord {
     pub kind: UsageKind,
     pub provider: String,
@@ -32,7 +30,6 @@ pub struct UsageRecord {
     pub usage: CallUsage,
 }
 
-#[allow(dead_code)]
 impl UsageRecord {
     pub fn text(kind: UsageKind, config: &TextModelConfig, usage: CallUsage) -> Self {
         Self {
@@ -43,6 +40,7 @@ impl UsageRecord {
         }
     }
 
+    #[allow(dead_code)] // Image generation is wired in S4.
     pub fn image(model: &str, cost_usd: Option<f64>) -> Self {
         Self {
             kind: UsageKind::Image,

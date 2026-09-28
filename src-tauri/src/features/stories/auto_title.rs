@@ -10,6 +10,7 @@ use crate::features::{
         model::kind as ledger_kind, query as ledger_query, turns,
     },
     settings as global_settings,
+    stats::model::{UsageKind, UsageRecord},
     turn::TurnTx,
 };
 use crate::prompts;
@@ -107,13 +108,16 @@ pub async fn title_in_turn(app: &AppHandle, settings_pool: &Pool, turn: &TurnTx)
         .collect();
 
     let prompt = format!("The story opens:\n\n{opening_text}\n\nGive it a title.");
-    let (generated, _usage) = tokio::time::timeout(
+    let (generated, usage) = tokio::time::timeout(
         Duration::from_secs(30),
         ai::prompt_typed::<GeneratedTitle>(&config, prompts::TITLE_SYSTEM_PROMPT, prompt),
     )
     .await
     .ok()?
     .ok()?;
+    for call in usage {
+        turn.record_usage(UsageRecord::text(UsageKind::Title, &config, call));
+    }
     let title = sanitize_title(&generated.title)?;
     match turn.with(|conn| write_title(conn, story_id, &title)).await {
         Ok(true) => Some(title),

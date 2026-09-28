@@ -6,7 +6,6 @@ use crate::shared::error::AppResult;
 
 use super::model::{StoryStats, UsageRecord};
 
-#[allow(dead_code)] // Wired into turn recording in S3.
 pub fn insert(conn: &Connection, story_id: &str, record: &UsageRecord) -> AppResult<()> {
     let usage = &record.usage;
     let tokens = |count| i64::try_from(count).unwrap_or(i64::MAX);

@@ -4,7 +4,7 @@ use rig_core::{
     wasm_compat::WasmBoxedFuture,
 };
 
-use crate::ai::{self, TextModelConfig};
+use crate::ai::{self, CallUsage, TextModelConfig};
 use crate::prompts;
 
 use super::summary::{format_summary, ContextSummary, SummaryArtifact};
@@ -12,11 +12,15 @@ use super::summary::{format_summary, ContextSummary, SummaryArtifact};
 #[derive(Clone)]
 pub struct NarratorCompactor {
     config: TextModelConfig,
+    pub usage: Arc<StdMutex<Vec<CallUsage>>>,
 }
 
 impl NarratorCompactor {
     pub fn new(config: TextModelConfig) -> Self {
-        Self { config }
+        Self {
+            config,
+            usage: Arc::new(StdMutex::new(Vec::new())),
+        }
     }
 }
 
@@ -42,8 +46,15 @@ impl Compactor for NarratorCompactor {
                 prompt,
             )
             .await
-            .map(|(summary, _usage)| SummaryArtifact(summary))
+            .map(|(summary, usage)| {
+                self.usage
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .extend(usage);
+                SummaryArtifact(summary)
+            })
             .map_err(|e| MemoryError::Policy(e.to_string()))
         })
     }
 }
+use std::sync::{Arc, Mutex as StdMutex};
