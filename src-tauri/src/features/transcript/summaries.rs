@@ -16,7 +16,7 @@ pub(crate) fn latest_boundary(
     story_id: &str,
 ) -> AppResult<Option<SummaryBoundary>> {
     let mut stmt = conn.prepare(
-        "SELECT id, payload_json FROM ledger_entries
+        "SELECT id, payload_json FROM transcript_entries
          WHERE story_id = ?1 AND kind = ?2 ORDER BY seq DESC",
     )?;
     let rows = stmt.query_map(
@@ -35,7 +35,7 @@ pub(crate) fn latest_boundary(
             });
         if let Some((through_seq, through_entry_id)) = boundary {
             let boundary_exists: bool = conn.query_row(
-                "SELECT EXISTS(SELECT 1 FROM ledger_entries WHERE id = ?1)",
+                "SELECT EXISTS(SELECT 1 FROM transcript_entries WHERE id = ?1)",
                 [through_entry_id],
                 |row| row.get(0),
             )?;
@@ -58,7 +58,7 @@ pub(crate) fn latest_payload(
         return Ok(None);
     };
     let payload: String = conn.query_row(
-        "SELECT payload_json FROM ledger_entries WHERE id = ?1",
+        "SELECT payload_json FROM transcript_entries WHERE id = ?1",
         [boundary.summary_entry_id],
         |row| row.get(0),
     )?;
@@ -98,7 +98,7 @@ pub(crate) fn prune_covering(
     doomed_ids: &HashSet<String>,
 ) -> AppResult<()> {
     let mut stmt = conn
-        .prepare("SELECT id, payload_json FROM ledger_entries WHERE story_id = ?1 AND kind = ?2")?;
+        .prepare("SELECT id, payload_json FROM transcript_entries WHERE story_id = ?1 AND kind = ?2")?;
     let summaries: Vec<(String, String)> = stmt
         .query_map(
             rusqlite::params![story_id, transcript_kind::CONTEXT_SUMMARY],
@@ -110,7 +110,7 @@ pub(crate) fn prune_covering(
             .ok()
             .and_then(|value| value.get("through_entry_id")?.as_str().map(str::to_string));
         if through.is_some_and(|id| doomed_ids.contains(&id)) {
-            conn.execute("DELETE FROM ledger_entries WHERE id = ?1", [&summary_id])?;
+            conn.execute("DELETE FROM transcript_entries WHERE id = ?1", [&summary_id])?;
         }
     }
     Ok(())
@@ -124,18 +124,18 @@ mod tests {
     fn prune_only_summaries_covering_doomed_entries_in_story() {
         let mut conn = rusqlite::Connection::open_in_memory().unwrap();
         conn.execute_batch(
-            "CREATE TABLE ledger_entries(id TEXT PRIMARY KEY, story_id TEXT, kind TEXT, payload_json TEXT);
-             INSERT INTO ledger_entries VALUES ('old', 'story-1', 'context_summary', '{\"through_entry_id\":\"doomed\"}');
-             INSERT INTO ledger_entries VALUES ('safe', 'story-1', 'context_summary', '{\"through_entry_id\":\"survives\"}');
-             INSERT INTO ledger_entries VALUES ('other-story', 'story-2', 'context_summary', '{\"through_entry_id\":\"doomed\"}');
-             INSERT INTO ledger_entries VALUES ('invalid', 'story-1', 'context_summary', 'not json');",
+            "CREATE TABLE transcript_entries(id TEXT PRIMARY KEY, story_id TEXT, kind TEXT, payload_json TEXT);
+             INSERT INTO transcript_entries VALUES ('old', 'story-1', 'context_summary', '{\"through_entry_id\":\"doomed\"}');
+             INSERT INTO transcript_entries VALUES ('safe', 'story-1', 'context_summary', '{\"through_entry_id\":\"survives\"}');
+             INSERT INTO transcript_entries VALUES ('other-story', 'story-2', 'context_summary', '{\"through_entry_id\":\"doomed\"}');
+             INSERT INTO transcript_entries VALUES ('invalid', 'story-1', 'context_summary', 'not json');",
         )
         .unwrap();
 
         let tx = conn.transaction().unwrap();
         prune_covering(&tx, "story-1", &HashSet::from(["doomed".into()])).unwrap();
         let ids: Vec<String> = tx
-            .prepare("SELECT id FROM ledger_entries ORDER BY id")
+            .prepare("SELECT id FROM transcript_entries ORDER BY id")
             .unwrap()
             .query_map([], |row| row.get(0))
             .unwrap()

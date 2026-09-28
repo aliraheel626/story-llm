@@ -644,11 +644,11 @@ mod tests {
         )
         .unwrap();
 
-        conn.execute("DELETE FROM ledger_entries WHERE id = ?1", [&narration.id])
+        conn.execute("DELETE FROM transcript_entries WHERE id = ?1", [&narration.id])
             .unwrap();
         let query_count: i64 = conn
             .query_row(
-                "SELECT COUNT(*) FROM ledger_entries WHERE id = ?1",
+                "SELECT COUNT(*) FROM transcript_entries WHERE id = ?1",
                 [&query.id],
                 |row| row.get(0),
             )

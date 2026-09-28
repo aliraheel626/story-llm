@@ -250,7 +250,7 @@ mod tests {
         );
         assert_eq!(
             conn.query_row(
-                "SELECT COUNT(*) FROM ledger_entries WHERE id = ?1",
+                "SELECT COUNT(*) FROM transcript_entries WHERE id = ?1",
                 [&image_event.id],
                 |row| row.get::<_, i64>(0)
             )
@@ -259,7 +259,7 @@ mod tests {
         );
         assert_eq!(
             conn.query_row(
-                "SELECT COUNT(*) FROM ledger_entries WHERE id = ?1",
+                "SELECT COUNT(*) FROM transcript_entries WHERE id = ?1",
                 [&narration.id],
                 |row| row.get::<_, i64>(0)
             )
@@ -468,7 +468,7 @@ mod tests {
         let conn = pool.get().unwrap();
         assert_eq!(
             conn.query_row(
-                "SELECT COUNT(*) FROM ledger_entries WHERE id = ?1",
+                "SELECT COUNT(*) FROM transcript_entries WHERE id = ?1",
                 [&doomed_summary.id],
                 |row| row.get::<_, i64>(0)
             )
@@ -477,7 +477,7 @@ mod tests {
         );
         assert_eq!(
             conn.query_row(
-                "SELECT COUNT(*) FROM ledger_entries WHERE id = ?1",
+                "SELECT COUNT(*) FROM transcript_entries WHERE id = ?1",
                 [&older_summary.id],
                 |row| row.get::<_, i64>(0)
             )
@@ -606,7 +606,7 @@ mod tests {
         assert_eq!(counts, (0, 0, 0));
         assert_eq!(
             conn.query_row(
-                "SELECT COUNT(*) FROM ledger_entries WHERE kind = ?1",
+                "SELECT COUNT(*) FROM transcript_entries WHERE kind = ?1",
                 [transcript_kind::ENTITY_ATTRIBUTE_CHANGED],
                 |row| row.get::<_, i64>(0),
             )

@@ -382,7 +382,7 @@ mod turn_tests {
             pool.get()
                 .unwrap()
                 .query_row(
-                    "SELECT COUNT(*) FROM ledger_entries WHERE kind='diceroll'",
+                    "SELECT COUNT(*) FROM transcript_entries WHERE kind='diceroll'",
                     [],
                     |r| r.get::<_, i64>(0)
                 )
@@ -391,7 +391,7 @@ mod turn_tests {
         );
         turn.with(|conn| {
             let (content, raw, entry, tid): (String, String, String, String) = conn.query_row(
-                "SELECT content, payload_json, target_entry_id, turn_id FROM ledger_entries WHERE kind='diceroll'",
+                "SELECT content, payload_json, target_entry_id, turn_id FROM transcript_entries WHERE kind='diceroll'",
                 [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?;
             assert_eq!((entry, tid), (target.clone(), turn_id.clone()));
             assert_eq!(content, format!("Dice-roll outcome: rolled {} with 35% chance and got {}.", out["roll"], out["outcome"].as_str().unwrap()));
@@ -407,7 +407,7 @@ mod turn_tests {
             pool.get()
                 .unwrap()
                 .query_row(
-                    "SELECT COUNT(*) FROM ledger_entries WHERE kind='diceroll'",
+                    "SELECT COUNT(*) FROM transcript_entries WHERE kind='diceroll'",
                     [],
                     |r| r.get::<_, i64>(0)
                 )

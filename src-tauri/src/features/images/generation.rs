@@ -306,7 +306,7 @@ mod tests {
         let (event_turn_id, asset_id): (String, String) = conn
             .query_row(
                 "SELECT turn_id, json_extract(payload_json, '$.asset_id')
-             FROM ledger_entries WHERE kind = ?1",
+             FROM transcript_entries WHERE kind = ?1",
                 [transcript_kind::IMAGE_GENERATED],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
@@ -382,7 +382,7 @@ mod tests {
         }
         assert_eq!(
             conn.query_row(
-                "SELECT COUNT(*) FROM ledger_entries WHERE kind = ?1",
+                "SELECT COUNT(*) FROM transcript_entries WHERE kind = ?1",
                 [transcript_kind::IMAGE_GENERATED],
                 |row| row.get::<_, i64>(0),
             )
@@ -395,7 +395,7 @@ mod tests {
         );
         assert_eq!(
             conn.query_row(
-                "SELECT COUNT(*) FROM ledger_entries WHERE id = ?1",
+                "SELECT COUNT(*) FROM transcript_entries WHERE id = ?1",
                 [&target.entry_id],
                 |row| row.get::<_, i64>(0),
             )

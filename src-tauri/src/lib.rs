@@ -75,7 +75,7 @@ pub fn run() {
             features::stories::get_story_injection_settings,
             features::stories::save_story_injection_settings,
             features::narrator::preview_story_context,
-            features::transcript::list_ledger_entries,
+            features::transcript::list_transcript_entries,
             features::turn::submit_turn,
             features::turn::retry_narration,
             features::transcript::edit_ledger_entry,

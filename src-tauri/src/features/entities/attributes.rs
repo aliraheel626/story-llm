@@ -328,7 +328,7 @@ mod tests {
         assert_eq!(updated.value, 7.0);
         let mut stmt = conn
             .prepare(
-                "SELECT payload_json FROM ledger_entries
+                "SELECT payload_json FROM transcript_entries
                  WHERE kind = ?1 ORDER BY seq",
             )
             .unwrap();
@@ -370,7 +370,7 @@ mod tests {
             .unwrap();
         let removal_events: i64 = conn
             .query_row(
-                "SELECT COUNT(*) FROM ledger_entries WHERE kind = ?1",
+                "SELECT COUNT(*) FROM transcript_entries WHERE kind = ?1",
                 [transcript_kind::ENTITY_ATTRIBUTE_REMOVED],
                 |row| row.get(0),
             )
@@ -398,7 +398,7 @@ mod tests {
         ));
         let changed_events: i64 = conn
             .query_row(
-                "SELECT COUNT(*) FROM ledger_entries WHERE kind = ?1",
+                "SELECT COUNT(*) FROM transcript_entries WHERE kind = ?1",
                 [transcript_kind::ENTITY_ATTRIBUTE_CHANGED],
                 |row| row.get(0),
             )

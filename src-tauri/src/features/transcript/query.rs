@@ -64,7 +64,7 @@ pub fn entities_touched_since(
     since_seq: i64,
 ) -> AppResult<HashSet<String>> {
     let mut stmt = conn.prepare(
-        "SELECT payload_json FROM ledger_entries
+        "SELECT payload_json FROM transcript_entries
          WHERE story_id = ?1 AND seq >= ?2
            AND kind IN (?3, ?4, ?5, ?6, ?7, ?8)",
     )?;
@@ -105,7 +105,7 @@ pub fn latest_narration_id(
 ) -> AppResult<Option<String>> {
     Ok(conn
         .query_row(
-            "SELECT id FROM ledger_entries WHERE story_id = ?1 AND kind = ?2
+            "SELECT id FROM transcript_entries WHERE story_id = ?1 AND kind = ?2
              ORDER BY seq DESC LIMIT 1",
             rusqlite::params![story_id, kind::NARRATION],
             |row| row.get(0),
@@ -118,7 +118,7 @@ pub fn entries_of_turn(conn: &rusqlite::Connection, turn_id: &str) -> AppResult<
     let mut stmt = conn.prepare(
         "SELECT id, story_id, seq, kind, visibility, content, payload_json,
                 target_entry_id, turn_id, created_at
-         FROM ledger_entries WHERE turn_id = ?1 ORDER BY seq ASC",
+         FROM transcript_entries WHERE turn_id = ?1 ORDER BY seq ASC",
     )?;
     let rows = stmt.query_map([turn_id], repository::row_to_entry)?;
     Ok(rows.collect::<Result<Vec<_>, _>>()?)

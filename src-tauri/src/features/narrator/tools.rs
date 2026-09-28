@@ -533,7 +533,7 @@ mod turn_tests {
             json!("Mira the Bold")
         );
         turn.with(|conn| {
-            let mut stmt = conn.prepare("SELECT kind, target_entry_id, turn_id FROM ledger_entries WHERE kind IN ('entity_created', 'entity_updated') ORDER BY seq")?;
+            let mut stmt = conn.prepare("SELECT kind, target_entry_id, turn_id FROM transcript_entries WHERE kind IN ('entity_created', 'entity_updated') ORDER BY seq")?;
             let events = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)))?
                 .collect::<Result<Vec<_>, _>>()?;
             assert_eq!(events.len(), 2);
@@ -587,7 +587,7 @@ mod turn_tests {
         turn.with(|conn| {
             let attribute = attributes::find_exact_match(conn, "Stealth")?.unwrap();
             let entry: (String, String, String) = conn.query_row(
-                "SELECT payload_json, target_entry_id, turn_id FROM ledger_entries WHERE kind = 'entity_attribute_changed'",
+                "SELECT payload_json, target_entry_id, turn_id FROM transcript_entries WHERE kind = 'entity_attribute_changed'",
                 [], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
             assert_eq!(serde_json::from_str::<serde_json::Value>(&entry.0).unwrap()["cause"], json!("sneaking"));
             assert_eq!((entry.1, entry.2), (target.clone(), turn_id.clone()));

@@ -24,7 +24,7 @@ pub(crate) fn row_to_entry(row: &rusqlite::Row) -> rusqlite::Result<TranscriptEn
 
 fn next_seq(conn: &rusqlite::Connection, story_id: &str) -> AppResult<i64> {
     Ok(conn.query_row(
-        "SELECT COALESCE(MAX(seq), -1) + 1 FROM ledger_entries WHERE story_id = ?1",
+        "SELECT COALESCE(MAX(seq), -1) + 1 FROM transcript_entries WHERE story_id = ?1",
         [story_id],
         |row| row.get(0),
     )?)
@@ -73,7 +73,7 @@ fn append_entry_with_id(
     }
     if let Some(target_id) = target_entry_id {
         let target_belongs_to_story: bool = conn.query_row(
-            "SELECT EXISTS(SELECT 1 FROM ledger_entries WHERE id = ?1 AND story_id = ?2)",
+            "SELECT EXISTS(SELECT 1 FROM transcript_entries WHERE id = ?1 AND story_id = ?2)",
             rusqlite::params![target_id, story_id],
             |row| row.get(0),
         )?;
@@ -100,7 +100,7 @@ fn append_entry_with_id(
     let payload_json = serde_json::to_string(payload)
         .map_err(|e| AppError::Other(format!("transcript payload serialization failed: {e}")))?;
     conn.execute(
-        "INSERT INTO ledger_entries
+        "INSERT INTO transcript_entries
          (id, story_id, seq, kind, visibility, content, payload_json, target_entry_id, turn_id, created_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
         rusqlite::params![
@@ -156,7 +156,7 @@ pub fn append_placeholder_narration(
 pub fn get_entry(conn: &rusqlite::Connection, id: &str) -> AppResult<TranscriptEntry> {
     conn.query_row(
         "SELECT id, story_id, seq, kind, visibility, content, payload_json, target_entry_id, turn_id, created_at
-         FROM ledger_entries WHERE id = ?1",
+         FROM transcript_entries WHERE id = ?1",
         [id],
         row_to_entry,
     )
@@ -170,7 +170,7 @@ fn entries(
 ) -> AppResult<Vec<TranscriptEntry>> {
     let mut stmt = conn.prepare(
         "SELECT id, story_id, seq, kind, visibility, content, payload_json, target_entry_id, turn_id, created_at
-         FROM ledger_entries WHERE story_id = ?1 AND seq >= ?2 ORDER BY seq ASC",
+         FROM transcript_entries WHERE story_id = ?1 AND seq >= ?2 ORDER BY seq ASC",
     )?;
     let rows = stmt.query_map(
         rusqlite::params![story_id, since_seq.unwrap_or(i64::MIN)],
@@ -250,7 +250,7 @@ pub fn finish_narration(
         None => serde_json::json!({"input_mode":"generated"}),
     };
     let changed = conn.execute(
-        "UPDATE ledger_entries SET content = ?1, payload_json = ?2
+        "UPDATE transcript_entries SET content = ?1, payload_json = ?2
          WHERE id = ?3 AND kind = ?4",
         rusqlite::params![content, payload.to_string(), entry_id, kind::NARRATION],
     )?;
@@ -272,7 +272,7 @@ mod tests {
         let conn = rusqlite::Connection::open_in_memory().unwrap();
         conn.execute_batch("CREATE TABLE stories(id TEXT PRIMARY KEY, updated_at TEXT NOT NULL);
             CREATE TABLE turns(id TEXT PRIMARY KEY, story_id TEXT NOT NULL);
-            CREATE TABLE ledger_entries(id TEXT PRIMARY KEY, story_id TEXT NOT NULL, seq INTEGER NOT NULL, kind TEXT NOT NULL, visibility TEXT NOT NULL, content TEXT, payload_json TEXT NOT NULL, target_entry_id TEXT, turn_id TEXT, created_at TEXT NOT NULL, UNIQUE(story_id,seq));").unwrap();
+            CREATE TABLE transcript_entries(id TEXT PRIMARY KEY, story_id TEXT NOT NULL, seq INTEGER NOT NULL, kind TEXT NOT NULL, visibility TEXT NOT NULL, content TEXT, payload_json TEXT NOT NULL, target_entry_id TEXT, turn_id TEXT, created_at TEXT NOT NULL, UNIQUE(story_id,seq));").unwrap();
         conn.execute("INSERT INTO stories VALUES ('s','now')", [])
             .unwrap();
 
@@ -334,7 +334,7 @@ mod tests {
         let conn = rusqlite::Connection::open_in_memory().unwrap();
         conn.execute_batch("CREATE TABLE stories(id TEXT PRIMARY KEY, updated_at TEXT NOT NULL);
             CREATE TABLE turns(id TEXT PRIMARY KEY, story_id TEXT NOT NULL);
-            CREATE TABLE ledger_entries(id TEXT PRIMARY KEY, story_id TEXT NOT NULL, seq INTEGER NOT NULL, kind TEXT NOT NULL, visibility TEXT NOT NULL, content TEXT, payload_json TEXT NOT NULL, target_entry_id TEXT, turn_id TEXT, created_at TEXT NOT NULL, UNIQUE(story_id,seq));").unwrap();
+            CREATE TABLE transcript_entries(id TEXT PRIMARY KEY, story_id TEXT NOT NULL, seq INTEGER NOT NULL, kind TEXT NOT NULL, visibility TEXT NOT NULL, content TEXT, payload_json TEXT NOT NULL, target_entry_id TEXT, turn_id TEXT, created_at TEXT NOT NULL, UNIQUE(story_id,seq));").unwrap();
         conn.execute("INSERT INTO stories VALUES ('s','now')", [])
             .unwrap();
 
@@ -387,7 +387,7 @@ mod tests {
         let conn = rusqlite::Connection::open_in_memory().unwrap();
         conn.execute_batch("CREATE TABLE stories(id TEXT PRIMARY KEY, updated_at TEXT NOT NULL);
             CREATE TABLE turns(id TEXT PRIMARY KEY, story_id TEXT NOT NULL);
-            CREATE TABLE ledger_entries(id TEXT PRIMARY KEY, story_id TEXT NOT NULL, seq INTEGER NOT NULL, kind TEXT NOT NULL, visibility TEXT NOT NULL, content TEXT, payload_json TEXT NOT NULL, target_entry_id TEXT, turn_id TEXT, created_at TEXT NOT NULL, UNIQUE(story_id,seq));").unwrap();
+            CREATE TABLE transcript_entries(id TEXT PRIMARY KEY, story_id TEXT NOT NULL, seq INTEGER NOT NULL, kind TEXT NOT NULL, visibility TEXT NOT NULL, content TEXT, payload_json TEXT NOT NULL, target_entry_id TEXT, turn_id TEXT, created_at TEXT NOT NULL, UNIQUE(story_id,seq));").unwrap();
         conn.execute(
             "INSERT INTO stories VALUES ('first','now'), ('second','now')",
             [],

@@ -406,12 +406,12 @@ mod tests {
         .unwrap();
         assert!(result.turns[0].content.contains("new compacted context"));
         let summary_count = turn.with(|conn| Ok(conn.query_row(
-            "SELECT COUNT(*) FROM ledger_entries WHERE story_id = 'story' AND kind = 'context_summary'",
+            "SELECT COUNT(*) FROM transcript_entries WHERE story_id = 'story' AND kind = 'context_summary'",
             [], |row| row.get::<_, i64>(0),
         )?)).await.unwrap();
         assert_eq!(summary_count, 1);
         let payload: String = turn.with(|conn| Ok(conn.query_row(
-            "SELECT payload_json FROM ledger_entries WHERE story_id = 'story' AND kind = 'context_summary'",
+            "SELECT payload_json FROM transcript_entries WHERE story_id = 'story' AND kind = 'context_summary'",
             [], |row| row.get(0),
         )?)).await.unwrap();
         let payload: serde_json::Value = serde_json::from_str(&payload).unwrap();
@@ -421,7 +421,7 @@ mod tests {
         assert_eq!(payload["facts"], serde_json::json!([]));
         turn.rollback().await.unwrap();
         let committed_count: i64 = pool.get().unwrap().query_row(
-            "SELECT COUNT(*) FROM ledger_entries WHERE story_id = 'story' AND kind = 'context_summary'",
+            "SELECT COUNT(*) FROM transcript_entries WHERE story_id = 'story' AND kind = 'context_summary'",
             [], |row| row.get(0),
         ).unwrap();
         assert_eq!(committed_count, 0);

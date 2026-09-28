@@ -59,7 +59,7 @@ fn erase_with_ticket(
 }
 
 #[tauri::command]
-pub fn list_ledger_entries(pool: State<Pool>, story_id: String) -> AppResult<TranscriptSnapshot> {
+pub fn list_transcript_entries(pool: State<Pool>, story_id: String) -> AppResult<TranscriptSnapshot> {
     let conn = pool.get()?;
     Ok(reducer::snapshot(
         repository::list_logical_entries(&conn, &story_id)?,

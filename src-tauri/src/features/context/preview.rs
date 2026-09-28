@@ -114,8 +114,8 @@ mod tests {
         let pool = crate::shared::db::test_pool();
         let conn = pool.get().unwrap();
         let story_settings = json!({
-            "context": {"include": {"images": true, "narration.thoughts": true}},
-            "injection": {"entities": "scoped", "author_note": "Keep it tense.",
+            "transcript": {"include": {"images": true, "narration.thoughts": true}},
+            "context": {"entities": "scoped", "author_note": "Keep it tense.",
                           "author_note_enabled": true, "tool_instructions": true}
         });
         test_support::story_with_settings(&conn, "s", story_settings);
@@ -198,7 +198,7 @@ mod tests {
                         'id',id,'seq',seq,'kind',kind,'visibility',visibility,
                         'content',content,'payload',payload_json,'target',target_entry_id,
                         'turn',turn_id,'created',created_at))
-                     FROM ledger_entries WHERE story_id='s')
+                     FROM transcript_entries WHERE story_id='s')
              FROM stories WHERE id='s'",
                 [],
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
@@ -301,7 +301,7 @@ mod tests {
                         'id',id,'seq',seq,'kind',kind,'visibility',visibility,
                         'content',content,'payload',payload_json,'target',target_entry_id,
                         'turn',turn_id,'created',created_at))
-                     FROM ledger_entries WHERE story_id='s')
+                     FROM transcript_entries WHERE story_id='s')
              FROM stories WHERE id='s'",
                 [],
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),

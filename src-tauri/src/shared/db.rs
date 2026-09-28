@@ -327,6 +327,7 @@ fn rebase_image_paths(db_path: &Path, old_images: &Path, new_images: &Path) -> A
 
 fn run_migrations(conn: &mut PooledConn) -> AppResult<()> {
     migrate_ledger_schema(conn)?;
+    migrate_transcript_schema(conn)?;
     conn.execute_batch(
         r#"
         CREATE TABLE IF NOT EXISTS stories (
@@ -346,7 +347,7 @@ fn run_migrations(conn: &mut PooledConn) -> AppResult<()> {
             created_at TEXT NOT NULL,
             UNIQUE(story_id, seq)
         );
-        CREATE TABLE IF NOT EXISTS ledger_entries (
+        CREATE TABLE IF NOT EXISTS transcript_entries (
             id TEXT PRIMARY KEY,
             story_id TEXT NOT NULL REFERENCES stories(id) ON DELETE CASCADE,
             seq INTEGER NOT NULL,
@@ -354,14 +355,14 @@ fn run_migrations(conn: &mut PooledConn) -> AppResult<()> {
             visibility TEXT NOT NULL CHECK (visibility IN ('visible', 'hidden')),
             content TEXT,
             payload_json TEXT NOT NULL DEFAULT '{}',
-            target_entry_id TEXT REFERENCES ledger_entries(id) ON DELETE CASCADE,
+            target_entry_id TEXT REFERENCES transcript_entries(id) ON DELETE CASCADE,
             turn_id TEXT REFERENCES turns(id) ON DELETE CASCADE,
             created_at TEXT NOT NULL,
             UNIQUE(story_id, seq)
         );
-        CREATE INDEX IF NOT EXISTS idx_ledger_story_seq ON ledger_entries(story_id, seq);
-        CREATE INDEX IF NOT EXISTS idx_ledger_target ON ledger_entries(target_entry_id);
-        CREATE INDEX IF NOT EXISTS idx_ledger_kind ON ledger_entries(story_id, kind, seq);
+        CREATE INDEX IF NOT EXISTS idx_transcript_story_seq ON transcript_entries(story_id, seq);
+        CREATE INDEX IF NOT EXISTS idx_transcript_target ON transcript_entries(target_entry_id);
+        CREATE INDEX IF NOT EXISTS idx_transcript_kind ON transcript_entries(story_id, kind, seq);
 
         CREATE TABLE IF NOT EXISTS entities (
             id TEXT PRIMARY KEY,
@@ -377,7 +378,7 @@ fn run_migrations(conn: &mut PooledConn) -> AppResult<()> {
             appearance_anchor TEXT,
             is_present INTEGER NOT NULL DEFAULT 1,
             updated_at TEXT NOT NULL,
-            last_event_id TEXT REFERENCES ledger_entries(id) ON DELETE SET NULL,
+            last_event_id TEXT REFERENCES transcript_entries(id) ON DELETE SET NULL,
             PRIMARY KEY (story_id, entity_id)
         );
         CREATE INDEX IF NOT EXISTS idx_story_entities_name ON story_entity_state(story_id, name);
@@ -406,13 +407,13 @@ fn run_migrations(conn: &mut PooledConn) -> AppResult<()> {
             value REAL NOT NULL,
             source TEXT NOT NULL,
             updated_at TEXT NOT NULL,
-            last_event_id TEXT REFERENCES ledger_entries(id) ON DELETE SET NULL,
+            last_event_id TEXT REFERENCES transcript_entries(id) ON DELETE SET NULL,
             PRIMARY KEY (story_id, entity_id, attribute_id)
         );
 
         CREATE TABLE IF NOT EXISTS image_assets (
             id TEXT PRIMARY KEY,
-            entry_id TEXT NOT NULL REFERENCES ledger_entries(id) ON DELETE CASCADE,
+            entry_id TEXT NOT NULL REFERENCES transcript_entries(id) ON DELETE CASCADE,
             path TEXT NOT NULL,
             prompt TEXT NOT NULL,
             created_at TEXT NOT NULL
@@ -449,13 +450,14 @@ fn run_migrations(conn: &mut PooledConn) -> AppResult<()> {
     )?;
     migrate_roll_needed_v1(conn)?;
     migrate_image_blobs_v1(conn)?;
-    ensure_ledger_turn_column(conn)?;
+    ensure_transcript_turn_column(conn)?;
     ensure_turn_attempt_column(conn)?;
     migrate_ledger_retention_settings(conn)?;
     migrate_narrator_memory_settings(conn)?;
     migrate_author_notes(conn)?;
     migrate_narrator_tools(conn)?;
     migrate_story_injection_v1(conn)?;
+    migrate_story_settings_keys_v1(conn)?;
     migrate_turns_v1(conn)?;
     conn.execute_batch("DROP INDEX IF EXISTS idx_turns_one_pending;")?;
     let auto_vacuum: i64 = conn.query_row("PRAGMA auto_vacuum", [], |row| row.get(0))?;
@@ -534,7 +536,7 @@ fn migrate_roll_needed_v1(conn: &mut rusqlite::Connection) -> AppResult<()> {
     }
 
     tx.execute(
-        "UPDATE ledger_entries
+        "UPDATE transcript_entries
          SET payload_json = json_set(
              payload_json,
              '$.needed',
@@ -568,21 +570,21 @@ fn ensure_turn_attempt_column(conn: &rusqlite::Connection) -> AppResult<()> {
     Ok(())
 }
 
-fn ensure_ledger_turn_column(conn: &rusqlite::Connection) -> AppResult<()> {
+fn ensure_transcript_turn_column(conn: &rusqlite::Connection) -> AppResult<()> {
     let has_turn_id: bool = conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('ledger_entries') WHERE name = 'turn_id')",
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('transcript_entries') WHERE name = 'turn_id')",
         [],
         |row| row.get(0),
     )?;
     if !has_turn_id {
         conn.execute(
-            "ALTER TABLE ledger_entries
+            "ALTER TABLE transcript_entries
              ADD COLUMN turn_id TEXT REFERENCES turns(id) ON DELETE CASCADE",
             [],
         )?;
     }
     conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_ledger_turn ON ledger_entries(turn_id)",
+        "CREATE INDEX IF NOT EXISTS idx_transcript_turn ON transcript_entries(turn_id)",
         [],
     )?;
     Ok(())
@@ -631,7 +633,7 @@ fn migrate_turns_v1(conn: &mut rusqlite::Connection) -> AppResult<()> {
         let entries = {
             let mut stmt = tx.prepare(
                 "SELECT id, kind, visibility, payload_json, target_entry_id, created_at
-                 FROM ledger_entries WHERE story_id = ?1 ORDER BY seq ASC",
+                 FROM transcript_entries WHERE story_id = ?1 ORDER BY seq ASC",
             )?;
             let rows = stmt.query_map([&story_id], |row| {
                 let raw: String = row.get(3)?;
@@ -729,7 +731,7 @@ fn migrate_turns_v1(conn: &mut rusqlite::Connection) -> AppResult<()> {
         }
         for (entry_id, turn_index) in mapped {
             tx.execute(
-                "UPDATE ledger_entries SET turn_id = ?1 WHERE id = ?2",
+                "UPDATE transcript_entries SET turn_id = ?1 WHERE id = ?2",
                 rusqlite::params![turns[turn_index].id, entry_id],
             )?;
         }
@@ -777,6 +779,63 @@ fn migrate_ledger_schema(conn: &mut rusqlite::Connection) -> AppResult<()> {
     if tx.prepare("PRAGMA foreign_key_check")?.exists([])? {
         return Err(AppError::Other(
             "ledger migration failed foreign key validation".into(),
+        ));
+    }
+    tx.commit()?;
+    Ok(())
+}
+
+fn migrate_transcript_schema(conn: &mut rusqlite::Connection) -> AppResult<()> {
+    let old_exists: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'ledger_entries')",
+        [],
+        |row| row.get(0),
+    )?;
+    if !old_exists {
+        return Ok(());
+    }
+    let new_exists: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'transcript_entries')",
+        [],
+        |row| row.get(0),
+    )?;
+    if new_exists {
+        return Err(AppError::Other(
+            "both ledger_entries and transcript_entries exist; refusing an ambiguous migration"
+                .into(),
+        ));
+    }
+
+    let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+    tx.execute_batch(
+        "ALTER TABLE ledger_entries RENAME TO transcript_entries;
+         DROP INDEX IF EXISTS idx_ledger_story_seq;
+         DROP INDEX IF EXISTS idx_ledger_target;
+         DROP INDEX IF EXISTS idx_ledger_kind;
+         DROP INDEX IF EXISTS idx_ledger_turn;
+         CREATE INDEX idx_transcript_story_seq ON transcript_entries(story_id, seq);
+         CREATE INDEX idx_transcript_target ON transcript_entries(target_entry_id);
+         CREATE INDEX idx_transcript_kind ON transcript_entries(story_id, kind, seq);",
+    )?;
+    let has_turn_id: bool = tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('transcript_entries') WHERE name = 'turn_id')",
+        [],
+        |row| row.get(0),
+    )?;
+    if has_turn_id {
+        tx.execute_batch("CREATE INDEX idx_transcript_turn ON transcript_entries(turn_id)")?;
+    }
+    if tx.prepare("PRAGMA foreign_key_check")?.exists([])? {
+        return Err(AppError::Other(
+            "transcript migration failed foreign key validation".into(),
+        ));
+    }
+    if tx
+        .prepare("SELECT sql FROM sqlite_master WHERE sql LIKE '%ledger_entries%'")?
+        .exists([])?
+    {
+        return Err(AppError::Other(
+            "transcript migration left a ledger_entries reference in sqlite_master".into(),
         ));
     }
     tx.commit()?;
@@ -909,7 +968,7 @@ fn migrate_narrator_tools(conn: &mut rusqlite::Connection) -> AppResult<()> {
                 }
             }
             tx.execute(
-                "UPDATE ledger_entries SET content = ?1, payload_json = ?2 WHERE id = ?3",
+                "UPDATE transcript_entries SET content = ?1, payload_json = ?2 WHERE id = ?3",
                 rusqlite::params![content, payload.to_string(), base.id],
             )?;
         }
@@ -918,12 +977,12 @@ fn migrate_narrator_tools(conn: &mut rusqlite::Connection) -> AppResult<()> {
     // Narration edits are now folded into base content; player edits stay as
     // events. Cascades remove any dependents of discarded alternatives.
     tx.execute(
-        "DELETE FROM ledger_entries WHERE kind = ?1 AND target_entry_id IN
-         (SELECT id FROM ledger_entries WHERE kind = ?2)",
+        "DELETE FROM transcript_entries WHERE kind = ?1 AND target_entry_id IN
+         (SELECT id FROM transcript_entries WHERE kind = ?2)",
         rusqlite::params![kind::CONTENT_EDITED, kind::NARRATION],
     )?;
     tx.execute(
-        "DELETE FROM ledger_entries WHERE kind IN (?1, ?2, ?3, ?4)",
+        "DELETE FROM transcript_entries WHERE kind IN (?1, ?2, ?3, ?4)",
         rusqlite::params![
             "narration_variant",
             "narration_selected",
@@ -936,7 +995,7 @@ fn migrate_narrator_tools(conn: &mut rusqlite::Connection) -> AppResult<()> {
     // original cut; discard it instead of hiding still-visible history.
     let summaries = {
         let mut stmt = tx.prepare(
-            "SELECT id, story_id, seq, payload_json FROM ledger_entries WHERE kind = ?1",
+            "SELECT id, story_id, seq, payload_json FROM transcript_entries WHERE kind = ?1",
         )?;
         let rows = stmt.query_map([kind::CONTEXT_SUMMARY], |row| {
             Ok((
@@ -960,7 +1019,7 @@ fn migrate_narrator_tools(conn: &mut rusqlite::Connection) -> AppResult<()> {
             .and_then(|value| value.as_i64());
         let valid = if let (Some(through_id), Some(through_seq)) = (through_id, through_seq) {
             tx.query_row(
-                "SELECT EXISTS(SELECT 1 FROM ledger_entries WHERE id = ?1 AND story_id = ?2 AND seq = ?3)",
+                "SELECT EXISTS(SELECT 1 FROM transcript_entries WHERE id = ?1 AND story_id = ?2 AND seq = ?3)",
                 rusqlite::params![through_id, story_id, through_seq],
                 |row| row.get::<_, bool>(0),
             )? && through_seq < seq
@@ -968,7 +1027,7 @@ fn migrate_narrator_tools(conn: &mut rusqlite::Connection) -> AppResult<()> {
             false
         };
         if !valid {
-            tx.execute("DELETE FROM ledger_entries WHERE id = ?1", [id])?;
+            tx.execute("DELETE FROM transcript_entries WHERE id = ?1", [id])?;
         }
     }
 
@@ -1109,10 +1168,10 @@ fn migrate_author_notes(conn: &rusqlite::Connection) -> AppResult<()> {
 
     let notes = {
         let mut stmt = conn.prepare(
-            "SELECT story_id, payload_json FROM ledger_entries AS note
+            "SELECT story_id, payload_json FROM transcript_entries AS note
              WHERE kind = 'context_note_updated'
                AND seq = (
-                    SELECT MAX(latest.seq) FROM ledger_entries AS latest
+                    SELECT MAX(latest.seq) FROM transcript_entries AS latest
                    WHERE latest.story_id = note.story_id
                      AND latest.kind = 'context_note_updated'
                )",
@@ -1232,6 +1291,61 @@ fn migrate_story_injection_v1(conn: &mut rusqlite::Connection) -> AppResult<()> 
     Ok(())
 }
 
+fn migrate_story_settings_keys_v1(conn: &mut rusqlite::Connection) -> AppResult<()> {
+    const MIGRATION_KEY: &str = "migration_transcript_context_keys_v1";
+    let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+    if tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM settings WHERE key = ?1)",
+        [MIGRATION_KEY],
+        |row| row.get::<_, bool>(0),
+    )? {
+        tx.commit()?;
+        return Ok(());
+    }
+    let stories = {
+        let mut stmt = tx.prepare("SELECT id, settings_json FROM stories")?;
+        let rows = stmt.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+        rows.collect::<Result<Vec<_>, _>>()?
+    };
+    for (id, raw) in stories {
+        let mut settings: serde_json::Value = match serde_json::from_str(&raw) {
+            Ok(serde_json::Value::Object(map)) => serde_json::Value::Object(map),
+            _ => {
+                log::warn!("story settings for {id} are not a JSON object; skipping key migration");
+                continue;
+            }
+        };
+        let object = settings.as_object_mut().expect("validated object");
+        let old_context = object.remove("context");
+        let old_injection = object.remove("injection");
+        let changed = old_context.is_some() || old_injection.is_some();
+        if let Some(value) = old_context {
+            if object.contains_key("transcript") {
+                log::warn!("story {id} already has transcript settings; dropping old context settings");
+            } else {
+                object.insert("transcript".into(), value);
+            }
+        }
+        if let Some(value) = old_injection {
+            object.insert("context".into(), value);
+        }
+        if changed {
+            tx.execute(
+                "UPDATE stories SET settings_json = ?1 WHERE id = ?2",
+                rusqlite::params![settings.to_string(), id],
+            )?;
+        }
+    }
+    tx.execute(
+        "INSERT INTO settings (key, value) VALUES (?1, '1')",
+        [MIGRATION_KEY],
+    )?;
+    tx.commit()?;
+    Ok(())
+}
+
 fn seed_attribute_registry(conn: &PooledConn) -> AppResult<()> {
     let now = chrono::Utc::now().to_rfc3339();
     let starters: &[(&str, &[&str], f64, f64, &str)] = &[
@@ -1288,6 +1402,164 @@ pub fn test_pool() -> Pool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn stage_old_ledger(conn: &rusqlite::Connection) {
+        conn.execute_batch(
+            "ALTER TABLE transcript_entries RENAME TO ledger_entries;
+             DROP INDEX idx_transcript_story_seq;
+             DROP INDEX idx_transcript_target;
+             DROP INDEX idx_transcript_kind;
+             DROP INDEX idx_transcript_turn;
+             CREATE INDEX idx_ledger_story_seq ON ledger_entries(story_id, seq);
+             CREATE INDEX idx_ledger_target ON ledger_entries(target_entry_id);
+             CREATE INDEX idx_ledger_kind ON ledger_entries(story_id, kind, seq);
+             CREATE INDEX idx_ledger_turn ON ledger_entries(turn_id);",
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn transcript_table_rename_keeps_rows_and_references() {
+        let pool = test_pool();
+        let mut conn = pool.get().unwrap();
+        conn.execute_batch(
+            "INSERT INTO stories (id, title, created_at, updated_at) VALUES ('s', 'Story', 'now', 'now');
+             INSERT INTO transcript_entries (id, story_id, seq, kind, visibility, payload_json, target_entry_id, created_at)
+             VALUES ('first', 's', 0, 'player_message', 'visible', '{}', NULL, 'now'),
+                    ('second', 's', 1, 'content_edited', 'hidden', '{}', 'first', 'now'),
+                    ('third', 's', 2, 'narration', 'visible', '{}', NULL, 'now');
+             INSERT INTO image_assets (id, entry_id, path, prompt, created_at)
+             VALUES ('image', 'first', 'old.png', 'old', 'now');
+             INSERT INTO entities (id, story_id, kind, created_at)
+             VALUES ('entity', 's', 'character', 'now');
+             INSERT INTO story_entity_state (story_id, entity_id, name, updated_at, last_event_id)
+             VALUES ('s', 'entity', 'Hero', 'now', 'second');",
+        )
+        .unwrap();
+        stage_old_ledger(&conn);
+        run_migrations(&mut conn).unwrap();
+
+        let ids: Vec<String> = conn
+            .prepare("SELECT id FROM transcript_entries ORDER BY seq")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(ids, ["first", "second", "third"]);
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'ledger_entries'", [], |row| row.get::<_, i64>(0)).unwrap(),
+            0
+        );
+        assert_eq!(
+            conn.query_row("SELECT target_entry_id FROM transcript_entries WHERE id = 'second'", [], |row| row.get::<_, String>(0)).unwrap(),
+            "first"
+        );
+        assert_eq!(
+            conn.query_row("SELECT last_event_id FROM story_entity_state WHERE story_id = 's'", [], |row| row.get::<_, String>(0)).unwrap(),
+            "second"
+        );
+        let schema: Vec<String> = conn
+            .prepare("SELECT name FROM sqlite_master WHERE sql LIKE '%ledger_entries%'")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert!(schema.is_empty(), "old table references: {schema:?}");
+        let indexes: Vec<String> = conn
+            .prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND (name LIKE 'idx_transcript_%' OR name LIKE 'idx_ledger_%') ORDER BY name")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(indexes, ["idx_transcript_kind", "idx_transcript_story_seq", "idx_transcript_target", "idx_transcript_turn"]);
+        assert!(!conn.prepare("PRAGMA foreign_key_check").unwrap().exists([]).unwrap());
+        conn.execute("DELETE FROM stories WHERE id = 's'", []).unwrap();
+        for table in ["transcript_entries", "image_assets"] {
+            let count: i64 = conn.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| row.get(0)).unwrap();
+            assert_eq!(count, 0, "{table}");
+        }
+    }
+
+    #[test]
+    fn transcript_table_rename_is_idempotent() {
+        let pool = test_pool();
+        let mut conn = pool.get().unwrap();
+        conn.execute_batch(
+            "INSERT INTO stories (id, title, created_at, updated_at) VALUES ('s', 'Story', 'now', 'now');
+             INSERT INTO transcript_entries (id, story_id, seq, kind, visibility, payload_json, created_at)
+             VALUES ('first', 's', 0, 'player_message', 'visible', '{}', 'now');",
+        ).unwrap();
+        stage_old_ledger(&conn);
+        run_migrations(&mut conn).unwrap();
+        run_migrations(&mut conn).unwrap();
+        assert_eq!(conn.query_row("SELECT COUNT(*) FROM transcript_entries", [], |row| row.get::<_, i64>(0)).unwrap(), 1);
+    }
+
+    #[test]
+    fn transcript_table_rename_refuses_both_tables() {
+        let pool = test_pool();
+        let mut conn = pool.get().unwrap();
+        conn.execute("CREATE TABLE ledger_entries(id TEXT PRIMARY KEY)", []).unwrap();
+        let error = run_migrations(&mut conn).unwrap_err().to_string();
+        assert!(error.contains("both ledger_entries and transcript_entries exist"), "{error}");
+    }
+
+    #[test]
+    fn settings_keys_move_once() {
+        let pool = test_pool();
+        let mut conn = pool.get().unwrap();
+        conn.execute("DELETE FROM settings WHERE key = 'migration_transcript_context_keys_v1'", []).unwrap();
+        let a = serde_json::json!({
+            "context": {"include": {"images": true}},
+            "injection": {"author_note": "n", "author_note_enabled": true, "entities": "scoped", "tool_instructions": false},
+            "narrator_tools": {"tool_call_persistence": true}
+        });
+        for (id, raw) in [("a", a.to_string()), ("b", "{}".into()), ("c", "\"not an object\"".into())] {
+            conn.execute(
+                "INSERT INTO stories (id, title, created_at, updated_at, settings_json) VALUES (?1, ?1, 'now', 'now', ?2)",
+                rusqlite::params![id, raw],
+            ).unwrap();
+        }
+        run_migrations(&mut conn).unwrap();
+        let get = |conn: &rusqlite::Connection, id| -> String {
+            conn.query_row("SELECT settings_json FROM stories WHERE id = ?1", [id], |row| row.get(0)).unwrap()
+        };
+        let migrated = get(&conn, "a");
+        let value: serde_json::Value = serde_json::from_str(&migrated).unwrap();
+        assert_eq!(value["transcript"], a["context"]);
+        assert_eq!(value["context"], a["injection"]);
+        assert_eq!(value["narrator_tools"], a["narrator_tools"]);
+        assert!(value.get("injection").is_none());
+        assert_eq!(get(&conn, "b"), "{}");
+        assert_eq!(get(&conn, "c"), "\"not an object\"");
+        assert_eq!(conn.query_row("SELECT COUNT(*) FROM settings WHERE key = 'migration_transcript_context_keys_v1'", [], |row| row.get::<_, i64>(0)).unwrap(), 1);
+        run_migrations(&mut conn).unwrap();
+        assert_eq!(get(&conn, "a"), migrated);
+    }
+
+    #[test]
+    fn settings_keys_move_keeps_existing_transcript() {
+        let pool = test_pool();
+        let mut conn = pool.get().unwrap();
+        conn.execute("DELETE FROM settings WHERE key = 'migration_transcript_context_keys_v1'", []).unwrap();
+        conn.execute(
+            "INSERT INTO stories (id, title, created_at, updated_at, settings_json) VALUES ('s', 'Story', 'now', 'now', ?1)",
+            [serde_json::json!({
+                "transcript": {"include": {"images": false}},
+                "context": {"include": {"images": true}},
+                "injection": {"author_note": "n"}
+            }).to_string()],
+        ).unwrap();
+        run_migrations(&mut conn).unwrap();
+        let raw: String = conn.query_row("SELECT settings_json FROM stories WHERE id = 's'", [], |row| row.get(0)).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(value["transcript"]["include"]["images"], false);
+        assert_eq!(value["context"]["author_note"], "n");
+        assert!(value.get("injection").is_none());
+    }
 
     #[tokio::test]
     async fn blocking_returns_work_value() {
@@ -1358,7 +1630,7 @@ mod tests {
         fs::write(&svg_path, b"<svg></svg>").unwrap();
         conn.execute_batch(
             "INSERT INTO stories (id, title, created_at, updated_at) VALUES ('s', 'Story', 'now', 'now');
-             INSERT INTO ledger_entries (id, story_id, seq, kind, visibility, payload_json, created_at)
+             INSERT INTO transcript_entries (id, story_id, seq, kind, visibility, payload_json, created_at)
                VALUES ('entry', 's', 1, 'narration', 'visible', '{}', 'now');
              DELETE FROM settings WHERE key = 'migration_image_blobs_v1';",
         ).unwrap();
@@ -1714,7 +1986,7 @@ mod tests {
     fn roll_needed_migration_backfills_once_without_touching_other_payloads() {
         fn payloads(conn: &rusqlite::Connection) -> Vec<(String, String)> {
             conn.prepare(
-                "SELECT id, payload_json FROM ledger_entries
+                "SELECT id, payload_json FROM transcript_entries
                  WHERE id IN ('old-roll', 'complete-roll', 'unrelated') ORDER BY id",
             )
             .unwrap()
@@ -1736,7 +2008,7 @@ mod tests {
         conn.execute_batch(
             r#"INSERT INTO stories (id, title, created_at, updated_at)
                VALUES ('s', 'Story', 'now', 'now');
-               INSERT INTO ledger_entries
+               INSERT INTO transcript_entries
                    (id, story_id, seq, kind, visibility, content, payload_json, target_entry_id, created_at)
                VALUES
                    ('base', 's', 0, 'narration', 'visible', 'Base', '{}', NULL, 'now'),
@@ -1903,7 +2175,7 @@ mod tests {
         conn.execute_batch(
             "INSERT INTO stories (id,title,created_at,updated_at,settings_json) VALUES
              ('s','Story','now','now','{\"attributes_enabled\":false,\"reasoning_effort\":\"low\",\"extra\":9}');
-             INSERT INTO ledger_entries (id,story_id,seq,kind,visibility,content,payload_json,target_entry_id,created_at) VALUES
+             INSERT INTO transcript_entries (id,story_id,seq,kind,visibility,content,payload_json,target_entry_id,created_at) VALUES
              ('player','s',0,'player_message','visible','old player','{}',NULL,'now'),
              ('player-edit','s',1,'content_edited','hidden','edited player','{}','player','now'),
              ('base','s',2,'narration','visible','base text','{\"thoughts\":\"base thought\",\"input_mode\":\"do\"}',NULL,'now'),
@@ -1922,7 +2194,7 @@ mod tests {
         let conn = pool.get().unwrap();
         let (content, payload): (String, String) = conn
             .query_row(
-                "SELECT content,payload_json FROM ledger_entries WHERE id='base'",
+                "SELECT content,payload_json FROM transcript_entries WHERE id='base'",
                 [],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
@@ -1932,7 +2204,7 @@ mod tests {
         assert_eq!(payload["thoughts"], "variant thought");
         assert_eq!(payload["input_mode"], "do");
         let surviving: Vec<String> = conn
-            .prepare("SELECT id FROM ledger_entries ORDER BY seq")
+            .prepare("SELECT id FROM transcript_entries ORDER BY seq")
             .unwrap()
             .query_map([], |row| row.get(0))
             .unwrap()
@@ -1945,7 +2217,7 @@ mod tests {
         assert_eq!(surviving.len(), 5);
         let (seed_kind, seed_payload): (String, String) = conn
             .query_row(
-                "SELECT kind, payload_json FROM ledger_entries WHERE id = ?1",
+                "SELECT kind, payload_json FROM transcript_entries WHERE id = ?1",
                 [&surviving[4]],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
@@ -1968,14 +2240,14 @@ mod tests {
             .unwrap()
             .exists([])
             .unwrap());
-        conn.execute("INSERT INTO ledger_entries (id,story_id,seq,kind,visibility,content,payload_json,target_entry_id,created_at) VALUES ('new-roll','s',(SELECT COALESCE(MAX(seq),-1)+1 FROM ledger_entries WHERE story_id='s'),'diceroll','hidden',NULL,'{\"chance_percent\":50}','base','now')", []).unwrap();
+        conn.execute("INSERT INTO transcript_entries (id,story_id,seq,kind,visibility,content,payload_json,target_entry_id,created_at) VALUES ('new-roll','s',(SELECT COALESCE(MAX(seq),-1)+1 FROM transcript_entries WHERE story_id='s'),'diceroll','hidden',NULL,'{\"chance_percent\":50}','base','now')", []).unwrap();
         drop(conn);
         drop(pool);
         let pool = init_pool(&dir).unwrap();
         let conn = pool.get().unwrap();
         let count: i64 = conn
             .query_row(
-                "SELECT COUNT(*) FROM ledger_entries WHERE id='new-roll'",
+                "SELECT COUNT(*) FROM transcript_entries WHERE id='new-roll'",
                 [],
                 |row| row.get(0),
             )
@@ -2026,7 +2298,7 @@ mod tests {
     }
 
     #[test]
-    fn fresh_schema_contains_ledger_and_no_story_cards() {
+    fn fresh_database_has_transcript_table() {
         let dir = std::env::temp_dir().join(format!("story-llm-schema-{}", Uuid::new_v4()));
         let pool = init_pool(&dir).expect("initialize schema");
         let conn = pool.get().unwrap();
@@ -2038,7 +2310,8 @@ mod tests {
             )
             .unwrap()
         };
-        assert!(exists("ledger_entries"));
+        assert!(exists("transcript_entries"));
+        assert!(!exists("ledger_entries"));
         assert!(exists("turns"));
         assert!(!exists("timeline_entries"));
         assert!(exists("story_entity_state"));
@@ -2055,17 +2328,17 @@ mod tests {
             image_columns,
             ["id", "entry_id", "path", "prompt", "created_at"]
         );
-        let ledger_columns = conn
-            .prepare("PRAGMA table_info(ledger_entries)")
+        let transcript_columns = conn
+            .prepare("PRAGMA table_info(transcript_entries)")
             .unwrap()
             .query_map([], |row| row.get::<_, String>(1))
             .unwrap()
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
-        assert!(ledger_columns.contains(&"turn_id".to_string()));
+        assert!(transcript_columns.contains(&"turn_id".to_string()));
         assert!(conn
             .query_row(
-                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'idx_ledger_turn')",
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'idx_transcript_turn')",
                 [],
                 |row| row.get::<_, bool>(0),
             )
@@ -2079,23 +2352,23 @@ mod tests {
     }
 
     #[test]
-    fn existing_ledger_table_gains_nullable_turn_reference_and_index() {
+    fn existing_transcript_table_gains_nullable_turn_reference_and_index() {
         let conn = rusqlite::Connection::open_in_memory().unwrap();
         conn.execute_batch(
             "PRAGMA foreign_keys = ON;
              CREATE TABLE stories(id TEXT PRIMARY KEY);
              CREATE TABLE turns(id TEXT PRIMARY KEY, story_id TEXT REFERENCES stories(id));
-             CREATE TABLE ledger_entries(
+             CREATE TABLE transcript_entries(
                  id TEXT PRIMARY KEY,
                  story_id TEXT NOT NULL REFERENCES stories(id),
-                 target_entry_id TEXT REFERENCES ledger_entries(id)
+                 target_entry_id TEXT REFERENCES transcript_entries(id)
              );",
         )
         .unwrap();
-        ensure_ledger_turn_column(&conn).unwrap();
+        ensure_transcript_turn_column(&conn).unwrap();
         let column: (String, i64) = conn
             .query_row(
-                "SELECT name, \"notnull\" FROM pragma_table_info('ledger_entries') WHERE name = 'turn_id'",
+                "SELECT name, \"notnull\" FROM pragma_table_info('transcript_entries') WHERE name = 'turn_id'",
                 [],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
@@ -2103,14 +2376,14 @@ mod tests {
         assert_eq!(column, ("turn_id".into(), 0));
         assert!(conn
             .query_row(
-                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'idx_ledger_turn')",
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'idx_transcript_turn')",
                 [],
                 |row| row.get::<_, bool>(0),
             )
             .unwrap());
         let referenced_table: String = conn
             .query_row(
-                "SELECT \"table\" FROM pragma_foreign_key_list('ledger_entries') WHERE \"from\" = 'turn_id'",
+                "SELECT \"table\" FROM pragma_foreign_key_list('transcript_entries') WHERE \"from\" = 'turn_id'",
                 [],
                 |row| row.get(0),
             )
@@ -2161,20 +2434,21 @@ mod tests {
         let conn = pool.get().unwrap();
         conn.execute_batch(
             "INSERT INTO stories (id, title, created_at, updated_at) VALUES ('s', 'Story', 'now', 'now');
-             INSERT INTO ledger_entries (id, story_id, seq, kind, visibility, content, payload_json, created_at)
+             INSERT INTO transcript_entries (id, story_id, seq, kind, visibility, content, payload_json, created_at)
                  VALUES ('turn', 's', 0, 'player_message', 'visible', 'Look', '{\"input_mode\":\"do\"}', 'now');
-             INSERT INTO ledger_entries (id, story_id, seq, kind, visibility, payload_json, target_entry_id, created_at)
+             INSERT INTO transcript_entries (id, story_id, seq, kind, visibility, payload_json, target_entry_id, created_at)
                  VALUES ('roll', 's', 1, 'diceroll', 'hidden', '{\"roll\":7}', 'turn', 'now');
              INSERT INTO entities (id, story_id, kind, created_at) VALUES ('entity', 's', 'character', 'now');
              INSERT INTO story_entity_state (story_id, entity_id, name, is_present, updated_at, last_event_id)
                  VALUES ('s', 'entity', 'Hero', 1, 'now', 'roll');
              INSERT INTO image_assets (id, entry_id, path, prompt, created_at)
                  VALUES ('image', 'turn', 'scene.png', 'A scene', 'now');
-             ALTER TABLE ledger_entries RENAME TO timeline_entries;
-             DROP INDEX idx_ledger_story_seq;
-             DROP INDEX idx_ledger_target;
-             DROP INDEX idx_ledger_kind;
-             CREATE INDEX idx_timeline_story_seq ON timeline_entries(story_id, seq);
+             ALTER TABLE transcript_entries RENAME TO timeline_entries;
+              DROP INDEX idx_transcript_story_seq;
+              DROP INDEX idx_transcript_target;
+              DROP INDEX idx_transcript_kind;
+              DROP INDEX idx_transcript_turn;
+              CREATE INDEX idx_timeline_story_seq ON timeline_entries(story_id, seq);
              CREATE INDEX idx_timeline_target ON timeline_entries(target_entry_id);
              CREATE INDEX idx_timeline_kind ON timeline_entries(story_id, kind, seq);
               INSERT INTO settings (key, value) VALUES ('timeline_retention', '{\"tool_call_persistence\":false}');
@@ -2204,7 +2478,7 @@ mod tests {
         let conn = pool.get().unwrap();
         let migrated: (i64, String, String) = conn
             .query_row(
-                "SELECT seq, target_entry_id, payload_json FROM ledger_entries WHERE id = 'roll'",
+                "SELECT seq, target_entry_id, payload_json FROM transcript_entries WHERE id = 'roll'",
                 [],
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
@@ -2213,8 +2487,8 @@ mod tests {
         let turn_ownership: (String, String, String) = conn
             .query_row(
                 "SELECT player.turn_id, roll.turn_id, turns.status
-                 FROM ledger_entries AS player
-                 JOIN ledger_entries AS roll ON roll.id = 'roll'
+                 FROM transcript_entries AS player
+                 JOIN transcript_entries AS roll ON roll.id = 'roll'
                  JOIN turns ON turns.id = player.turn_id
                  WHERE player.id = 'turn'",
                 [],
@@ -2224,7 +2498,7 @@ mod tests {
         assert_eq!(turn_ownership.0, turn_ownership.1);
         assert_eq!(turn_ownership.2, "failed");
         let count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM ledger_entries", [], |row| row.get(0))
+            .query_row("SELECT COUNT(*) FROM transcript_entries", [], |row| row.get(0))
             .unwrap();
         assert_eq!(count, 2);
         let old_table: bool = conn
@@ -2236,7 +2510,7 @@ mod tests {
             .unwrap();
         assert!(!old_table);
         for table in [
-            "ledger_entries",
+            "transcript_entries",
             "story_entity_state",
             "entity_attributes",
             "image_assets",
@@ -2249,7 +2523,7 @@ mod tests {
                 .collect::<Result<Vec<_>, _>>()
                 .unwrap();
             assert!(
-                references.contains(&"ledger_entries".to_string()),
+                references.contains(&"transcript_entries".to_string()),
                 "{table}"
             );
         }
@@ -2287,9 +2561,9 @@ mod tests {
             .unwrap();
         assert!(!old_setting);
         for index in [
-            "idx_ledger_story_seq",
-            "idx_ledger_target",
-            "idx_ledger_kind",
+            "idx_transcript_story_seq",
+            "idx_transcript_target",
+            "idx_transcript_kind",
         ] {
             let exists: bool = conn
                 .query_row(
@@ -2300,10 +2574,10 @@ mod tests {
                 .unwrap();
             assert!(exists, "{index}");
         }
-        conn.execute("DELETE FROM ledger_entries WHERE id = 'turn'", [])
+        conn.execute("DELETE FROM transcript_entries WHERE id = 'turn'", [])
             .unwrap();
         let remaining: i64 = conn
-            .query_row("SELECT COUNT(*) FROM ledger_entries", [], |row| row.get(0))
+            .query_row("SELECT COUNT(*) FROM transcript_entries", [], |row| row.get(0))
             .unwrap();
         assert_eq!(remaining, 0);
         let images: i64 = conn
@@ -2328,10 +2602,11 @@ mod tests {
         let pool = test_pool();
         let mut conn = pool.get().unwrap();
         conn.execute_batch(
-            "ALTER TABLE ledger_entries RENAME TO timeline_entries;
-             DROP INDEX idx_ledger_story_seq;
-             DROP INDEX idx_ledger_target;
-             DROP INDEX idx_ledger_kind;
+            "ALTER TABLE transcript_entries RENAME TO timeline_entries;
+             DROP INDEX idx_transcript_story_seq;
+             DROP INDEX idx_transcript_target;
+             DROP INDEX idx_transcript_kind;
+             DROP INDEX idx_transcript_turn;
              CREATE INDEX idx_ledger_story_seq ON stories(id);",
         )
         .unwrap();
@@ -2358,7 +2633,8 @@ mod tests {
         let pool = test_pool();
         let mut conn = pool.get().unwrap();
         conn.execute_batch(
-            "CREATE TABLE timeline_entries (id TEXT PRIMARY KEY);
+            "ALTER TABLE transcript_entries RENAME TO ledger_entries;
+             CREATE TABLE timeline_entries (id TEXT PRIMARY KEY);
              INSERT INTO timeline_entries (id) VALUES ('legacy');",
         )
         .unwrap();
@@ -2411,7 +2687,7 @@ mod tests {
         )
         .unwrap();
         conn.execute(
-            "INSERT INTO ledger_entries
+            "INSERT INTO transcript_entries
              (id, story_id, seq, kind, visibility, content, payload_json, created_at)
              VALUES ('note', 's', 0, 'context_note_updated', 'hidden', NULL,
                      '{\"author_note\":\"  Keep it terse.  \"}', 'now')",
@@ -2852,7 +3128,7 @@ mod tests {
             r#"INSERT INTO stories (id, title, created_at, updated_at, settings_json)
                    VALUES ('s', 'Story', 'now', 'now', '{}');
                DELETE FROM settings WHERE key = 'migration_turns_v1';
-               INSERT INTO ledger_entries
+               INSERT INTO transcript_entries
                    (id, story_id, seq, kind, visibility, content, payload_json, target_entry_id, turn_id, created_at)
                VALUES
                    ('p1','s',0,'player_message','visible','Act','{"input_mode":"do"}',NULL,NULL,'t0'),
@@ -2875,9 +3151,9 @@ mod tests {
         let rows = {
             let mut stmt = conn
                 .prepare(
-                    "SELECT ledger_entries.id, ledger_entries.turn_id, turns.seq, turns.status
-                     FROM ledger_entries LEFT JOIN turns ON turns.id = ledger_entries.turn_id
-                     WHERE ledger_entries.story_id = 's' ORDER BY ledger_entries.seq",
+                    "SELECT transcript_entries.id, transcript_entries.turn_id, turns.seq, turns.status
+                     FROM transcript_entries LEFT JOIN turns ON turns.id = transcript_entries.turn_id
+                     WHERE transcript_entries.story_id = 's' ORDER BY transcript_entries.seq",
                 )
                 .unwrap();
             stmt.query_map([], |row| {
@@ -2923,7 +3199,7 @@ mod tests {
             .collect();
         migrate_turns_v1(&mut conn).unwrap();
         let after = conn
-            .prepare("SELECT id, turn_id FROM ledger_entries WHERE story_id = 's' ORDER BY seq")
+            .prepare("SELECT id, turn_id FROM transcript_entries WHERE story_id = 's' ORDER BY seq")
             .unwrap()
             .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
             .unwrap()

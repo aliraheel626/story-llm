@@ -58,8 +58,8 @@ pub fn turn_of(conn: &rusqlite::Connection, entry_id: &str) -> AppResult<Option<
     Ok(conn
         .query_row(
             "SELECT turns.id, turns.story_id, turns.seq, turns.status, turns.created_at
-             FROM ledger_entries JOIN turns ON turns.id = ledger_entries.turn_id
-             WHERE ledger_entries.id = ?1",
+             FROM transcript_entries JOIN turns ON turns.id = transcript_entries.turn_id
+             WHERE transcript_entries.id = ?1",
             [entry_id],
             row_to_turn,
         )

@@ -233,7 +233,7 @@ mod tests {
         );
         conn.execute(
             "UPDATE stories SET settings_json = ?1 WHERE id = 's'",
-            [json!({"injection": {"entities":"scoped", "author_note":"Keep it terse.", "author_note_enabled":true, "tool_instructions":true}}).to_string()],
+            [json!({"context": {"entities":"scoped", "author_note":"Keep it terse.", "author_note_enabled":true, "tool_instructions":true}}).to_string()],
         )
         .unwrap();
         drop(conn);
@@ -298,7 +298,7 @@ mod tests {
         turn.with(|conn| {
             conn.execute(
                 "UPDATE stories SET settings_json = ?1 WHERE id = 's'",
-                [json!({"injection": {"entities":"scoped", "author_note":"A new direction.", "author_note_enabled":true, "tool_instructions":true}}).to_string()],
+                [json!({"context": {"entities":"scoped", "author_note":"A new direction.", "author_note_enabled":true, "tool_instructions":true}}).to_string()],
             )?;
             entities::create_entity_with_id_sync(
                 conn, "alice", "s", "character", "Alice", Some("a blue coat"),

@@ -18,8 +18,8 @@ pub(crate) fn images_for_story(
 ) -> AppResult<Vec<StoryImage>> {
     let mut stmt = conn.prepare(
         "SELECT image_assets.id, image_assets.entry_id, image_assets.prompt, image_assets.created_at
-         FROM image_assets JOIN ledger_entries ON ledger_entries.id = image_assets.entry_id
-         WHERE ledger_entries.story_id = ?1 ORDER BY image_assets.created_at ASC",
+         FROM image_assets JOIN transcript_entries ON transcript_entries.id = image_assets.entry_id
+         WHERE transcript_entries.story_id = ?1 ORDER BY image_assets.created_at ASC",
     )?;
     let rows = stmt.query_map([story_id], row_to_image)?;
     Ok(rows.collect::<Result<Vec<_>, _>>()?)
@@ -39,11 +39,11 @@ pub(crate) fn images_for_entries(
         "SELECT image_assets.entry_id, image_blobs.media_type, image_blobs.bytes
          FROM image_assets
          JOIN image_blobs ON image_blobs.asset_id = image_assets.id
-         JOIN ledger_entries ON ledger_entries.id = image_assets.entry_id
-         WHERE ledger_entries.story_id = ?1 AND ledger_entries.kind = ?2
-           AND (?3 IS NULL OR ledger_entries.seq > ?3)
+         JOIN transcript_entries ON transcript_entries.id = image_assets.entry_id
+         WHERE transcript_entries.story_id = ?1 AND transcript_entries.kind = ?2
+           AND (?3 IS NULL OR transcript_entries.seq > ?3)
            AND image_blobs.media_type IN ('image/png', 'image/jpeg', 'image/webp', 'image/gif')
-         ORDER BY ledger_entries.seq DESC, image_assets.created_at DESC, image_assets.id DESC
+         ORDER BY transcript_entries.seq DESC, image_assets.created_at DESC, image_assets.id DESC
          LIMIT ?4",
     )?;
     let rows = stmt.query_map(
@@ -103,7 +103,7 @@ pub fn detach_from_entry(tx: &rusqlite::Transaction<'_>, entry_id: &str) -> AppR
     if !asset_ids.is_empty() {
         let events = {
             let mut stmt =
-                tx.prepare("SELECT id, payload_json FROM ledger_entries WHERE kind = ?1")?;
+                tx.prepare("SELECT id, payload_json FROM transcript_entries WHERE kind = ?1")?;
             let rows = stmt.query_map([transcript_kind::IMAGE_GENERATED], |row| {
                 Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
             })?;
@@ -114,7 +114,7 @@ pub fn detach_from_entry(tx: &rusqlite::Transaction<'_>, entry_id: &str) -> AppR
                 .ok()
                 .and_then(|value| value.get("asset_id")?.as_str().map(str::to_string));
             if asset_id.is_some_and(|asset_id| asset_ids.contains(&asset_id)) {
-                tx.execute("DELETE FROM ledger_entries WHERE id = ?1", [event_id])?;
+                tx.execute("DELETE FROM transcript_entries WHERE id = ?1", [event_id])?;
             }
         }
     }
@@ -137,14 +137,14 @@ mod tests {
         let mut conn = pool.get().unwrap();
         conn.execute_batch(
             r#"INSERT INTO stories (id, title, created_at, updated_at) VALUES ('s', 'Story', 'now', 'now');
-             INSERT INTO ledger_entries (id, story_id, seq, kind, visibility, payload_json, created_at)
+             INSERT INTO transcript_entries (id, story_id, seq, kind, visibility, payload_json, created_at)
                VALUES ('entry-1', 's', 1, 'narration', 'visible', '{}', 'now'),
                       ('entry-2', 's', 2, 'narration', 'visible', '{}', 'now');
              INSERT INTO image_assets VALUES ('asset-1', 'entry-1', '', 'first', 'now');
              INSERT INTO image_assets VALUES ('asset-2', 'entry-2', '', 'second', 'now');
              INSERT INTO image_blobs VALUES ('asset-1', 'image/png', X'0102');
              INSERT INTO image_blobs VALUES ('asset-2', 'image/png', X'0304');
-             INSERT INTO ledger_entries (id, story_id, seq, kind, visibility, payload_json, created_at)
+             INSERT INTO transcript_entries (id, story_id, seq, kind, visibility, payload_json, created_at)
                VALUES ('event-1', 's', 3, 'image_generated', 'hidden', '{"asset_id":"asset-1"}', 'now'),
                       ('event-2', 's', 4, 'image_generated', 'hidden', '{"asset_id":"asset-2"}', 'now'),
                       ('event-3', 's', 5, 'content_edited', 'hidden', '{}', 'now'),
@@ -167,7 +167,7 @@ mod tests {
         detach_from_entry(&tx, "entry-1").unwrap();
         assert_eq!(tx.query_row("SELECT COUNT(*) FROM image_blobs", [], |row| row.get::<_, i64>(0)).unwrap(), 1);
         let event_ids: Vec<String> = tx
-            .prepare("SELECT id FROM ledger_entries ORDER BY id")
+            .prepare("SELECT id FROM transcript_entries ORDER BY id")
             .unwrap()
             .query_map([], |row| row.get(0))
             .unwrap()
@@ -185,11 +185,11 @@ mod tests {
         let conn = pool.get().unwrap();
         conn.execute_batch(
             "INSERT INTO stories (id, title, created_at, updated_at) VALUES ('s', 'Story', 'now', 'now');
-             INSERT INTO ledger_entries (id, story_id, seq, kind, visibility, payload_json, created_at)
+             INSERT INTO transcript_entries (id, story_id, seq, kind, visibility, payload_json, created_at)
                VALUES ('entry', 's', 1, 'narration', 'visible', '{}', 'now');
              INSERT INTO image_assets VALUES ('asset', 'entry', '', 'prompt', 'now');
              INSERT INTO image_blobs VALUES ('asset', 'image/png', X'0102');
-             DELETE FROM ledger_entries WHERE id = 'entry';",
+             DELETE FROM transcript_entries WHERE id = 'entry';",
         ).unwrap();
         assert_eq!(conn.query_row("SELECT COUNT(*) FROM image_blobs", [], |row| row.get::<_, i64>(0)).unwrap(), 0);
     }

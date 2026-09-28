@@ -67,7 +67,7 @@ pub fn read_transcript_settings(
     story_id: &str,
 ) -> AppResult<TranscriptSettings> {
     let settings = story_settings(conn, story_id)?;
-    Ok(TranscriptSettings::from_stored(settings.get("context")))
+    Ok(TranscriptSettings::from_stored(settings.get("transcript")))
 }
 
 pub fn write_transcript_settings(
@@ -77,7 +77,7 @@ pub fn write_transcript_settings(
 ) -> AppResult<()> {
     TranscriptSettings::validate_keys(&include)?;
     let mut settings = story_settings(conn, story_id)?;
-    settings["context"] = json!({"include": include});
+    settings["transcript"] = json!({"include": include});
     write_story_settings(conn, story_id, &settings)
 }
 
@@ -201,7 +201,7 @@ pub fn read_context_settings(
 ) -> AppResult<ContextSettings> {
     let settings = story_settings(conn, story_id)?;
     let mut context: ContextSettings = settings
-        .get("injection")
+        .get("context")
         .cloned()
         .map(|value| serde_json::from_value(value).unwrap_or_default())
         .unwrap_or_default();
@@ -217,7 +217,7 @@ pub fn write_context_settings(
     context.author_note = context.author_note.trim().to_string();
     let mut settings = story_settings(conn, story_id)?;
     let previous = read_context_settings(conn, story_id)?;
-    settings["injection"] = json!(context);
+    settings["context"] = json!(context);
     write_story_settings(conn, story_id, &settings)?;
     if previous.author_note != context.author_note {
         repository::append_entry(
@@ -242,6 +242,26 @@ mod tests {
     use super::*;
     use crate::shared::db::{with_transaction, Pool};
     use crate::shared::test_support;
+
+    #[test]
+    fn migrated_transcript_and_context_keys_are_read() {
+        let pool = crate::shared::db::test_pool();
+        let conn = pool.get().unwrap();
+        test_support::story_with_settings(&conn, "s", json!({
+            "context": {"include": {"images": true}},
+            "injection": {"author_note": "n", "entities": "scoped"}
+        }));
+        conn.execute("DELETE FROM settings WHERE key = 'migration_transcript_context_keys_v1'", []).unwrap();
+        let path = crate::shared::db::database_path(&pool).unwrap();
+        drop(conn);
+        drop(pool);
+        let pool = crate::shared::db::init_pool(path.parent().unwrap()).unwrap();
+        let conn = pool.get().unwrap();
+        assert!(read_transcript_settings(&conn, "s").unwrap().includes("images"));
+        let context = read_context_settings(&conn, "s").unwrap();
+        assert_eq!(context.author_note, "n");
+        assert_eq!(context.entities, EntityContext::Scoped);
+    }
 
     #[test]
     fn unknown_legacy_reasoning_effort_uses_model_default() {
@@ -409,7 +429,7 @@ mod tests {
 
         let conn = pool.get().unwrap();
         conn.execute("UPDATE stories SET settings_json = ?1 WHERE id = 'first'",
-            [json!({"context":{"include":{"action.do":false,"unknown":true,"action.say":"invalid"}},"custom":42}).to_string()]).unwrap();
+            [json!({"transcript":{"include":{"action.do":false,"unknown":true,"action.say":"invalid"}},"custom":42}).to_string()]).unwrap();
         drop(conn);
         let resolved = read_story_transcript_settings(&pool, "first").unwrap();
         assert!(!resolved.include["action.do"]);
@@ -461,7 +481,7 @@ mod tests {
         let saved: Value = serde_json::from_str(&raw).unwrap();
         assert_eq!(saved["custom"], 42);
         assert_eq!(
-            saved["context"]["include"].as_object().unwrap().len(),
+            saved["transcript"]["include"].as_object().unwrap().len(),
             defaults.items().len()
         );
         assert!(matches!(
@@ -474,7 +494,7 @@ mod tests {
     fn partial_context_uses_serde_defaults() {
         let pool = stories();
         let conn = pool.get().unwrap();
-        conn.execute("UPDATE stories SET settings_json = '{\"injection\":{\"author_note\":\"x\"}}' WHERE id = 'first'", []).unwrap();
+        conn.execute("UPDATE stories SET settings_json = '{\"context\":{\"author_note\":\"x\"}}' WHERE id = 'first'", []).unwrap();
         assert_eq!(
             read_context_settings(&conn, "first").unwrap(),
             ContextSettings {
@@ -494,7 +514,7 @@ mod tests {
         context.tool_instructions = false;
         save_story_context_settings(&pool, "first", context.clone()).unwrap();
         let count = || -> i64 {
-            pool.get().unwrap().query_row("SELECT COUNT(*) FROM ledger_entries WHERE story_id = 'first' AND kind = 'context_note_updated'", [], |row| row.get(0)).unwrap()
+            pool.get().unwrap().query_row("SELECT COUNT(*) FROM transcript_entries WHERE story_id = 'first' AND kind = 'context_note_updated'", [], |row| row.get(0)).unwrap()
         };
         assert_eq!(count(), 0);
         context.author_note = "  Stay quiet.  ".into();
@@ -511,7 +531,7 @@ mod tests {
         save_story_context_settings(&pool, "first", context.clone()).unwrap();
         assert_eq!(count(), 1);
         let entry: (String, String, String) = pool.get().unwrap().query_row(
-            "SELECT visibility, content, payload_json FROM ledger_entries WHERE story_id = 'first' AND kind = 'context_note_updated'",
+            "SELECT visibility, content, payload_json FROM transcript_entries WHERE story_id = 'first' AND kind = 'context_note_updated'",
             [], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?))
         ).unwrap();
         assert_eq!(entry.0, "hidden");
