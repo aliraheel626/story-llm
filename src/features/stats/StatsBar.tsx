@@ -15,7 +15,7 @@ export function StatsBar({ storyId }: { storyId: string }) {
     : "No usage recorded yet";
   const unpriced = stats?.unpriced_calls ?? 0;
   const totalTitle = unpriced > 0
-    ? `${totalTooltip}. ${unpriced} calls reported no cost (Ollama, Nous Portal, or a timed-out image) and aren't included`
+    ? `${totalTooltip}. ${unpriced} calls reported no cost (Ollama, Nous Portal, or a request that failed or timed out before reporting its cost) and aren't included`
     : totalTooltip;
 
   return (

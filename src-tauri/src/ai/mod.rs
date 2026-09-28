@@ -476,6 +476,7 @@ where
     let mut text_stripper = ReasoningStripper::new();
     let mut visible = String::new();
     let mut thoughts = String::new();
+    let mut output_since_call = false;
 
     while let Some(item) = stream.next().await {
         if has_tools {
@@ -483,6 +484,7 @@ where
         }
         match item {
             Ok(MultiTurnStreamItem::StreamAssistantItem(StreamedAssistantContent::Text(t))) => {
+                output_since_call = true;
                 let delta = text_stripper.push(&t.text);
                 if !delta.is_empty() {
                     visible.push_str(&delta);
@@ -492,9 +494,13 @@ where
             Ok(MultiTurnStreamItem::StreamAssistantItem(
                 StreamedAssistantContent::ReasoningDelta { reasoning, .. },
             )) => {
+                output_since_call = true;
                 thoughts.push_str(&reasoning);
                 on_chunk(NarratorChunk::Reasoning(reasoning));
             }
+            Ok(MultiTurnStreamItem::StreamAssistantItem(
+                StreamedAssistantContent::ToolCallDelta { .. },
+            )) => output_since_call = true,
             Ok(MultiTurnStreamItem::CompletionCall(call)) => {
                 let tail = text_stripper.finalize();
                 if !tail.is_empty() {
@@ -503,10 +509,15 @@ where
                 }
                 text_stripper = ReasoningStripper::new();
                 on_chunk(NarratorChunk::Usage(call_usage(&call)));
+                output_since_call = false;
             }
             Ok(_) => {}
             Err(e) if is_expected_tool_stop(stop_reason, &e) => break,
             Err(e) => {
+                if output_since_call {
+                    // The call produced output before failing, so it was billed, but its usage never arrived.
+                    on_chunk(NarratorChunk::Usage(CallUsage::default()));
+                }
                 return Err(AppError::Other(format!("narrator stream error: {e}")));
             }
         }
@@ -752,6 +763,79 @@ mod tests {
         assert!(
             matches!(chunks.as_slice(), [NarratorChunk::Usage(usage)] if usage.cost_usd == Some(0.01))
         );
+    }
+
+    fn unexpected_stream_error() -> rig_agent::agent::StreamingError {
+        rig_agent::agent::StreamingError::Prompt(Box::new(PromptError::PromptCancelled {
+            chat_history: Vec::new(),
+            reason: "unexpected".into(),
+        }))
+    }
+
+    #[tokio::test]
+    async fn failed_call_after_output_is_counted_without_cost() {
+        let stream: rig_agent::agent::StreamingResult = Box::pin(futures::stream::iter(vec![
+            Ok(MultiTurnStreamItem::StreamAssistantItem(
+                StreamedAssistantContent::Text(Text::new("x")),
+            )),
+            Err(unexpected_stream_error()),
+        ]));
+        let mut chunks = Vec::new();
+        assert!(
+            consume_narration_stream(stream, false, None, &Mutex::new(Vec::new()), |chunk| chunks
+                .push(chunk))
+            .await
+            .is_err()
+        );
+        assert!(
+            matches!(chunks.last(), Some(NarratorChunk::Usage(usage)) if usage.cost_usd.is_none())
+        );
+    }
+
+    #[tokio::test]
+    async fn failed_call_before_output_records_nothing() {
+        let stream: rig_agent::agent::StreamingResult =
+            Box::pin(futures::stream::iter(vec![Err(unexpected_stream_error())]));
+        let mut chunks = Vec::new();
+        assert!(
+            consume_narration_stream(stream, false, None, &Mutex::new(Vec::new()), |chunk| chunks
+                .push(chunk))
+            .await
+            .is_err()
+        );
+        assert!(!chunks
+            .iter()
+            .any(|chunk| matches!(chunk, NarratorChunk::Usage(_))));
+    }
+
+    #[tokio::test]
+    async fn failure_after_a_finished_call_records_nothing_extra() {
+        let stream: rig_agent::agent::StreamingResult = Box::pin(futures::stream::iter(vec![
+            Ok(MultiTurnStreamItem::StreamAssistantItem(
+                StreamedAssistantContent::Text(Text::new("x")),
+            )),
+            Ok(MultiTurnStreamItem::CompletionCall(sample_call(
+                0,
+                serde_json::json!({"usage":{"cost":0.01}}),
+            ))),
+            Err(unexpected_stream_error()),
+        ]));
+        let mut chunks = Vec::new();
+        assert!(
+            consume_narration_stream(stream, false, None, &Mutex::new(Vec::new()), |chunk| chunks
+                .push(chunk))
+            .await
+            .is_err()
+        );
+        let usage: Vec<_> = chunks
+            .iter()
+            .filter_map(|chunk| match chunk {
+                NarratorChunk::Usage(usage) => Some(usage),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(usage.len(), 1);
+        assert_eq!(usage[0].cost_usd, Some(0.01));
     }
 
     fn turn(role: HistoryRole) -> HistoryTurn {
