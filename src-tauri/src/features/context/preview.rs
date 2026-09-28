@@ -9,7 +9,7 @@ use crate::shared::error::AppResult;
 
 use super::{
     build_message_context, combine_context_blocks,
-    injection::{Inputs, ToolDescription},
+    blocks::{Inputs, ToolDescription},
 };
 
 #[derive(Serialize, Debug, PartialEq, Eq)]
@@ -35,7 +35,7 @@ pub fn build_preview(
     tools: &[ToolDescription<'_>],
 ) -> AppResult<ContextPreview> {
     let settings = settings::read_transcript_settings(conn, story_id)?;
-    let injection = settings::read_injection_settings(conn, story_id)?;
+    let context = settings::read_context_settings(conn, story_id)?;
     let images_unsupported = settings.includes("images") && !model.supports_images;
     let policy = if model.supports_images {
         ImagePolicy::Allowed
@@ -56,7 +56,7 @@ pub fn build_preview(
         story_id,
         history: &history,
         config: model,
-        injection: &injection,
+        context: &context,
         tools,
         rejected_reply: None,
     })?;
@@ -209,7 +209,7 @@ mod tests {
             let config = config(supports_images);
             let preview = build_preview(&conn, "s", &config, &tools()).unwrap();
             let settings = settings::read_transcript_settings(&conn, "s").unwrap();
-            let injection = settings::read_injection_settings(&conn, "s").unwrap();
+            let context = settings::read_context_settings(&conn, "s").unwrap();
             let mut history = history::for_model(
                 &conn,
                 "s",
@@ -242,7 +242,7 @@ mod tests {
                 story_id: "s",
                 history: &history,
                 config: &config,
-                injection: &injection,
+                context: &context,
                 tools: &tools(),
                 rejected_reply: None,
             })

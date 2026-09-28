@@ -103,7 +103,7 @@ pub async fn prepare(inputs: NarratorInputs<'_>) -> AppResult<Prepared> {
         .collect();
     let descriptions = enabled_tools
         .iter()
-        .map(|spec| context::injection::ToolDescription {
+        .map(|spec| context::blocks::ToolDescription {
             name: spec.name,
             instruction: spec.instruction,
         })
@@ -111,13 +111,13 @@ pub async fn prepare(inputs: NarratorInputs<'_>) -> AppResult<Prepared> {
     let context = inputs
         .turn
         .with(|conn| {
-            let injection = stories::settings::read_injection_settings(conn, inputs.story_id)?;
-            context::build_message_context(&context::injection::Inputs {
+            let context = stories::settings::read_context_settings(conn, inputs.story_id)?;
+            context::build_message_context(&context::blocks::Inputs {
                 conn,
                 story_id: inputs.story_id,
                 history: &inputs.transcript,
                 config: &config,
-                injection: &injection,
+                context: &context,
                 tools: &descriptions,
                 rejected_reply: inputs.rejected_reply.as_deref(),
             })

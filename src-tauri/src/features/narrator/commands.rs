@@ -27,7 +27,7 @@ pub async fn preview_story_context(
         });
         let descriptions = tools
             .iter()
-            .map(|spec| context::injection::ToolDescription {
+            .map(|spec| context::blocks::ToolDescription {
                 name: spec.name,
                 instruction: spec.instruction,
             })

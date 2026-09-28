@@ -99,21 +99,21 @@ pub async fn save_story_context_settings(
 pub fn get_story_injection_settings(
     pool: State<Pool>,
     story_id: String,
-) -> AppResult<settings::InjectionSettings> {
+) -> AppResult<settings::ContextSettings> {
     let conn = pool.get()?;
-    settings::read_injection_settings(&conn, &story_id)
+    settings::read_context_settings(&conn, &story_id)
 }
 
 #[tauri::command]
 pub async fn save_story_injection_settings(
     pool: State<'_, Pool>,
     story_id: String,
-    settings: settings::InjectionSettings,
+    settings: settings::ContextSettings,
 ) -> AppResult<()> {
     let pool = pool.inner().clone();
     blocking(move || {
         with_transaction(&pool, |tx| {
-            super::settings::write_injection_settings(tx, &story_id, settings)
+            super::settings::write_context_settings(tx, &story_id, settings)
         })
     })
     .await

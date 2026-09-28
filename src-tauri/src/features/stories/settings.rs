@@ -167,7 +167,7 @@ pub(super) fn save_reasoning_effort(
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub enum EntityInjection {
+pub enum EntityContext {
     #[default]
     All,
     Scoped,
@@ -176,17 +176,17 @@ pub enum EntityInjection {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
-pub struct InjectionSettings {
-    pub entities: EntityInjection,
+pub struct ContextSettings {
+    pub entities: EntityContext,
     pub author_note_enabled: bool,
     pub author_note: String,
     pub tool_instructions: bool,
 }
 
-impl Default for InjectionSettings {
+impl Default for ContextSettings {
     fn default() -> Self {
         Self {
-            entities: EntityInjection::All,
+            entities: EntityContext::All,
             author_note_enabled: true,
             author_note: String::new(),
             tool_instructions: true,
@@ -194,32 +194,32 @@ impl Default for InjectionSettings {
     }
 }
 
-/// A wrong-typed field resets the whole injection object to its defaults.
-pub fn read_injection_settings(
+/// A wrong-typed field resets the whole context object to its defaults.
+pub fn read_context_settings(
     conn: &rusqlite::Connection,
     story_id: &str,
-) -> AppResult<InjectionSettings> {
+) -> AppResult<ContextSettings> {
     let settings = story_settings(conn, story_id)?;
-    let mut injection: InjectionSettings = settings
+    let mut context: ContextSettings = settings
         .get("injection")
         .cloned()
         .map(|value| serde_json::from_value(value).unwrap_or_default())
         .unwrap_or_default();
-    injection.author_note = injection.author_note.trim().to_string();
-    Ok(injection)
+    context.author_note = context.author_note.trim().to_string();
+    Ok(context)
 }
 
-pub fn write_injection_settings(
+pub fn write_context_settings(
     conn: &rusqlite::Connection,
     story_id: &str,
-    mut injection: InjectionSettings,
+    mut context: ContextSettings,
 ) -> AppResult<()> {
-    injection.author_note = injection.author_note.trim().to_string();
+    context.author_note = context.author_note.trim().to_string();
     let mut settings = story_settings(conn, story_id)?;
-    let previous = read_injection_settings(conn, story_id)?;
-    settings["injection"] = json!(injection);
+    let previous = read_context_settings(conn, story_id)?;
+    settings["injection"] = json!(context);
     write_story_settings(conn, story_id, &settings)?;
-    if previous.author_note != injection.author_note {
+    if previous.author_note != context.author_note {
         repository::append_entry(
             conn,
             story_id,
@@ -227,9 +227,9 @@ pub fn write_injection_settings(
             "hidden",
             Some(&format!(
                 "Author's note was updated: {}",
-                injection.author_note
+                context.author_note
             )),
-            &json!({"author_note": injection.author_note}),
+            &json!({"author_note": context.author_note}),
             None,
             None,
         )?;
@@ -364,17 +364,17 @@ mod tests {
         })
     }
 
-    fn read_story_injection_settings(pool: &Pool, story_id: &str) -> AppResult<InjectionSettings> {
+    fn read_story_context_settings(pool: &Pool, story_id: &str) -> AppResult<ContextSettings> {
         let conn = pool.get()?;
-        read_injection_settings(&conn, story_id)
+        read_context_settings(&conn, story_id)
     }
 
-    fn save_story_injection_settings(
+    fn save_story_context_settings(
         pool: &Pool,
         story_id: &str,
-        injection: InjectionSettings,
+        context: ContextSettings,
     ) -> AppResult<()> {
-        with_transaction(pool, |tx| write_injection_settings(tx, story_id, injection))
+        with_transaction(pool, |tx| write_context_settings(tx, story_id, context))
     }
 
     fn stories() -> Pool {
@@ -471,44 +471,44 @@ mod tests {
     }
 
     #[test]
-    fn partial_injection_uses_serde_defaults() {
+    fn partial_context_uses_serde_defaults() {
         let pool = stories();
         let conn = pool.get().unwrap();
         conn.execute("UPDATE stories SET settings_json = '{\"injection\":{\"author_note\":\"x\"}}' WHERE id = 'first'", []).unwrap();
         assert_eq!(
-            read_injection_settings(&conn, "first").unwrap(),
-            InjectionSettings {
+            read_context_settings(&conn, "first").unwrap(),
+            ContextSettings {
                 author_note: "x".into(),
-                ..InjectionSettings::default()
+                ..ContextSettings::default()
             }
         );
     }
 
     #[test]
-    fn injection_changes_only_log_text_edits_and_preserve_other_story_settings() {
+    fn context_changes_only_log_text_edits_and_preserve_other_story_settings() {
         let pool = stories();
-        let mut injection = read_story_injection_settings(&pool, "first").unwrap();
-        assert_eq!(injection, InjectionSettings::default());
-        injection.entities = EntityInjection::Scoped;
-        injection.author_note_enabled = false;
-        injection.tool_instructions = false;
-        save_story_injection_settings(&pool, "first", injection.clone()).unwrap();
+        let mut context = read_story_context_settings(&pool, "first").unwrap();
+        assert_eq!(context, ContextSettings::default());
+        context.entities = EntityContext::Scoped;
+        context.author_note_enabled = false;
+        context.tool_instructions = false;
+        save_story_context_settings(&pool, "first", context.clone()).unwrap();
         let count = || -> i64 {
             pool.get().unwrap().query_row("SELECT COUNT(*) FROM ledger_entries WHERE story_id = 'first' AND kind = 'context_note_updated'", [], |row| row.get(0)).unwrap()
         };
         assert_eq!(count(), 0);
-        injection.author_note = "  Stay quiet.  ".into();
-        save_story_injection_settings(&pool, "first", injection.clone()).unwrap();
+        context.author_note = "  Stay quiet.  ".into();
+        save_story_context_settings(&pool, "first", context.clone()).unwrap();
         assert_eq!(count(), 1);
         assert_eq!(
-            read_story_injection_settings(&pool, "first")
+            read_story_context_settings(&pool, "first")
                 .unwrap()
                 .author_note,
             "Stay quiet."
         );
-        injection.author_note = "Stay quiet.".into();
-        injection.author_note_enabled = true;
-        save_story_injection_settings(&pool, "first", injection.clone()).unwrap();
+        context.author_note = "Stay quiet.".into();
+        context.author_note_enabled = true;
+        save_story_context_settings(&pool, "first", context.clone()).unwrap();
         assert_eq!(count(), 1);
         let entry: (String, String, String) = pool.get().unwrap().query_row(
             "SELECT visibility, content, payload_json FROM ledger_entries WHERE story_id = 'first' AND kind = 'context_note_updated'",
@@ -520,12 +520,12 @@ mod tests {
             serde_json::from_str::<Value>(&entry.2).unwrap(),
             json!({"author_note":"Stay quiet."})
         );
-        injection.author_note.clear();
-        save_story_injection_settings(&pool, "first", injection).unwrap();
+        context.author_note.clear();
+        save_story_context_settings(&pool, "first", context).unwrap();
         assert_eq!(count(), 2);
         assert_eq!(
-            read_story_injection_settings(&pool, "second").unwrap(),
-            InjectionSettings::default()
+            read_story_context_settings(&pool, "second").unwrap(),
+            ContextSettings::default()
         );
         let raw: String = pool
             .get()
@@ -538,7 +538,7 @@ mod tests {
             .unwrap();
         assert_eq!(serde_json::from_str::<Value>(&raw).unwrap()["custom"], 42);
         assert!(matches!(
-            save_story_injection_settings(&pool, "missing", InjectionSettings::default()),
+            save_story_context_settings(&pool, "missing", ContextSettings::default()),
             Err(AppError::NotFound(_))
         ));
     }}

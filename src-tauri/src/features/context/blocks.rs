@@ -8,7 +8,7 @@ use crate::features::entities::{
     model::{Entity, EntityAttributeValue},
 };
 use crate::features::transcript::{query, repository};
-use crate::features::stories::settings::{EntityInjection, InjectionSettings};
+use crate::features::stories::settings::{EntityContext, ContextSettings};
 use crate::prompts;
 use crate::shared::error::AppResult;
 
@@ -24,7 +24,7 @@ pub(crate) struct Inputs<'a> {
     pub story_id: &'a str,
     pub history: &'a [HistoryTurn],
     pub config: &'a TextModelConfig,
-    pub injection: &'a InjectionSettings,
+    pub context: &'a ContextSettings,
     pub tools: &'a [ToolDescription<'a>],
     pub rejected_reply: Option<&'a str>,
 }
@@ -118,7 +118,7 @@ pub(crate) fn combine_context_blocks(parts: &[String]) -> String {
 }
 
 pub(crate) fn build_message_context(inputs: &Inputs<'_>) -> AppResult<ContextPlan> {
-    let (entities, attributes) = if inputs.injection.entities == EntityInjection::None {
+    let (entities, attributes) = if inputs.context.entities == EntityContext::None {
         (Vec::new(), HashMap::new())
     } else {
         let entities = entities::list_entities_sync(inputs.conn, inputs.story_id, None)?;
@@ -133,25 +133,25 @@ pub(crate) fn build_message_context(inputs: &Inputs<'_>) -> AppResult<ContextPla
         )?;
         (entities, attributes)
     };
-    let entities_full = if inputs.injection.entities == EntityInjection::None {
+    let entities_full = if inputs.context.entities == EntityContext::None {
         String::new()
     } else {
         format_entity_context(&entities, &attributes, None)
     };
-    let note = inputs.injection.author_note.trim();
-    let author_note = if inputs.injection.author_note_enabled && !note.is_empty() {
+    let note = inputs.context.author_note.trim();
+    let author_note = if inputs.context.author_note_enabled && !note.is_empty() {
         format!("<author_note>{note}</author_note>")
     } else {
         String::new()
     };
-    let tools = if inputs.injection.tool_instructions {
+    let tools = if inputs.context.tool_instructions {
         tool_context(inputs.tools)
     } else {
         String::new()
     };
 
     let full = combine_context_blocks(&[entities_full.clone(), author_note.clone(), tools.clone()]);
-    let entities_live = if inputs.injection.entities != EntityInjection::Scoped {
+    let entities_live = if inputs.context.entities != EntityContext::Scoped {
         entities_full
     } else {
         let split = raw_tail_boundary(
@@ -265,13 +265,13 @@ mod tests {
         let turn = TurnTx::begin(&pool, &Default::default(), "s").unwrap();
         let plan = turn
             .with(|conn| {
-                let injection = crate::features::stories::settings::read_injection_settings(conn, "s")?;
+                let context = crate::features::stories::settings::read_context_settings(conn, "s")?;
                 build_message_context(&Inputs {
                     conn,
                     story_id: "s",
                     history: &history,
                     config: &config,
-                    injection: &injection,
+                    context: &context,
                     tools: &descriptions(&tools),
                     rejected_reply: None,
                 })
@@ -309,13 +309,13 @@ mod tests {
         let history = vec![history_turn];
         let plan = turn
             .with(|conn| {
-                let injection = crate::features::stories::settings::read_injection_settings(conn, "s")?;
+                let context = crate::features::stories::settings::read_context_settings(conn, "s")?;
                 build_message_context(&Inputs {
                     conn,
                     story_id: "s",
                     history: &history,
                     config: &config(),
-                    injection: &injection,
+                    context: &context,
                     tools: &[],
                     rejected_reply: None,
                 })
@@ -384,8 +384,8 @@ mod tests {
             assert_eq!(alice_attributes.len(), 1);
             assert_eq!(alice_attributes[0].canonical_name, "Accuracy");
             assert_eq!(alice_attributes[0].value, 7.0);
-            let injection = InjectionSettings {
-                entities: EntityInjection::All,
+            let context = ContextSettings {
+                entities: EntityContext::All,
                 author_note_enabled: false,
                 author_note: String::new(),
                 tool_instructions: false,
@@ -395,7 +395,7 @@ mod tests {
                 story_id: "s",
                 history: &[],
                 config: &config(),
-                injection: &injection,
+                context: &context,
                 tools: &[],
                 rejected_reply: None,
             })?;
@@ -421,8 +421,8 @@ mod tests {
         });
         let plan = turn
             .with(|conn| {
-                let injection = InjectionSettings {
-                    entities: EntityInjection::None,
+                let context = ContextSettings {
+                    entities: EntityContext::None,
                     author_note_enabled: false,
                     author_note: "Keep it terse.".into(),
                     tool_instructions: false,
@@ -432,7 +432,7 @@ mod tests {
                     story_id: "s",
                     history: &[history_turn],
                     config: &config(),
-                    injection: &injection,
+                    context: &context,
                     tools: &descriptions(&specs),
                     rejected_reply: None,
                 })
@@ -450,7 +450,7 @@ mod tests {
         let (pool, history_turn) = story_with_entity_query();
         let turn = TurnTx::begin(&pool, &Default::default(), "s").unwrap();
         turn.with(|conn| {
-            let injection = crate::features::stories::settings::read_injection_settings(conn, "s")?;
+            let context = crate::features::stories::settings::read_context_settings(conn, "s")?;
             let tools = [ToolDescription {
                 name: "get_entities",
                 instruction: Some("Look up characters."),
@@ -461,7 +461,7 @@ mod tests {
                 story_id: "s",
                 history: &history,
                 config: &config(),
-                injection: &injection,
+                context: &context,
                 tools: &tools,
                 rejected_reply: Some("Rejected narration."),
             };
