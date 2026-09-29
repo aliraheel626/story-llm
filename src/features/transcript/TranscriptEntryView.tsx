@@ -81,7 +81,9 @@ export function TranscriptEntryView({ entry, storyId, isLast, retryEntryId, canR
   const display = entryDisplay(entry, streaming);
   const turnCost = entry.turn_id ? breakdown?.turns[entry.turn_id] : undefined;
   const turnCostTitle = turnCost ? [
-    "Text and images for this turn.",
+    "Text for this turn: narration, title and any summary.",
+    ...(turnCost.image_cost_usd > 0
+      ? [`Turn total with its images: ${formatUsd(turnCost.total_cost_usd)}.`] : []),
     ...(turnCost.earlier_attempts_cost_usd > 0
       ? [`Includes ${formatUsd(turnCost.earlier_attempts_cost_usd)} from earlier attempts (Retry).`] : []),
     ...(turnCost.unpriced_calls > 0 ? [`${turnCost.unpriced_calls} calls reported no cost.`] : []),
@@ -190,8 +192,7 @@ export function TranscriptEntryView({ entry, storyId, isLast, retryEntryId, canR
         <div className="flex items-center justify-between gap-3">
           {entry.kind === "narration" && !isBeingReplaced && !display.streaming && turnCost && (
             <span className="text-[11px] text-muted tabular-nums" title={turnCostTitle}>
-              Turn {formatUsd(turnCost.total_cost_usd)}
-              {turnCost.image_cost_usd > 0 && ` · text ${formatUsd(turnCost.text_cost_usd)} · images ${formatUsd(turnCost.image_cost_usd)}`}
+              Text {formatUsd(turnCost.text_cost_usd)}
               {turnCost.unpriced_calls > 0 && "*"}
             </span>
           )}
