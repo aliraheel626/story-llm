@@ -28,6 +28,7 @@ struct NarrationDeltaPayload<'a> {
 #[derive(Clone, Serialize)]
 struct NarrationErrorPayload<'a> {
     stream_id: &'a str,
+    story_id: &'a str,
     message: &'a str,
 }
 
@@ -40,11 +41,12 @@ struct NarrationToolActivityPayload<'a> {
     ok: Option<bool>,
 }
 
-fn emit_error(app: &AppHandle, stream_id: &str, error: &AppError) {
+fn emit_error(app: &AppHandle, stream_id: &str, story_id: &str, error: &AppError) {
     let _ = app.emit(
         "narration-error",
         NarrationErrorPayload {
             stream_id,
+            story_id,
             message: &error.to_string(),
         },
     );
@@ -227,7 +229,7 @@ where
         .await;
 
         if let Err(error) = on_candidate(app.clone(), sid.clone(), result).await {
-            emit_error(&app, &sid, &error);
+            emit_error(&app, &sid, &story_id, &error);
         }
     });
     stream_id

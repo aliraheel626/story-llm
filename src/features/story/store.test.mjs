@@ -645,6 +645,49 @@ test("early Retry completion does not leave the replacement streaming", async ()
   store.getState().setActiveStory(previousStoryId);
 });
 
+test("early See failure does not leave the composer streaming", async () => {
+  const previousStoryId = store.getState().activeStoryId;
+  const story = await store.getState().newStory();
+  let releaseSubmit;
+  nextSubmit = new Promise((resolve) => { releaseSubmit = resolve; });
+  const submitting = store.getState().submitTurn(story.id, "see", "the window");
+  for (let i = 0; i < 10 && calls.at(-1)?.command !== "submit_turn"; i++) await Promise.resolve();
+  assert.equal(calls.at(-1)?.command, "submit_turn");
+  const id = calls.length;
+  store.getState()._fail(`stream-${id}`, "provider failed", story.id);
+  releaseSubmit();
+  await submitting;
+  const bundle = store.getState().bundles[story.id];
+  assert.equal(bundle.streaming, null);
+  assert.equal(bundle.requestPending, false);
+  assert.equal(bundle.turnError, "provider failed");
+  store.getState().setActiveStory(previousStoryId);
+});
+
+test("early Retry failure restores the original reply", async () => {
+  const previousStoryId = store.getState().activeStoryId;
+  const story = await store.getState().newStory();
+  const original = { id: "early-failure-original", story_id: story.id, kind: "narration", payload: { input_mode: "generated" }, content: "Original", turn_id: "old-turn" };
+  entries.set(story.id, [original]);
+  await store.getState().loadTranscript(story.id);
+  let releaseRetry;
+  nextRetry = new Promise((resolve) => { releaseRetry = resolve; });
+  const retrying = store.getState().retryNarration(story.id, original.id);
+  for (let i = 0; i < 10 && calls.at(-1)?.command !== "retry_narration"; i++) await Promise.resolve();
+  assert.equal(calls.at(-1)?.command, "retry_narration");
+  const id = calls.length;
+  store.getState()._fail(`stream-${id}`, "retry failed", story.id);
+  releaseRetry();
+  await retrying;
+  const bundle = store.getState().bundles[story.id];
+  assert.equal(bundle.streaming, null);
+  assert.equal(bundle.requestPending, false);
+  assert.equal(bundle.turnError, "retry failed");
+  assert.equal(bundle.entries[0].id, original.id);
+  assert.equal(bundle.entries[0].content, "Original");
+  store.getState().setActiveStory(previousStoryId);
+});
+
 test("text completion stops the cursor without changing streamed narration", async () => {
   const previousStoryId = store.getState().activeStoryId;
   const storyId = (await store.getState().newStory()).id;

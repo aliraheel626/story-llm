@@ -28,7 +28,7 @@ export function useNarrationEvents() {
         useStoryStore.getState()._textComplete(event.payload.stream_id);
       }),
       listen<NarrationErrorPayload>("narration-error", (event) => {
-        useStoryStore.getState()._fail(event.payload.stream_id, event.payload.message);
+        useStoryStore.getState()._fail(event.payload.stream_id, event.payload.message, event.payload.story_id);
       }),
       listen<NarrationToolActivityPayload>("narration-tool-activity", (event) => {
         useStoryStore.getState()._toolActivity(event.payload);

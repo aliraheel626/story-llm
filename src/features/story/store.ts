@@ -95,7 +95,7 @@ interface StoryStoreState {
   _appendThoughts: (streamId: string, text: string) => void;
   _toolActivity: (payload: NarrationToolActivityPayload) => void;
   _finalize: (payload: NarrationDonePayload) => void;
-  _fail: (streamId: string, message: string) => void;
+  _fail: (streamId: string, message: string, storyId: string) => void;
   _imagePending: (entryId: string) => void;
   _imageGenerated: (image: StoryImage) => void;
   _imageFailed: (entryId: string) => void;
@@ -190,6 +190,7 @@ const closeTool = (log: ToolActivity[], callId: string, ok: boolean | null): Too
 
 const transcriptGenerations = new Map<string, number>();
 const earlyCompletions = new Map<string, NarrationDonePayload>();
+const earlyFailures = new Map<string, { stream_id: string; message: string }>();
 const imageGenerations = new Map<string, number>();
 const imageEventGenerations = new Map<string, number>();
 const advanceGeneration = (generations: Map<string, number>, key: string) => {
@@ -315,8 +316,12 @@ export const useStoryStore = create<StoryStoreState>((set, get) => ({
       const completed = earlyCompletions.get(storyId);
       earlyCompletions.delete(storyId);
       if (completed?.stream_id === result.stream_id) get()._finalize(completed);
+      const failed = earlyFailures.get(storyId);
+      earlyFailures.delete(storyId);
+      if (failed?.stream_id === result.stream_id) get()._fail(failed.stream_id, failed.message, storyId);
     } catch (error) {
       earlyCompletions.delete(storyId);
+      earlyFailures.delete(storyId);
       await get().loadTranscript(storyId);
       throw error;
     } finally {
@@ -349,8 +354,12 @@ export const useStoryStore = create<StoryStoreState>((set, get) => ({
       const completed = earlyCompletions.get(storyId);
       earlyCompletions.delete(storyId);
       if (completed?.stream_id === result.stream_id) get()._finalize(completed);
+      const failed = earlyFailures.get(storyId);
+      earlyFailures.delete(storyId);
+      if (failed?.stream_id === result.stream_id) get()._fail(failed.stream_id, failed.message, storyId);
     } catch (error) {
       earlyCompletions.delete(storyId);
+      earlyFailures.delete(storyId);
       set((state) => ({ bundles: patchBundle(state.bundles, storyId, { turnError: String(error) }) }));
       throw error;
     } finally {
@@ -509,9 +518,12 @@ export const useStoryStore = create<StoryStoreState>((set, get) => ({
     get().loadImagesForStory(storyId);
     get().loadCharacters(storyId);
   },
-  _fail: (streamId, message) => {
+  _fail: (streamId, message, eventStoryId) => {
     const found = findStream(get().bundles, streamId);
-    if (!found) return;
+    if (!found) {
+      if (get().bundles[eventStoryId]?.requestPending) earlyFailures.set(eventStoryId, { stream_id: streamId, message });
+      return;
+    }
     const [storyId, current] = found;
     const pendingEntry = current.pendingEntry;
     advanceGeneration(transcriptGenerations, storyId);
