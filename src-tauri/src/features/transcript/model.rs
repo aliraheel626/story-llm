@@ -68,12 +68,11 @@ pub mod kind {
     pub const ENTITY_ATTRIBUTE_CHANGED: &str = "entity_attribute_changed";
     pub const ENTITY_ATTRIBUTE_REMOVED: &str = "entity_attribute_removed";
     pub const IMAGE_GENERATED: &str = "image_generated";
-    pub const DICEROLL_SETTINGS_CHANGED: &str = "diceroll_settings_changed";
     pub const CONTEXT_SUMMARY: &str = "context_summary";
     pub const CONTEXT_NOTE_UPDATED: &str = "context_note_updated";
 
     // CONTENT_EDITED is applied to its target, CONTEXT_SUMMARY is the compaction
-    // boundary, and legacy DICEROLL_SETTINGS_CHANGED is not a transcript event.
+    // boundary; the old dice-settings event is not a transcript event.
     pub const RECORD_KINDS: &[&str] = &[
         DICEROLL,
         IMAGE_GENERATED,

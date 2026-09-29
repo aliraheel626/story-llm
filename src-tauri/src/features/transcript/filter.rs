@@ -33,8 +33,8 @@ const FIXED_ITEMS: &[(&str, &str, &str, bool)] = &[
 
 // These are the only record kinds whose history can be independently toggled.
 // content_edited is folded into its target; context_summary is the compaction
-// boundary and disabling it loses history; diceroll_settings_changed is legacy
-// and has never been sent to the narrator.
+// boundary and disabling it loses history; old dice-settings events have never
+// been sent to the narrator.
 fn record_label(kind: &str) -> (&'static str, bool) {
     match kind {
         kind::DICEROLL => ("Dice rolls", true),
