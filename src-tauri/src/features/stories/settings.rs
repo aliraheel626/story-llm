@@ -244,14 +244,13 @@ mod tests {
     use crate::shared::test_support;
 
     #[test]
-    fn migrated_transcript_and_context_keys_are_read() {
+    fn stored_transcript_and_context_keys_are_read_after_reopen() {
         let pool = crate::shared::db::test_pool();
         let conn = pool.get().unwrap();
         test_support::story_with_settings(&conn, "s", json!({
-            "context": {"include": {"images": true}},
-            "injection": {"author_note": "n", "entities": "scoped"}
+            "transcript": {"include": {"images": true}},
+            "context": {"author_note": "n", "entities": "scoped"}
         }));
-        conn.execute("DELETE FROM settings WHERE key = 'migration_transcript_context_keys_v1'", []).unwrap();
         let path = crate::shared::db::database_path(&pool).unwrap();
         drop(conn);
         drop(pool);

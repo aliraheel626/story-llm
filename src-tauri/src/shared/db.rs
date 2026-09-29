@@ -327,7 +327,6 @@ fn rebase_image_paths(db_path: &Path, old_images: &Path, new_images: &Path) -> A
 
 fn run_migrations(conn: &mut PooledConn) -> AppResult<()> {
     migrate_ledger_schema(conn)?;
-    migrate_transcript_schema(conn)?;
     conn.execute_batch(
         r#"
         CREATE TABLE IF NOT EXISTS stories (
@@ -457,7 +456,6 @@ fn run_migrations(conn: &mut PooledConn) -> AppResult<()> {
     migrate_author_notes(conn)?;
     migrate_narrator_tools(conn)?;
     migrate_story_injection_v1(conn)?;
-    migrate_story_settings_keys_v1(conn)?;
     migrate_turns_v1(conn)?;
     conn.execute_batch("DROP INDEX IF EXISTS idx_turns_one_pending;")?;
     let auto_vacuum: i64 = conn.query_row("PRAGMA auto_vacuum", [], |row| row.get(0))?;
@@ -779,63 +777,6 @@ fn migrate_ledger_schema(conn: &mut rusqlite::Connection) -> AppResult<()> {
     if tx.prepare("PRAGMA foreign_key_check")?.exists([])? {
         return Err(AppError::Other(
             "ledger migration failed foreign key validation".into(),
-        ));
-    }
-    tx.commit()?;
-    Ok(())
-}
-
-fn migrate_transcript_schema(conn: &mut rusqlite::Connection) -> AppResult<()> {
-    let old_exists: bool = conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'ledger_entries')",
-        [],
-        |row| row.get(0),
-    )?;
-    if !old_exists {
-        return Ok(());
-    }
-    let new_exists: bool = conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'transcript_entries')",
-        [],
-        |row| row.get(0),
-    )?;
-    if new_exists {
-        return Err(AppError::Other(
-            "both ledger_entries and transcript_entries exist; refusing an ambiguous migration"
-                .into(),
-        ));
-    }
-
-    let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-    tx.execute_batch(
-        "ALTER TABLE ledger_entries RENAME TO transcript_entries;
-         DROP INDEX IF EXISTS idx_ledger_story_seq;
-         DROP INDEX IF EXISTS idx_ledger_target;
-         DROP INDEX IF EXISTS idx_ledger_kind;
-         DROP INDEX IF EXISTS idx_ledger_turn;
-         CREATE INDEX idx_transcript_story_seq ON transcript_entries(story_id, seq);
-         CREATE INDEX idx_transcript_target ON transcript_entries(target_entry_id);
-         CREATE INDEX idx_transcript_kind ON transcript_entries(story_id, kind, seq);",
-    )?;
-    let has_turn_id: bool = tx.query_row(
-        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('transcript_entries') WHERE name = 'turn_id')",
-        [],
-        |row| row.get(0),
-    )?;
-    if has_turn_id {
-        tx.execute_batch("CREATE INDEX idx_transcript_turn ON transcript_entries(turn_id)")?;
-    }
-    if tx.prepare("PRAGMA foreign_key_check")?.exists([])? {
-        return Err(AppError::Other(
-            "transcript migration failed foreign key validation".into(),
-        ));
-    }
-    if tx
-        .prepare("SELECT sql FROM sqlite_master WHERE sql LIKE '%ledger_entries%'")?
-        .exists([])?
-    {
-        return Err(AppError::Other(
-            "transcript migration left a ledger_entries reference in sqlite_master".into(),
         ));
     }
     tx.commit()?;
@@ -1291,61 +1232,6 @@ fn migrate_story_injection_v1(conn: &mut rusqlite::Connection) -> AppResult<()> 
     Ok(())
 }
 
-fn migrate_story_settings_keys_v1(conn: &mut rusqlite::Connection) -> AppResult<()> {
-    const MIGRATION_KEY: &str = "migration_transcript_context_keys_v1";
-    let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-    if tx.query_row(
-        "SELECT EXISTS(SELECT 1 FROM settings WHERE key = ?1)",
-        [MIGRATION_KEY],
-        |row| row.get::<_, bool>(0),
-    )? {
-        tx.commit()?;
-        return Ok(());
-    }
-    let stories = {
-        let mut stmt = tx.prepare("SELECT id, settings_json FROM stories")?;
-        let rows = stmt.query_map([], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-        })?;
-        rows.collect::<Result<Vec<_>, _>>()?
-    };
-    for (id, raw) in stories {
-        let mut settings: serde_json::Value = match serde_json::from_str(&raw) {
-            Ok(serde_json::Value::Object(map)) => serde_json::Value::Object(map),
-            _ => {
-                log::warn!("story settings for {id} are not a JSON object; skipping key migration");
-                continue;
-            }
-        };
-        let object = settings.as_object_mut().expect("validated object");
-        let old_context = object.remove("context");
-        let old_injection = object.remove("injection");
-        let changed = old_context.is_some() || old_injection.is_some();
-        if let Some(value) = old_context {
-            if object.contains_key("transcript") {
-                log::warn!("story {id} already has transcript settings; dropping old context settings");
-            } else {
-                object.insert("transcript".into(), value);
-            }
-        }
-        if let Some(value) = old_injection {
-            object.insert("context".into(), value);
-        }
-        if changed {
-            tx.execute(
-                "UPDATE stories SET settings_json = ?1 WHERE id = ?2",
-                rusqlite::params![settings.to_string(), id],
-            )?;
-        }
-    }
-    tx.execute(
-        "INSERT INTO settings (key, value) VALUES (?1, '1')",
-        [MIGRATION_KEY],
-    )?;
-    tx.commit()?;
-    Ok(())
-}
-
 fn seed_attribute_registry(conn: &PooledConn) -> AppResult<()> {
     let now = chrono::Utc::now().to_rfc3339();
     let starters: &[(&str, &[&str], f64, f64, &str)] = &[
@@ -1402,164 +1288,6 @@ pub fn test_pool() -> Pool {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn stage_old_ledger(conn: &rusqlite::Connection) {
-        conn.execute_batch(
-            "ALTER TABLE transcript_entries RENAME TO ledger_entries;
-             DROP INDEX idx_transcript_story_seq;
-             DROP INDEX idx_transcript_target;
-             DROP INDEX idx_transcript_kind;
-             DROP INDEX idx_transcript_turn;
-             CREATE INDEX idx_ledger_story_seq ON ledger_entries(story_id, seq);
-             CREATE INDEX idx_ledger_target ON ledger_entries(target_entry_id);
-             CREATE INDEX idx_ledger_kind ON ledger_entries(story_id, kind, seq);
-             CREATE INDEX idx_ledger_turn ON ledger_entries(turn_id);",
-        )
-        .unwrap();
-    }
-
-    #[test]
-    fn transcript_table_rename_keeps_rows_and_references() {
-        let pool = test_pool();
-        let mut conn = pool.get().unwrap();
-        conn.execute_batch(
-            "INSERT INTO stories (id, title, created_at, updated_at) VALUES ('s', 'Story', 'now', 'now');
-             INSERT INTO transcript_entries (id, story_id, seq, kind, visibility, payload_json, target_entry_id, created_at)
-             VALUES ('first', 's', 0, 'player_message', 'visible', '{}', NULL, 'now'),
-                    ('second', 's', 1, 'content_edited', 'hidden', '{}', 'first', 'now'),
-                    ('third', 's', 2, 'narration', 'visible', '{}', NULL, 'now');
-             INSERT INTO image_assets (id, entry_id, path, prompt, created_at)
-             VALUES ('image', 'first', 'old.png', 'old', 'now');
-             INSERT INTO entities (id, story_id, kind, created_at)
-             VALUES ('entity', 's', 'character', 'now');
-             INSERT INTO story_entity_state (story_id, entity_id, name, updated_at, last_event_id)
-             VALUES ('s', 'entity', 'Hero', 'now', 'second');",
-        )
-        .unwrap();
-        stage_old_ledger(&conn);
-        run_migrations(&mut conn).unwrap();
-
-        let ids: Vec<String> = conn
-            .prepare("SELECT id FROM transcript_entries ORDER BY seq")
-            .unwrap()
-            .query_map([], |row| row.get(0))
-            .unwrap()
-            .collect::<Result<_, _>>()
-            .unwrap();
-        assert_eq!(ids, ["first", "second", "third"]);
-        assert_eq!(
-            conn.query_row("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'ledger_entries'", [], |row| row.get::<_, i64>(0)).unwrap(),
-            0
-        );
-        assert_eq!(
-            conn.query_row("SELECT target_entry_id FROM transcript_entries WHERE id = 'second'", [], |row| row.get::<_, String>(0)).unwrap(),
-            "first"
-        );
-        assert_eq!(
-            conn.query_row("SELECT last_event_id FROM story_entity_state WHERE story_id = 's'", [], |row| row.get::<_, String>(0)).unwrap(),
-            "second"
-        );
-        let schema: Vec<String> = conn
-            .prepare("SELECT name FROM sqlite_master WHERE sql LIKE '%ledger_entries%'")
-            .unwrap()
-            .query_map([], |row| row.get(0))
-            .unwrap()
-            .collect::<Result<_, _>>()
-            .unwrap();
-        assert!(schema.is_empty(), "old table references: {schema:?}");
-        let indexes: Vec<String> = conn
-            .prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND (name LIKE 'idx_transcript_%' OR name LIKE 'idx_ledger_%') ORDER BY name")
-            .unwrap()
-            .query_map([], |row| row.get(0))
-            .unwrap()
-            .collect::<Result<_, _>>()
-            .unwrap();
-        assert_eq!(indexes, ["idx_transcript_kind", "idx_transcript_story_seq", "idx_transcript_target", "idx_transcript_turn"]);
-        assert!(!conn.prepare("PRAGMA foreign_key_check").unwrap().exists([]).unwrap());
-        conn.execute("DELETE FROM stories WHERE id = 's'", []).unwrap();
-        for table in ["transcript_entries", "image_assets"] {
-            let count: i64 = conn.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| row.get(0)).unwrap();
-            assert_eq!(count, 0, "{table}");
-        }
-    }
-
-    #[test]
-    fn transcript_table_rename_is_idempotent() {
-        let pool = test_pool();
-        let mut conn = pool.get().unwrap();
-        conn.execute_batch(
-            "INSERT INTO stories (id, title, created_at, updated_at) VALUES ('s', 'Story', 'now', 'now');
-             INSERT INTO transcript_entries (id, story_id, seq, kind, visibility, payload_json, created_at)
-             VALUES ('first', 's', 0, 'player_message', 'visible', '{}', 'now');",
-        ).unwrap();
-        stage_old_ledger(&conn);
-        run_migrations(&mut conn).unwrap();
-        run_migrations(&mut conn).unwrap();
-        assert_eq!(conn.query_row("SELECT COUNT(*) FROM transcript_entries", [], |row| row.get::<_, i64>(0)).unwrap(), 1);
-    }
-
-    #[test]
-    fn transcript_table_rename_refuses_both_tables() {
-        let pool = test_pool();
-        let mut conn = pool.get().unwrap();
-        conn.execute("CREATE TABLE ledger_entries(id TEXT PRIMARY KEY)", []).unwrap();
-        let error = run_migrations(&mut conn).unwrap_err().to_string();
-        assert!(error.contains("both ledger_entries and transcript_entries exist"), "{error}");
-    }
-
-    #[test]
-    fn settings_keys_move_once() {
-        let pool = test_pool();
-        let mut conn = pool.get().unwrap();
-        conn.execute("DELETE FROM settings WHERE key = 'migration_transcript_context_keys_v1'", []).unwrap();
-        let a = serde_json::json!({
-            "context": {"include": {"images": true}},
-            "injection": {"author_note": "n", "author_note_enabled": true, "entities": "scoped", "tool_instructions": false},
-            "narrator_tools": {"tool_call_persistence": true}
-        });
-        for (id, raw) in [("a", a.to_string()), ("b", "{}".into()), ("c", "\"not an object\"".into())] {
-            conn.execute(
-                "INSERT INTO stories (id, title, created_at, updated_at, settings_json) VALUES (?1, ?1, 'now', 'now', ?2)",
-                rusqlite::params![id, raw],
-            ).unwrap();
-        }
-        run_migrations(&mut conn).unwrap();
-        let get = |conn: &rusqlite::Connection, id| -> String {
-            conn.query_row("SELECT settings_json FROM stories WHERE id = ?1", [id], |row| row.get(0)).unwrap()
-        };
-        let migrated = get(&conn, "a");
-        let value: serde_json::Value = serde_json::from_str(&migrated).unwrap();
-        assert_eq!(value["transcript"], a["context"]);
-        assert_eq!(value["context"], a["injection"]);
-        assert_eq!(value["narrator_tools"], a["narrator_tools"]);
-        assert!(value.get("injection").is_none());
-        assert_eq!(get(&conn, "b"), "{}");
-        assert_eq!(get(&conn, "c"), "\"not an object\"");
-        assert_eq!(conn.query_row("SELECT COUNT(*) FROM settings WHERE key = 'migration_transcript_context_keys_v1'", [], |row| row.get::<_, i64>(0)).unwrap(), 1);
-        run_migrations(&mut conn).unwrap();
-        assert_eq!(get(&conn, "a"), migrated);
-    }
-
-    #[test]
-    fn settings_keys_move_keeps_existing_transcript() {
-        let pool = test_pool();
-        let mut conn = pool.get().unwrap();
-        conn.execute("DELETE FROM settings WHERE key = 'migration_transcript_context_keys_v1'", []).unwrap();
-        conn.execute(
-            "INSERT INTO stories (id, title, created_at, updated_at, settings_json) VALUES ('s', 'Story', 'now', 'now', ?1)",
-            [serde_json::json!({
-                "transcript": {"include": {"images": false}},
-                "context": {"include": {"images": true}},
-                "injection": {"author_note": "n"}
-            }).to_string()],
-        ).unwrap();
-        run_migrations(&mut conn).unwrap();
-        let raw: String = conn.query_row("SELECT settings_json FROM stories WHERE id = 's'", [], |row| row.get(0)).unwrap();
-        let value: serde_json::Value = serde_json::from_str(&raw).unwrap();
-        assert_eq!(value["transcript"]["include"]["images"], false);
-        assert_eq!(value["context"]["author_note"], "n");
-        assert!(value.get("injection").is_none());
-    }
 
     #[tokio::test]
     async fn blocking_returns_work_value() {
@@ -2428,8 +2156,8 @@ mod tests {
     }
 
     #[test]
-    fn existing_ledger_data_and_foreign_keys_survive_upgrade() {
-        let dir = std::env::temp_dir().join(format!("story-llm-ledger-upgrade-{}", Uuid::new_v4()));
+    fn existing_transcript_data_and_foreign_keys_survive_upgrade() {
+        let dir = std::env::temp_dir().join(format!("story-llm-transcript-upgrade-{}", Uuid::new_v4()));
         let pool = init_pool(&dir).unwrap();
         let conn = pool.get().unwrap();
         conn.execute_batch(
@@ -2443,15 +2171,7 @@ mod tests {
                  VALUES ('s', 'entity', 'Hero', 1, 'now', 'roll');
              INSERT INTO image_assets (id, entry_id, path, prompt, created_at)
                  VALUES ('image', 'turn', 'scene.png', 'A scene', 'now');
-             ALTER TABLE transcript_entries RENAME TO timeline_entries;
-              DROP INDEX idx_transcript_story_seq;
-              DROP INDEX idx_transcript_target;
-              DROP INDEX idx_transcript_kind;
-              DROP INDEX idx_transcript_turn;
-              CREATE INDEX idx_timeline_story_seq ON timeline_entries(story_id, seq);
-             CREATE INDEX idx_timeline_target ON timeline_entries(target_entry_id);
-             CREATE INDEX idx_timeline_kind ON timeline_entries(story_id, kind, seq);
-              INSERT INTO settings (key, value) VALUES ('timeline_retention', '{\"tool_call_persistence\":false}');
+               INSERT INTO settings (key, value) VALUES ('timeline_retention', '{\"tool_call_persistence\":false}');
               DELETE FROM settings WHERE key = 'migration_turns_v1';",
         )
         .unwrap();
