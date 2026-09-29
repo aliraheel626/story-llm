@@ -90,10 +90,9 @@ transcript snapshot. Images and entity projections follow their owning events.
 
 ## Local data
 
-The SQLite database (`story-llm.sqlite3`), generated images, and API-key store
-live in the operating system's Tauri application-data directory for
-`com.story-llm.app`. If the new database does not yet exist, first launch copies
-existing data from `com.dungeon.app`; the original files are left untouched.
-If a new database already exists, it takes precedence and the old one is not
-merged or overwritten. Back up both directories before any manual transfer.
-Do not commit secrets or local application data.
+The SQLite database (`story-llm.sqlite3`, which also stores generated images)
+and the API-key store (`secrets.json`) live in the operating system's Tauri
+application-data directory for `com.story-llm.app`. The app creates the current
+schema on a fresh database and never upgrades an older one: after a schema
+change, delete the `story-llm.sqlite3*` files and keep `secrets.json` to keep
+the API key. Do not commit secrets or local application data.
