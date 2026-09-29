@@ -30,9 +30,10 @@ export function StoryHeader({ storyId }: { storyId: string }) {
         : "Cached input tokens"}>
         Cached input {usage ? formatTokens(usage.cached_input_tokens) : "—"}
       </span>
-      <span title="Input tokens written to the provider's cache">
-        Cache write {usage ? formatTokens(usage.cache_write_tokens) : "—"}
-      </span>
+      {/* Only providers with explicit caching (Anthropic, Gemini) report writes; xAI always sends 0. */}
+      {usage && usage.cache_write_tokens > 0 && <span title="Input tokens written to the provider's cache">
+        Cache write {formatTokens(usage.cache_write_tokens)}
+      </span>}
       <span className="font-medium text-text" title={totalTitle}>
         Total {usage ? formatUsd(usage.total_cost_usd) : "—"}{unpriced > 0 ? "*" : ""}
       </span>
