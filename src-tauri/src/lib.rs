@@ -90,6 +90,7 @@ pub fn run() {
             features::settings::save_image_model_settings,
             features::images::list_images_for_story,
             features::usage::get_story_usage,
+            features::usage::get_story_usage_breakdown,
             features::entities::list_entities,
             features::entities::create_entity,
             features::entities::update_entity,

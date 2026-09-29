@@ -74,3 +74,27 @@ pub struct StoryUsage {
     pub unpriced_calls: i64,
     pub since: Option<String>,
 }
+
+#[derive(Debug, Clone, Default, Serialize, PartialEq)]
+pub struct TurnCost {
+    pub turn_id: String,
+    pub text_cost_usd: f64,
+    pub image_cost_usd: f64,
+    pub total_cost_usd: f64,
+    pub earlier_attempts_cost_usd: f64,
+    pub unpriced_calls: i64,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct ImageCost {
+    pub asset_id: String,
+    pub turn_id: Option<String>,
+    pub cost_usd: Option<f64>,
+    pub duration_ms: Option<i64>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, PartialEq)]
+pub struct StoryCostBreakdown {
+    pub turns: Vec<TurnCost>,
+    pub images: Vec<ImageCost>,
+}

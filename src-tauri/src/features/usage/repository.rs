@@ -6,7 +6,7 @@ use uuid::Uuid;
 use crate::shared::db::{self, Pool};
 use crate::shared::error::AppResult;
 
-use super::model::{StoryUsage, UsageRecord};
+use super::model::{ImageCost, StoryCostBreakdown, StoryUsage, TurnCost, UsageRecord};
 
 pub const LATE_REPLY_LIMIT: Duration = Duration::from_secs(600);
 
@@ -92,6 +92,44 @@ pub fn story_usage(conn: &Connection, story_id: &str) -> AppResult<StoryUsage> {
     Ok(usage)
 }
 
+pub fn cost_breakdown(conn: &Connection, story_id: &str) -> AppResult<StoryCostBreakdown> {
+    let mut stmt = conn.prepare(
+        "SELECT turn_id,
+           COALESCE(SUM(CASE WHEN kind <> 'image' THEN cost_usd END), 0),
+           COALESCE(SUM(CASE WHEN kind = 'image' THEN cost_usd END), 0),
+           COALESCE(SUM(CASE WHEN earlier_attempt = 1 THEN cost_usd END), 0),
+           COUNT(CASE WHEN cost_usd IS NULL THEN 1 END)
+         FROM usage_records WHERE story_id = ?1 AND turn_id IS NOT NULL
+         GROUP BY turn_id ORDER BY turn_id",
+    )?;
+    let turns = stmt.query_map([story_id], |row| {
+        let text_cost_usd: f64 = row.get(1)?;
+        let image_cost_usd: f64 = row.get(2)?;
+        Ok(TurnCost {
+            turn_id: row.get(0)?,
+            text_cost_usd,
+            image_cost_usd,
+            total_cost_usd: text_cost_usd + image_cost_usd,
+            earlier_attempts_cost_usd: row.get(3)?,
+            unpriced_calls: row.get(4)?,
+        })
+    })?.collect::<Result<Vec<_>, _>>()?;
+
+    let mut stmt = conn.prepare(
+        "SELECT image_asset_id, turn_id, cost_usd, duration_ms FROM usage_records
+         WHERE story_id = ?1 AND image_asset_id IS NOT NULL ORDER BY image_asset_id",
+    )?;
+    let images = stmt.query_map([story_id], |row| {
+        Ok(ImageCost {
+            asset_id: row.get(0)?,
+            turn_id: row.get(1)?,
+            cost_usd: row.get(2)?,
+            duration_ms: row.get(3)?,
+        })
+    })?.collect::<Result<Vec<_>, _>>()?;
+    Ok(StoryCostBreakdown { turns, images })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -130,6 +168,55 @@ mod tests {
 
     fn near(actual: f64, expected: f64) {
         assert!((actual - expected).abs() < 1e-9, "{actual} != {expected}");
+    }
+
+    #[test]
+    fn breakdown_separates_turns_images_and_earlier_attempts() {
+        let pool = db::test_pool();
+        let conn = pool.get().unwrap();
+        test_support::story(&conn, "s");
+        test_support::story(&conn, "other");
+        let mut narration = text(UsageKind::Narration, Some(0.004), 0, 0, 0, 0);
+        narration.turn_id = Some("t1".into());
+        insert(&conn, "s", &narration, false).unwrap();
+        let mut image = UsageRecord::image("m", Some(0.039), Some("a1".into()), Some(14_200));
+        image.turn_id = Some("t1".into());
+        insert(&conn, "s", &image, false).unwrap();
+        for (kind, cost, earlier) in [
+            (UsageKind::Narration, Some(0.003), false),
+            (UsageKind::Narration, Some(0.002), true),
+            (UsageKind::Title, None, false),
+        ] {
+            let mut record = text(kind, cost, 0, 0, 0, 0);
+            record.turn_id = Some("t2".into());
+            insert(&conn, "s", &record, earlier).unwrap();
+        }
+        insert(&conn, "s", &text(UsageKind::Narration, Some(0.010), 0, 0, 0, 0), false).unwrap();
+        let mut other = UsageRecord::image("m", Some(0.5), Some("other-a".into()), Some(100));
+        other.turn_id = Some("t1".into());
+        insert(&conn, "other", &other, false).unwrap();
+
+        let breakdown = cost_breakdown(&conn, "s").unwrap();
+        assert_eq!(breakdown.turns.len(), 2);
+        assert_eq!(breakdown.turns[0].turn_id, "t1");
+        near(breakdown.turns[0].text_cost_usd, 0.004);
+        near(breakdown.turns[0].image_cost_usd, 0.039);
+        near(breakdown.turns[0].total_cost_usd, 0.043);
+        near(breakdown.turns[0].earlier_attempts_cost_usd, 0.0);
+        assert_eq!(breakdown.turns[0].unpriced_calls, 0);
+        assert_eq!(breakdown.turns[1].turn_id, "t2");
+        near(breakdown.turns[1].text_cost_usd, 0.005);
+        near(breakdown.turns[1].image_cost_usd, 0.0);
+        near(breakdown.turns[1].total_cost_usd, 0.005);
+        near(breakdown.turns[1].earlier_attempts_cost_usd, 0.002);
+        assert_eq!(breakdown.turns[1].unpriced_calls, 1);
+        assert_eq!(breakdown.images, [ImageCost {
+            asset_id: "a1".into(),
+            turn_id: Some("t1".into()),
+            cost_usd: Some(0.039),
+            duration_ms: Some(14_200),
+        }]);
+        assert_eq!(cost_breakdown(&conn, "other").unwrap().images.len(), 1);
     }
 
     #[test]
