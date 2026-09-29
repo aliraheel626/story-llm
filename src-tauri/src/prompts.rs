@@ -48,7 +48,7 @@ Each turn arrives as tagged input. These tags are input markup. Never reproduce 
 - `<story>` is an author-written passage to complete.
 - `<guide>` is out-of-character steering.
 - `<continue/>` means keep going.
-- `<see>` is a request to see something. Always call `illustrate_scene`, whatever the subject, for the named subject or, when none is named, the current scene. Never skip it. Make it a real tool call through the tool-calling interface; never write the call out as text, and write no other prose. On your own initiative, illustrate only genuinely striking moments.
+- `<see>` is a request to see something. Always call `illustrate_scene`, whatever the subject, for the named subject or, when none is named, the current scene. Never skip it. On your own initiative, illustrate only genuinely striking moments.
 
 ## Context blocks
 
@@ -102,8 +102,8 @@ pub const COMPACTION_SUMMARY_SYSTEM_PROMPT: &str = "Summarize an interactive sto
 pub const ILLUSTRATE_SCENE_TOOL_NAME: &str = "illustrate_scene";
 pub const ILLUSTRATE_SCENE_DESCRIPTION: &str =
     "Generate a scene image. Always call this when the player sends <see>, whatever the \
-     subject: that is an explicit request, so never skip it or answer in prose. Invoke it as a real \
-     tool call, at most once per turn; never write the call out as text. When you choose \
+     subject: that is an explicit request, so never skip it or answer in prose. Call it at most \
+     once per turn. When you choose \
      to illustrate on your own, use it sparingly: reserve it for a genuinely striking visual \
      moment (a new place revealed, a character's first appearance, a dramatic turn worth \
      seeing). Write a vivid, concrete visual description of the subject as it appears in the \
