@@ -1,26 +1,26 @@
 import { create } from "zustand";
-import type { StoryStats } from "../../shared/types";
-import { statsApi } from "./api";
+import type { StoryUsage } from "../../shared/types";
+import { usageApi } from "./api";
 
-interface StatsStore {
-  byStory: Record<string, StoryStats | undefined>;
+interface UsageStore {
+  byStory: Record<string, StoryUsage | undefined>;
   load: (storyId: string) => Promise<void>;
 }
 
 const requestVersions = new Map<string, number>();
 
-export const useStatsStore = create<StatsStore>((set) => ({
+export const useUsageStore = create<UsageStore>((set) => ({
   byStory: {},
   load: async (storyId) => {
     const version = (requestVersions.get(storyId) ?? 0) + 1;
     requestVersions.set(storyId, version);
     try {
-      const stats = await statsApi.get(storyId);
+      const usage = await usageApi.get(storyId);
       if (requestVersions.get(storyId) === version) {
-        set((state) => ({ byStory: { ...state.byStory, [storyId]: stats } }));
+        set((state) => ({ byStory: { ...state.byStory, [storyId]: usage } }));
       }
     } catch (error) {
-      console.warn("Could not load story stats", error);
+      console.warn("Could not load story usage", error);
     }
   },
 }));

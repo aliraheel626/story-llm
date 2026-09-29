@@ -53,7 +53,7 @@ impl UsageRecord {
 }
 
 #[derive(Debug, Clone, Default, Serialize, PartialEq)]
-pub struct StoryStats {
+pub struct StoryUsage {
     pub text_cost_usd: f64,
     pub image_cost_usd: f64,
     pub total_cost_usd: f64,

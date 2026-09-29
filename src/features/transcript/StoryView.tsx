@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef } from "react";
 import { groupRollsByEntry, transcriptInputMode, type ActionMode } from "../../shared/types";
 import type { TranscriptEntry, NarrativePayload } from "../../shared/types";
 import { useStoryStore } from "../story/store";
-import { StatsBar } from "../stats/StatsBar";
+import { StoryHeader } from "../usage/StoryHeader";
 import { EditableStoryTitle } from "../stories/EditableStoryTitle";
 import { TranscriptEntryView } from "./TranscriptEntryView";
 import { ImagePlaceholder } from "./ImagePlaceholder";
@@ -93,7 +93,7 @@ export function StoryView() {
 
   return (
     <div className="flex h-full flex-1 flex-col overflow-hidden">
-      <StatsBar storyId={activeStory.id} />
+      <StoryHeader storyId={activeStory.id} />
       <div ref={scrollRef} className="flex-1 overflow-y-auto">
         <div className="mx-auto flex w-full max-w-measure flex-col gap-5 px-6 py-10">
           <EditableStoryTitle storyId={activeStory.id} />

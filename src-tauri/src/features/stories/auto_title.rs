@@ -10,8 +10,8 @@ use crate::features::{
         model::kind as transcript_kind, query as transcript_query, turns,
     },
     settings as global_settings,
-    stats::model::{UsageKind, UsageRecord},
-    stats::repository::{record_late, LATE_REPLY_LIMIT},
+    usage::model::{UsageKind, UsageRecord},
+    usage::repository::{record_late, LATE_REPLY_LIMIT},
     turn::TurnTx,
 };
 use crate::prompts;

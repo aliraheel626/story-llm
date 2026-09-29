@@ -4,6 +4,6 @@ pub mod images;
 pub mod transcript;
 pub mod narrator;
 pub mod settings;
-pub mod stats;
+pub mod usage;
 pub mod stories;
 pub mod turn;

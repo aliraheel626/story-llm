@@ -10,7 +10,7 @@ use crate::ai::{
 use crate::features::{
     context::{self, combine_context_blocks, prepare_history},
     transcript::{model::kind as transcript_kind, repository as transcript_repository},
-    stats::model::{UsageKind, UsageRecord},
+    usage::model::{UsageKind, UsageRecord},
 };
 use crate::prompts;
 use crate::shared::error::{AppError, AppResult};

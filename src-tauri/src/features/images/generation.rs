@@ -7,8 +7,8 @@ use crate::features::transcript::{
     attachments, model::kind as transcript_kind, repository as transcript_repository,
 };
 use crate::features::settings;
-use crate::features::stats::model::UsageRecord;
-use crate::features::stats::repository::{record_late, LATE_REPLY_LIMIT};
+use crate::features::usage::model::UsageRecord;
+use crate::features::usage::repository::{record_late, LATE_REPLY_LIMIT};
 use crate::features::turn::TurnTx;
 use crate::shared::db::Pool;
 use crate::shared::error::{AppError, AppResult};

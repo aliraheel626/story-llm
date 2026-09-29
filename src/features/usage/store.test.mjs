@@ -16,18 +16,18 @@ globalThis.window = { __TAURI_INTERNALS__: { invoke: async (command, args) => {
 
 before(async () => {
   server = await createServer({ configFile: false, optimizeDeps: { noDiscovery: true }, server: { middlewareMode: true } });
-  ({ useStatsStore: store, formatUsd, formatTokens } = await server.ssrLoadModule("/src/features/stats/store.ts"));
+  ({ useUsageStore: store, formatUsd, formatTokens } = await server.ssrLoadModule("/src/features/usage/store.ts"));
 });
 
 after(async () => { await server?.close(); });
 
-test("load stores a story's stats", async () => {
+test("load stores a story's usage", async () => {
   await store.getState().load("A");
-  assert.deepEqual(calls.at(-1), { command: "get_story_stats", args: { storyId: "A" } });
+  assert.deepEqual(calls.at(-1), { command: "get_story_usage", args: { storyId: "A" } });
   assert.equal(store.getState().byStory.A.total_cost_usd, 3);
 });
 
-test("a stale stats response cannot overwrite a newer load", async () => {
+test("a stale usage response cannot overwrite a newer load", async () => {
   let resolveFirst;
   let requests = 0;
   nextResponse = () => ++requests === 1

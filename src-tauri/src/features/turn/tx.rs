@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex as StdMutex};
 use tokio::sync::Mutex;
 
 use super::gate::{GateGuard, TurnGate};
-use crate::features::stats::{model::UsageRecord, repository as stats_repository};
+use crate::features::usage::{model::UsageRecord, repository as usage_repository};
 use crate::shared::db::{open_connection, Pool};
 use crate::shared::error::{AppError, AppResult};
 
@@ -22,7 +22,7 @@ pub struct TurnTx {
 fn flush_usage(story_id: &str, usage: &StdMutex<Vec<UsageRecord>>, conn: &rusqlite::Connection) {
     let records = std::mem::take(&mut *usage.lock().unwrap_or_else(|e| e.into_inner()));
     for record in records {
-        if let Err(error) = stats_repository::insert(conn, story_id, &record) {
+        if let Err(error) = usage_repository::insert(conn, story_id, &record) {
             log::warn!("could not record usage for story {story_id}: {error}");
         }
     }
@@ -141,7 +141,7 @@ impl Drop for TurnTx {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::features::stats::model::UsageRecord;
+    use crate::features::usage::model::UsageRecord;
     use crate::shared::test_support;
 
     async fn setup_story(pool: &Pool, gate: &TurnGate) {

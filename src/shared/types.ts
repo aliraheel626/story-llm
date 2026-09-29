@@ -83,7 +83,7 @@ export interface ContextPreview {
 }
 export interface StoryImage { id: string; entry_id: string; prompt: string; created_at: string }
 
-export interface StoryStats {
+export interface StoryUsage {
   text_cost_usd: number;
   image_cost_usd: number;
   total_cost_usd: number;

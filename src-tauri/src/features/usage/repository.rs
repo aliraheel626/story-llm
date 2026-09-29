@@ -6,7 +6,7 @@ use uuid::Uuid;
 use crate::shared::db::{self, Pool};
 use crate::shared::error::AppResult;
 
-use super::model::{StoryStats, UsageRecord};
+use super::model::{StoryUsage, UsageRecord};
 
 pub const LATE_REPLY_LIMIT: Duration = Duration::from_secs(600);
 
@@ -49,8 +49,8 @@ pub fn insert(conn: &Connection, story_id: &str, record: &UsageRecord) -> AppRes
     Ok(())
 }
 
-pub fn story_stats(conn: &Connection, story_id: &str) -> AppResult<StoryStats> {
-    let mut stats = conn.query_row(
+pub fn story_usage(conn: &Connection, story_id: &str) -> AppResult<StoryUsage> {
+    let mut usage = conn.query_row(
         "SELECT
            COALESCE(SUM(CASE WHEN kind <> 'image' THEN cost_usd END), 0),
            COALESCE(SUM(CASE WHEN kind = 'image' THEN cost_usd END), 0),
@@ -61,7 +61,7 @@ pub fn story_stats(conn: &Connection, story_id: &str) -> AppResult<StoryStats> {
          FROM usage_records WHERE story_id = ?1",
         [story_id],
         |row| {
-            Ok(StoryStats {
+            Ok(StoryUsage {
                 text_cost_usd: row.get(0)?,
                 image_cost_usd: row.get(1)?,
                 total_cost_usd: 0.0,
@@ -75,15 +75,15 @@ pub fn story_stats(conn: &Connection, story_id: &str) -> AppResult<StoryStats> {
             })
         },
     )?;
-    stats.total_cost_usd = stats.text_cost_usd + stats.image_cost_usd;
-    Ok(stats)
+    usage.total_cost_usd = usage.text_cost_usd + usage.image_cost_usd;
+    Ok(usage)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::ai::{CallUsage, TextModelConfig};
-    use crate::features::stats::model::UsageKind;
+    use crate::features::usage::model::UsageKind;
     use crate::features::turn::{TurnGate, TurnTx};
     use crate::shared::{db, test_support};
 
@@ -130,9 +130,9 @@ mod tests {
         )
         .await;
         let conn = pool.get().unwrap();
-        let stats = story_stats(&conn, "s").unwrap();
-        near(stats.image_cost_usd, 0.02);
-        assert_eq!(stats.image_count, 1);
+        let usage = story_usage(&conn, "s").unwrap();
+        near(usage.image_cost_usd, 0.02);
+        assert_eq!(usage.image_count, 1);
     }
 
     #[tokio::test]
@@ -156,15 +156,15 @@ mod tests {
         turn.commit().await.unwrap();
         late.await.unwrap();
         let conn = pool.get().unwrap();
-        near(story_stats(&conn, "s").unwrap().image_cost_usd, 0.02);
+        near(story_usage(&conn, "s").unwrap().image_cost_usd, 0.02);
     }
 
     #[test]
-    fn empty_story_has_default_stats() {
+    fn empty_story_has_default_usage() {
         let pool = db::test_pool();
         let conn = pool.get().unwrap();
         test_support::story(&conn, "s");
-        assert_eq!(story_stats(&conn, "s").unwrap(), StoryStats::default());
+        assert_eq!(story_usage(&conn, "s").unwrap(), StoryUsage::default());
     }
 
     #[test]
@@ -195,21 +195,21 @@ mod tests {
         insert(&conn, "s", &UsageRecord::image("image", Some(0.040))).unwrap();
         insert(&conn, "s", &UsageRecord::image("image", None)).unwrap();
 
-        let stats = story_stats(&conn, "s").unwrap();
-        near(stats.text_cost_usd, 0.012);
-        near(stats.image_cost_usd, 0.040);
-        near(stats.total_cost_usd, 0.052);
+        let usage = story_usage(&conn, "s").unwrap();
+        near(usage.text_cost_usd, 0.012);
+        near(usage.image_cost_usd, 0.040);
+        near(usage.total_cost_usd, 0.052);
         assert_eq!(
             (
-                stats.input_tokens,
-                stats.cached_input_tokens,
-                stats.cache_write_tokens,
-                stats.output_tokens
+                usage.input_tokens,
+                usage.cached_input_tokens,
+                usage.cache_write_tokens,
+                usage.output_tokens
             ),
             (1050, 600, 100, 200)
         );
-        assert_eq!((stats.image_count, stats.unpriced_calls), (1, 2));
-        assert_eq!(stats.since.as_deref(), Some(earliest.as_str()));
+        assert_eq!((usage.image_count, usage.unpriced_calls), (1, 2));
+        assert_eq!(usage.since.as_deref(), Some(earliest.as_str()));
     }
 
     #[test]
@@ -219,7 +219,7 @@ mod tests {
         test_support::story(&conn, "a");
         test_support::story(&conn, "b");
         insert(&conn, "b", &UsageRecord::image("image", Some(0.5))).unwrap();
-        assert_eq!(story_stats(&conn, "a").unwrap(), StoryStats::default());
+        assert_eq!(story_usage(&conn, "a").unwrap(), StoryUsage::default());
     }
 
     #[test]
