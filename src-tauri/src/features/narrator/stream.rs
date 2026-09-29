@@ -150,6 +150,8 @@ where
                         &usage_config,
                         usage,
                     )),
+                    // A See turn keeps no text; Grok also writes its tool call out as text.
+                    NarratorChunk::Text(_) if stop_after_tool_result => {}
                     NarratorChunk::Text(text) => {
                         let _ = app_for_chunks.emit(
                             "narration-delta",
