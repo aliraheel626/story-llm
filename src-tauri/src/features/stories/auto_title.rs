@@ -119,8 +119,12 @@ pub async fn title_in_turn(app: &AppHandle, settings_pool: &Pool, turn: &TurnTx)
     {
         Ok(joined) => joined.ok()?,
         Err(_) => {
-            let (pool, story_id, config) =
-                (settings_pool.clone(), story_id.to_string(), config.clone());
+            let (pool, story_id, config, turn_id) = (
+                settings_pool.clone(),
+                story_id.to_string(),
+                config.clone(),
+                turn.turn_id(),
+            );
             tauri::async_runtime::spawn(async move {
                 let usage = match tokio::time::timeout(LATE_REPLY_LIMIT, &mut request).await {
                     Ok(Ok((_, usage))) => usage,
@@ -128,10 +132,12 @@ pub async fn title_in_turn(app: &AppHandle, settings_pool: &Pool, turn: &TurnTx)
                     Err(_) => vec![CallUsage::default()],
                 };
                 for call in usage {
+                    let mut record = UsageRecord::text(UsageKind::Title, &config, call);
+                    record.turn_id = turn_id.clone();
                     record_late(
                         pool.clone(),
                         story_id.clone(),
-                        UsageRecord::text(UsageKind::Title, &config, call),
+                        record,
                     )
                     .await;
                 }

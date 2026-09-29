@@ -17,13 +17,33 @@ pub struct TurnTx {
     done: AtomicBool,
     gate: StdMutex<Option<GateGuard>>,
     usage: StdMutex<Vec<UsageRecord>>,
+    turn_id: StdMutex<Option<String>>,
+    replaces_turn: StdMutex<Option<String>>,
 }
 
-fn flush_usage(story_id: &str, usage: &StdMutex<Vec<UsageRecord>>, conn: &rusqlite::Connection) {
+fn flush_usage(
+    story_id: &str,
+    usage: &StdMutex<Vec<UsageRecord>>,
+    conn: &rusqlite::Connection,
+    turn_id: Option<&str>,
+    replaces: Option<&str>,
+    committed: bool,
+) {
     let records = std::mem::take(&mut *usage.lock().unwrap_or_else(|e| e.into_inner()));
-    for record in records {
-        if let Err(error) = usage_repository::insert(conn, story_id, &record) {
+    for mut record in records {
+        let earlier_attempt = !committed && replaces.is_some();
+        if let Some(old) = replaces.filter(|_| !committed) {
+            record.turn_id = Some(old.to_string());
+        } else if record.turn_id.is_none() {
+            record.turn_id = turn_id.map(str::to_string);
+        }
+        if let Err(error) = usage_repository::insert(conn, story_id, &record, earlier_attempt) {
             log::warn!("could not record usage for story {story_id}: {error}");
+        }
+    }
+    if let (true, Some(old), Some(new)) = (committed, replaces, turn_id) {
+        if let Err(error) = usage_repository::move_to_turn(conn, story_id, old, new) {
+            log::warn!("could not move earlier usage for story {story_id}: {error}");
         }
     }
 }
@@ -39,6 +59,8 @@ impl TurnTx {
             done: AtomicBool::new(false),
             gate: StdMutex::new(Some(guard)),
             usage: StdMutex::new(Vec::new()),
+            turn_id: StdMutex::new(None),
+            replaces_turn: StdMutex::new(None),
         }))
     }
 
@@ -59,6 +81,25 @@ impl TurnTx {
             return;
         }
         usage.push(record);
+    }
+
+    pub fn set_turn(&self, turn_id: &str) {
+        *self.turn_id.lock().unwrap_or_else(|e| e.into_inner()) = Some(turn_id.to_string());
+    }
+
+    pub fn replaces(&self, old_turn_id: &str) {
+        *self.replaces_turn.lock().unwrap_or_else(|e| e.into_inner()) = Some(old_turn_id.to_string());
+    }
+
+    pub fn turn_id(&self) -> Option<String> {
+        self.turn_id.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    fn usage_turns(&self) -> (Option<String>, Option<String>) {
+        (
+            self.turn_id(),
+            self.replaces_turn.lock().unwrap_or_else(|e| e.into_inner()).clone(),
+        )
     }
 
     pub async fn with<R>(
@@ -103,7 +144,8 @@ impl TurnTx {
                 "turn transaction is already finished".into(),
             ));
         }
-        flush_usage(&self.story_id, &self.usage, &conn);
+        let (turn_id, replaces) = self.usage_turns();
+        flush_usage(&self.story_id, &self.usage, &conn, turn_id.as_deref(), replaces.as_deref(), true);
         conn.execute_batch("COMMIT")?;
         self.done.store(true, Ordering::Release);
         self.release_gate();
@@ -118,7 +160,8 @@ impl TurnTx {
             ));
         }
         conn.execute_batch("ROLLBACK")?;
-        flush_usage(&self.story_id, &self.usage, &conn);
+        let (turn_id, replaces) = self.usage_turns();
+        flush_usage(&self.story_id, &self.usage, &conn, turn_id.as_deref(), replaces.as_deref(), false);
         self.done.store(true, Ordering::Release);
         self.release_gate();
         Ok(())
@@ -133,7 +176,8 @@ impl Drop for TurnTx {
     fn drop(&mut self) {
         if !self.done.load(Ordering::Acquire) {
             let _ = self.conn.get_mut().execute_batch("ROLLBACK");
-            flush_usage(&self.story_id, &self.usage, self.conn.get_mut());
+            let (turn_id, replaces) = self.usage_turns();
+            flush_usage(&self.story_id, &self.usage, self.conn.get_mut(), turn_id.as_deref(), replaces.as_deref(), false);
         }
     }
 }
@@ -166,14 +210,100 @@ mod tests {
             .unwrap()
     }
 
+    fn usage_turn_rows(pool: &Pool) -> Vec<(Option<String>, i64, f64)> {
+        pool.get()
+            .unwrap()
+            .prepare("SELECT turn_id, earlier_attempt, cost_usd FROM usage_records WHERE story_id = 's' ORDER BY cost_usd")
+            .unwrap()
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn usage_gets_the_turn_id_on_commit() {
+        let pool = crate::shared::db::test_pool();
+        let gate = TurnGate::default();
+        setup_story(&pool, &gate).await;
+        let turn = TurnTx::begin(&pool, &gate, "s").unwrap();
+        turn.set_turn("t1");
+        turn.record_usage(UsageRecord::image("m", Some(0.01), None, None));
+        turn.record_usage(UsageRecord::image("m", Some(0.02), None, None));
+        turn.commit().await.unwrap();
+        assert_eq!(usage_turn_rows(&pool), [(Some("t1".into()), 0, 0.01), (Some("t1".into()), 0, 0.02)]);
+    }
+
+    #[tokio::test]
+    async fn retry_commit_moves_old_rows_to_the_new_turn() {
+        let pool = crate::shared::db::test_pool();
+        let gate = TurnGate::default();
+        setup_story(&pool, &gate).await;
+        let old = TurnTx::begin(&pool, &gate, "s").unwrap();
+        old.set_turn("t1");
+        old.record_usage(UsageRecord::image("m", Some(0.01), None, None));
+        old.record_usage(UsageRecord::image("m", Some(0.02), None, None));
+        old.commit().await.unwrap();
+        let retry = TurnTx::begin(&pool, &gate, "s").unwrap();
+        retry.replaces("t1");
+        retry.set_turn("t2");
+        retry.record_usage(UsageRecord::image("m", Some(0.03), None, None));
+        retry.commit().await.unwrap();
+        assert_eq!(usage_turn_rows(&pool), [
+            (Some("t2".into()), 1, 0.01),
+            (Some("t2".into()), 1, 0.02),
+            (Some("t2".into()), 0, 0.03),
+        ]);
+    }
+
+    #[tokio::test]
+    async fn failed_retry_rows_go_to_the_old_turn() {
+        let pool = crate::shared::db::test_pool();
+        let gate = TurnGate::default();
+        setup_story(&pool, &gate).await;
+        let old = TurnTx::begin(&pool, &gate, "s").unwrap();
+        old.set_turn("t1");
+        old.record_usage(UsageRecord::image("m", Some(0.01), None, None));
+        old.commit().await.unwrap();
+        let retry = TurnTx::begin(&pool, &gate, "s").unwrap();
+        retry.replaces("t1");
+        retry.set_turn("t2");
+        retry.record_usage(UsageRecord::image("m", Some(0.02), None, None));
+        retry.rollback().await.unwrap();
+        assert_eq!(usage_turn_rows(&pool), [
+            (Some("t1".into()), 0, 0.01),
+            (Some("t1".into()), 1, 0.02),
+        ]);
+    }
+
+    #[tokio::test]
+    async fn drop_after_retry_behaves_like_rollback() {
+        let pool = crate::shared::db::test_pool();
+        let gate = TurnGate::default();
+        setup_story(&pool, &gate).await;
+        let old = TurnTx::begin(&pool, &gate, "s").unwrap();
+        old.set_turn("t1");
+        old.record_usage(UsageRecord::image("m", Some(0.01), None, None));
+        old.commit().await.unwrap();
+        let retry = TurnTx::begin(&pool, &gate, "s").unwrap();
+        retry.replaces("t1");
+        retry.set_turn("t2");
+        retry.record_usage(UsageRecord::image("m", Some(0.02), None, None));
+        drop(retry);
+        assert_eq!(usage_turn_rows(&pool), [
+            (Some("t1".into()), 0, 0.01),
+            (Some("t1".into()), 1, 0.02),
+        ]);
+    }
+
     #[tokio::test]
     async fn usage_is_written_with_the_commit() {
         let pool = crate::shared::db::test_pool();
         let gate = TurnGate::default();
         setup_story(&pool, &gate).await;
         let turn = TurnTx::begin(&pool, &gate, "s").unwrap();
-        turn.record_usage(UsageRecord::image("image", Some(0.01)));
-        turn.record_usage(UsageRecord::image("image", Some(0.02)));
+        turn.record_usage(UsageRecord::image("image", Some(0.01), None, None));
+        turn.record_usage(UsageRecord::image("image", Some(0.02), None, None));
         assert_eq!(usage_count(&pool), 0);
         turn.commit().await.unwrap();
         assert_eq!(usage_count(&pool), 2);
@@ -194,7 +324,7 @@ mod tests {
         })
         .await
         .unwrap();
-        turn.record_usage(UsageRecord::image("image", Some(0.01)));
+        turn.record_usage(UsageRecord::image("image", Some(0.01), None, None));
         turn.rollback().await.unwrap();
         assert_eq!(usage_count(&pool), 1);
         let count: i64 = pool
@@ -215,7 +345,7 @@ mod tests {
         let gate = TurnGate::default();
         setup_story(&pool, &gate).await;
         let turn = TurnTx::begin(&pool, &gate, "s").unwrap();
-        turn.record_usage(UsageRecord::image("image", Some(0.01)));
+        turn.record_usage(UsageRecord::image("image", Some(0.01), None, None));
         drop(turn);
         assert_eq!(usage_count(&pool), 1);
     }
@@ -226,7 +356,7 @@ mod tests {
         let gate = TurnGate::default();
         setup_story(&pool, &gate).await;
         let turn = TurnTx::begin(&pool, &gate, "s").unwrap();
-        turn.record_usage(UsageRecord::image("image", None));
+        turn.record_usage(UsageRecord::image("image", None, None, None));
         turn.rollback().await.unwrap();
         let next = TurnTx::begin(&pool, &gate, "s").unwrap();
         assert_eq!(usage_count(&pool), 1);

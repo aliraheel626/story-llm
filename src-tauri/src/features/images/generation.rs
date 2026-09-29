@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use chrono::Utc;
 use tauri::{AppHandle, Emitter};
 use tokio::time::{timeout, Duration};
@@ -94,6 +96,8 @@ async fn generate_from_description(
         .await?;
     let matched: Vec<&(String, String)> = characters.iter().collect();
     let prompt = compose_image_prompt(&settings.style, description, &matched);
+    let asset_id = Uuid::new_v4().to_string();
+    let started = Instant::now();
     let mut request = tauri::async_runtime::spawn({
         let (key, model, prompt) = (api_key.clone(), settings.model.clone(), prompt.clone());
         async move { openrouter::generate_image(&key, &model, &prompt).await }
@@ -103,18 +107,24 @@ async fn generate_from_description(
         Err(_) => {
             let pool = settings_pool.clone();
             let model = settings.model.clone();
+            let turn_id = target.turn_id.clone();
             tauri::async_runtime::spawn(async move {
                 match timeout(LATE_REPLY_LIMIT, &mut request).await {
                     Ok(Ok(Ok(generated))) => {
+                        let duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+                        let mut record = UsageRecord::image(&model, generated.cost_usd, None, Some(duration_ms));
+                        record.turn_id = Some(turn_id);
                         record_late(
                             pool,
                             story_id,
-                            UsageRecord::image(&model, generated.cost_usd),
+                            record,
                         )
                         .await;
                     }
                     Err(_) => {
-                        record_late(pool, story_id, UsageRecord::image(&model, None)).await;
+                        let mut record = UsageRecord::image(&model, None, None, None);
+                        record.turn_id = Some(turn_id);
+                        record_late(pool, story_id, record).await;
                     }
                     Ok(Ok(Err(_)) | Err(_)) => {}
                 }
@@ -122,25 +132,26 @@ async fn generate_from_description(
             return Err(AppError::Other("image generation timed out".into()));
         }
     };
-    turn.record_usage(UsageRecord::image(&settings.model, generated.cost_usd));
+    let duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+    turn.record_usage(UsageRecord::image(&settings.model, generated.cost_usd, Some(asset_id.clone()), Some(duration_ms)));
     turn.with_savepoint(|conn| {
-        persist_and_store_image(conn, target, description, prompt, generated)
+        persist_and_store_image(conn, &asset_id, target, description, prompt, generated)
     })
     .await
 }
 
 fn persist_and_store_image(
     conn: &rusqlite::Connection,
+    asset_id: &str,
     target: &ImageTarget,
     description: &str,
     prompt: String,
     generated: openrouter::GeneratedImage,
 ) -> AppResult<StoryImage> {
-    let id = Uuid::new_v4().to_string();
     let now = Utc::now().to_rfc3339();
 
     let image = StoryImage {
-        id,
+        id: asset_id.to_string(),
         entry_id: target.entry_id.clone(),
         prompt,
         created_at: now,
@@ -259,6 +270,7 @@ mod tests {
             .with_savepoint(|conn| {
                 persist_and_store_image(
                     conn,
+                    "test-image",
                     &ImageTarget {
                         entry_id,
                         source_action_id: None,
@@ -271,6 +283,7 @@ mod tests {
             })
             .await
             .unwrap();
+        assert_eq!(image.id, "test-image");
         assert_eq!(
             turn.with(|conn| Ok(conn.query_row(
                 "SELECT COUNT(*) FROM image_assets",

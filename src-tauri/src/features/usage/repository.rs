@@ -15,7 +15,7 @@ pub const LATE_REPLY_LIMIT: Duration = Duration::from_secs(600);
 pub async fn record_late(pool: Pool, story_id: String, record: UsageRecord) {
     let result = db::blocking(move || {
         let conn = pool.get()?;
-        insert(&conn, &story_id, &record)
+        insert(&conn, &story_id, &record, false)
     })
     .await;
     if let Err(error) = result {
@@ -23,14 +23,15 @@ pub async fn record_late(pool: Pool, story_id: String, record: UsageRecord) {
     }
 }
 
-pub fn insert(conn: &Connection, story_id: &str, record: &UsageRecord) -> AppResult<()> {
+pub fn insert(conn: &Connection, story_id: &str, record: &UsageRecord, earlier_attempt: bool) -> AppResult<()> {
     let usage = &record.usage;
     let tokens = |count| i64::try_from(count).unwrap_or(i64::MAX);
     conn.execute(
         "INSERT INTO usage_records
          (id, story_id, kind, provider, model, response_id, input_tokens,
-          output_tokens, cached_input_tokens, cache_write_tokens, cost_usd, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+           output_tokens, cached_input_tokens, cache_write_tokens, cost_usd, created_at,
+           turn_id, image_asset_id, duration_ms, earlier_attempt)
+          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
         params![
             Uuid::new_v4().to_string(),
             story_id,
@@ -43,8 +44,20 @@ pub fn insert(conn: &Connection, story_id: &str, record: &UsageRecord) -> AppRes
             tokens(usage.cached_input_tokens),
             tokens(usage.cache_write_tokens),
             usage.cost_usd,
-            Utc::now().to_rfc3339()
+            Utc::now().to_rfc3339(),
+            record.turn_id,
+            record.image_asset_id,
+            record.duration_ms.map(tokens),
+            earlier_attempt
         ],
+    )?;
+    Ok(())
+}
+
+pub fn move_to_turn(conn: &Connection, story_id: &str, old: &str, new: &str) -> AppResult<()> {
+    conn.execute(
+        "UPDATE usage_records SET turn_id = ?1, earlier_attempt = 1 WHERE story_id = ?2 AND turn_id = ?3",
+        params![new, story_id, old],
     )?;
     Ok(())
 }
@@ -119,6 +132,40 @@ mod tests {
         assert!((actual - expected).abs() < 1e-9, "{actual} != {expected}");
     }
 
+    #[test]
+    fn insert_round_trips_turn_image_and_duration() {
+        let pool = db::test_pool();
+        let conn = pool.get().unwrap();
+        test_support::story(&conn, "s");
+        let mut record = UsageRecord::image("m", Some(0.039), Some("asset".into()), Some(14_200));
+        record.turn_id = Some("t1".into());
+        insert(&conn, "s", &record, false).unwrap();
+        let row: (Option<String>, Option<String>, Option<i64>, i64) = conn.query_row(
+            "SELECT turn_id, image_asset_id, duration_ms, earlier_attempt FROM usage_records WHERE story_id = 's'",
+            [], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        ).unwrap();
+        assert_eq!(row, (Some("t1".into()), Some("asset".into()), Some(14_200), 0));
+    }
+
+    #[test]
+    fn move_to_turn_touches_only_that_story_and_turn() {
+        let pool = db::test_pool();
+        let conn = pool.get().unwrap();
+        test_support::story(&conn, "s");
+        test_support::story(&conn, "other");
+        for (story, turn, cost) in [("s", "t1", 0.01), ("s", "t9", 0.02), ("other", "t1", 0.03)] {
+            let mut record = UsageRecord::image("m", Some(cost), None, None);
+            record.turn_id = Some(turn.into());
+            insert(&conn, story, &record, false).unwrap();
+        }
+        move_to_turn(&conn, "s", "t1", "t2").unwrap();
+        let rows: Vec<(String, String, i64)> = conn.prepare(
+            "SELECT story_id, turn_id, earlier_attempt FROM usage_records ORDER BY cost_usd",
+        ).unwrap().query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+            .unwrap().collect::<Result<_, _>>().unwrap();
+        assert_eq!(rows, [("s".into(), "t2".into(), 1), ("s".into(), "t9".into(), 0), ("other".into(), "t1".into(), 0)]);
+    }
+
     #[tokio::test]
     async fn record_late_writes_through_the_pool() {
         let pool = db::test_pool();
@@ -126,7 +173,7 @@ mod tests {
         record_late(
             pool.clone(),
             "s".into(),
-            UsageRecord::image("m", Some(0.02)),
+            UsageRecord::image("m", Some(0.02), None, None),
         )
         .await;
         let conn = pool.get().unwrap();
@@ -147,7 +194,7 @@ mod tests {
         let mut late = tokio::spawn(record_late(
             pool.clone(),
             "s".into(),
-            UsageRecord::image("m", Some(0.02)),
+            UsageRecord::image("m", Some(0.02), None, None),
         ));
         tokio::task::yield_now().await;
         assert!(tokio::time::timeout(Duration::from_millis(75), &mut late)
@@ -176,6 +223,7 @@ mod tests {
             &conn,
             "s",
             &text(UsageKind::Narration, Some(0.010), 1000, 600, 100, 200),
+            false,
         )
         .unwrap();
         let earliest: String = conn
@@ -189,11 +237,12 @@ mod tests {
             &conn,
             "s",
             &text(UsageKind::Summary, Some(0.002), 0, 0, 0, 0),
+            false,
         )
         .unwrap();
-        insert(&conn, "s", &text(UsageKind::Title, None, 50, 0, 0, 0)).unwrap();
-        insert(&conn, "s", &UsageRecord::image("image", Some(0.040))).unwrap();
-        insert(&conn, "s", &UsageRecord::image("image", None)).unwrap();
+        insert(&conn, "s", &text(UsageKind::Title, None, 50, 0, 0, 0), false).unwrap();
+        insert(&conn, "s", &UsageRecord::image("image", Some(0.040), None, None), false).unwrap();
+        insert(&conn, "s", &UsageRecord::image("image", None, None, None), false).unwrap();
 
         let usage = story_usage(&conn, "s").unwrap();
         near(usage.text_cost_usd, 0.012);
@@ -218,7 +267,7 @@ mod tests {
         let conn = pool.get().unwrap();
         test_support::story(&conn, "a");
         test_support::story(&conn, "b");
-        insert(&conn, "b", &UsageRecord::image("image", Some(0.5))).unwrap();
+        insert(&conn, "b", &UsageRecord::image("image", Some(0.5), None, None), false).unwrap();
         assert_eq!(story_usage(&conn, "a").unwrap(), StoryUsage::default());
     }
 
@@ -227,7 +276,7 @@ mod tests {
         let pool = db::test_pool();
         let conn = pool.get().unwrap();
         test_support::story(&conn, "s");
-        insert(&conn, "s", &UsageRecord::image("image", Some(0.5))).unwrap();
+        insert(&conn, "s", &UsageRecord::image("image", Some(0.5), None, None), false).unwrap();
         conn.execute("DELETE FROM stories WHERE id = ?1", ["s"])
             .unwrap();
         let count: i64 = conn

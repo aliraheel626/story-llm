@@ -94,5 +94,6 @@ The SQLite database (`story-llm.sqlite3`, which also stores generated images)
 and the API-key store (`secrets.json`) live in the operating system's Tauri
 application-data directory for `com.story-llm.app`. The app creates the current
 schema on a fresh database and never upgrades an older one: after a schema
-change, delete the `story-llm.sqlite3*` files and keep `secrets.json` to keep
+change, change the database by hand (for example, drop the changed table) or
+delete the `story-llm.sqlite3*` files and keep `secrets.json` to keep
 the API key. Do not commit secrets or local application data.

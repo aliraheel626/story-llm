@@ -116,6 +116,7 @@ async fn prepare_and_spawn(
             Ok((turn_id, action, prior_narration, history))
         })
         .await?;
+    turn.set_turn(&turn_id);
 
     let is_see = mode == "see";
     let target_entry_id = prior_narration

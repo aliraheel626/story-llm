@@ -181,9 +181,14 @@ fn create_schema(conn: &mut PooledConn) -> AppResult<()> {
             cached_input_tokens INTEGER NOT NULL DEFAULT 0,
             cache_write_tokens INTEGER NOT NULL DEFAULT 0,
             cost_usd REAL,
-            created_at TEXT NOT NULL
+            created_at TEXT NOT NULL,
+            turn_id TEXT,
+            image_asset_id TEXT,
+            duration_ms INTEGER,
+            earlier_attempt INTEGER NOT NULL DEFAULT 0
         );
         CREATE INDEX IF NOT EXISTS idx_usage_story ON usage_records(story_id);
+        CREATE INDEX IF NOT EXISTS idx_usage_turn ON usage_records(turn_id);
 
         CREATE TABLE IF NOT EXISTS settings (
             key TEXT PRIMARY KEY,
@@ -461,6 +466,14 @@ mod tests {
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
         assert!(transcript_columns.contains(&"turn_id".to_string()));
+        let usage_columns = conn
+            .prepare("PRAGMA table_info(usage_records)")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(&usage_columns[usage_columns.len() - 4..], ["turn_id", "image_asset_id", "duration_ms", "earlier_attempt"]);
         assert!(conn
             .query_row(
                 "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'idx_transcript_turn')",

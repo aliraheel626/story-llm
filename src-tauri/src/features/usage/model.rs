@@ -27,6 +27,9 @@ pub struct UsageRecord {
     pub provider: String,
     pub model: String,
     pub usage: CallUsage,
+    pub turn_id: Option<String>,
+    pub image_asset_id: Option<String>,
+    pub duration_ms: Option<u64>,
 }
 
 impl UsageRecord {
@@ -36,10 +39,13 @@ impl UsageRecord {
             provider: config.provider.clone(),
             model: config.model.clone(),
             usage,
+            turn_id: None,
+            image_asset_id: None,
+            duration_ms: None,
         }
     }
 
-    pub fn image(model: &str, cost_usd: Option<f64>) -> Self {
+    pub fn image(model: &str, cost_usd: Option<f64>, asset_id: Option<String>, duration_ms: Option<u64>) -> Self {
         Self {
             kind: UsageKind::Image,
             provider: "openrouter".into(),
@@ -48,6 +54,9 @@ impl UsageRecord {
                 cost_usd,
                 ..CallUsage::default()
             },
+            turn_id: None,
+            image_asset_id: asset_id,
+            duration_ms,
         }
     }
 }

@@ -32,6 +32,7 @@ async fn prepare_retry(
                 "only the latest turn can be retried".into(),
             ));
         }
+        turn.replaces(&old_turn.id);
         let entries = query::entries_of_turn(conn, &old_turn.id)?;
         let player_id = entries
             .iter()
