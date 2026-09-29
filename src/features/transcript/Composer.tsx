@@ -51,7 +51,6 @@ export function Composer({ storyId }: { storyId: string }) {
   const reasoningEffort = useStoryStore((s) => s.bundles[storyId]?.reasoningEffort);
   const reasoningEffortLoaded = useStoryStore((s) => s.bundles[storyId]?.reasoningEffortLoaded ?? false);
   const reasoningEffortError = useStoryStore((s) => s.bundles[storyId]?.reasoningEffortError);
-  const tools = useStoryStore((s) => s.bundles[storyId]?.narratorTools);
 
   const changeReasoningEffort = async (value: string) => {
     try {
@@ -65,7 +64,7 @@ export function Composer({ storyId }: { storyId: string }) {
   const lastEntry = entries && entries.length > 0 ? entries[entries.length - 1] : undefined;
   const lastNarration = entries?.slice().reverse().find((entry) => entry.kind === "narration");
   const imageBusy = !!lastNarration && (imagePendingFor?.includes(lastNarration.id) ?? false);
-  const imagesDisabled = !imageSettings?.enabled || !imageSettings.has_api_key || !tools?.illustrate_scene;
+  const imagesDisabled = !imageSettings?.enabled || !imageSettings.has_api_key;
 
   useEffect(() => {
     loadImageSettings();
@@ -143,9 +142,7 @@ export function Composer({ storyId }: { storyId: string }) {
 
   const statusHint =
     mode === "see"
-      ? !tools?.illustrate_scene
-        ? "Turn on Illustrate scenes in Narrator Tools to use See."
-        : !imageSettings?.enabled || !imageSettings.has_api_key
+      ? !imageSettings?.enabled || !imageSettings.has_api_key
           ? "Enable image generation and configure a key in Image Model / Text Model."
         : !lastNarration
           ? "Write a passage first, then generate an image."

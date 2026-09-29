@@ -43,6 +43,12 @@ pub struct Prepared {
     pub(super) image_requests: Arc<Mutex<Vec<images::model::ImageRequest>>>,
 }
 
+/// The Illustrate scenes toggle governs only images the narrator starts itself;
+/// See works whenever the image service is configured.
+fn images_allowed(service_ready: bool, see_turn: bool, illustrate_toggle: bool) -> bool {
+    service_ready && (see_turn || illustrate_toggle)
+}
+
 pub async fn prepare(inputs: NarratorInputs<'_>) -> AppResult<Prepared> {
     match inputs.transcript.last() {
         None => {
@@ -70,9 +76,12 @@ pub async fn prepare(inputs: NarratorInputs<'_>) -> AppResult<Prepared> {
         .await?;
     let reasoning_effort = (!reasoning_effort.is_empty()).then_some(reasoning_effort);
     let image_settings = settings::read_image_model_settings(inputs.app, inputs.settings_pool)?;
-    let image_enabled =
-        image_settings.enabled && image_settings.has_api_key && tool_settings.illustrate_scene;
     let illustrate = matches!(inputs.purpose, NarratorPurpose::Illustrate);
+    let image_enabled = images_allowed(
+        image_settings.enabled && image_settings.has_api_key,
+        illustrate,
+        tool_settings.illustrate_scene,
+    );
     if illustrate && !image_enabled {
         return Err(AppError::Invalid(
             "image generation is disabled or has no API key".into(),
@@ -137,4 +146,17 @@ pub async fn prepare(inputs: NarratorInputs<'_>) -> AppResult<Prepared> {
         reasoning_effort,
         image_requests,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::images_allowed;
+
+    #[test]
+    fn see_ignores_the_illustrate_toggle_but_needs_the_image_service() {
+        assert!(images_allowed(true, true, false));
+        assert!(!images_allowed(true, false, false));
+        assert!(images_allowed(true, false, true));
+        assert!(!images_allowed(false, true, true));
+    }
 }

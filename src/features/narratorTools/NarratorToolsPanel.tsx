@@ -21,7 +21,7 @@ const GROUPS: { title: string; items: { key: keyof NarratorToolSettings; label: 
   {
     title: "Image",
     items: [
-      { key: "illustrate_scene", label: "Illustrate scenes", description: "Enables See and narrator-initiated images when the global image service and key are configured. Images may incur provider charges." },
+      { key: "illustrate_scene", label: "Illustrate scenes", description: "The narrator may illustrate striking moments on its own. See works either way, whenever the image service and key are configured. Images may incur provider charges." },
     ],
   },
 ];
