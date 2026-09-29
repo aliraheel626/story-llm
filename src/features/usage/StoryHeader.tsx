@@ -13,10 +13,11 @@ export function StoryHeader({ storyId }: { storyId: string }) {
   const totalTooltip = usage?.since
     ? `Text + images since ${new Date(usage.since).toLocaleDateString()}`
     : "No usage recorded yet";
+  const visibleTurnNote = "Per-turn lines in the story show only turns still on the page; failed and erased turns count here too.";
   const unpriced = usage?.unpriced_calls ?? 0;
   const totalTitle = unpriced > 0
-    ? `${totalTooltip}. ${unpriced} calls reported no cost (Ollama, Nous Portal, or a request that failed or timed out before reporting its cost) and aren't included`
-    : totalTooltip;
+    ? `${totalTooltip}. ${visibleTurnNote} ${unpriced} calls reported no cost (Ollama, Nous Portal, or a request that failed or timed out before reporting its cost) and aren't included`
+    : `${totalTooltip}. ${visibleTurnNote}`;
 
   return (
     <div className="flex h-12 shrink-0 items-center justify-end gap-2 overflow-x-auto whitespace-nowrap border-b border-border px-3 text-xs text-muted tabular-nums sm:gap-4 sm:px-6">

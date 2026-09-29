@@ -96,6 +96,22 @@ export interface StoryUsage {
   since: string | null;
 }
 
+export interface TurnCost {
+  turn_id: string;
+  text_cost_usd: number;
+  image_cost_usd: number;
+  total_cost_usd: number;
+  earlier_attempts_cost_usd: number;
+  unpriced_calls: number;
+}
+export interface ImageCost {
+  asset_id: string;
+  turn_id: string | null;
+  cost_usd: number | null;
+  duration_ms: number | null;
+}
+export interface StoryCostBreakdown { turns: TurnCost[]; images: ImageCost[] }
+
 export type EntityKind = "character" | "object" | "location" | "relationship" | "campaign";
 export interface Entity {
   id: string; story_id: string; kind: EntityKind; name: string;

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { isPlayerEntry, transcriptInputMode, type ActionMode, type TranscriptEntry, type Roll, type StoryImage } from "../../shared/types";
 import { useStoryStore } from "../story/store";
+import { formatSeconds, formatUsd, useUsageStore } from "../usage/store";
 import { ImagePlaceholder } from "./ImagePlaceholder";
 import { RollDisclosure } from "./RollDisclosure";
 import { modeDefinition } from "./Composer";
@@ -25,6 +26,7 @@ export function TranscriptEntryView({ entry, storyId, isLast, retryEntryId, canR
   const eraseLastExchange = useStoryStore((s) => s.eraseLastExchange);
   const editEntry = useStoryStore((s) => s.editEntry);
   const imagePending = useStoryStore((s) => s.bundles[storyId]?.imagePendingFor.includes(entry.id) ?? false);
+  const breakdown = useUsageStore((state) => state.breakdownByStory[storyId]);
 
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(entry.content ?? "");
@@ -77,6 +79,13 @@ export function TranscriptEntryView({ entry, storyId, isLast, retryEntryId, canR
   };
 
   const display = entryDisplay(entry, streaming);
+  const turnCost = entry.turn_id ? breakdown?.turns[entry.turn_id] : undefined;
+  const turnCostTitle = turnCost ? [
+    "Text and images for this turn.",
+    ...(turnCost.earlier_attempts_cost_usd > 0
+      ? [`Includes ${formatUsd(turnCost.earlier_attempts_cost_usd)} from earlier attempts (Retry).`] : []),
+    ...(turnCost.unpriced_calls > 0 ? [`${turnCost.unpriced_calls} calls reported no cost.`] : []),
+  ].join(" ") : "";
 
   const editControls = !editing && !anyStreamBusy && (
     <button
@@ -158,17 +167,34 @@ export function TranscriptEntryView({ entry, storyId, isLast, retryEntryId, canR
         <RollDisclosure key={roll.id} roll={roll} />
       ))}
 
-      {display.showOldExtras && images?.map((image) => (
-        <div key={image.id} className="flex flex-col gap-1">
+      {display.showOldExtras && images?.map((image) => {
+        const cost = breakdown?.images[image.id];
+        const seeTurn = cost?.turn_id && cost.turn_id !== entry.turn_id ? breakdown?.turns[cost.turn_id] : undefined;
+        const tooltip = `Image cost and generation time.${seeTurn
+          ? ` See turn total ${formatUsd(seeTurn.total_cost_usd)}, including ${formatUsd(seeTurn.text_cost_usd)} to plan the image.` : ""}`;
+        return <div key={image.id} className="flex flex-col gap-1">
           <img src={convertFileSrc(image.id, "storyimg")} alt={image.prompt} className="w-full rounded border border-border object-cover" />
-          <ImageCaption prompt={image.prompt} />
-        </div>
-      ))}
+          <div className="flex items-center justify-between gap-2">
+            <ImageCaption prompt={image.prompt} />
+            {cost && <span className="text-[11px] text-muted tabular-nums" title={tooltip}>
+              {cost.cost_usd === null ? "cost unknown" : formatUsd(cost.cost_usd)}
+              {cost.duration_ms !== null && ` · ${formatSeconds(cost.duration_ms)}`}
+            </span>}
+          </div>
+        </div>;
+      })}
 
       {(imagePending || (isBeingReplaced && streaming.imagePending)) && <ImagePlaceholder />}
 
       {!editing && (
-        <div className="flex justify-end">
+        <div className="flex items-center justify-between gap-3">
+          {entry.kind === "narration" && !isBeingReplaced && !display.streaming && turnCost && (
+            <span className="text-[11px] text-muted tabular-nums" title={turnCostTitle}>
+              Turn {formatUsd(turnCost.total_cost_usd)}
+              {turnCost.image_cost_usd > 0 && ` · text ${formatUsd(turnCost.text_cost_usd)} · images ${formatUsd(turnCost.image_cost_usd)}`}
+              {turnCost.unpriced_calls > 0 && "*"}
+            </span>
+          )}
           <div className="flex gap-1.5 opacity-0 transition-opacity group-hover:opacity-100">
             {editControls}
             {isLast && !anyStreamBusy && (
