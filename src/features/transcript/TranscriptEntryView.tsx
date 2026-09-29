@@ -163,6 +163,13 @@ export function TranscriptEntryView({ entry, storyId, isLast, retryEntryId, canR
         </p>
       )}
 
+      {!editing && entry.kind === "narration" && !isBeingReplaced && !display.streaming && turnCost && (
+        <span className="-mt-2 self-end text-[11px] text-muted tabular-nums" title={turnCostTitle}>
+          {formatUsd(turnCost.text_cost_usd)}
+          {turnCost.unpriced_calls > 0 && "*"}
+        </span>
+      )}
+
       {isBeingReplaced && <p className="text-xs italic text-muted" role="status">Retrying. The original comes back if this fails.</p>}
 
       {display.showOldExtras && rolls?.map((roll) => (
@@ -189,13 +196,7 @@ export function TranscriptEntryView({ entry, storyId, isLast, retryEntryId, canR
       {(imagePending || (isBeingReplaced && streaming.imagePending)) && <ImagePlaceholder />}
 
       {!editing && (
-        <div className="flex items-center justify-between gap-3">
-          {entry.kind === "narration" && !isBeingReplaced && !display.streaming && turnCost && (
-            <span className="text-[11px] text-muted tabular-nums" title={turnCostTitle}>
-              Text {formatUsd(turnCost.text_cost_usd)}
-              {turnCost.unpriced_calls > 0 && "*"}
-            </span>
-          )}
+        <div className="flex items-center justify-end gap-3">
           <div className="flex gap-1.5 opacity-0 transition-opacity group-hover:opacity-100">
             {editControls}
             {isLast && !anyStreamBusy && (
