@@ -62,6 +62,7 @@ pub fn init_pool(app_data_dir: &Path) -> AppResult<Pool> {
     let db_path = app_data_dir.join("story-llm.sqlite3");
     if !path_exists(&db_path)?
         && app_data_dir.file_name() == Some(std::ffi::OsStr::new("com.story-llm.app"))
+        && !secrets_are_only_app_data(app_data_dir)?
     {
         let legacy_dir = app_data_dir.with_file_name("com.dungeon.app");
         let legacy_db = legacy_dir.join("dungeon.sqlite3");
@@ -94,6 +95,18 @@ fn path_exists(path: &Path) -> AppResult<bool> {
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
         Err(error) => Err(error.into()),
     }
+}
+
+fn secrets_are_only_app_data(app_data_dir: &Path) -> AppResult<bool> {
+    if !path_exists(&app_data_dir.join("secrets.json"))? {
+        return Ok(false);
+    }
+    for entry in fs::read_dir(app_data_dir)? {
+        if entry?.file_name() != "secrets.json" {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 fn migrate_app_data(
@@ -1288,6 +1301,30 @@ pub fn test_pool() -> Pool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn retained_secrets_only_start_a_fresh_transcript_database() {
+        let parent = std::env::temp_dir().join(format!("story-llm-reset-{}", Uuid::new_v4()));
+        let legacy = legacy_app_db(&parent);
+        legacy.execute(
+            "INSERT INTO stories (id, title, created_at, updated_at) VALUES ('old', 'Old', 'now', 'now')",
+            [],
+        ).unwrap();
+        drop(legacy);
+        let new_dir = parent.join("com.story-llm.app");
+        fs::create_dir_all(&new_dir).unwrap();
+        fs::write(new_dir.join("secrets.json"), b"{\"placeholder\":\"saved\"}").unwrap();
+
+        let pool = init_pool(&new_dir).unwrap();
+        let conn = pool.get().unwrap();
+        assert_eq!(conn.query_row("SELECT COUNT(*) FROM stories", [], |row| row.get::<_, i64>(0)).unwrap(), 0);
+        assert_eq!(conn.query_row("SELECT COUNT(*) FROM sqlite_master WHERE name = 'transcript_entries'", [], |row| row.get::<_, i64>(0)).unwrap(), 1);
+        assert_eq!(conn.query_row("SELECT COUNT(*) FROM sqlite_master WHERE name = 'ledger_entries'", [], |row| row.get::<_, i64>(0)).unwrap(), 0);
+        assert_eq!(fs::read(new_dir.join("secrets.json")).unwrap(), b"{\"placeholder\":\"saved\"}");
+        drop(conn);
+        drop(pool);
+        let _ = fs::remove_dir_all(parent);
+    }
 
     #[tokio::test]
     async fn blocking_returns_work_value() {
