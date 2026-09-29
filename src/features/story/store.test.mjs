@@ -14,6 +14,7 @@ let nextToolsSave;
 let nextImageLoad;
 let nextTranscriptLoad;
 let nextRetry;
+let nextSubmit;
 let nextTranscriptSettingsLoad;
 let nextTranscriptSave;
 let nextContextLoad;
@@ -137,10 +138,19 @@ globalThis.__storyTestInvoke = async (command, args = {}) => {
       }
       return { entry_id: args.entryId, stream_id: `stream-${calls.length}` };
     case "erase_last_exchange": images.set(args.storyId, []); return ["see-action"];
-    case "submit_turn": if (story) story.played = true; return {
-      entry: { id: `action-${calls.length}`, story_id: args.storyId, kind: "player_message", payload: { input_mode: args.mode }, content: args.content, turn_id: `turn-${calls.length}` },
-      stream_id: `stream-${calls.length}`,
-    };
+    case "submit_turn": {
+      if (story) story.played = true;
+      const result = {
+        entry: { id: `action-${calls.length}`, story_id: args.storyId, kind: "player_message", payload: { input_mode: args.mode }, content: args.content, turn_id: `turn-${calls.length}` },
+        stream_id: `stream-${calls.length}`,
+      };
+      if (nextSubmit) {
+        const wait = nextSubmit;
+        nextSubmit = null;
+        await wait;
+      }
+      return result;
+    }
     default: throw new Error(`Unmocked command: ${command}`);
   }
 };
@@ -589,6 +599,49 @@ test("image pending before narration finalize remains through finalize and clear
   bundle = store.getState().bundles[storyId];
   assert.deepEqual(bundle.imagePendingFor, []);
   assert.equal(bundle.imagesByEntry[narration.id][0].id, "finished-image");
+  store.getState().setActiveStory(previousStoryId);
+});
+
+test("early See completion does not leave the composer streaming", async () => {
+  const previousStoryId = store.getState().activeStoryId;
+  const story = await store.getState().newStory();
+  let releaseSubmit;
+  nextSubmit = new Promise((resolve) => { releaseSubmit = resolve; });
+  const submitting = store.getState().submitTurn(story.id, "see", "");
+  for (let i = 0; i < 10 && calls.at(-1)?.command !== "submit_turn"; i++) await Promise.resolve();
+  assert.equal(calls.at(-1)?.command, "submit_turn");
+  const id = calls.length;
+  store.getState()._finalize({
+    stream_id: `stream-${id}`,
+    entry: { id: `action-${id}`, story_id: story.id, kind: "player_message", payload: { input_mode: "see" }, content: "", turn_id: `turn-${id}` },
+  });
+  releaseSubmit();
+  await submitting;
+  assert.equal(store.getState().bundles[story.id].streaming, null);
+  assert.equal(store.getState().bundles[story.id].requestPending, false);
+  store.getState().setActiveStory(previousStoryId);
+});
+
+test("early Retry completion does not leave the replacement streaming", async () => {
+  const previousStoryId = store.getState().activeStoryId;
+  const story = await store.getState().newStory();
+  const original = { id: "early-retry-original", story_id: story.id, kind: "narration", payload: { input_mode: "generated" }, content: "Original", turn_id: "old-turn" };
+  entries.set(story.id, [original]);
+  await store.getState().loadTranscript(story.id);
+  let releaseRetry;
+  nextRetry = new Promise((resolve) => { releaseRetry = resolve; });
+  const retrying = store.getState().retryNarration(story.id, original.id);
+  for (let i = 0; i < 10 && calls.at(-1)?.command !== "retry_narration"; i++) await Promise.resolve();
+  assert.equal(calls.at(-1)?.command, "retry_narration");
+  const id = calls.length;
+  store.getState()._finalize({
+    stream_id: `stream-${id}`,
+    entry: { ...original, id: "early-retry-finished", content: "Replacement", turn_id: "new-turn" },
+  });
+  releaseRetry();
+  await retrying;
+  assert.equal(store.getState().bundles[story.id].streaming, null);
+  assert.equal(store.getState().bundles[story.id].requestPending, false);
   store.getState().setActiveStory(previousStoryId);
 });
 

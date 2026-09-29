@@ -189,6 +189,7 @@ const closeTool = (log: ToolActivity[], callId: string, ok: boolean | null): Too
 };
 
 const transcriptGenerations = new Map<string, number>();
+const earlyCompletions = new Map<string, NarrationDonePayload>();
 const imageGenerations = new Map<string, number>();
 const imageEventGenerations = new Map<string, number>();
 const advanceGeneration = (generations: Map<string, number>, key: string) => {
@@ -311,7 +312,11 @@ export const useStoryStore = create<StoryStoreState>((set, get) => ({
           transcriptLoading: false,
         })),
       }));
+      const completed = earlyCompletions.get(storyId);
+      earlyCompletions.delete(storyId);
+      if (completed?.stream_id === result.stream_id) get()._finalize(completed);
     } catch (error) {
+      earlyCompletions.delete(storyId);
       await get().loadTranscript(storyId);
       throw error;
     } finally {
@@ -341,7 +346,11 @@ export const useStoryStore = create<StoryStoreState>((set, get) => ({
           ),
         }),
       }));
+      const completed = earlyCompletions.get(storyId);
+      earlyCompletions.delete(storyId);
+      if (completed?.stream_id === result.stream_id) get()._finalize(completed);
     } catch (error) {
+      earlyCompletions.delete(storyId);
       set((state) => ({ bundles: patchBundle(state.bundles, storyId, { turnError: String(error) }) }));
       throw error;
     } finally {
@@ -465,7 +474,10 @@ export const useStoryStore = create<StoryStoreState>((set, get) => ({
   },
   _finalize: (payload) => {
     const found = findStream(get().bundles, payload.stream_id);
-    if (!found) return;
+    if (!found) {
+      if (get().bundles[payload.entry.story_id]?.requestPending) earlyCompletions.set(payload.entry.story_id, payload);
+      return;
+    }
     const [storyId, current] = found;
     advanceGeneration(transcriptGenerations, storyId);
     advanceGeneration(imageGenerations, storyId);
