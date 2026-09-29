@@ -68,7 +68,11 @@ pub fn init_pool(app_data_dir: &Path) -> AppResult<Pool> {
         let legacy_db = legacy_dir.join("dungeon.sqlite3");
         match fs::metadata(&legacy_db) {
             Ok(metadata) if metadata.is_file() => {
-                migrate_app_data(&legacy_dir, app_data_dir, &legacy_db, &db_path)?
+                // A failed copy may leave only secrets; mark it so a retry is not mistaken for a reset.
+                let pending = app_data_dir.join(".legacy-import-pending");
+                fs::write(&pending, [])?;
+                migrate_app_data(&legacy_dir, app_data_dir, &legacy_db, &db_path)?;
+                fs::remove_file(pending)?;
             }
             Ok(_) => {}
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
@@ -1723,6 +1727,7 @@ mod tests {
 
         assert!(init_pool(&new_dir).is_err());
         assert!(!new_dir.join("story-llm.sqlite3").exists());
+        assert!(new_dir.join(".legacy-import-pending").exists());
         fs::remove_file(new_dir.join("images")).unwrap();
         let pool = init_pool(&new_dir).unwrap();
         assert!(pool
@@ -1742,6 +1747,7 @@ mod tests {
             fs::read(new_dir.join("secrets.json")).unwrap(),
             b"{\"placeholder\":\"new\"}"
         );
+        assert!(!new_dir.join(".legacy-import-pending").exists());
         drop(pool);
         drop(legacy);
         let _ = fs::remove_dir_all(parent);
