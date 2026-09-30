@@ -13,7 +13,7 @@ export type TranscriptVisibility = "visible" | "hidden";
 export type TranscriptEntryKind =
   | "player_message" | "narration" | "content_edited"
   | "diceroll" | "tool_call" | "entity_created" | "entity_queried" | "entity_updated" | "entity_deleted"
-  | "entity_attribute_changed" | "entity_attribute_removed" | "image_generated"
+  | "entity_attribute_changed" | "entity_attribute_removed" | "image_generated" | "image_captioned"
   | "context_summary";
 
 interface TranscriptPayloadBase extends Record<string, unknown> {
@@ -34,6 +34,7 @@ export interface EntityAttributeEventPayload extends TranscriptPayloadBase {
   before?: number | null; after?: number | null; source: "user" | "mechanics" | "inferred" | string;
 }
 export interface ImageGeneratedPayload extends TranscriptPayloadBase { asset_id: string; prompt: string }
+export interface ImageCaptionedPayload extends TranscriptPayloadBase { asset_id: string; model: string; caption: string }
 export interface ContextSummaryPayload extends TranscriptPayloadBase {
   through_entry_id: string; facts?: string[]; entity_notes?: string[];
   open_threads?: string[]; unresolved_mechanics?: string[];
@@ -52,6 +53,7 @@ export type TranscriptEntry =
   | (TranscriptEntryBase & { kind: "entity_created" | "entity_updated" | "entity_deleted"; payload: EntityEventPayload })
   | (TranscriptEntryBase & { kind: "entity_attribute_changed" | "entity_attribute_removed"; payload: EntityAttributeEventPayload })
   | (TranscriptEntryBase & { kind: "image_generated"; payload: ImageGeneratedPayload })
+  | (TranscriptEntryBase & { kind: "image_captioned"; payload: ImageCaptionedPayload })
   | (TranscriptEntryBase & { kind: "context_summary"; payload: ContextSummaryPayload })
   | (TranscriptEntryBase & { kind: "tool_call"; payload: ToolCallPayload })
   | (TranscriptEntryBase & { kind: "diceroll" | "entity_queried"; payload: TranscriptPayloadBase });
@@ -81,7 +83,7 @@ export interface ContextPreview {
   injected: string;
   images_unsupported: boolean;
 }
-export interface StoryImage { id: string; entry_id: string; prompt: string; created_at: string }
+export interface StoryImage { id: string; entry_id: string; prompt: string; created_at: string; caption: string | null }
 
 export interface StoryUsage {
   text_cost_usd: number;

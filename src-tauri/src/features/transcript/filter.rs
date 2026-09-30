@@ -39,6 +39,7 @@ fn record_label(kind: &str) -> (&'static str, bool) {
     match kind {
         kind::DICEROLL => ("Dice rolls", true),
         kind::IMAGE_GENERATED => ("Image prompts", false),
+        kind::IMAGE_CAPTIONED => ("Image captions", true),
         kind::TOOL_CALL => ("Tool calls", false),
         kind::ENTITY_CREATED => ("Entity created", true),
         kind::ENTITY_QUERIED => ("Entity lookups", true),

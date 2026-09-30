@@ -279,6 +279,44 @@ mod tests {
     }
 
     #[test]
+    fn image_captions_are_included_only_when_the_record_toggle_is_on() {
+        let pool = crate::shared::db::test_pool();
+        let conn = pool.get().unwrap();
+        crate::shared::test_support::story(&conn, "s");
+        let caption_id = crate::shared::test_support::record(
+            &conn,
+            "s",
+            kind::IMAGE_CAPTIONED,
+            Some("A lantern lights the stone corridor."),
+            json!({"asset_id":"asset"}),
+            None,
+            None,
+        );
+        let mut settings = TranscriptSettings::default();
+        let history = for_model(&conn, "s", &settings, ImagePolicy::Unsupported).unwrap();
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].entry_id.as_deref(), Some(caption_id.as_str()));
+        assert_eq!(history[0].role, HistoryRole::Record);
+        assert_eq!(
+            history[0].content,
+            "[Authoritative story event: image_captioned]\nA lantern lights the stone corridor."
+        );
+        assert!(history[0].images.is_empty());
+
+        settings.include.insert("record.image_captioned".into(), false);
+        settings.include.insert("images".into(), true);
+        settings.include.insert("record.image_generated".into(), true);
+        assert!(for_model(&conn, "s", &settings, ImagePolicy::Allowed)
+            .unwrap()
+            .is_empty());
+        settings.include.insert("record.image_captioned".into(), true);
+        let restored = for_model(&conn, "s", &settings, ImagePolicy::Unsupported).unwrap();
+        assert_eq!(restored.len(), 1);
+        assert_eq!(restored[0].entry_id, history[0].entry_id);
+        assert_eq!(restored[0].content, history[0].content);
+    }
+
+    #[test]
     fn migrated_player_bootstrap_does_not_trail_narration_history() {
         let rows = vec![
             entry(
@@ -789,6 +827,7 @@ mod tests {
                     id: id.into(),
                     entry_id: entry_id.into(),
                     prompt: "prompt".into(),
+                    caption: None,
                     created_at: id.into(),
                 },
                 mime,

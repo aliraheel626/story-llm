@@ -8,6 +8,7 @@ pub enum UsageKind {
     Summary,
     Title,
     Image,
+    Caption,
 }
 
 impl UsageKind {
@@ -17,6 +18,7 @@ impl UsageKind {
             Self::Summary => "summary",
             Self::Title => "title",
             Self::Image => "image",
+            Self::Caption => "caption",
         }
     }
 }
@@ -59,6 +61,18 @@ impl UsageRecord {
             duration_ms,
         }
     }
+
+    pub fn caption(model: &str, usage: CallUsage) -> Self {
+        Self {
+            kind: UsageKind::Caption,
+            provider: "openrouter".into(),
+            model: model.into(),
+            usage,
+            turn_id: None,
+            image_asset_id: None,
+            duration_ms: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, PartialEq)]
@@ -97,4 +111,30 @@ pub struct ImageCost {
 pub struct StoryCostBreakdown {
     pub turns: Vec<TurnCost>,
     pub images: Vec<ImageCost>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn caption_preserves_call_usage_without_turn_or_asset_binding() {
+        let usage = CallUsage {
+            response_id: Some("caption-response".into()),
+            input_tokens: 80,
+            output_tokens: 10,
+            cached_input_tokens: 20,
+            cache_write_tokens: 2,
+            cost_usd: Some(0.002),
+        };
+        let record = UsageRecord::caption("caption-model", usage.clone());
+        assert_eq!(record.kind, UsageKind::Caption);
+        assert_eq!(record.kind.as_str(), "caption");
+        assert_eq!(record.provider, "openrouter");
+        assert_eq!(record.model, "caption-model");
+        assert_eq!(record.usage, usage);
+        assert_eq!(record.turn_id, None);
+        assert_eq!(record.image_asset_id, None);
+        assert_eq!(record.duration_ms, None);
+    }
 }

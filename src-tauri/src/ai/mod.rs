@@ -561,6 +561,28 @@ where
     (output, usage)
 }
 
+/// One vision call that describes an image in words.
+pub async fn describe_image(
+    config: &TextModelConfig, prompt: &str, media_type: &str, bytes: &[u8],
+) -> (AppResult<String>, Vec<CallUsage>) {
+    let Some(media_type) = ImageMediaType::from_mime_type(media_type) else {
+        return (Err(AppError::Invalid(format!("unsupported caption image MIME type: {media_type}"))), Vec::new());
+    };
+    let agent = match build_agent(config, "", Vec::new(), None) {
+        Ok(agent) => agent,
+        Err(error) => return (Err(error), Vec::new()),
+    };
+    let message = Message::User { content: vec![
+        UserContent::text(prompt),
+        UserContent::image_base64(STANDARD.encode(bytes), Some(media_type), None),
+    ] };
+    let sink = Arc::new(Mutex::new(Vec::new()));
+    let output = agent.prompt(message).add_hook(UsageHook { sink: sink.clone() })
+        .await.map_err(|e| AppError::Other(format!("caption prompt failed: {e}")));
+    let usage = std::mem::take(&mut *sink.lock().unwrap_or_else(|e| e.into_inner()));
+    (output, usage)
+}
+
 /// Model round-trips a tool-calling turn may take. Rig's builder defaults to
 /// `max_turns: 1`, which aborts the whole turn the moment the model calls any
 /// tool (`MaxTurnsError`) — it never gets to see the tool result and narrate.

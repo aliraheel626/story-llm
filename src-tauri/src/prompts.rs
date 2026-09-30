@@ -88,6 +88,21 @@ pub const ROLL_CHECK_AVAILABLE_INSTRUCTION: &str = "For a genuinely uncertain ou
 
 // Title generation
 
+pub fn caption_prompt(character_names: &[&str]) -> String {
+    let mut prompt = "Describe this story illustration in 2-3 plain sentences for a narrator who cannot see it. State only what is visible: who and what is in the frame, clothing, expressions, positions, the setting, lighting and notable objects. Don't interpret the story, and don't mention the art style.".to_string();
+    if !character_names.is_empty() {
+        prompt.push_str(&format!("\nCharacters who may appear: {}. Use a name only when a figure clearly matches; otherwise describe the figure.", character_names.join(", ")));
+    }
+    prompt
+}
+
+#[cfg(test)]
+#[test]
+fn caption_names_are_optional() {
+    assert!(!caption_prompt(&[]).contains("Characters who may appear"));
+    assert!(caption_prompt(&["Mira", "Varro"]).contains("Characters who may appear: Mira, Varro."));
+}
+
 pub const TITLE_SYSTEM_PROMPT: &str =
     "You name interactive stories. Given the opening of a story, give it \
 a short, evocative title of 2 to 5 words that fits its tone and language. Respond with the \

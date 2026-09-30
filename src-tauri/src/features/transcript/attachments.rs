@@ -9,6 +9,7 @@ fn row_to_image(row: &rusqlite::Row) -> rusqlite::Result<StoryImage> {
         entry_id: row.get(1)?,
         prompt: row.get(2)?,
         created_at: row.get(3)?,
+        caption: row.get(4)?,
     })
 }
 
@@ -17,11 +18,15 @@ pub(crate) fn images_for_story(
     story_id: &str,
 ) -> AppResult<Vec<StoryImage>> {
     let mut stmt = conn.prepare(
-        "SELECT image_assets.id, image_assets.entry_id, image_assets.prompt, image_assets.created_at
+        "SELECT image_assets.id, image_assets.entry_id, image_assets.prompt, image_assets.created_at,
+           (SELECT json_extract(caption.payload_json, '$.caption') FROM transcript_entries AS caption
+            WHERE caption.story_id = ?1 AND caption.kind = ?2
+              AND json_extract(caption.payload_json, '$.asset_id') = image_assets.id
+            ORDER BY caption.seq DESC LIMIT 1)
          FROM image_assets JOIN transcript_entries ON transcript_entries.id = image_assets.entry_id
          WHERE transcript_entries.story_id = ?1 ORDER BY image_assets.created_at ASC",
     )?;
-    let rows = stmt.query_map([story_id], row_to_image)?;
+    let rows = stmt.query_map([story_id, transcript_kind::IMAGE_CAPTIONED], row_to_image)?;
     Ok(rows.collect::<Result<Vec<_>, _>>()?)
 }
 
@@ -102,11 +107,16 @@ pub fn detach_from_entry(tx: &rusqlite::Transaction<'_>, entry_id: &str) -> AppR
     let asset_ids = image_ids_for_entry(tx, entry_id)?;
     if !asset_ids.is_empty() {
         let events = {
-            let mut stmt =
-                tx.prepare("SELECT id, payload_json FROM transcript_entries WHERE kind = ?1")?;
-            let rows = stmt.query_map([transcript_kind::IMAGE_GENERATED], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-            })?;
+            let mut stmt = tx.prepare(
+                "SELECT id, payload_json FROM transcript_entries WHERE kind IN (?1, ?2)",
+            )?;
+            let rows = stmt.query_map(
+                [
+                    transcript_kind::IMAGE_GENERATED,
+                    transcript_kind::IMAGE_CAPTIONED,
+                ],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            )?;
             rows.collect::<Result<Vec<_>, _>>()?
         };
         for (event_id, payload) in events {
@@ -130,6 +140,60 @@ pub fn delete_asset_by_id(conn: &rusqlite::Connection, asset_id: &str) -> AppRes
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::shared::test_support;
+    use serde_json::json;
+
+    #[test]
+    fn story_images_read_latest_caption_by_asset_and_leave_uncaptioned_images_none() {
+        let pool = crate::shared::db::test_pool();
+        let conn = pool.get().unwrap();
+        test_support::story(&conn, "s");
+        test_support::story(&conn, "other");
+        let entry_id = test_support::record(
+            &conn, "s", transcript_kind::NARRATION, Some("scene"), json!({}), None, None,
+        );
+        for id in ["asset-1", "asset-2", "asset-3"] {
+            insert_image(
+                &conn,
+                &StoryImage {
+                    id: id.into(),
+                    entry_id: entry_id.clone(),
+                    prompt: format!("prompt {id}"),
+                    caption: None,
+                    created_at: id.into(),
+                },
+                "image/png",
+                b"image",
+            )
+            .unwrap();
+        }
+        for (story, kind, asset, content) in [
+            ("s", transcript_kind::IMAGE_CAPTIONED, "asset-1", "old caption"),
+            ("s", transcript_kind::IMAGE_CAPTIONED, "asset-2", "second caption"),
+            ("s", transcript_kind::IMAGE_CAPTIONED, "asset-1", "latest caption"),
+            ("s", transcript_kind::IMAGE_GENERATED, "asset-3", "not a caption"),
+            ("other", transcript_kind::IMAGE_CAPTIONED, "asset-1", "wrong story"),
+        ] {
+            test_support::record(
+                &conn, story, kind, Some(&format!("The generated scene image shows: {content}")), json!({"asset_id":asset,"caption":content}), None, None,
+            );
+        }
+
+        let images = images_for_story(&conn, "s").unwrap();
+        assert_eq!(images.len(), 3);
+        for (image, id, caption) in [
+            (&images[0], "asset-1", Some("latest caption")),
+            (&images[1], "asset-2", Some("second caption")),
+            (&images[2], "asset-3", None),
+        ] {
+            assert_eq!(image.id, id);
+            assert_eq!(image.entry_id, entry_id);
+            assert_eq!(image.prompt, format!("prompt {id}"));
+            assert_eq!(image.created_at, id);
+            assert_eq!(image.caption.as_deref(), caption);
+        }
+        assert!(images_for_story(&conn, "other").unwrap().is_empty());
+    }
 
     #[test]
     fn detaching_an_entry_removes_only_its_images_and_events() {
@@ -147,9 +211,13 @@ mod tests {
              INSERT INTO transcript_entries (id, story_id, seq, kind, visibility, payload_json, created_at)
                VALUES ('event-1', 's', 3, 'image_generated', 'hidden', '{"asset_id":"asset-1"}', 'now'),
                       ('event-2', 's', 4, 'image_generated', 'hidden', '{"asset_id":"asset-2"}', 'now'),
-                      ('event-3', 's', 5, 'content_edited', 'hidden', '{}', 'now'),
+                      ('event-3', 's', 5, 'content_edited', 'hidden', '{"asset_id":"asset-1"}', 'now'),
                       ('event-4', 's', 6, 'image_generated', 'hidden', '{"asset_id":"asset-1"}', 'now'),
-                      ('event-5', 's', 7, 'image_generated', 'hidden', '{"asset_id":"asset-2"}', 'now');"#,
+                      ('event-5', 's', 7, 'image_generated', 'hidden', '{"asset_id":"asset-2"}', 'now');
+             INSERT INTO transcript_entries (id, story_id, seq, kind, visibility, content, payload_json, created_at)
+               VALUES ('caption-1', 's', 8, 'image_captioned', 'hidden', 'first caption', '{"asset_id":"asset-1","caption":"first caption"}', 'now'),
+                      ('caption-2', 's', 9, 'image_captioned', 'hidden', 'second caption', '{"asset_id":"asset-2","caption":"second caption"}', 'now'),
+                      ('caption-3', 's', 10, 'image_captioned', 'hidden', 'revised first caption', '{"asset_id":"asset-1","caption":"revised first caption"}', 'now');"#,
         )
         .unwrap();
 
@@ -173,7 +241,11 @@ mod tests {
             .unwrap()
             .collect::<Result<_, _>>()
             .unwrap();
-        assert_eq!(event_ids, vec!["entry-1", "entry-2", "event-2", "event-3", "event-5"]);
+        assert_eq!(event_ids, vec!["caption-2", "entry-1", "entry-2", "event-2", "event-3", "event-5"]);
+        let images = images_for_story(&tx, "s").unwrap();
+        assert_eq!(images.len(), 1);
+        assert_eq!(images[0].id, "asset-2");
+        assert_eq!(images[0].caption.as_deref(), Some("second caption"));
         delete_asset_by_id(&tx, "asset-2").unwrap();
         delete_asset_by_id(&tx, "asset-2").unwrap();
         tx.commit().unwrap();

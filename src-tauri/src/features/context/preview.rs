@@ -175,6 +175,7 @@ mod tests {
         attachments::insert_image(
             &conn,
             &crate::features::transcript::model::StoryImage {
+                caption: None,
                 id: "asset".into(),
                 entry_id: narration.id,
                 prompt: "picture".into(),

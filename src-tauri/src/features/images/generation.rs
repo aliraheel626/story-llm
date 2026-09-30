@@ -14,11 +14,13 @@ use crate::features::usage::repository::{record_late, LATE_REPLY_LIMIT};
 use crate::features::turn::TurnTx;
 use crate::shared::db::Pool;
 use crate::shared::error::{AppError, AppResult};
+use crate::{ai::{self, CallUsage, TextModelConfig}, prompts};
 
 use super::model::{ImageRequest, StoryImage};
 use super::openrouter;
 
 const IMAGE_TIMEOUT: Duration = Duration::from_secs(120);
+const CAPTION_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub(crate) struct ImageTarget {
     pub entry_id: String,
@@ -134,10 +136,67 @@ async fn generate_from_description(
     };
     let duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
     turn.record_usage(UsageRecord::image(&settings.model, generated.cost_usd, Some(asset_id.clone()), Some(duration_ms)));
-    turn.with_savepoint(|conn| {
+    let (media_type, bytes) = (generated.media_type.clone(), generated.bytes.clone());
+    let mut image = turn.with_savepoint(|conn| {
         persist_and_store_image(conn, &asset_id, target, description, prompt, generated)
     })
-    .await
+    .await?;
+    if settings.captions_enabled {
+        let names: Vec<&str> = characters.iter().map(|(name, _)| name.as_str()).collect();
+        caption_image(turn, &settings.caption_model, &api_key, target, &mut image, &names, &media_type, bytes).await;
+    }
+    Ok(image)
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn caption_image(
+    turn: &TurnTx, model: &str, api_key: &str, target: &ImageTarget,
+    image: &mut StoryImage, names: &[&str], media_type: &str, bytes: Vec<u8>,
+) {
+    let config = TextModelConfig { provider: "openrouter".into(), model: model.into(),
+        api_key: api_key.into(), context_window: 0, supports_images: true };
+    let prompt = prompts::caption_prompt(names);
+    let media_type = media_type.to_string();
+    let mut request = tauri::async_runtime::spawn(async move {
+        ai::describe_image(&config, &prompt, &media_type, &bytes).await
+    });
+    let result = match timeout(CAPTION_TIMEOUT, &mut request).await {
+        Ok(Ok((result, usages))) => {
+            for usage in usages { turn.record_usage(UsageRecord::caption(model, usage)); }
+            result
+        }
+        Ok(Err(error)) => { log::warn!("caption task failed for {}: {error}", image.id); return; }
+        Err(_) => {
+            request.abort();
+            turn.record_usage(UsageRecord::caption(model, CallUsage::default()));
+            log::warn!("caption timed out for {}", image.id);
+            return;
+        }
+    };
+    let caption = match result {
+        Ok(text) if !text.trim().is_empty() => text.trim().chars().take(1000).collect::<String>(),
+        Ok(_) => { log::warn!("caption was empty for {}", image.id); return; }
+        Err(error) => { log::warn!("caption failed for {}: {error}", image.id); return; }
+    };
+    if let Err(error) = turn.with_savepoint(|conn| persist_caption(conn, target, &image.id, model, &caption)).await {
+        log::warn!("caption could not be saved for {}: {error}", image.id);
+        return;
+    }
+    image.caption = Some(caption);
+}
+
+fn persist_caption(
+    conn: &rusqlite::Connection, target: &ImageTarget, asset_id: &str, model: &str, caption: &str,
+) -> AppResult<()> {
+    let base = transcript_repository::get_entry(conn, &target.entry_id)?;
+    transcript_repository::append_entry(
+        conn, &base.story_id, transcript_kind::IMAGE_CAPTIONED, "hidden",
+        Some(&format!("The generated scene image shows: {caption}")),
+        &serde_json::json!({"asset_id": asset_id, "model": model, "caption": caption}),
+        Some(target.source_action_id.as_deref().unwrap_or(&target.entry_id)),
+        Some(&target.turn_id),
+    )?;
+    Ok(())
 }
 
 fn persist_and_store_image(
@@ -155,6 +214,7 @@ fn persist_and_store_image(
         entry_id: target.entry_id.clone(),
         prompt,
         created_at: now,
+        caption: None,
     };
     persist_image_record(conn, target, description, &image, &generated)?;
     Ok(image)
@@ -258,6 +318,30 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn caption_commit_and_failed_savepoint_preserve_image() {
+        let (pool, turn, turn_id, entry_id) = turn_fixture().await;
+        let target = ImageTarget { entry_id, source_action_id: None, turn_id: turn_id.clone() };
+        turn.with_savepoint(|conn| persist_and_store_image(conn, "captioned", &target, "scene", "scene".into(),
+            openrouter::GeneratedImage { bytes: vec![1], media_type: "image/png".into(), cost_usd: None })).await.unwrap();
+        let bad_target = ImageTarget { source_action_id: Some("missing".into()), entry_id: target.entry_id.clone(), turn_id: turn_id.clone() };
+        assert!(turn.with_savepoint(|conn| persist_caption(conn, &bad_target, "captioned", "vision", "A room.")).await.is_err());
+        turn.with(|conn| {
+            assert_eq!(conn.query_row("SELECT COUNT(*) FROM image_assets", [], |r| r.get::<_, i64>(0))?, 1);
+            assert_eq!(conn.query_row("SELECT COUNT(*) FROM transcript_entries WHERE kind='image_captioned'", [], |r| r.get::<_, i64>(0))?, 0);
+            Ok(())
+        }).await.unwrap();
+        turn.with_savepoint(|conn| persist_caption(conn, &target, "captioned", "vision", "A room.")).await.unwrap();
+        assert_eq!(pool.get().unwrap().query_row("SELECT COUNT(*) FROM transcript_entries WHERE kind='image_captioned'", [], |r| r.get::<_, i64>(0)).unwrap(), 0);
+        turn.commit().await.unwrap();
+        let conn = pool.get().unwrap();
+        let (payload, owner, visibility): (String, String, String) = conn.query_row("SELECT payload_json, turn_id, visibility FROM transcript_entries WHERE kind='image_captioned'", [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).unwrap();
+        assert_eq!((owner.as_str(), visibility.as_str()), (turn_id.as_str(), "hidden"));
+        let payload: serde_json::Value = serde_json::from_str(&payload).unwrap();
+        assert_eq!(payload["asset_id"], "captioned");
+        assert_eq!(payload["caption"], "A room.");
+    }
+
+    #[tokio::test]
     async fn persisted_image_is_private_until_turn_commit() {
         let (pool, turn, turn_id, entry_id) = turn_fixture().await;
         let generated = openrouter::GeneratedImage {
@@ -336,6 +420,7 @@ mod tests {
             entry_id: entry_id.clone(),
             prompt: "the scene".into(),
             created_at: "now".into(),
+            caption: None,
         };
         let target = ImageTarget {
             entry_id,

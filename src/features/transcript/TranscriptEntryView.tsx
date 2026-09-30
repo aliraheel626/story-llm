@@ -182,9 +182,9 @@ export function TranscriptEntryView({ entry, storyId, isLast, retryEntryId, canR
         const tooltip = `Image cost and generation time.${seeTurn
           ? ` See turn total ${formatUsd(seeTurn.total_cost_usd)}, including ${formatUsd(seeTurn.text_cost_usd)} to plan the image.` : ""}`;
         return <div key={image.id} className="flex flex-col gap-1">
-          <img src={convertFileSrc(image.id, "storyimg")} alt={image.prompt} className="w-full rounded border border-border object-cover" />
+          <img src={convertFileSrc(image.id, "storyimg")} alt={image.caption ?? image.prompt} className="w-full rounded border border-border object-cover" />
           <div className="flex items-center justify-between gap-2">
-            <ImageCaption prompt={image.prompt} />
+            <ImageCaption prompt={image.prompt} caption={image.caption} />
             {cost && <span className="text-[11px] text-muted tabular-nums" title={tooltip}>
               {cost.cost_usd === null ? "cost unknown" : formatUsd(cost.cost_usd)}
               {cost.duration_ms !== null && ` · ${formatSeconds(cost.duration_ms)}`}
@@ -225,16 +225,20 @@ export function TranscriptEntryView({ entry, storyId, isLast, retryEntryId, canR
   );
 }
 
-function ImageCaption({ prompt }: { prompt: string }) {
+function ImageCaption({ prompt, caption }: { prompt: string; caption: string | null }) {
   const [open, setOpen] = useState(false);
   return (
     <div className="text-[11px] text-muted">
       <button onClick={() => setOpen((v) => !v)} className="flex items-center gap-1 hover:text-text">
         <span>🖼</span>
-        <span>Image prompt</span>
+        <span>{caption ? "Image details" : "Image prompt"}</span>
         <span className="text-muted">{open ? "▲" : "▼"}</span>
       </button>
-      {open && <p className="mt-1 whitespace-pre-wrap rounded border border-border bg-bg px-2.5 py-2 leading-5">{prompt}</p>}
+      {open && <div className="mt-1 whitespace-pre-wrap rounded border border-border bg-bg px-2.5 py-2 leading-5">
+        {caption && <div className="mb-2"><strong className="block">What was drawn</strong><p>{caption}</p></div>}
+        {caption && <strong className="block">Prompt</strong>}
+        <p>{prompt}</p>
+      </div>}
     </div>
   );
 }

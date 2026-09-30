@@ -65,8 +65,8 @@ pub fn move_to_turn(conn: &Connection, story_id: &str, old: &str, new: &str) -> 
 pub fn story_usage(conn: &Connection, story_id: &str) -> AppResult<StoryUsage> {
     let mut usage = conn.query_row(
         "SELECT
-           COALESCE(SUM(CASE WHEN kind <> 'image' THEN cost_usd END), 0),
-           COALESCE(SUM(CASE WHEN kind = 'image' THEN cost_usd END), 0),
+           COALESCE(SUM(CASE WHEN kind NOT IN ('image', 'caption') THEN cost_usd END), 0),
+           COALESCE(SUM(CASE WHEN kind IN ('image', 'caption') THEN cost_usd END), 0),
            COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0),
            COALESCE(SUM(cached_input_tokens), 0), COALESCE(SUM(cache_write_tokens), 0),
            COUNT(CASE WHEN kind = 'image' AND cost_usd IS NOT NULL THEN 1 END),
@@ -95,8 +95,8 @@ pub fn story_usage(conn: &Connection, story_id: &str) -> AppResult<StoryUsage> {
 pub fn cost_breakdown(conn: &Connection, story_id: &str) -> AppResult<StoryCostBreakdown> {
     let mut stmt = conn.prepare(
         "SELECT turn_id,
-           COALESCE(SUM(CASE WHEN kind <> 'image' THEN cost_usd END), 0),
-           COALESCE(SUM(CASE WHEN kind = 'image' THEN cost_usd END), 0),
+           COALESCE(SUM(CASE WHEN kind NOT IN ('image', 'caption') THEN cost_usd END), 0),
+           COALESCE(SUM(CASE WHEN kind IN ('image', 'caption') THEN cost_usd END), 0),
            COALESCE(SUM(CASE WHEN earlier_attempt = 1 THEN cost_usd END), 0),
            COUNT(CASE WHEN cost_usd IS NULL THEN 1 END)
          FROM usage_records WHERE story_id = ?1 AND turn_id IS NOT NULL
@@ -168,6 +168,74 @@ mod tests {
 
     fn near(actual: f64, expected: f64) {
         assert!((actual - expected).abs() < 1e-9, "{actual} != {expected}");
+    }
+
+    #[test]
+    fn captions_add_image_cost_but_not_image_count_or_per_asset_cost() {
+        let pool = db::test_pool();
+        let conn = pool.get().unwrap();
+        test_support::story(&conn, "s");
+        test_support::story(&conn, "other");
+        let caption = UsageRecord::caption("caption-model", CallUsage {
+            cost_usd: Some(0.002),
+            input_tokens: 80,
+            output_tokens: 10,
+            cached_input_tokens: 20,
+            ..CallUsage::default()
+        });
+        insert(&conn, "s", &caption, false).unwrap();
+        let usage = story_usage(&conn, "s").unwrap();
+        near(usage.text_cost_usd, 0.0);
+        near(usage.image_cost_usd, 0.002);
+        near(usage.total_cost_usd, 0.002);
+        assert_eq!(usage.image_count, 0);
+        assert_eq!(cost_breakdown(&conn, "s").unwrap(), StoryCostBreakdown::default());
+
+        let mut narration = text(UsageKind::Narration, Some(0.010), 0, 0, 0, 0);
+        narration.turn_id = Some("t1".into());
+        insert(&conn, "s", &narration, false).unwrap();
+        let mut image = UsageRecord::image("image-model", Some(0.040), Some("asset".into()), Some(200));
+        image.turn_id = Some("t1".into());
+        insert(&conn, "s", &image, false).unwrap();
+        let mut caption = UsageRecord::caption("caption-model", CallUsage {
+            cost_usd: Some(0.003),
+            input_tokens: 30,
+            output_tokens: 5,
+            cache_write_tokens: 2,
+            ..CallUsage::default()
+        });
+        caption.turn_id = Some("t1".into());
+        insert(&conn, "s", &caption, true).unwrap();
+        insert(&conn, "s", &UsageRecord::caption("caption-model", CallUsage::default()), false).unwrap();
+        insert(&conn, "other", &UsageRecord::caption("caption-model", CallUsage {
+            cost_usd: Some(0.5),
+            ..CallUsage::default()
+        }), false).unwrap();
+
+        let usage = story_usage(&conn, "s").unwrap();
+        near(usage.text_cost_usd, 0.010);
+        near(usage.image_cost_usd, 0.045);
+        near(usage.total_cost_usd, 0.055);
+        assert_eq!((usage.image_count, usage.unpriced_calls), (1, 1));
+        assert_eq!(
+            (usage.input_tokens, usage.output_tokens, usage.cached_input_tokens, usage.cache_write_tokens),
+            (110, 15, 20, 2)
+        );
+        let breakdown = cost_breakdown(&conn, "s").unwrap();
+        assert_eq!(breakdown.turns.len(), 1);
+        let turn = &breakdown.turns[0];
+        assert_eq!(turn.turn_id, "t1");
+        near(turn.text_cost_usd, 0.010);
+        near(turn.image_cost_usd, 0.043);
+        near(turn.total_cost_usd, 0.053);
+        near(turn.earlier_attempts_cost_usd, 0.003);
+        assert_eq!(turn.unpriced_calls, 0);
+        assert_eq!(breakdown.images, [ImageCost {
+            asset_id: "asset".into(),
+            turn_id: Some("t1".into()),
+            cost_usd: Some(0.040),
+            duration_ms: Some(200),
+        }]);
     }
 
     #[test]

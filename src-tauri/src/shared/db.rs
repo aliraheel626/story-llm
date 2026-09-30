@@ -172,7 +172,7 @@ fn create_schema(conn: &mut PooledConn) -> AppResult<()> {
         CREATE TABLE IF NOT EXISTS usage_records (
             id TEXT PRIMARY KEY,
             story_id TEXT NOT NULL REFERENCES stories(id) ON DELETE CASCADE,
-            kind TEXT NOT NULL CHECK (kind IN ('narration', 'summary', 'title', 'image')),
+            kind TEXT NOT NULL CHECK (kind IN ('narration', 'summary', 'title', 'image', 'caption')),
             provider TEXT NOT NULL,
             model TEXT NOT NULL,
             response_id TEXT,

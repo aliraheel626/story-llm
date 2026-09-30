@@ -412,7 +412,15 @@ mod tests {
         assert!(!defaults.includes("action.see"));
         assert!(defaults.includes("action.do"));
         assert!(defaults.includes("record.diceroll"));
+        assert!(defaults.includes("record.image_captioned"));
         assert!(!defaults.includes("record.context_note_updated"));
+        let caption = defaults
+            .items()
+            .into_iter()
+            .find(|item| item.key == "record.image_captioned")
+            .unwrap();
+        assert_eq!(caption.label, "Image captions");
+        assert!(caption.enabled);
         let record_keys: Vec<String> = defaults.items()
             .into_iter()
             .filter(|item| item.group == "Records")

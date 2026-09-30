@@ -6,6 +6,8 @@ pub struct StoryImage {
     pub id: String,
     pub entry_id: String,
     pub prompt: String,
+    #[serde(default)]
+    pub caption: Option<String>,
     pub created_at: String,
 }
 
@@ -68,6 +70,7 @@ pub mod kind {
     pub const ENTITY_ATTRIBUTE_CHANGED: &str = "entity_attribute_changed";
     pub const ENTITY_ATTRIBUTE_REMOVED: &str = "entity_attribute_removed";
     pub const IMAGE_GENERATED: &str = "image_generated";
+    pub const IMAGE_CAPTIONED: &str = "image_captioned";
     pub const CONTEXT_SUMMARY: &str = "context_summary";
     pub const CONTEXT_NOTE_UPDATED: &str = "context_note_updated";
 
@@ -76,6 +79,7 @@ pub mod kind {
     pub const RECORD_KINDS: &[&str] = &[
         DICEROLL,
         IMAGE_GENERATED,
+        IMAGE_CAPTIONED,
         TOOL_CALL,
         ENTITY_CREATED,
         ENTITY_QUERIED,
@@ -91,6 +95,21 @@ pub mod kind {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn story_image_caption_defaults_to_none_and_round_trips() {
+        let mut value = json!({"id":"asset","entry_id":"entry","prompt":"scene","created_at":"now"});
+        let image: StoryImage = serde_json::from_value(value.clone()).unwrap();
+        assert_eq!(image.caption, None);
+
+        value["caption"] = json!("A lantern lights the stone corridor.");
+        let image: StoryImage = serde_json::from_value(value.clone()).unwrap();
+        assert_eq!(
+            image.caption.as_deref(),
+            Some("A lantern lights the stone corridor.")
+        );
+        assert_eq!(serde_json::to_value(image).unwrap(), value);
+    }
 
     #[test]
     fn role_and_input_mode_follow_story_entry_defaults() {
