@@ -149,8 +149,15 @@ pub fn read_image_model_settings(app: &AppHandle, pool: &Pool) -> AppResult<Imag
         )
         .ok();
 
-    let (model, enabled, style) = stored
-        .and_then(|v| serde_json::from_str::<serde_json::Value>(&v).ok())
+    let (model, enabled, style, captions_enabled, caption_model) = image_model_fields(stored.as_deref());
+    let has_api_key = has_api_key(app, "openrouter")?;
+    Ok(ImageModelSettings { model, enabled, style, captions_enabled, caption_model, has_api_key })
+}
+
+fn image_model_fields(stored: Option<&str>) -> (String, bool, String, bool, String) {
+    use crate::features::images::openrouter::DEFAULT_CAPTION_MODEL;
+    stored
+        .and_then(|v| serde_json::from_str::<serde_json::Value>(v).ok())
         .map(|v| {
             let model = v
                 .get("model")
@@ -163,24 +170,20 @@ pub fn read_image_model_settings(app: &AppHandle, pool: &Pool) -> AppResult<Imag
                 .and_then(|s| s.as_str())
                 .unwrap_or(DEFAULT_IMAGE_STYLE)
                 .to_string();
-            (model, enabled, style)
+            let captions_enabled = v.get("captions_enabled").and_then(|e| e.as_bool()).unwrap_or(true);
+            let caption_model = v.get("caption_model").and_then(|m| m.as_str())
+                .map(str::trim).filter(|m| !m.is_empty()).unwrap_or(DEFAULT_CAPTION_MODEL).to_string();
+            (model, enabled, style, captions_enabled, caption_model)
         })
         .unwrap_or_else(|| {
             (
                 crate::features::images::openrouter::DEFAULT_IMAGE_MODEL.to_string(),
                 true,
                 DEFAULT_IMAGE_STYLE.to_string(),
+                true,
+                DEFAULT_CAPTION_MODEL.to_string(),
             )
-        });
-
-    let has_api_key = has_api_key(app, "openrouter")?;
-
-    Ok(ImageModelSettings {
-        model,
-        enabled,
-        style,
-        has_api_key,
-    })
+        })
 }
 
 pub(super) fn write_image_model_settings(
@@ -188,6 +191,8 @@ pub(super) fn write_image_model_settings(
     model: String,
     enabled: bool,
     style: String,
+    captions_enabled: bool,
+    caption_model: String,
 ) -> AppResult<()> {
     let conn = pool.get()?;
     let style = if style.trim().is_empty() {
@@ -195,7 +200,11 @@ pub(super) fn write_image_model_settings(
     } else {
         style.trim().to_string()
     };
-    let value = json!({ "model": model, "enabled": enabled, "style": style }).to_string();
+    let caption_model = if caption_model.trim().is_empty() {
+        crate::features::images::openrouter::DEFAULT_CAPTION_MODEL
+    } else { caption_model.trim() };
+    let value = json!({ "model": model, "enabled": enabled, "style": style,
+        "captions_enabled": captions_enabled, "caption_model": caption_model }).to_string();
     conn.execute(
         "INSERT INTO settings (key, value) VALUES (?1, ?2)
          ON CONFLICT(key) DO UPDATE SET value = excluded.value",
@@ -207,6 +216,23 @@ pub(super) fn write_image_model_settings(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn caption_settings_default_and_round_trip() {
+        use crate::features::images::openrouter::DEFAULT_CAPTION_MODEL;
+        for row in [None, Some("{}"), Some(r#"{"caption_model":"   "}"#)] {
+            let fields = image_model_fields(row);
+            assert!(fields.3);
+            assert_eq!(fields.4, DEFAULT_CAPTION_MODEL);
+        }
+        let pool = crate::shared::db::test_pool();
+        for (enabled, model, expected) in [(true, "", DEFAULT_CAPTION_MODEL), (false, " custom/vision ", "custom/vision")] {
+            write_image_model_settings(&pool, "image".into(), true, "".into(), enabled, model.into()).unwrap();
+            let row: String = pool.get().unwrap().query_row("SELECT value FROM settings WHERE key=?1", [SETTINGS_KEY_IMAGE_MODEL], |r| r.get(0)).unwrap();
+            let fields = image_model_fields(Some(&row));
+            assert_eq!((fields.3, fields.4.as_str()), (enabled, expected));
+        }
+    }
 
     #[test]
     fn new_install_uses_grok_4_7_without_a_settings_row() {

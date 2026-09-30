@@ -9,6 +9,7 @@ export interface SettingsState<T, Args extends unknown[]> {
   settings: T | null;
   loading: boolean;
   saving: boolean;
+  error: string | null;
   load: () => Promise<void>;
   save: (...args: Args) => Promise<void>;
 }
@@ -24,6 +25,7 @@ export function createSettingsStore<T, Args extends unknown[]>(
     settings: null,
     loading: false,
     saving: false,
+    error: null,
     load: async () => {
       const version = ++requestVersion;
       set({ loading: true });
@@ -39,7 +41,7 @@ export function createSettingsStore<T, Args extends unknown[]>(
     },
     save: async (...args) => {
       ++requestVersion;
-      set({ saving: true, loading: false });
+      set({ saving: true, loading: false, error: null });
       try {
         await api.save(...args);
         const version = ++requestVersion;
@@ -48,7 +50,7 @@ export function createSettingsStore<T, Args extends unknown[]>(
         if (version === requestVersion) set({ settings, saving: false });
         else set({ saving: false });
       } catch (error) {
-        set({ saving: false });
+        set({ saving: false, error: String(error) });
         throw error;
       }
     },

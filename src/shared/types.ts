@@ -67,7 +67,7 @@ export interface NarrationErrorPayload { stream_id: string; story_id: string; me
 export interface NarrationToolActivityPayload { stream_id: string; call_id: string; label: string; phase: "started" | "finished"; ok: boolean | null }
 
 export interface TextModelSettings { provider: string; model: string; has_api_key: boolean; context_window: number; supports_images: boolean }
-export interface ImageModelSettings { model: string; enabled: boolean; style: string; has_api_key: boolean }
+export interface ImageModelSettings { model: string; enabled: boolean; style: string; has_api_key: boolean; captions_enabled: boolean; caption_model: string }
 export interface TranscriptItem { key: string; group: string; label: string; enabled: boolean }
 export interface ContextSettings {
   entities: "none" | "all" | "scoped";

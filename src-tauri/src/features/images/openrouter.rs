@@ -10,6 +10,7 @@ use crate::shared::error::{AppError, AppResult};
 
 const IMAGES_ENDPOINT: &str = "https://openrouter.ai/api/v1/images";
 pub const DEFAULT_IMAGE_MODEL: &str = "google/gemini-3.1-flash-image-preview";
+pub const DEFAULT_CAPTION_MODEL: &str = "google/gemini-3.5-flash-lite";
 
 pub struct GeneratedImage {
     pub bytes: Vec<u8>,

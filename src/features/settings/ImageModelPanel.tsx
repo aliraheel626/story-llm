@@ -19,6 +19,13 @@ const IMAGE_MODELS: { slug: string; label: string }[] = [
   { slug: "x-ai/grok-imagine-image-2.0", label: "Grok Imagine 2.0" },
 ];
 
+const CAPTION_MODELS: { slug: string; label: string }[] = [
+  { slug: "google/gemini-3.5-flash-lite", label: "Gemini 3.5 Flash Lite (default)" },
+  { slug: "google/gemini-3.8-flash", label: "Gemini 3.8 Flash (sharper)" },
+  { slug: "google/gemini-2.5-flash-lite", label: "Gemini 2.5 Flash Lite (cheapest)" },
+  { slug: "openai/gpt-5-nano", label: "GPT-5 nano" },
+];
+
 export function ImageModelPanel() {
   const textSettings = useTextModelStore((s) => s.settings);
 
@@ -26,11 +33,17 @@ export function ImageModelPanel() {
   const [enabled, setEnabled] = useState(true);
   const [style, setStyle] = useState("");
   const [customMode, setCustomMode] = useState(false);
-  const { settings, loading, saving, savedNotice, save } = useSettingsForm(useImageModelStore, (next) => {
+  const [captionsEnabled, setCaptionsEnabled] = useState(true);
+  const [captionModel, setCaptionModel] = useState("");
+  const [captionCustom, setCaptionCustom] = useState(false);
+  const { settings, loading, saving, savedNotice, save, error } = useSettingsForm(useImageModelStore, (next) => {
     setModel(next.model);
     setEnabled(next.enabled);
     setStyle(next.style);
     setCustomMode(!IMAGE_MODELS.some((candidate) => candidate.slug === next.model));
+    setCaptionsEnabled(next.captions_enabled);
+    setCaptionModel(next.caption_model);
+    setCaptionCustom(!CAPTION_MODELS.some((candidate) => candidate.slug === next.caption_model));
   });
 
   const onModelSelect = (value: string) => {
@@ -43,7 +56,7 @@ export function ImageModelPanel() {
   };
 
   const onSave = async () => {
-    await save(model.trim(), enabled, style.trim());
+    await save(model.trim(), enabled, style.trim(), captionsEnabled, captionModel.trim());
   };
 
   if (loading && !settings) {
@@ -111,17 +124,40 @@ export function ImageModelPanel() {
         />
       </div>
 
+      <section aria-labelledby="captions-heading" className="flex flex-col gap-2">
+        <h3 id="captions-heading" className="text-xs text-muted">Captions</h3>
+        <label className="flex items-center gap-2 text-xs text-muted">
+          <input type="checkbox" checked={captionsEnabled} onChange={(e) => setCaptionsEnabled(e.target.checked)} disabled={!enabled} className="accent-accent" />
+          Caption images
+        </label>
+        <div>
+          <label htmlFor="caption-model" className="block text-xs text-muted mb-1">Caption model</label>
+          <select id="caption-model" value={captionCustom ? "__custom__" : captionModel}
+            onChange={(e) => { setCaptionCustom(e.target.value === "__custom__"); if (e.target.value !== "__custom__") setCaptionModel(e.target.value); }}
+            disabled={!enabled || !captionsEnabled}
+            className="w-full rounded bg-bg border border-border px-2 py-1.5 text-sm text-text focus:outline-none focus:border-accent disabled:opacity-50">
+            {CAPTION_MODELS.map((m) => <option key={m.slug} value={m.slug}>{m.label}</option>)}
+            <option value="__custom__">Custom…</option>
+          </select>
+          {captionCustom && <input aria-label="Custom caption model" value={captionModel} onChange={(e) => setCaptionModel(e.target.value)} placeholder="provider/model"
+            disabled={!enabled || !captionsEnabled}
+            className="mt-1.5 w-full rounded bg-bg border border-border px-2 py-1.5 text-sm text-text placeholder:text-muted focus:outline-none focus:border-accent disabled:opacity-50" />}
+        </div>
+        <p className="text-xs text-muted">Describes each image in words, shown under the image. About $0.0006 per image. Whether the narrator sees captions is set per story under Context → Transcript.</p>
+      </section>
+
       <p className="text-xs text-muted">
         Uses OpenRouter, {hasKey ? <span className="text-success">key set</span> : <span className="text-danger">no key — set one in Text Model</span>}.
       </p>
 
       <button
         onClick={onSave}
-        disabled={saving || !model.trim()}
+        disabled={saving || !model.trim() || (captionsEnabled && !captionModel.trim())}
         className="mt-1 rounded bg-accent px-2 py-1.5 text-xs font-medium text-bg hover:bg-accent-hover disabled:opacity-40 transition-colors"
       >
         {saving ? "Saving..." : savedNotice ? "Saved" : "Save"}
       </button>
+      {error && <p role="alert" className="text-xs text-danger">{error}</p>}
     </div>
   );
 }

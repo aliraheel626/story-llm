@@ -9,6 +9,7 @@ export function useSettingsForm<T, Args extends unknown[]>(
   const settings = store((state) => state.settings);
   const loading = store((state) => state.loading);
   const saving = store((state) => state.saving);
+  const error = store((state) => state.error);
   const load = store((state) => state.load);
   const saveSettings = store((state) => state.save);
   const applySettingsRef = useRef(applySettings);
@@ -45,5 +46,5 @@ export function useSettingsForm<T, Args extends unknown[]>(
     }
   };
 
-  return { settings, loading, saving, savedNotice, save };
+  return { settings, loading, saving, savedNotice, save, error };
 }

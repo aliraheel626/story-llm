@@ -110,6 +110,12 @@ fn confirmed_image_support(support: Option<bool>) -> AppResult<bool> {
     support.ok_or_else(|| AppError::Other("model image capability metadata unavailable".into()))
 }
 
+/// `Some(false)` only when OpenRouter's listing says the model can't take images.
+pub(super) async fn openrouter_accepts_images(model: &str) -> Option<bool> {
+    fetch_model("https://openrouter.ai/api/v1/models", ("data", "id"), model, None)
+        .await.ok().as_ref().and_then(openrouter_image_support)
+}
+
 /// Settings saved before image support was recorded have no `supports_images`.
 /// Look it up once in the background without delaying app startup.
 pub async fn refresh_missing_capabilities(pool: Pool) -> bool {

@@ -23,6 +23,10 @@ pub struct ImageModelSettings {
     /// A style prefix folded into every generated prompt (e.g. "anime",
     /// "photorealistic") — see `commands::images::compose_image_prompt`.
     pub style: String,
+    /// Whether each generated image gets a caption.
+    pub captions_enabled: bool,
+    /// Vision model that writes the captions.
+    pub caption_model: String,
     /// Images reuse the OpenRouter key set in the Text Model panel — there is
     /// only one provider (OpenRouter) for both text and images.
     pub has_api_key: bool,

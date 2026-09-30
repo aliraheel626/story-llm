@@ -12,6 +12,6 @@ export const textModelApi = {
 
 export const imageModelApi = {
   get: () => invoke<ImageModelSettings>("get_image_model_settings"),
-  save: (model: string, enabled: boolean, style: string) =>
-    invoke<void>("save_image_model_settings", { model, enabled, style }),
+  save: (model: string, enabled: boolean, style: string, captionsEnabled: boolean, captionModel: string) =>
+    invoke<void>("save_image_model_settings", { model, enabled, style, captionsEnabled, captionModel }),
 };
