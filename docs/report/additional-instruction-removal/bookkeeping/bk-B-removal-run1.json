@@ -1,0 +1,584 @@
+{
+  "arm": "B-removal",
+  "run": 1,
+  "story_id": "cd02e86d-4c18-48f5-ac45-f539047c4a4b",
+  "database_mode": "ro",
+  "turns": [
+    {
+      "index": 1,
+      "mode": "story",
+      "content": "I step out of the rain into the Gilded Lantern inn. Behind the bar, a broad-shouldered woman named Hedda Grane polishes a tankard; she wears a leather apron and a brass key on a chain.",
+      "expected": "character: Hedda created",
+      "submit_error": null,
+      "turn_status": "complete",
+      "tools": [],
+      "tool_names": [],
+      "narration": "The door thumped shut behind you, cutting the rain to a muffled hiss. Warmth met you at once: woodsmoke, wet wool, and the sour-sweet breath of spilled ale. Lamps burned low along the beams, and the few patrons hunched over their cups did not look up.",
+      "seconds": 18.0
+    },
+    {
+      "index": 2,
+      "mode": "say",
+      "content": "\"Hedda, who's the old man dozing by the fire?\"",
+      "expected": "character: narrator-named old man created",
+      "submit_error": null,
+      "turn_status": "complete",
+      "tools": [
+        {
+          "tool": "save_character",
+          "ok": true,
+          "args": {
+            "appearance_anchor": "broad-shouldered woman with strong arms, practical face, hair pinned back, leather apron and a brass key on a chain",
+            "gender": "female",
+            "location": "behind the bar at the Gilded Lantern",
+            "name": "Hedda Grane",
+            "outfit": "leather apron, brass key on a chain",
+            "role": "innkeeper of the Gilded Lantern"
+          },
+          "result": {
+            "created": true,
+            "kind": "character",
+            "name": "Hedda Grane"
+          }
+        },
+        {
+          "tool": "save_character",
+          "ok": true,
+          "args": {
+            "age": "elderly",
+            "appearance_anchor": "thin elderly man, white stubble, deep-lined face, knit cap pulled low, patched gray coat",
+            "gender": "male",
+            "known_as": "the old man by the fire",
+            "location": "by the hearth at the Gilded Lantern",
+            "name": "Soren Pell",
+            "outfit": "patched gray wool coat, worn boots, a knit cap",
+            "role": "regular patron"
+          },
+          "result": {
+            "created": true,
+            "kind": "character",
+            "name": "Soren Pell"
+          }
+        },
+        {
+          "tool": "save_character",
+          "ok": true,
+          "args": {
+            "known_as": null,
+            "name": "Soren Pell"
+          },
+          "result": {
+            "created": false,
+            "kind": "character",
+            "name": "Soren Pell"
+          }
+        }
+      ],
+      "tool_names": [
+        "save_character",
+        "save_character",
+        "save_character"
+      ],
+      "narration": "You lean an elbow on the scarred bar. \"Hedda, who's the old man dozing by the fire?\"\n\nHedda does not look up at once. She turns the tankard once more under the cloth, then tips her chin toward the hearth, where a thin figure has folded into the chair like a coat left on a peg. A knit cap sits low over white stubble. His patched gray coat steams faintly, and one boot has slipped half off his heel.\n\n\"Soren Pell,\" she says, low enough that the room need not hear it. \"Comes in when the rain turns mean. Drinks one cup, sleeps through three, and never pays for the fourth because I don't pour it.\" The brass key at her throat ticks against the tankard. \"Leave him be, unless you've a reason. He dreams loud, and he doesn't like being woken for nothing.\"\n\nBy the fire, Soren's mouth works once, soundlessly, and his fingers twitch on the arm of the chair. The rain keeps its soft assault on the shutters.",
+      "seconds": 24.0
+    },
+    {
+      "index": 3,
+      "mode": "story",
+      "content": "A hooded figure in the far corner hasn't touched her drink. She's been watching me since I came in.",
+      "expected": "character: true name + known_as",
+      "submit_error": null,
+      "turn_status": "complete",
+      "tools": [
+        {
+          "tool": "save_character",
+          "ok": true,
+          "args": {
+            "appearance_anchor": "woman of indeterminate age, sharp pale eyes under a deep hood, a strand of dark hair, narrow face mostly shadowed, still hands around an untouched cup",
+            "gender": "female",
+            "known_as": "the hooded woman",
+            "location": "far corner of the Gilded Lantern",
+            "name": "Wren Calder",
+            "outfit": "dark hooded cloak, untouched drink before her",
+            "role": "watcher in the corner"
+          },
+          "result": {
+            "created": true,
+            "kind": "character",
+            "name": "Wren Calder"
+          }
+        },
+        {
+          "tool": "save_relationship",
+          "ok": true,
+          "args": {
+            "description": "Has not touched her drink and has been watching you since you came in out of the rain.",
+            "direction": "one_way",
+            "from": "Wren Calder",
+            "label": "watching",
+            "to": "You"
+          },
+          "result": {
+            "created": true,
+            "kind": "relationship",
+            "name": "Wren Calder → You: watching"
+          }
+        }
+      ],
+      "tool_names": [
+        "save_character",
+        "save_relationship"
+      ],
+      "narration": "The hooded woman sits where the lamplight fails, in the far corner past the last occupied table. Her cup stands full and still. She has not lifted it once since you came in out of the rain.\n\nYou feel it now that Hedda's voice has gone quiet: a steady attention, not the idle glance of a bored drinker. The hood is deep enough to swallow her face, but when a log shifts in the hearth a thread of light finds her eyes. They are pale, sharp, and fixed on you. A strand of dark hair has escaped along her jaw. Her hands rest on either side of the cup, unmoving, as if the drink were only an excuse to occupy the chair.\n\nSoren mutters in his sleep by the fire. Hedda sets the tankard down and follows your look, just for a moment. Her mouth tightens.\n\n\"That one came in ahead of the weather,\" she says, barely moving her lips. \"Hasn't given a name. Hasn't spent a coin either.\" The brass key ticks once against the bar. \"If she's watching you, she's been at it since the door closed. I'd decide whether you want that before you give her a reason to stand up.\"\n\nThe hooded woman does not look away. Rain ticks at the shutter beside her. The ale in her cup catches a dull gold and holds it, untouched.",
+      "seconds": 34.0
+    },
+    {
+      "index": 4,
+      "mode": "do",
+      "content": "While Hedda's back is turned, I try to pick the lock of the cellar door with a bent hairpin.",
+      "expected": "roll_check",
+      "submit_error": null,
+      "turn_status": "complete",
+      "tools": [
+        {
+          "tool": "roll_check",
+          "ok": true,
+          "args": {
+            "chance_percent": 35,
+            "reason": "Picking the cellar lock with only a bent hairpin while Hedda's back is turned"
+          },
+          "result": {
+            "chance_percent": 35,
+            "chance_source": "narrator",
+            "factors": [],
+            "needed": 65,
+            "outcome": "failure",
+            "reason": "Picking the cellar lock with only a bent hairpin while Hedda's back is turned",
+            "roll": 60,
+            "seed": 3000848019
+          }
+        },
+        {
+          "tool": "save_relationship",
+          "ok": true,
+          "args": {
+            "description": "Has been watching you since you came in, and just saw you try the cellar lock with a hairpin while Hedda's back was turned.",
+            "from": "Wren Calder",
+            "label": "watching",
+            "stats": [
+              {
+                "attribute": "Suspicion",
+                "delta": 2,
+                "reason": "Saw you attempt to pick the cellar lock."
+              }
+            ],
+            "to": "You"
+          },
+          "result": {
+            "created": false,
+            "kind": "relationship",
+            "name": "Wren Calder → You: watching",
+            "stats": [
+              {
+                "after": 7.0,
+                "attribute": "Suspicion",
+                "before": 5.0
+              }
+            ]
+          }
+        }
+      ],
+      "tool_names": [
+        "roll_check",
+        "save_relationship"
+      ],
+      "narration": "You wait until Hedda turns to the casks, then slip to the cellar door at the end of the bar. The hairpin is a poor thing for the work. You work it into the keyhole and feel for a catch that never quite comes.\n\nThe pin skates, bites, and springs back with a thin metallic tick. The lock holds. You try once more, slower, and the bent wire folds flatter against your thumb. Nothing gives. The door stays shut.\n\nHedda does not turn. She is still at the casks, cloth in hand, the brass key ticking softly against her apron as she shifts a keg.\n\nIn the far corner, the hooded woman has not moved. Her cup is still full. Her pale eyes are still on you, and now they are narrower, as if she has measured the failed attempt and filed it away. A strand of dark hair lies against her jaw. She does not look toward Hedda. She looks at the hairpin in your hand.\n\nBy the hearth, Soren Pell's boot scrapes once against the floor. He does not wake. Rain keeps worrying the shutters. The cellar stays locked, and you are still standing at its door with a ruined pin and an audience of one.",
+      "seconds": 26.0
+    },
+    {
+      "index": 5,
+      "mode": "do",
+      "content": "I walk over to the bar and sit down on a stool.",
+      "expected": "nothing",
+      "submit_error": null,
+      "turn_status": "complete",
+      "tools": [],
+      "tool_names": [],
+      "narration": "You slip the ruined hairpin into your pocket and cross the room as if the cellar door had never interested you. The stool nearest Hedda scrapes once against the boards. You sit. The bar is warm under your forearms, scarred and sticky in the old places.\n\nHedda turns from the casks. The brass key ticks against her apron. She sets a clean tankard in front of you without being asked and rests both hands on the wood, broad and still.\n\n\"Rain's in your coat,\" she says. \"Ale, or are you only here to dry?\"\n\nHer eyes stay on your face. They do not travel to the cellar door. If she heard the tick of the pin, she gives no sign of it.\n\nIn the far corner the hooded woman has not lifted her cup. Her pale eyes follow you to the stool and stay there, narrow under the hood, a strand of dark hair against her jaw. She saw the lock. She saw you fail it. She watches you sit down as if the stool were the second half of the same attempt.\n\nBy the hearth, Soren Pell shifts in his sleep. One boot scrapes the floor. He does not wake. Rain worries the shutters, and the ale in the hooded woman's cup holds its dull gold, still untouched.",
+      "seconds": 20.0
+    },
+    {
+      "index": 6,
+      "mode": "say",
+      "content": "\"Hedda, I'm Aldric's son. Your brother's boy. He died last winter.\"",
+      "expected": "relationship created",
+      "submit_error": null,
+      "turn_status": "complete",
+      "tools": [
+        {
+          "tool": "roll_check",
+          "ok": true,
+          "args": {
+            "chance_percent": 40,
+            "reason": "Hedda weighs an unproven claim that the stranger is her dead brother Aldric's son, with no likeness offered and no proof."
+          },
+          "result": {
+            "chance_percent": 40,
+            "chance_source": "narrator",
+            "factors": [],
+            "needed": 60,
+            "outcome": "failure",
+            "reason": "Hedda weighs an unproven claim that the stranger is her dead brother Aldric's son, with no likeness offered and no proof.",
+            "roll": 6,
+            "seed": 1478309330
+          }
+        },
+        {
+          "tool": "save_relationship",
+          "ok": true,
+          "args": {
+            "description": "Does not believe the claim that you are her brother Aldric's son. Heard it as a stranger's story with no proof, and shut it down.",
+            "direction": "one_way",
+            "from": "Hedda Grane",
+            "label": "distrusts",
+            "stats": [
+              {
+                "attribute": "Suspicion",
+                "delta": 4,
+                "reason": "Unproven claim of being her dead brother's son, offered with nothing to show for it."
+              }
+            ],
+            "to": "You"
+          },
+          "result": {
+            "created": true,
+            "kind": "relationship",
+            "name": "Hedda Grane → You: distrusts",
+            "stats": [
+              {
+                "after": 8.0,
+                "attribute": "Suspicion",
+                "before": 5.0
+              }
+            ]
+          }
+        }
+      ],
+      "tool_names": [
+        "roll_check",
+        "save_relationship"
+      ],
+      "narration": "Hedda's hands go still on the bar. Whether she takes the claim for truth is not a settled thing.She does not take it. The claim dies on the bar between you.The brass key stops against Hedda's apron. She sets both palms on the bar and looks at you the way she looks at a coin that does not ring true.\n\n\"Aldric,\" she says. The name comes out flat. No grief in it, and no welcome. \"My brother. Dead these three years on the frost road, not last winter. His boy went into the ground the winter before that. I paid for both boxes.\" Her eyes travel your face once, slow, and find nothing she is willing to keep. \"So you are not his son. You are a wet stranger who came in out of the rain and put a dead man's name in your mouth.\"\n\nShe does not raise her voice. A man two stools down stares into his cup and pretends he has not heard. Hedda slides the empty tankard an inch closer to you, then leaves her hand on it.\n\n\"Ale is two coppers. Kinship is not on the board.\" The key ticks once, sharp. \"Drink, or go back into the weather. Don't say that name to me again.\"\n\nIn the far corner the hooded woman has not touched her cup. Her pale eyes are still on you, narrower now, as if the failed lock and the failed name were two lines of the same hand. A strand of dark hair lies against her jaw. She does not look at Hedda. She watches what you will do with a story that has just been shut in your face.\n\nBy the hearth, Soren Pell's mouth works in his sleep. Rain keeps at the shutters. The bar smells of wet wool and spilled ale, and the stool under you has not grown any kinder.",
+      "seconds": 44.0
+    },
+    {
+      "index": 7,
+      "mode": "do",
+      "content": "I hand Hedda the letter my father wrote her before he died, and watch her read it.",
+      "expected": "relationship stats",
+      "submit_error": null,
+      "turn_status": "complete",
+      "tools": [
+        {
+          "tool": "roll_check",
+          "ok": true,
+          "args": {
+            "chance_percent": 25,
+            "reason": "Hedda already rejected the kinship claim and paid for Aldric's and his son's burials; the letter must overcome that to sway her."
+          },
+          "result": {
+            "chance_percent": 25,
+            "chance_source": "narrator",
+            "factors": [],
+            "needed": 75,
+            "outcome": "failure",
+            "reason": "Hedda already rejected the kinship claim and paid for Aldric's and his son's burials; the letter must overcome that to sway her.",
+            "roll": 28,
+            "seed": 3730124852
+          }
+        },
+        {
+          "tool": "save_relationship",
+          "ok": true,
+          "args": {
+            "description": "Read the offered letter and rejected it. The hand is not Aldric's, and the dates contradict the burials she paid for. Kinship claim still shut.",
+            "from": "Hedda Grane",
+            "label": "distrusts",
+            "stats": [
+              {
+                "attribute": "Suspicion",
+                "delta": 1,
+                "reason": "A letter offered as proof of being Aldric's son did not match his hand or the deaths she already buried."
+              }
+            ],
+            "to": "You"
+          },
+          "result": {
+            "created": false,
+            "kind": "relationship",
+            "name": "Hedda Grane → You: distrusts",
+            "stats": [
+              {
+                "after": 9.0,
+                "attribute": "Suspicion",
+                "before": 8.0
+              }
+            ]
+          }
+        }
+      ],
+      "tool_names": [
+        "roll_check",
+        "save_relationship"
+      ],
+      "narration": "Hedda already buried Aldric and his son. Whether a letter in your hand can move her is not a sure thing.The letter fails to move her. I will record that and show her reading it.You draw the letter from inside your coat and lay it on the bar, the paper softened at the creases, rain-damp along one edge. \"From my father,\" you say. \"Before he died. For you.\"\n\nHedda does not take it at once. She looks at the fold, then at your hand, then at you. When she does pick it up, she holds it the way she holds a coin she means to bite. The brass key ticks once against her apron and goes still.\n\nShe breaks nothing. The seal, if there was one, is already gone. She reads standing, broad shoulders squared to the lamps, lips moving over the first lines and then stopping. Her eyes go back to the top. She reads the date. She reads the close. She turns the page over as if the real hand might be hiding on the blank side.\n\nIt is not.\n\n\"Aldric wrote left-handed after the frost took two fingers,\" she says, quiet and exact. \"This is a right hand, and a careful one. And this date is a winter after I put him in the ground.\" She folds the letter once, sharp, and sets it back in front of you. She does not return it to your fingers. She leaves it where a bad coin would sit until someone claims it or the bar sweeps it away.\n\n\"I know my brother's hand. I know the year he stopped having one.\" Her palms settle on the wood again. The empty tankard is still between you. \"Ale is two coppers. That paper is worth less.\"\n\nA man two stools down finds the bottom of his cup suddenly fascinating. By the hearth, Soren Pell's mouth works in his sleep and does not wake.\n\nIn the far corner the hooded woman has not touched her drink. Her pale eyes stay on the letter, then lift to your face, narrower than before, as if she has watched you spend a second story and come up empty. A strand of dark hair lies against her jaw. She does not look at Hedda. She watches what you will do with a proof that has just been folded shut.\n\nRain ticks at the shutters. The letter lies on the scarred wood, unread by anyone who will believe it.",
+      "seconds": 42.0
+    },
+    {
+      "index": 8,
+      "mode": "story",
+      "content": "A drunk dockhand lunges at me with a knife; Hedda steps between us and takes a deep cut across her forearm before she throws him out.",
+      "expected": "character stats (injury) on Hedda",
+      "submit_error": null,
+      "turn_status": "complete",
+      "tools": [],
+      "tool_names": [],
+      "narration": "Hedda's forearm is laid open before the stool has finished scraping back. Blood runs hot over the brass key, and she puts Bram Kett through the door anyway.",
+      "seconds": 24.0
+    },
+    {
+      "index": 9,
+      "mode": "story",
+      "content": "Hedda binds her arm, swaps her bloodied apron for a black oilskin cloak, and we leave the inn together for the docks.",
+      "expected": "character: Hedda location + outfit",
+      "submit_error": null,
+      "turn_status": "complete",
+      "tools": [
+        {
+          "tool": "save_character",
+          "ok": true,
+          "args": {
+            "location": "the docks, with you",
+            "name": "Hedda Grane",
+            "outfit": "black oilskin cloak, forearm bound in cloth, brass key on a chain",
+            "stats": [
+              {
+                "attribute": "Wound",
+                "delta": 4,
+                "dramatic": false,
+                "reason": "Deep knife cut across the forearm, taken shielding you from Bram Kett, then bound before leaving the inn."
+              }
+            ]
+          },
+          "result": {
+            "created": false,
+            "kind": "character",
+            "name": "Hedda Grane",
+            "stats": [
+              {
+                "after": 8.0,
+                "attribute": "Wound",
+                "before": 5.0
+              }
+            ]
+          }
+        },
+        {
+          "tool": "save_character",
+          "ok": true,
+          "args": {
+            "location": "the docks, with Hedda Grane",
+            "name": "You"
+          },
+          "result": {
+            "created": false,
+            "kind": "character",
+            "name": "You"
+          }
+        },
+        {
+          "tool": "save_character",
+          "ok": true,
+          "args": {
+            "appearance_anchor": "thick-necked dockhand, rain-dark hair, flushed face, heavy hands",
+            "gender": "male",
+            "location": "thrown out of the Gilded Lantern into the rain",
+            "name": "Bram Kett",
+            "outfit": "dockhand's rough coat, knife lost in the scuffle",
+            "role": "drunk dockhand"
+          },
+          "result": {
+            "created": true,
+            "kind": "character",
+            "name": "Bram Kett"
+          }
+        },
+        {
+          "tool": "save_relationship",
+          "ok": true,
+          "args": {
+            "description": "Still rejects the kinship claim and the letter, but took a deep cut shielding you from Bram Kett and left the inn with you for the docks.",
+            "from": "Hedda Grane",
+            "label": "distrusts",
+            "stats": [
+              {
+                "attribute": "Suspicion",
+                "delta": -2,
+                "dramatic": false,
+                "reason": "She bled for you and chose to walk out with you, though the false claim is not forgiven."
+              }
+            ],
+            "to": "You"
+          },
+          "result": {
+            "created": false,
+            "kind": "relationship",
+            "name": "Hedda Grane → You: distrusts",
+            "stats": [
+              {
+                "after": 7.0,
+                "attribute": "Suspicion",
+                "before": 9.0
+              }
+            ]
+          }
+        }
+      ],
+      "tool_names": [
+        "save_character",
+        "save_character",
+        "save_character",
+        "save_relationship"
+      ],
+      "narration": "Hedda's arm is bound and the inn is behind you. I'll set that down, then take you both out into the rain.Hedda does not ask for help. She tears a strip from a bar-cloth, bites one end, and winds it tight around the cut until the linen goes dark and the bleeding slows to a seep. The brass key at her throat is sticky with it. She wipes the key on her apron, then the apron itself comes off, leather stiff and blotched, and she hangs it on a peg behind the bar as if the night were only a change of work.\n\nFrom a hook by the cellar door she takes a black oilskin cloak. It smells of tar and old weather. She settles it over her shoulders, the bound forearm held a little out from her body, and looks at you once. Not kindly. Not as kin.\n\n\"Boots,\" she says. \"We're not done.\"\n\nShe lifts the latch. Rain rushes in and puts the lamps to shivering. A man near the hearth swears and pulls his collar up. Soren Pell does not wake. In the far corner the hooded woman is on her feet at last, cup still full, pale eyes following the two of you to the threshold. She does not speak. She does not come. The door shuts on her and on the warm sour dark of the inn.\n\nThe street is a gutter. Rain needles your face and turns the cobbles to black glass. Hedda walks ahead, cloak snapping, broad shoulders set against the wind off the water. You follow. Alleys give way to wider stone, and then the smell changes: fish, rope, wet timber, the iron bite of the harbor. Lamps on the quay burn in smears. Masts knock and complain. Somewhere a winch creaks, and a voice calls and is answered and is lost.\n\nHedda stops where the inn's light can no longer reach you. Water runs from the oilskin and from the cloth on her arm. She does not look back at the Gilded Lantern.\n\n\"Bram Kett drinks where the night crews drink,\" she says, low, against the rain. \"If he came at you with a knife, someone put the notion in him, or the coin. I want the which of it before that cut goes bad.\" Her eyes find you, sharp as the weather. \"You walk with me. You do not talk about my brother. And if you run, I will not come after you a second time.\"\n\nThe docks open ahead, slick and loud with rain, and the two of you step down onto them together.",
+      "seconds": 50.1
+    },
+    {
+      "index": 10,
+      "mode": "story",
+      "content": "On the way, Hedda spots her silver candlestick from the cellar sticking out of my pack, and her face goes cold.",
+      "expected": "relationship label or stats change",
+      "submit_error": null,
+      "turn_status": "complete",
+      "tools": [],
+      "tool_names": [],
+      "narration": "Hedda stops so hard the rain seems to pile up against her cloak. Her eyes have found the mouth of your pack, where the oilskin has worked loose in the walk. A stem of worked silver juts from it, beaded with water, the base still dark with cellar dust. She knows it. You can see the knowing land all at once, and then leave her face.\n\n\"That stood on the cellar shelf,\" she says. Her voice has gone flat as harbor iron. \"Behind a lock I have not opened tonight.\"\n\nShe does not reach for it. She does not reach for you. The bound forearm stays a little out from her side, the cloth dark and stiff, rain running pink at the edge. The brass key at her throat ticks once and hangs still. Whatever warmth the cut had bought you is gone out of her like heat from a dropped coal.\n\n\"I put a knife between you and Bram Kett,\" she says, quiet enough that the winches almost cover it. \"I left my own bar to walk you down here. And you have my silver in your pack like a rat with a spoon.\" Her eyes come up to yours, cold and finished. \"Put it on the stones. Now. And then you will tell me how a door I locked gave you anything at all.\"\n\nMasts knock overhead. Somewhere a voice calls across the quay and is not answered. The candlestick gleams between you, rain-bright, and Hedda Grane does not look like a woman who means to bleed for you twice.",
+      "seconds": 18.0
+    }
+  ],
+  "entities": [
+    {
+      "id": "796cf7a6-234c-4233-a891-d5d774d52c2b",
+      "kind": "character",
+      "name": "You",
+      "is_present": 1,
+      "known_as": null,
+      "role": null,
+      "location": "the docks, with Hedda Grane",
+      "outfit": null
+    },
+    {
+      "id": "55cebe48-78c0-4a69-9dff-b980cf3cb18c",
+      "kind": "character",
+      "name": "Hedda Grane",
+      "is_present": 1,
+      "known_as": null,
+      "role": "innkeeper of the Gilded Lantern",
+      "location": "the docks, with you",
+      "outfit": "black oilskin cloak, forearm bound in cloth, brass key on a chain"
+    },
+    {
+      "id": "52bc0e65-eb6c-452e-8bdc-7cad5c36a850",
+      "kind": "character",
+      "name": "Soren Pell",
+      "is_present": 1,
+      "known_as": null,
+      "role": "regular patron",
+      "location": "by the hearth at the Gilded Lantern",
+      "outfit": "patched gray wool coat, worn boots, a knit cap"
+    },
+    {
+      "id": "3696d6c7-73be-450a-a6c2-2b7bafe144c0",
+      "kind": "character",
+      "name": "Wren Calder",
+      "is_present": 1,
+      "known_as": "the hooded woman",
+      "role": "watcher in the corner",
+      "location": "far corner of the Gilded Lantern",
+      "outfit": "dark hooded cloak, untouched drink before her"
+    },
+    {
+      "id": "relationship:3696d6c7-73be-450a-a6c2-2b7bafe144c0:796cf7a6-234c-4233-a891-d5d774d52c2b",
+      "kind": "relationship",
+      "name": null,
+      "is_present": 1,
+      "known_as": null,
+      "role": null,
+      "location": null,
+      "outfit": null
+    },
+    {
+      "id": "relationship:55cebe48-78c0-4a69-9dff-b980cf3cb18c:796cf7a6-234c-4233-a891-d5d774d52c2b",
+      "kind": "relationship",
+      "name": null,
+      "is_present": 1,
+      "known_as": null,
+      "role": null,
+      "location": null,
+      "outfit": null
+    },
+    {
+      "id": "b92e45d9-ee6c-4f48-b84d-3909eda036ae",
+      "kind": "character",
+      "name": "Bram Kett",
+      "is_present": 1,
+      "known_as": null,
+      "role": "drunk dockhand",
+      "location": "thrown out of the Gilded Lantern into the rain",
+      "outfit": "dockhand's rough coat, knife lost in the scuffle"
+    }
+  ],
+  "relationships": [
+    {
+      "entity_id": "relationship:3696d6c7-73be-450a-a6c2-2b7bafe144c0:796cf7a6-234c-4233-a891-d5d774d52c2b",
+      "from_id": "3696d6c7-73be-450a-a6c2-2b7bafe144c0",
+      "to_id": "796cf7a6-234c-4233-a891-d5d774d52c2b",
+      "label": "watching",
+      "direction": "one_way",
+      "description": "Has been watching you since you came in, and just saw you try the cellar lock with a hairpin while Hedda's back was turned."
+    },
+    {
+      "entity_id": "relationship:55cebe48-78c0-4a69-9dff-b980cf3cb18c:796cf7a6-234c-4233-a891-d5d774d52c2b",
+      "from_id": "55cebe48-78c0-4a69-9dff-b980cf3cb18c",
+      "to_id": "796cf7a6-234c-4233-a891-d5d774d52c2b",
+      "label": "distrusts",
+      "direction": "one_way",
+      "description": "Still rejects the kinship claim and the letter, but took a deep cut shielding you from Bram Kett and left the inn with you for the docks."
+    }
+  ],
+  "attributes": [
+    {
+      "entity_id": "relationship:3696d6c7-73be-450a-a6c2-2b7bafe144c0:796cf7a6-234c-4233-a891-d5d774d52c2b",
+      "canonical_name": "Suspicion",
+      "value": 7.0
+    },
+    {
+      "entity_id": "relationship:55cebe48-78c0-4a69-9dff-b980cf3cb18c:796cf7a6-234c-4233-a891-d5d774d52c2b",
+      "canonical_name": "Suspicion",
+      "value": 7.0
+    },
+    {
+      "entity_id": "55cebe48-78c0-4a69-9dff-b980cf3cb18c",
+      "canonical_name": "Wound",
+      "value": 8.0
+    }
+  ],
+  "usage": [
+    {
+      "kind": "narration",
+      "model": "x-ai/grok-4.7",
+      "calls": 20,
+      "cost_usd": 0.22461
+    }
+  ]
+}

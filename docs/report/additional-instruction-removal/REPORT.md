@@ -41,8 +41,44 @@ Both arms used the same model (`x-ai/grok-4.7` via OpenRouter) and the same 13 t
 | A | 22 calls, $0.270 | 6, $0.410 | 6, $0.003 | $0.684 |
 | B | 18 calls, $0.200 | 6, $0.409 | 6, $0.003 | $0.613 |
 
+## Bookkeeping profile (3 runs per version)
+
+The first run was one story per version, so it couldn't tell chance from a real difference. This rerun uses 10 normal turns, each with one expected record, in 3 fresh stories per version. There are no see turns and no images; the model and settings are the same as above. Script: [bookkeeping/bk.py](bookkeeping/bk.py). Scorer: [bookkeeping/score.py](bookkeeping/score.py). It scores a record **on time** if it lands on the expected turn, **late** if it lands within the next two turns, and **missed** otherwise. One JSON file per run is in [bookkeeping/](bookkeeping/).
+
+| # | Expected record | A (main), runs 1-3 | B (removal), runs 1-3 |
+|---|---|---|---|
+| 1 | Hedda created (author-written intro) | missed, late, on time | late, late, late |
+| 2 | Old man the narrator names | late, on time, late | on time, on time, on time |
+| 3 | Hooded figure, true name + `known_as` | late, on time, on time | on time, on time, on time |
+| 4 | Roll for the lock | on time ×3 | on time ×3 |
+| 5 | Nothing on a routine action | on time ×3 | on time ×3 |
+| 6 | Hedda / You relationship | on time ×3 | on time ×3 |
+| 7 | Relationship stats after the letter | on time ×3 | on time, late, on time |
+| 8 | Hedda's injury as stats | on time, on time, missed | late, on time, missed |
+| 9 | Hedda's location and outfit | on time, on time, missed | on time, late, late |
+| 10 | Relationship after the theft | missed, on time, missed | missed, on time, on time |
+
+| | On time | Late | Missed | Tool calls | Rolls | Narration calls | Cost |
+|---|---|---|---|---|---|---|---|
+| A | **21** / 30 | 4 | 5 | 46 | 8 | 57 | $0.789 |
+| B | **21** / 30 | 7 | 2 | 47 | 8 | 59 | $0.747 |
+
+- **No difference on timing:** 21 on time in each version. The single late pair in the first run was chance. B was late more often, and A missed outright more often.
+- **Both versions share the same weaknesses:**
+  - The first turn of a story is rarely recorded on time (1 of 6 runs).
+  - Author-written story turns (1, 8, 9, 10) are recorded worse than player actions (4, 6, 7).
+  - Labels drift into feelings in both ("distrusts", "grieving aunt, betrayed", "believes him to be her nephew, now suspects theft"). The first run's "B keeps labels as bonds" didn't hold up.
+  - The narrator makes up overlapping attribute names: Injury and Wound, plus Suspicion and Grief. It also swings hard, for example Trust −9.
+- **Extra calls and spending are the same.**
+
 ## Verdict
 
-- **See mode:** the removal is safe.
-- **Recording in normal turns:** B was late twice in one run. That points to the reminder next to the player's action helping the save tools. One run can't establish it.
-- **Label quality:** B was better.
+- **Remove `<additional_instructions>`.** The rule was to remove it if B came within one on-time record of A, and they tied (21–21). See mode is unaffected, because it's enforced in code.
+- **What actually limits recording is the same in both versions:**
+  - the first turn of a story
+  - author-written story turns
+  - label drift
+  - made-up attribute names
+
+  Fix those in the tool descriptions, or with the bookkeeper pass, not by where the instructions sit.
+- **Separate fix:** see mode can still turn a junk description into a billed image.

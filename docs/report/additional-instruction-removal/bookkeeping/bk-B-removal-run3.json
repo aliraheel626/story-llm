@@ -1,0 +1,589 @@
+{
+  "arm": "B-removal",
+  "run": 3,
+  "story_id": "45186d34-61af-459b-85cf-7e7e7a3f863d",
+  "database_mode": "ro",
+  "turns": [
+    {
+      "index": 1,
+      "mode": "story",
+      "content": "I step out of the rain into the Gilded Lantern inn. Behind the bar, a broad-shouldered woman named Hedda Grane polishes a tankard; she wears a leather apron and a brass key on a chain.",
+      "expected": "character: Hedda created",
+      "submit_error": null,
+      "turn_status": "complete",
+      "tools": [],
+      "tool_names": [],
+      "narration": "The door thuds shut behind you and the rain becomes a muffled hiss. Warmth hits first—hearth-smoke, wet wool, and the sour-sweet of spilled ale—then the low murmur of the room. Lamps hang in brass cages along the beams, their light pooling on scarred tables and the faces bent over them.",
+      "seconds": 10.0
+    },
+    {
+      "index": 2,
+      "mode": "say",
+      "content": "\"Hedda, who's the old man dozing by the fire?\"",
+      "expected": "character: narrator-named old man created",
+      "submit_error": null,
+      "turn_status": "complete",
+      "tools": [
+        {
+          "tool": "save_character",
+          "ok": true,
+          "args": {
+            "age": "middle-aged",
+            "appearance_anchor": "broad-shouldered woman with strong arms, practical face, dark hair pulled back, brass key on a chain at her throat",
+            "gender": "female",
+            "location": "Gilded Lantern inn, behind the bar",
+            "name": "Hedda Grane",
+            "outfit": "leather apron over a linen shirt, sleeves rolled",
+            "role": "innkeeper"
+          },
+          "result": {
+            "created": true,
+            "kind": "character",
+            "name": "Hedda Grane"
+          }
+        },
+        {
+          "tool": "save_character",
+          "ok": true,
+          "args": {
+            "age": "elderly",
+            "appearance_anchor": "weathered elderly man, thin gray hair, deep-lined face, gray stubble, one shoulder slightly higher than the other",
+            "gender": "male",
+            "known_as": "the old man by the fire",
+            "location": "Gilded Lantern inn, chair by the hearth",
+            "name": "Calder Voss",
+            "outfit": "patched wool coat, scuffed boots, a faded red scarf",
+            "role": "regular, former road warden"
+          },
+          "result": {
+            "created": true,
+            "kind": "character",
+            "name": "Calder Voss"
+          }
+        },
+        {
+          "tool": "save_character",
+          "ok": true,
+          "args": {
+            "known_as": null,
+            "name": "Calder Voss"
+          },
+          "result": {
+            "created": false,
+            "kind": "character",
+            "name": "Calder Voss"
+          }
+        },
+        {
+          "tool": "save_relationship",
+          "ok": true,
+          "args": {
+            "description": "She lets the old road warden doze by her fire and answers for him when strangers ask.",
+            "direction": "one_way",
+            "from": "Hedda Grane",
+            "label": "keeps an eye on",
+            "to": "Calder Voss"
+          },
+          "result": {
+            "created": true,
+            "kind": "relationship",
+            "name": "Hedda Grane → Calder Voss: keeps an eye on"
+          }
+        }
+      ],
+      "tool_names": [
+        "save_character",
+        "save_character",
+        "save_character",
+        "save_relationship"
+      ],
+      "narration": "The old man by the fire is Calder Voss, and Hedda knows him well enough to answer without looking up from the tankard.Hedda names him Calder Voss, a former road warden who keeps a chair by her hearth.Hedda doesn't look up at once. The rag moves in a slow circle inside the tankard, and the brass key at her throat ticks once against the bar.\n\n\"Calder Voss,\" she says. Her voice is low, meant for you and not the room. \"Used to walk the north road for the wardens. Badge, pike, the lot. Gave it up years ago. Or it gave him up. Depends who you ask.\"\n\nShe tips her chin toward the hearth. The old man is sunk deep in a chair too big for him, chin on his chest, a faded red scarf loose at his throat. One shoulder sits higher than the other. Firelight crawls over the deep lines of his face and the thin gray hair plastered to his scalp. A half-empty cup rests on the stones beside his boot, untouched long enough that a skin has formed on the ale.\n\n\"He pays for the chair and the quiet,\" Hedda says. \"Doesn't steal, doesn't start trouble, and he don't snore loud enough to bother the paying sort. That's more than I can say for half the room.\"\n\nShe sets the tankard down and finally meets your eye, one brow lifted.\n\n\"Why. You looking for work, or looking for him?\"",
+      "seconds": 32.0
+    },
+    {
+      "index": 3,
+      "mode": "story",
+      "content": "A hooded figure in the far corner hasn't touched her drink. She's been watching me since I came in.",
+      "expected": "character: true name + known_as",
+      "submit_error": null,
+      "turn_status": "complete",
+      "tools": [
+        {
+          "tool": "save_character",
+          "ok": true,
+          "args": {
+            "age": "young adult",
+            "appearance_anchor": "hood shadowing most of her face, sharp pale jaw, dark eyes that don't look away, a thin silver ring on one finger, rain still beading on the cloak's shoulder",
+            "gender": "female",
+            "known_as": "the hooded woman",
+            "location": "Gilded Lantern inn, far corner table",
+            "name": "Isolde Marr",
+            "outfit": "dark hooded cloak, the hood drawn low, a plain cup of untouched ale before her",
+            "role": "watcher in the corner"
+          },
+          "result": {
+            "created": true,
+            "kind": "character",
+            "name": "Isolde Marr"
+          }
+        },
+        {
+          "tool": "save_relationship",
+          "ok": true,
+          "args": {
+            "description": "She has not looked away since you came in out of the rain, and her drink sits untouched.",
+            "direction": "one_way",
+            "from": "Isolde Marr",
+            "label": "watching",
+            "to": "You"
+          },
+          "result": {
+            "created": true,
+            "kind": "relationship",
+            "name": "Isolde Marr → You: watching"
+          }
+        }
+      ],
+      "tool_names": [
+        "save_character",
+        "save_relationship"
+      ],
+      "narration": "You catch her between one breath and the next. She sits alone at the far table, where the lamplight thins and the wall is all shadow and damp plaster. The hood is drawn low enough that you get only the cut of a pale jaw and the steady dark of her eyes. She has not looked away. Not when you spoke to Hedda. Not now.\n\nHer cup stands where it was set, the ale black and still, a wet ring spreading under it. One hand rests beside it, a thin silver ring catching a thread of firelight. The other is lost in the fold of her cloak. Rain still beads on the shoulder of the wool, as if she came in only a little before you and never bothered to shake it off.\n\nHedda's rag has gone still. She follows your look, and something tightens at the corner of her mouth.\n\n\"That one,\" she says, quieter still, \"came in with the weather and hasn't said a word. Pays in good coin. Watches the door like she's waiting on somebody who owes her.\"\n\nThe hooded woman doesn't flinch at being spoken of. Her gaze stays on you, level and unhurried, as if the two of you already have business and she is simply waiting for you to remember what it is.",
+      "seconds": 22.0
+    },
+    {
+      "index": 4,
+      "mode": "do",
+      "content": "While Hedda's back is turned, I try to pick the lock of the cellar door with a bent hairpin.",
+      "expected": "roll_check",
+      "submit_error": null,
+      "turn_status": "complete",
+      "tools": [
+        {
+          "tool": "roll_check",
+          "ok": true,
+          "args": {
+            "chance_percent": 35,
+            "reason": "Picking the cellar lock with a bent hairpin while Hedda is nearby and others may notice"
+          },
+          "result": {
+            "chance_percent": 35,
+            "chance_source": "narrator",
+            "factors": [],
+            "needed": 65,
+            "outcome": "success",
+            "reason": "Picking the cellar lock with a bent hairpin while Hedda is nearby and others may notice",
+            "roll": 65,
+            "seed": 532018381
+          }
+        },
+        {
+          "tool": "save_relationship",
+          "ok": true,
+          "args": {
+            "description": "She watched you work the cellar lock with a hairpin and has not looked away.",
+            "from": "Isolde Marr",
+            "label": "watching",
+            "stats": [
+              {
+                "attribute": "Suspicion",
+                "delta": 2,
+                "reason": "She saw you pick the cellar lock while Hedda's back was turned."
+              }
+            ],
+            "to": "You"
+          },
+          "result": {
+            "created": false,
+            "kind": "relationship",
+            "name": "Isolde Marr → You: watching",
+            "stats": [
+              {
+                "after": 7.0,
+                "attribute": "Suspicion",
+                "before": 5.0
+              }
+            ]
+          }
+        }
+      ],
+      "tool_names": [
+        "roll_check",
+        "save_relationship"
+      ],
+      "narration": "The hairpin is a poor thing, soft at the bend and warm from your pocket, but the lock is older than it is stubborn. You work it while Hedda's shoulders stay turned to the casks, the rag squeaking inside a tankard, the brass key at her throat ticking against the bar with every shift of her weight.\n\nThe tumblers catch. Stick. Give.\n\nA dull click, small enough to lose under the hearth's crackle. The cellar door eases a finger's width, and a breath of cold stone and sour barrels climbs up to meet you. No one at the near tables looks around. Calder does not stir. Hedda keeps polishing.\n\nIn the far corner, the hooded woman has not moved. Her cup is still full. Her eyes are still on you, and on the narrow dark gap you have just made, as if she has been waiting to see which door you would choose.",
+      "seconds": 20.0
+    },
+    {
+      "index": 5,
+      "mode": "do",
+      "content": "I walk over to the bar and sit down on a stool.",
+      "expected": "nothing",
+      "submit_error": null,
+      "turn_status": "complete",
+      "tools": [],
+      "tool_names": [],
+      "narration": "You leave the cellar door as it is, a dark seam in the paneling, and cross the room without hurry. The floorboards give under your boots. A man at the nearest table glances up, finds nothing worth the effort, and goes back to his cards.\n\nThe stool at the bar is worn smooth at the seat. You take it. The wood is warm from the room, and the rail under your heel is sticky with old spills.\n\nHedda turns at the sound of you settling. The rag is still in her hand. Her eyes move past your shoulder, just once, toward the wall where the cellar door stands a finger ajar, then come back to your face. She does not mention it. She sets a clean tankard in front of you and waits, one hand resting on the bar, the brass key quiet against her apron.\n\nFrom the far corner, the hooded woman watches you sit. The ale in front of her has not been touched. The silver ring turns once against the wood, slow, and stops.",
+      "seconds": 20.0
+    },
+    {
+      "index": 6,
+      "mode": "say",
+      "content": "\"Hedda, I'm Aldric's son. Your brother's boy. He died last winter.\"",
+      "expected": "relationship created",
+      "submit_error": null,
+      "turn_status": "complete",
+      "tools": [
+        {
+          "tool": "roll_check",
+          "ok": true,
+          "args": {
+            "chance_percent": 35,
+            "reason": "Hedda may or may not have a brother named Aldric, and nothing marks you as kin after she noticed the cellar door ajar. Whether she accepts the claim is uncertain."
+          },
+          "result": {
+            "chance_percent": 35,
+            "chance_source": "narrator",
+            "factors": [],
+            "needed": 65,
+            "outcome": "failure",
+            "reason": "Hedda may or may not have a brother named Aldric, and nothing marks you as kin after she noticed the cellar door ajar. Whether she accepts the claim is uncertain.",
+            "roll": 12,
+            "seed": 3056403921
+          }
+        },
+        {
+          "tool": "save_relationship",
+          "ok": true,
+          "args": {
+            "description": "She does not believe you are kin. The name Aldric means nothing to her, and she has not forgotten the cellar door standing ajar.",
+            "direction": "one_way",
+            "from": "Hedda Grane",
+            "label": "distrusts",
+            "stats": [
+              {
+                "attribute": "Trust",
+                "delta": -3,
+                "reason": "You claimed to be her dead brother's son, and she has no such brother."
+              }
+            ],
+            "to": "You"
+          },
+          "result": {
+            "created": true,
+            "kind": "relationship",
+            "name": "Hedda Grane → You: distrusts",
+            "stats": [
+              {
+                "after": -3.0,
+                "attribute": "Trust",
+                "before": 0.0
+              }
+            ]
+          }
+        }
+      ],
+      "tool_names": [
+        "roll_check",
+        "save_relationship"
+      ],
+      "narration": "Hedda has never mentioned a brother, and nothing about you marks you as kin. Whether the name lands or she calls the claim false is not yours to know yet.The name does not land. Hedda's hand stills on the tankard, and the quiet that follows is colder than the cellar draft at your back.\"Aldric,\" she says, and the word sits wrong in her mouth, as if she is tasting it for a lie. She sets the tankard down. The rag stays in her fist. \"I haven't got a brother. Never did. No nephew either, living or otherwise.\"\n\nHer eyes do not leave your face. One hand comes up and rests, casual as a habit, against the brass key at her throat. The other stays below the bar, where you cannot see it.\n\n\"Last winter took plenty,\" she goes on, quieter, so the card-players won't have it for gossip. \"It didn't take a man I never had, and it didn't send me his boy.\" A pause. The hearth pops. Calder does not stir. \"So. You want a drink, you pay for a drink. You want a room, you pay for a room. You want to stand there and invent my dead, you can do it in the rain.\"\n\nShe leans in just enough that you catch the iron-and-ale smell of her, and her voice drops to something meant for you alone.\n\n\"And if that cellar door is open when I turn around again, we'll be having a different talk. One that doesn't end with you on a stool.\"\n\nShe straightens. The key ticks once against the apron. In the far corner the hooded woman has not touched her cup, and she has not looked away. The silver ring turns once against the wood, slow, and stops.",
+      "seconds": 54.1
+    },
+    {
+      "index": 7,
+      "mode": "do",
+      "content": "I hand Hedda the letter my father wrote her before he died, and watch her read it.",
+      "expected": "relationship stats",
+      "submit_error": null,
+      "turn_status": "complete",
+      "tools": [
+        {
+          "tool": "roll_check",
+          "ok": true,
+          "args": {
+            "chance_percent": 22,
+            "reason": "Hedda already knows she has no brother named Aldric and distrusts you; whether a sudden letter convinces her is uncertain."
+          },
+          "result": {
+            "chance_percent": 22,
+            "chance_source": "narrator",
+            "factors": [],
+            "needed": 78,
+            "outcome": "failure",
+            "reason": "Hedda already knows she has no brother named Aldric and distrusts you; whether a sudden letter convinces her is uncertain.",
+            "roll": 65,
+            "seed": 1846980558
+          }
+        },
+        {
+          "tool": "save_relationship",
+          "ok": true,
+          "args": {
+            "description": "She read the letter and found nothing in it that makes you kin. The cellar door and the false name are still between you.",
+            "from": "Hedda Grane",
+            "label": "distrusts",
+            "stats": [
+              {
+                "attribute": "Trust",
+                "delta": -2,
+                "reason": "The letter did not convince her you are Aldric's son; she has no such brother."
+              }
+            ],
+            "to": "You"
+          },
+          "result": {
+            "created": false,
+            "kind": "relationship",
+            "name": "Hedda Grane → You: distrusts",
+            "stats": [
+              {
+                "after": -5.0,
+                "attribute": "Trust",
+                "before": -3.0
+              }
+            ]
+          }
+        },
+        {
+          "tool": "save_relationship",
+          "ok": true,
+          "args": {
+            "description": "She watched you work the cellar lock and then press a letter on Hedda that Hedda rejected. She has not looked away.",
+            "from": "Isolde Marr",
+            "label": "watching",
+            "stats": [
+              {
+                "attribute": "Suspicion",
+                "delta": 1,
+                "reason": "She saw Hedda reject the letter after the lock-picking."
+              }
+            ],
+            "to": "You"
+          },
+          "result": {
+            "created": false,
+            "kind": "relationship",
+            "name": "Isolde Marr → You: watching",
+            "stats": [
+              {
+                "after": 8.0,
+                "attribute": "Suspicion",
+                "before": 7.0
+              }
+            ]
+          }
+        }
+      ],
+      "tool_names": [
+        "roll_check",
+        "save_relationship",
+        "save_relationship"
+      ],
+      "narration": "You set the folded page on the bar between her hands. The paper is creased soft at the edges, the ink gone brown where damp has found it. Hedda does not take it at once. She looks at you, then at the letter, then wipes her fingers on the apron and opens it.\n\nShe reads it through. Once. Her mouth does not change.\n\n\"Whoever wrote this,\" she says, folding it again with a blunt thumb, \"knew how to spell a dead man's name and not much else.\" She pushes it back across the wood until it touches your wrist. \"Aldric Grane. There's no such man. Not in my family. Not in this town. Not in any winter I remember.\"\n\nThe brass key ticks once against her apron. Below the bar, her other hand stays where you cannot see it.\n\n\"I don't know what game you're running,\" she says, low enough that the card table won't have it. \"Kin, a letter, a cellar door you thought I wouldn't notice. You've had your try. Drink if you're paying. Otherwise the rain's still there.\"\n\nShe does not raise her voice. She does not need to. The tankard she set out stays empty. In the far corner the hooded woman has not touched her ale, and the silver ring turns once against the wood, slow, and stops.",
+      "seconds": 36.0
+    },
+    {
+      "index": 8,
+      "mode": "story",
+      "content": "A drunk dockhand lunges at me with a knife; Hedda steps between us and takes a deep cut across her forearm before she throws him out.",
+      "expected": "character stats (injury) on Hedda",
+      "submit_error": null,
+      "turn_status": "complete",
+      "tools": [],
+      "tool_names": [],
+      "narration": "The knife comes out of the noise before the man does. A dockhand, thick through the shoulders and reeking of tar and cheap spirits, lurches up from a table near the door with a short blade already in his fist. His eyes are wet and unfocused. Whatever he thinks you are, he has decided to cut it.\n\nYou have barely started to rise when Hedda is past you.\n\nShe does not shout. She puts her forearm in the path of the blade and takes the cut clean across the meat of it, a deep red line that opens the rolled sleeve and keeps going. Blood jumps, bright in the lamplight, and spatters the bar. Her other hand closes on his wrist, twists, and the knife clatters onto the boards.\n\n\"Harl.\" Her voice is flat. \"Out.\"\n\nHe swings once, clumsy, and she drives him backward with her good shoulder, boots skidding, the apron darkening where his blood and hers mix. The door bangs. Rain and cold rush in. She puts him through it and shuts it on his cursing, the bolt thrown with a bloody hand.\n\nThe room has gone quiet except for the hearth.\n\nHedda stands with her back to the door, breathing hard through her nose. The cut on her forearm gapes, welling, and she presses the rag from the bar against it without looking at you yet. The brass key ticks once against her apron. When she does look, the distrust is still there, sharpened now by pain.\n\n\"Sit,\" she says. \"And don't make me regret the arm.\"\n\nIn the far corner the hooded woman has not touched her ale. The silver ring turns once against the wood, slow, and stops. By the fire, Calder Voss has opened one eye.",
+      "seconds": 40.0
+    },
+    {
+      "index": 9,
+      "mode": "story",
+      "content": "Hedda binds her arm, swaps her bloodied apron for a black oilskin cloak, and we leave the inn together for the docks.",
+      "expected": "character: Hedda location + outfit",
+      "submit_error": null,
+      "turn_status": "complete",
+      "tools": [],
+      "tool_names": [],
+      "narration": "Hedda knots the linen tight over the cut, jaw set, and does not ask for help. Blood blooms through the cloth once before she cinches it. She hangs the ruined apron on its peg, takes a black oilskin from the hook by the door, and settles it over her shoulders. The brass key stays at her throat. The cloak sheds the lamplight like wet slate.\n\nCalder has both eyes open now. He gives her the smallest nod. She does not explain herself to the room.\n\n\"Harl drinks at the lower wharf when he's been thrown,\" she says. Her gaze cuts to you, still edged with pain and the lie you tried. \"You started something in my house. You can walk it down to the water.\"\n\nRain meets you at the threshold, cold and needling. Behind you the hooded woman does not rise. Her cup is still full. The silver ring turns once against the wood, and the door shuts her watch away.\n\nThe street slopes toward tar, fish, and cold iron. Lamps along the dock road gutter in the wind. Hedda goes ahead, cloak snapping, the bound arm held close to her ribs, and does not look back to see if you follow. You do. The Gilded Lantern's warmth thins behind you until there is only the wet dark and the black gleam of the wharf ahead.",
+      "seconds": 30.0
+    },
+    {
+      "index": 10,
+      "mode": "story",
+      "content": "On the way, Hedda spots her silver candlestick from the cellar sticking out of my pack, and her face goes cold.",
+      "expected": "relationship label or stats change",
+      "submit_error": null,
+      "turn_status": "complete",
+      "tools": [
+        {
+          "tool": "save_character",
+          "ok": true,
+          "args": {
+            "location": "rain-slick street toward the lower wharf",
+            "name": "Hedda Grane",
+            "outfit": "black oilskin cloak over a linen shirt, forearm bound in bloody linen, brass key on a chain"
+          },
+          "result": {
+            "created": false,
+            "kind": "character",
+            "name": "Hedda Grane"
+          }
+        },
+        {
+          "tool": "save_relationship",
+          "ok": true,
+          "args": {
+            "description": "She took a knife cut defending you, then saw her cellar candlestick sticking out of your pack on the way to the docks.",
+            "from": "Hedda Grane",
+            "label": "caught you stealing",
+            "stats": [
+              {
+                "attribute": "Trust",
+                "delta": -4,
+                "dramatic": true,
+                "reason": "She found her silver candlestick from the cellar in your pack after taking a knife wound for you."
+              }
+            ],
+            "to": "You"
+          },
+          "result": {
+            "created": false,
+            "kind": "relationship",
+            "name": "Hedda Grane → You: caught you stealing",
+            "stats": [
+              {
+                "after": -9.0,
+                "attribute": "Trust",
+                "before": -5.0
+              }
+            ]
+          }
+        }
+      ],
+      "tool_names": [
+        "save_character",
+        "save_relationship"
+      ],
+      "narration": "Hedda stops dead in the rain. The candlestick at the mouth of your pack is hers, and the cut on her arm is still wet.The rain has turned the street to black glass. Hedda is a pace ahead, oilskin snapping, the bound arm held tight to her ribs, when the lamplight at the corner of Sailmaker's Row catches on something in your pack.\n\nShe stops.\n\nThe silver candlestick juts from the mouth of the pack like a bone. Rain beads on the stem and runs down into the wax-cup, and even in the dark she knows the weight of it, the dent near the base from the winter a drunk knocked it off the cellar shelf. Her face goes cold. Not angry first. Cold, the way a lock goes cold when the key is wrong.\n\n\"That's mine.\"\n\nShe turns. Water sheets off the cloak. The linen on her forearm has gone dark again, a fresh thread of blood working down toward her wrist, and she does not look at it. Her eyes are on the silver, then on you.\n\n\"Cellar shelf. Left of the brine casks. I polished that thing last Firstday.\" Her voice is low, almost quiet, and worse for it. \"You picked my lock. You lied about a brother I never had. You stood there while I put my arm in a knife for you. And you were carrying my silver the whole way down.\"\n\nThe street is empty but for the rain and a lantern creaking on its hook. She does not reach for the candlestick yet. One hand rests at the brass key at her throat. The other stays under the oilskin, near her belt.\n\n\"Put it in my hand,\" she says. \"Now. And then you tell me what else came up those stairs with you, before I decide this walk ends in the harbor instead of on it.\"",
+      "seconds": 28.1
+    }
+  ],
+  "entities": [
+    {
+      "id": "b7fe0773-6b4b-4149-b62a-1480c69232e9",
+      "kind": "character",
+      "name": "You",
+      "is_present": 1,
+      "known_as": null,
+      "role": null,
+      "location": null,
+      "outfit": null
+    },
+    {
+      "id": "0b9767e2-e5cc-40f2-8e1f-95e412857da6",
+      "kind": "character",
+      "name": "Hedda Grane",
+      "is_present": 1,
+      "known_as": null,
+      "role": "innkeeper",
+      "location": "rain-slick street toward the lower wharf",
+      "outfit": "black oilskin cloak over a linen shirt, forearm bound in bloody linen, brass key on a chain"
+    },
+    {
+      "id": "b8ba10ed-cc64-457e-b119-0b87e8c4c5cb",
+      "kind": "character",
+      "name": "Calder Voss",
+      "is_present": 1,
+      "known_as": null,
+      "role": "regular, former road warden",
+      "location": "Gilded Lantern inn, chair by the hearth",
+      "outfit": "patched wool coat, scuffed boots, a faded red scarf"
+    },
+    {
+      "id": "relationship:0b9767e2-e5cc-40f2-8e1f-95e412857da6:b8ba10ed-cc64-457e-b119-0b87e8c4c5cb",
+      "kind": "relationship",
+      "name": null,
+      "is_present": 1,
+      "known_as": null,
+      "role": null,
+      "location": null,
+      "outfit": null
+    },
+    {
+      "id": "1c5d11eb-28b2-4cf9-ab59-8697855e0601",
+      "kind": "character",
+      "name": "Isolde Marr",
+      "is_present": 1,
+      "known_as": "the hooded woman",
+      "role": "watcher in the corner",
+      "location": "Gilded Lantern inn, far corner table",
+      "outfit": "dark hooded cloak, the hood drawn low, a plain cup of untouched ale before her"
+    },
+    {
+      "id": "relationship:1c5d11eb-28b2-4cf9-ab59-8697855e0601:b7fe0773-6b4b-4149-b62a-1480c69232e9",
+      "kind": "relationship",
+      "name": null,
+      "is_present": 1,
+      "known_as": null,
+      "role": null,
+      "location": null,
+      "outfit": null
+    },
+    {
+      "id": "relationship:0b9767e2-e5cc-40f2-8e1f-95e412857da6:b7fe0773-6b4b-4149-b62a-1480c69232e9",
+      "kind": "relationship",
+      "name": null,
+      "is_present": 1,
+      "known_as": null,
+      "role": null,
+      "location": null,
+      "outfit": null
+    }
+  ],
+  "relationships": [
+    {
+      "entity_id": "relationship:0b9767e2-e5cc-40f2-8e1f-95e412857da6:b8ba10ed-cc64-457e-b119-0b87e8c4c5cb",
+      "from_id": "0b9767e2-e5cc-40f2-8e1f-95e412857da6",
+      "to_id": "b8ba10ed-cc64-457e-b119-0b87e8c4c5cb",
+      "label": "keeps an eye on",
+      "direction": "one_way",
+      "description": "She lets the old road warden doze by her fire and answers for him when strangers ask."
+    },
+    {
+      "entity_id": "relationship:1c5d11eb-28b2-4cf9-ab59-8697855e0601:b7fe0773-6b4b-4149-b62a-1480c69232e9",
+      "from_id": "1c5d11eb-28b2-4cf9-ab59-8697855e0601",
+      "to_id": "b7fe0773-6b4b-4149-b62a-1480c69232e9",
+      "label": "watching",
+      "direction": "one_way",
+      "description": "She watched you work the cellar lock and then press a letter on Hedda that Hedda rejected. She has not looked away."
+    },
+    {
+      "entity_id": "relationship:0b9767e2-e5cc-40f2-8e1f-95e412857da6:b7fe0773-6b4b-4149-b62a-1480c69232e9",
+      "from_id": "0b9767e2-e5cc-40f2-8e1f-95e412857da6",
+      "to_id": "b7fe0773-6b4b-4149-b62a-1480c69232e9",
+      "label": "caught you stealing",
+      "direction": "one_way",
+      "description": "She took a knife cut defending you, then saw her cellar candlestick sticking out of your pack on the way to the docks."
+    }
+  ],
+  "attributes": [
+    {
+      "entity_id": "relationship:1c5d11eb-28b2-4cf9-ab59-8697855e0601:b7fe0773-6b4b-4149-b62a-1480c69232e9",
+      "canonical_name": "Suspicion",
+      "value": 8.0
+    },
+    {
+      "entity_id": "relationship:0b9767e2-e5cc-40f2-8e1f-95e412857da6:b7fe0773-6b4b-4149-b62a-1480c69232e9",
+      "canonical_name": "Trust",
+      "value": -9.0
+    }
+  ],
+  "usage": [
+    {
+      "kind": "narration",
+      "model": "x-ai/grok-4.7",
+      "calls": 20,
+      "cost_usd": 0.2674
+    }
+  ]
+}
