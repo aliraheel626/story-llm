@@ -96,6 +96,7 @@ pub fn run() {
             features::entities::update_entity,
             features::entities::delete_entity,
             features::entities::list_entity_attributes,
+            features::entities::list_story_attributes,
             features::entities::list_attribute_registry,
             features::entities::set_entity_attribute,
             features::entities::remove_entity_attribute,

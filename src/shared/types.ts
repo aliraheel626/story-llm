@@ -115,11 +115,23 @@ export interface ImageCost {
 export interface StoryCostBreakdown { turns: TurnCost[]; images: ImageCost[] }
 
 export type EntityKind = "character" | "relationship";
-export interface Entity {
-  id: string; story_id: string; kind: EntityKind; name: string;
+export interface CharacterFields {
   known_as: string | null; appearance_anchor: string | null;
   gender: string | null; age: string | null; role: string | null;
-  location: string | null; outfit: string | null; created_at: string;
+  location: string | null; outfit: string | null;
+}
+export type CharacterPatch = Partial<CharacterFields>;
+export const CHARACTER_FIELD_LABELS: Record<keyof CharacterFields, string> = {
+  known_as: "Known as", appearance_anchor: "Appearance", gender: "Gender",
+  age: "Age", role: "Role", location: "Location", outfit: "Outfit",
+};
+export interface EntityLink {
+  from_id: string; to_id: string; label: string;
+  direction: "one_way" | "both"; description: string | null;
+}
+export interface Entity extends CharacterFields {
+  id: string; story_id: string; kind: EntityKind; name: string;
+  created_at: string; link: EntityLink | null;
 }
 export interface NarratorToolSettings {
   save_relationship: boolean;

@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use tauri::State;
 
 use crate::features::turn::TurnGate;
@@ -5,11 +6,12 @@ use crate::shared::db::{blocking, with_transaction, Pool};
 use crate::shared::error::{AppError, AppResult};
 
 use super::attributes::{
-    list_entity_attributes_sync, remove_entity_attribute_sync, set_entity_attribute_sync,
+    list_entity_attributes_for_entities_sync, list_entity_attributes_sync,
+    remove_entity_attribute_sync, set_entity_attribute_sync,
 };
-use super::model::{AttributeRegistryEntry, CharacterFields, CharacterPatch, Entity, EntityAttributeValue, CHARACTER};
+use super::model::{AttributeRegistryEntry, CharacterFields, CharacterPatch, Entity, EntityAttributeValue, CHARACTER, RELATIONSHIP};
 use super::registry::list_attribute_registry_sync;
-use super::repository::{create_character_sync, delete_entity_sync, update_character_sync};
+use super::repository::{create_character_sync, delete_entity_sync, load_entity_raw, update_character_sync, update_link_sync};
 use super::{create_entity_sync, list_entities_sync, update_entity_sync};
 
 #[tauri::command]
@@ -60,7 +62,7 @@ pub async fn update_entity(
     gate: State<'_, TurnGate>,
     story_id: String,
     entity_id: String,
-    name: String,
+    name: Option<String>,
     appearance_anchor: Option<String>,
     fields: Option<CharacterPatch>,
 ) -> AppResult<Entity> {
@@ -70,12 +72,17 @@ pub async fn update_entity(
     blocking(move || {
         with_transaction(&pool, |tx| {
             gate.still_idle(&ticket)?;
+            let before = load_entity_raw(tx, &story_id, &entity_id)?
+                .ok_or_else(|| AppError::NotFound(format!("entity {entity_id}")))?;
+            if before.kind == RELATIONSHIP {
+                return update_link_sync(tx, &story_id, &entity_id, name.as_deref(), None, None, "user", None, None);
+            }
             match fields {
                 Some(fields) => update_character_sync(
-                    tx, &story_id, &entity_id, Some(&name), &fields, "user", None, None,
+                    tx, &story_id, &entity_id, name.as_deref(), &fields, "user", None, None,
                 ),
                 None => update_entity_sync(
-                    tx, &story_id, &entity_id, &name, appearance_anchor.as_deref(), "user", None, None,
+                    tx, &story_id, &entity_id, name.as_deref().unwrap_or(&before.name), appearance_anchor.as_deref(), "user", None, None,
                 ),
             }
         })
@@ -110,6 +117,17 @@ pub fn list_entity_attributes(
 ) -> AppResult<Vec<EntityAttributeValue>> {
     let conn = pool.get()?;
     list_entity_attributes_sync(&conn, &story_id, &entity_id)
+}
+
+#[tauri::command]
+pub fn list_story_attributes(
+    pool: State<Pool>,
+    story_id: String,
+) -> AppResult<HashMap<String, Vec<EntityAttributeValue>>> {
+    let conn = pool.get()?;
+    let entities = list_entities_sync(&conn, &story_id, None)?;
+    let ids = entities.iter().map(|entity| entity.id.as_str()).collect::<Vec<_>>();
+    list_entity_attributes_for_entities_sync(&conn, &story_id, &ids)
 }
 
 #[tauri::command]

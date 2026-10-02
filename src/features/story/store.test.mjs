@@ -9,6 +9,9 @@ const stories = new Map();
 const hiddenEntries = new Map();
 const images = new Map();
 const entries = new Map();
+const entitiesByStory = new Map();
+const entityAttributes = new Map();
+const entityCommands = new Map();
 let failTools = false;
 let nextToolsSave;
 let nextImageLoad;
@@ -29,6 +32,42 @@ let rollFromEntry;
 let groupRollsByEntry;
 let toolCallsFromEvents;
 
+const deferred = () => {
+  let resolve, reject;
+  const promise = new Promise((done, fail) => { resolve = done; reject = fail; });
+  return { promise, resolve, reject };
+};
+const delayEntityCommand = (storyId, command) => {
+  const result = deferred(), started = deferred();
+  entityCommands.set(`${storyId}:${command}`, { result, started });
+  return { ...result, started: started.promise };
+};
+const entityCalls = (storyId, command) => calls.filter((call) => call.args.storyId === storyId && (!command || call.command === command));
+const character = (storyId, id, name) => ({
+  id, story_id: storyId, name, kind: "character", link: null, created_at: "now",
+  known_as: null, appearance_anchor: null, gender: null, age: null, role: null, location: null, outfit: null,
+});
+const attribute = (storyId, entityId, value, attributeId = "health") => ({
+  story_id: storyId, entity_id: entityId, attribute_id: attributeId, canonical_name: attributeId === "health" ? "Health" : "Trust",
+  value, min: attributeId === "health" ? 0 : -10, max: 10, updated_at: "saved", source: "user",
+});
+const shownEntities = (storyId) => {
+  const known = entitiesByStory.get(storyId) ?? [];
+  return known.filter((entity) => !entity.link || [entity.link.from_id, entity.link.to_id]
+    .every((id) => known.some((endpoint) => endpoint.id === id && endpoint.kind === "character")));
+};
+const entityFixture = async (storyId, kind = "character") => {
+  const mira = { ...character(storyId, `${storyId}-mira`, "Mira"), role: "smuggler", location: "tavern" };
+  const you = character(storyId, `${storyId}-you`, "You");
+  const relationship = { ...character(storyId, `${storyId}-link`, "Mira -> You"), kind: "relationship",
+    link: { from_id: mira.id, to_id: you.id, label: "Resentment", direction: "one_way", description: "Estranged" } };
+  const entity = kind === "character" ? mira : relationship;
+  entitiesByStory.set(storyId, [mira, you, relationship]);
+  entityAttributes.set(entity.id, [attribute(storyId, entity.id, 5, kind === "character" ? "health" : "trust")]);
+  await store.getState().loadEntities(storyId);
+  return entity;
+};
+
 const rollEvent = (id, target_entry_id, payload) => ({
   id, story_id: "story", seq: 1, kind: "diceroll", visibility: "hidden",
   content: null, target_entry_id, turn_id: null, created_at: "2026-09-23T12:00:00Z", payload,
@@ -45,6 +84,13 @@ const renderedReply = (storyId) => {
 
 globalThis.__storyTestInvoke = async (command, args = {}) => {
   calls.push({ command, args });
+  const key = `${args.storyId}:${command}`, delayed = entityCommands.get(key);
+  if (delayed) {
+    entityCommands.delete(key);
+    delayed.started.resolve();
+    const response = await delayed.result.promise;
+    if (response !== undefined) return response;
+  }
   const story = stories.get(args.storyId);
   switch (command) {
     case "new_story": {
@@ -129,7 +175,35 @@ globalThis.__storyTestInvoke = async (command, args = {}) => {
         return load;
       }
       return images.get(args.storyId) ?? [];
-    case "list_entities": return [];
+    case "list_entities": return shownEntities(args.storyId).filter((entity) => args.kind === null || entity.kind === args.kind);
+    case "list_story_attributes": return Object.fromEntries(shownEntities(args.storyId)
+      .map((entity) => [entity.id, entityAttributes.get(entity.id) ?? []]));
+    case "create_entity": {
+      const entity = { ...character(args.storyId, `${args.storyId}-new`, args.name), ...args.fields };
+      entitiesByStory.set(args.storyId, [...(entitiesByStory.get(args.storyId) ?? []), entity]);
+      return entity;
+    }
+    case "update_entity": {
+      const known = entitiesByStory.get(args.storyId) ?? [], current = known.find((entity) => entity.id === args.entityId);
+      if (!current) throw new Error("Entity missing");
+      const entity = { ...current, ...args.fields, ...(args.name == null ? {} : current.link
+        ? { link: { ...current.link, label: args.name } } : { name: args.name }) };
+      entitiesByStory.set(args.storyId, known.map((item) => item.id === entity.id ? entity : item));
+      return entity;
+    }
+    case "delete_entity":
+      entitiesByStory.set(args.storyId, (entitiesByStory.get(args.storyId) ?? []).filter((entity) => entity.id !== args.entityId));
+      entityAttributes.delete(args.entityId);
+      return;
+    case "set_entity_attribute": {
+      const saved = attribute(args.storyId, args.entityId, args.value, args.attributeId);
+      entityAttributes.set(args.entityId, [...(entityAttributes.get(args.entityId) ?? [])
+        .filter((item) => item.attribute_id !== args.attributeId), saved]);
+      return saved;
+    }
+    case "remove_entity_attribute":
+      entityAttributes.set(args.entityId, (entityAttributes.get(args.entityId) ?? []).filter((item) => item.attribute_id !== args.attributeId));
+      return;
     case "retry_narration":
       if (nextRetry) {
         const wait = nextRetry;
@@ -369,6 +443,7 @@ test("replacement keeps original through streaming and failure, then clears old 
   assert.doesNotMatch(html, /Old roll/);
   assert.equal(calls.some(({ command }) => command.startsWith("list_") && command.includes("roll")), false);
   assert.ok(calls.some(({ command }) => command === "list_entities"));
+  assert.ok(calls.some(({ command }) => command === "list_story_attributes"));
 });
 
 test("delayed transcript and context loads for A cannot show A data in B", async () => {
@@ -798,8 +873,10 @@ test("retry preparation blocks another action before streaming begins", async ()
 test("erasing a trailing See refreshes images attached to prior narration", async () => {
   const storyId = store.getState().activeStoryId;
   assert.equal(store.getState().bundles[storyId].imagesByEntry.replacement[0].id, "fresh-image");
+  const attributesBefore = entityCalls(storyId, "list_story_attributes").length;
   await store.getState().eraseLastExchange(storyId);
   assert.equal(store.getState().bundles[storyId].imagesByEntry.replacement, undefined);
+  assert.equal(entityCalls(storyId, "list_story_attributes").length, attributesBefore + 1);
 });
 
 test("snapshot roll selector preserves both factor snapshots and optional fields", () => {
@@ -922,4 +999,157 @@ test("chance-only legacy rolls do not claim a default or attribute source", () =
   const roll = { id: "old", entry_id: "replacement", reason: null, chance_percent: 40, roll: 72, needed: 60, outcome: "success", seed: 9 };
   const html = renderToStaticMarkup(createElement(RollDisclosure, { roll }));
   assert.match(html, /Chance source: Unspecified/);
+});
+
+test("entity loads ignore older overlapping entity and attribute responses", async () => {
+  const storyId = "entity-load-race", entity = await entityFixture(storyId);
+  const oldEntities = delayEntityCommand(storyId, "list_entities"), oldAttributes = delayEntityCommand(storyId, "list_story_attributes");
+  const old = store.getState().loadEntities(storyId);
+  await Promise.all([oldEntities.started, oldAttributes.started]);
+  entitiesByStory.set(storyId, shownEntities(storyId).map((item) => item.id === entity.id ? { ...item, location: "docks" } : item));
+  entityAttributes.set(entity.id, [attribute(storyId, entity.id, 8)]);
+  await store.getState().loadEntities(storyId);
+  oldEntities.resolve([entity]);
+  oldAttributes.resolve({ [entity.id]: [attribute(storyId, entity.id, 5)] });
+  await old;
+  const bundle = store.getState().bundles[storyId];
+  assert.equal(bundle.entities.find((item) => item.id === entity.id).location, "docks");
+  assert.equal(bundle.attributesByEntity[entity.id][0].value, 8);
+  assert.equal(bundle.entitiesLoading, false);
+  assert.ok(entityCalls(storyId, "list_entities").every(({ args }) => args.kind === null));
+});
+
+test("a slow stat set followed by a fast remove runs in order for both entity kinds", async () => {
+  for (const kind of ["character", "relationship"]) {
+    const storyId = `entity-set-remove-${kind}`, entity = await entityFixture(storyId, kind);
+    const attributeId = kind === "character" ? "health" : "trust";
+    const wait = delayEntityCommand(storyId, "set_entity_attribute");
+    const setting = store.getState().setEntityAttribute(storyId, entity.id, attributeId, 8);
+    await wait.started;
+    const removing = store.getState().removeEntityAttribute(storyId, entity.id, attributeId);
+    assert.equal(entityCalls(storyId, "remove_entity_attribute").length, 0);
+    wait.resolve();
+    const [saved] = await Promise.all([setting, removing]);
+    assert.equal(saved.value, 8);
+    assert.deepEqual(entityCalls(storyId).filter(({ command }) => command.endsWith("_entity_attribute"))
+      .map(({ command }) => command), ["set_entity_attribute", "remove_entity_attribute"]);
+    assert.deepEqual(entityAttributes.get(entity.id), []);
+    assert.deepEqual(store.getState().bundles[storyId].attributesByEntity[entity.id], []);
+  }
+});
+
+test("Save while a stat set is pending sends it once and captures its field and stat drafts", async () => {
+  const storyId = "entity-pending-save", entity = await entityFixture(storyId);
+  const wait = delayEntityCommand(storyId, "set_entity_attribute");
+  const setting = store.getState().setEntityAttribute(storyId, entity.id, "health", 8);
+  await wait.started;
+  const drafts = { health: "8" }, fields = { gender: "female" };
+  const saving = store.getState().updateEntity(storyId, entity.id, undefined, fields, drafts);
+  drafts.health = "9";
+  fields.gender = "male";
+  assert.equal(entityCalls(storyId, "update_entity").length, 0);
+  wait.resolve();
+  await Promise.all([setting, saving]);
+  assert.equal(entityCalls(storyId, "set_entity_attribute").length, 1);
+  assert.deepEqual(entityCalls(storyId, "update_entity")[0].args, { storyId, entityId: entity.id, name: null, fields: { gender: "female" } });
+  const bundle = store.getState().bundles[storyId];
+  assert.equal(bundle.attributesByEntity[entity.id][0].value, 8);
+  assert.equal(bundle.entities.find((item) => item.id === entity.id).gender, "female");
+  assert.equal(bundle.entities.find((item) => item.id === entity.id).role, "smuggler");
+});
+
+test("Delete starts only after a pending stat set and its reload have settled", async () => {
+  const storyId = "entity-pending-delete", entity = await entityFixture(storyId);
+  const wait = delayEntityCommand(storyId, "set_entity_attribute"), deleteWait = delayEntityCommand(storyId, "delete_entity");
+  const setting = store.getState().setEntityAttribute(storyId, entity.id, "health", 8);
+  await wait.started;
+  const deleting = store.getState().deleteEntity(storyId, entity.id);
+  assert.equal(entityCalls(storyId, "delete_entity").length, 0);
+  wait.resolve();
+  await setting;
+  await deleteWait.started;
+  assert.equal(store.getState().bundles[storyId].attributesByEntity[entity.id][0].value, 8);
+  assert.deepEqual(entityCalls(storyId).slice(-3).map(({ command }) => command), ["list_entities", "list_story_attributes", "delete_entity"]);
+  deleteWait.resolve();
+  await deleting;
+  assert.equal(store.getState().bundles[storyId].entities.some((item) => item.id === entity.id), false);
+});
+
+test("a failed entity operation does not block the next operation already queued", async () => {
+  const storyId = "entity-failed-queue", entity = await entityFixture(storyId);
+  const wait = delayEntityCommand(storyId, "set_entity_attribute");
+  const setting = store.getState().setEntityAttribute(storyId, entity.id, "health", 8);
+  const rejected = assert.rejects(setting, /set rejected/);
+  await wait.started;
+  const removing = store.getState().removeEntityAttribute(storyId, entity.id, "health");
+  wait.reject(new Error("set rejected"));
+  await Promise.all([rejected, removing]);
+  assert.equal(entityCalls(storyId, "remove_entity_attribute").length, 1);
+  assert.deepEqual(store.getState().bundles[storyId].attributesByEntity[entity.id], []);
+});
+
+test("deleting a character reloads the list and hides its still-present relationship", async () => {
+  const storyId = "entity-delete-reload", entity = await entityFixture(storyId);
+  const relationship = shownEntities(storyId).find((item) => item.kind === "relationship");
+  entityAttributes.set(relationship.id, [attribute(storyId, relationship.id, 7, "trust")]);
+  await store.getState().loadEntities(storyId);
+  assert.equal(store.getState().bundles[storyId].attributesByEntity[relationship.id][0].value, 7);
+  await store.getState().deleteEntity(storyId, entity.id);
+  assert.ok(entitiesByStory.get(storyId).some((item) => item.id === relationship.id));
+  assert.deepEqual(store.getState().bundles[storyId].entities.map((item) => item.name), ["You"]);
+  assert.equal(store.getState().bundles[storyId].attributesByEntity[relationship.id], undefined);
+  assert.equal(entityCalls(storyId, "list_entities").length, 3);
+  assert.equal(entityCalls(storyId, "list_story_attributes").length, 3);
+});
+
+test("stat edits reload all story attributes after set, remove and add", async () => {
+  const storyId = "entity-stat-reload", entity = await entityFixture(storyId);
+  await store.getState().setEntityAttribute(storyId, entity.id, "health", 8);
+  assert.equal(store.getState().bundles[storyId].attributesByEntity[entity.id][0].value, 8);
+  await store.getState().removeEntityAttribute(storyId, entity.id, "health");
+  assert.deepEqual(store.getState().bundles[storyId].attributesByEntity[entity.id], []);
+  await store.getState().setEntityAttribute(storyId, entity.id, "health", 5);
+  assert.equal(store.getState().bundles[storyId].attributesByEntity[entity.id][0].value, 5);
+  assert.equal(entityCalls(storyId, "list_story_attributes").length, 4);
+});
+
+test("a returned stat stays cached if reload fails so Save does not resend it", async () => {
+  const storyId = "entity-stat-read-failure", entity = await entityFixture(storyId);
+  const wait = delayEntityCommand(storyId, "list_story_attributes");
+  const previousError = console.error;
+  console.error = () => {};
+  try {
+    const setting = store.getState().setEntityAttribute(storyId, entity.id, "health", 8);
+    await wait.started;
+    assert.equal(store.getState().bundles[storyId].attributesByEntity[entity.id][0].value, 8);
+    wait.reject(new Error("attributes read failed"));
+    const saved = await setting;
+    assert.equal(store.getState().bundles[storyId].attributesByEntity[entity.id][0], saved);
+    assert.equal(store.getState().bundles[storyId].entitiesLoading, false);
+    await store.getState().updateEntity(storyId, entity.id, undefined, {}, { health: "8" });
+    assert.equal(entityCalls(storyId, "set_entity_attribute").length, 1);
+  } finally { console.error = previousError; }
+});
+
+test("entity create and update send flat character patches and use the relationship label as name", async () => {
+  const storyId = "entity-field-api";
+  await entityFixture(storyId);
+  const fields = { role: "innkeeper", location: "bar", outfit: "apron" };
+  await store.getState().createEntity(storyId, "Tom", fields);
+  assert.deepEqual(entityCalls(storyId, "create_entity")[0].args, { storyId, kind: "character", name: "Tom", fields });
+  const created = store.getState().bundles[storyId].entities.find((item) => item.name === "Tom");
+  assert.equal(created.link, null);
+  await store.getState().updateEntity(storyId, created.id, undefined, { gender: "female", role: null });
+  const edited = store.getState().bundles[storyId].entities.find((item) => item.id === created.id);
+  assert.equal(edited.gender, "female");
+  assert.equal(edited.role, null);
+  assert.equal(edited.location, "bar");
+  assert.equal(edited.outfit, "apron");
+  const relationship = store.getState().bundles[storyId].entities.find((item) => item.kind === "relationship");
+  await store.getState().updateEntity(storyId, relationship.id, "Allies", {});
+  const link = store.getState().bundles[storyId].entities.find((item) => item.id === relationship.id);
+  assert.equal(link.name, "Mira -> You");
+  assert.equal(link.link.label, "Allies");
+  assert.equal(link.link.description, "Estranged");
+  assert.equal(link.link.direction, "one_way");
 });

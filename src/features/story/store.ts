@@ -1,7 +1,9 @@
 import { create } from "zustand";
 import type {
   ActionMode,
+  CharacterPatch,
   Entity,
+  EntityAttributeValue,
   NarratorToolSettings,
   NarrationDonePayload,
   NarrationToolActivityPayload,
@@ -59,8 +61,9 @@ export interface StoryBundle {
   imagesByEntry: Record<string, StoryImage[]>;
   imagePendingFor: string[];
   imageError: string | null;
-  characters: Entity[];
-  charactersLoading: boolean;
+  entities: Entity[];
+  entitiesLoading: boolean;
+  attributesByEntity: Record<string, EntityAttributeValue[]>;
   narratorTools: NarratorToolSettings | null;
   narratorToolsLoading: boolean;
   narratorToolsError: string | null;
@@ -100,10 +103,12 @@ interface StoryStoreState {
   _imageGenerated: (image: StoryImage) => void;
   _imageFailed: (entryId: string) => void;
 
-  loadCharacters: (storyId: string) => Promise<void>;
-  createCharacter: (storyId: string, name: string, appearanceAnchor?: string) => Promise<void>;
-  updateCharacter: (storyId: string, entityId: string, name: string, appearanceAnchor?: string) => Promise<void>;
-  deleteCharacter: (storyId: string, entityId: string) => Promise<void>;
+  loadEntities: (storyId: string) => Promise<void>;
+  createEntity: (storyId: string, name: string, fields: CharacterPatch) => Promise<void>;
+  updateEntity: (storyId: string, entityId: string, name: string | undefined, fields: CharacterPatch, attributeDrafts?: Record<string, string>) => Promise<void>;
+  deleteEntity: (storyId: string, entityId: string) => Promise<void>;
+  setEntityAttribute: (storyId: string, entityId: string, attributeId: string, value: number) => Promise<EntityAttributeValue>;
+  removeEntityAttribute: (storyId: string, entityId: string, attributeId: string) => Promise<void>;
 
   loadNarratorTools: (storyId: string) => Promise<void>;
   saveNarratorTools: (storyId: string, patch: Partial<NarratorToolSettings>) => Promise<void>;
@@ -125,8 +130,9 @@ const newBundle = (id: string): StoryBundle => ({
   imagesByEntry: {},
   imagePendingFor: [],
   imageError: null,
-  characters: [],
-  charactersLoading: false,
+  entities: [],
+  entitiesLoading: false,
+  attributesByEntity: {},
   narratorTools: null,
   narratorToolsLoading: false,
   narratorToolsError: null,
@@ -193,6 +199,7 @@ const earlyCompletions = new Map<string, NarrationDonePayload>();
 const earlyFailures = new Map<string, { stream_id: string; message: string }>();
 const imageGenerations = new Map<string, number>();
 const imageEventGenerations = new Map<string, number>();
+const entityGenerations = new Map<string, number>();
 const advanceGeneration = (generations: Map<string, number>, key: string) => {
   const generation = (generations.get(key) ?? 0) + 1;
   generations.set(key, generation);
@@ -211,6 +218,29 @@ const enqueueSettings = (queues: Map<string, Promise<void>>, storyId: string, op
   return current.finally(() => {
     if (queues.get(storyId) === current) queues.delete(storyId);
   });
+};
+const entityQueues = new Map<string, Promise<unknown>>();
+const enqueueEntity = <T>(entityId: string, operation: () => Promise<T>): Promise<T> => {
+  const current = (entityQueues.get(entityId) ?? Promise.resolve()).catch(() => undefined).then(operation);
+  entityQueues.set(entityId, current);
+  return current.finally(() => {
+    if (entityQueues.get(entityId) === current) entityQueues.delete(entityId);
+  });
+};
+
+// Already inside the entity queue, including Save; never enqueue again here.
+const saveAttribute = async (storyId: string, entityId: string, attributeId: string, value: number): Promise<EntityAttributeValue> => {
+  const current = useStoryStore.getState().bundles[storyId]?.attributesByEntity[entityId]?.find((item) => item.attribute_id === attributeId);
+  if (current?.value === value) return current;
+  const saved = await charactersApi.setAttribute(storyId, entityId, attributeId, value);
+  advanceGeneration(entityGenerations, storyId);
+  useStoryStore.setState((state) => ({ bundles: patchBundle(state.bundles, storyId, (bundle) => {
+    const attributes = bundle.attributesByEntity[entityId] ?? [];
+    return { attributesByEntity: { ...bundle.attributesByEntity, [entityId]: attributes.some((item) => item.attribute_id === attributeId)
+      ? attributes.map((item) => item.attribute_id === attributeId ? saved : item)
+      : [...attributes, saved] } };
+  }) }));
+  return saved;
 };
 
 export const useStoryStore = create<StoryStoreState>((set, get) => ({
@@ -394,7 +424,7 @@ export const useStoryStore = create<StoryStoreState>((set, get) => ({
         };
       }),
     }));
-    await get().loadCharacters(storyId);
+    await get().loadEntities(storyId);
     await get().loadImagesForStory(storyId);
   },
   editEntry: async (storyId, entryId, content) => {
@@ -516,7 +546,7 @@ export const useStoryStore = create<StoryStoreState>((set, get) => ({
     }));
     get().loadTranscript(storyId);
     get().loadImagesForStory(storyId);
-    get().loadCharacters(storyId);
+    get().loadEntities(storyId);
   },
   _fail: (streamId, message, eventStoryId) => {
     const found = findStream(get().bundles, streamId);
@@ -601,38 +631,60 @@ export const useStoryStore = create<StoryStoreState>((set, get) => ({
     get().loadTranscript(storyId);
   },
 
-  loadCharacters: async (storyId) => {
-    set((state) => ({ bundles: patchBundle(state.bundles, storyId, { charactersLoading: true }) }));
+  loadEntities: async (storyId) => {
+    const generation = advanceGeneration(entityGenerations, storyId);
+    set((state) => ({ bundles: patchBundle(state.bundles, storyId, { entitiesLoading: true }) }));
     try {
-      const characters = await charactersApi.list(storyId);
-      set((state) => ({ bundles: patchBundle(state.bundles, storyId, { characters, charactersLoading: false }) }));
+      const [entities, attributesByEntity] = await Promise.all([
+        charactersApi.list(storyId), charactersApi.listStoryAttributes(storyId),
+      ]);
+      if (!isCurrentGeneration(entityGenerations, storyId, generation)) return;
+      set((state) => ({ bundles: patchBundle(state.bundles, storyId, { entities, attributesByEntity }) }));
     } catch (error) {
-      console.error("failed to load characters", error);
-      set((state) => ({ bundles: patchBundle(state.bundles, storyId, { charactersLoading: false }) }));
+      console.error("failed to load entities", error);
+    } finally {
+      if (isCurrentGeneration(entityGenerations, storyId, generation)) {
+        set((state) => ({ bundles: patchBundle(state.bundles, storyId, { entitiesLoading: false }) }));
+      }
     }
   },
-  createCharacter: async (storyId, name, appearanceAnchor) => {
-    const character = await charactersApi.create(storyId, name, appearanceAnchor);
-    set((state) => ({
-      bundles: patchBundle(state.bundles, storyId, (bundle) => ({ characters: [...bundle.characters, character] })),
-    }));
+  createEntity: async (storyId, name, fields) => {
+    await charactersApi.create(storyId, name, fields);
+    await get().loadEntities(storyId);
   },
-  updateCharacter: async (storyId, entityId, name, appearanceAnchor) => {
-    const character = await charactersApi.update(storyId, entityId, name, appearanceAnchor);
-    set((state) => ({
-      bundles: patchBundle(state.bundles, storyId, (bundle) => ({
-        characters: bundle.characters.map((entity) => (entity.id === entityId ? character : entity)),
-      })),
-    }));
+  updateEntity: (storyId, entityId, name, fields, attributeDrafts) => {
+    const drafts = { ...attributeDrafts };
+    const patch = { ...fields };
+    return enqueueEntity(entityId, async () => {
+      try {
+        for (const [attributeId, draft] of Object.entries(drafts)) {
+          const value = Number(draft);
+          if (Number.isFinite(value)) await saveAttribute(storyId, entityId, attributeId, value);
+        }
+        await charactersApi.update(storyId, entityId, name, patch);
+      } finally {
+        await get().loadEntities(storyId);
+      }
+    });
   },
-  deleteCharacter: async (storyId, entityId) => {
+  deleteEntity: (storyId, entityId) => enqueueEntity(entityId, async () => {
     await charactersApi.delete(storyId, entityId);
-    set((state) => ({
-      bundles: patchBundle(state.bundles, storyId, (bundle) => ({
-        characters: bundle.characters.filter((entity) => entity.id !== entityId),
-      })),
-    }));
-  },
+    await get().loadEntities(storyId);
+  }),
+  setEntityAttribute: (storyId, entityId, attributeId, value) => enqueueEntity(entityId, async () => {
+    const saved = await saveAttribute(storyId, entityId, attributeId, value);
+    await get().loadEntities(storyId);
+    return saved;
+  }),
+  removeEntityAttribute: (storyId, entityId, attributeId) => enqueueEntity(entityId, async () => {
+    await charactersApi.removeAttribute(storyId, entityId, attributeId);
+    advanceGeneration(entityGenerations, storyId);
+    set((state) => ({ bundles: patchBundle(state.bundles, storyId, (bundle) => ({
+      attributesByEntity: { ...bundle.attributesByEntity,
+        [entityId]: (bundle.attributesByEntity[entityId] ?? []).filter((item) => item.attribute_id !== attributeId) },
+    })) }));
+    await get().loadEntities(storyId);
+  }),
 
   loadNarratorTools: async (storyId) => {
     const activeLoad = settingsLoads.get(storyId);
