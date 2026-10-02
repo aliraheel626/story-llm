@@ -20,13 +20,13 @@ use super::to_tool_error;
 
 pub const NAME: &str = "save_relationship";
 pub const DESCRIPTION: &str =
-    "Record how one character relates to another, or update it. There is one relationship per \
+    "Record how one character relates to another, or update it, whenever the story establishes \
+     or changes how two characters relate. There is one relationship per \
      direction: calling again with the same from and to updates it (a new label replaces the \
      old one, such as \"former friends\" when a friendship ends). `label` is short (\"estranged \
      sister\", \"owes money to\", \"siblings\"). Use direction \"both\" only for truly mutual facts \
      (siblings, married, allies); feelings that differ per side are two one_way relationships. \
      Use stats for how one feels about the other, such as Affection or Trust.";
-pub const INSTRUCTION: &str = "Use save_relationship when the story establishes or changes how two characters relate.";
 
 pub fn schema() -> Value {
     json!({
@@ -59,7 +59,6 @@ fn build(deps: &ToolDeps) -> PortableDynamicTool {
 
 pub const SPEC: ToolSpec = ToolSpec {
     name: NAME,
-    instruction: Some(INSTRUCTION),
     needs_turn: true,
     enabled,
     build,

@@ -19,14 +19,14 @@ use super::to_tool_error;
 
 pub const NAME: &str = "save_character";
 pub const DESCRIPTION: &str =
-    "Record a character the story has established, or update one. Always use the character's \
+    "Record a character the story has established, or update one: use it for new or changed \
+     characters, including where they are and what they wear. Always use the character's \
      true name, decided when you introduce them, even if the player doesn't know it yet; put \
      how the player knows them in known_as and narrate them only that way until revealed. Keep \
      location and outfit current as the story moves. Fields you leave out stay as they are; \
      null clears a field. Use stats for changes such as an injury; most changes are minor, and \
      dramatic is only for a major, story-changing swing. Only set facts the story has \
      established or that you have decided for a character you're introducing.";
-pub const INSTRUCTION: &str = "Use save_character for new or changed characters, including where they are and what they wear.";
 
 pub fn schema() -> Value {
     json!({
@@ -64,7 +64,6 @@ fn build(deps: &ToolDeps) -> PortableDynamicTool {
 
 pub const SPEC: ToolSpec = ToolSpec {
     name: NAME,
-    instruction: Some(INSTRUCTION),
     needs_turn: true,
     enabled,
     build,

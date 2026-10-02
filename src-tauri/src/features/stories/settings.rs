@@ -183,7 +183,6 @@ pub struct ContextSettings {
     pub entity_kinds: EntityVisibility,
     pub author_note_enabled: bool,
     pub author_note: String,
-    pub tool_instructions: bool,
 }
 
 impl Default for ContextSettings {
@@ -192,7 +191,6 @@ impl Default for ContextSettings {
             entity_kinds: EntityVisibility::default(),
             author_note_enabled: true,
             author_note: String::new(),
-            tool_instructions: true,
         }
     }
 }
@@ -524,7 +522,6 @@ mod tests {
         assert_eq!(context, ContextSettings::default());
         context.entity_kinds.relationship = false;
         context.author_note_enabled = false;
-        context.tool_instructions = false;
         save_story_context_settings(&pool, "first", context.clone()).unwrap();
         let count = || -> i64 {
             pool.get().unwrap().query_row("SELECT COUNT(*) FROM transcript_entries WHERE story_id = 'first' AND kind = 'context_note_updated'", [], |row| row.get(0)).unwrap()

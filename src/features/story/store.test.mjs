@@ -139,7 +139,7 @@ globalThis.__storyTestInvoke = async (command, args = {}) => {
       ];
     }
     case "get_story_context_settings": {
-      const settings = { entity_kinds: { character: true, relationship: true }, author_note_enabled: true, author_note: `Note ${args.storyId}`, tool_instructions: true };
+      const settings = { entity_kinds: { character: true, relationship: true }, author_note_enabled: true, author_note: `Note ${args.storyId}` };
       if (nextContextLoad) {
         const wait = nextContextLoad;
         nextContextLoad = null;
@@ -503,16 +503,16 @@ test("a second toggle while a save is in flight is ignored", async () => {
   const firstTranscript = contextStore.getState().toggleTranscriptItem(storyId, "images", true);
   const secondTranscript = contextStore.getState().toggleTranscriptItem(storyId, "narration", false);
   const firstContext = contextStore.getState().saveContextSettings(storyId, { entity_kinds: { character: true, relationship: false } });
-  const secondContext = contextStore.getState().saveContextSettings(storyId, { tool_instructions: false });
+  const secondContext = contextStore.getState().saveContextSettings(storyId, { author_note_enabled: false });
   assert.deepEqual(contextStore.getState().stories[storyId].items.map((item) => item.enabled), [true, true]);
   assert.deepEqual(contextStore.getState().stories[storyId].context.entity_kinds, { character: true, relationship: false });
-  assert.equal(contextStore.getState().stories[storyId].context.tool_instructions, true);
+  assert.equal(contextStore.getState().stories[storyId].context.author_note_enabled, true);
   releaseTranscript();
   releaseContext();
   await Promise.all([firstTranscript, secondTranscript, firstContext, secondContext]);
   assert.deepEqual(calls.filter(({ command, args }) => command === "save_story_transcript_settings" && args.storyId === storyId).map(({ args }) => args.include),
     [{ images: true, narration: true }]);
-  assert.deepEqual(calls.filter(({ command, args }) => command === "save_story_context_settings" && args.storyId === storyId).map(({ args }) => [args.settings.entity_kinds, args.settings.tool_instructions]),
+  assert.deepEqual(calls.filter(({ command, args }) => command === "save_story_context_settings" && args.storyId === storyId).map(({ args }) => [args.settings.entity_kinds, args.settings.author_note_enabled]),
     [[{ character: true, relationship: false }, true]]);
   assert.deepEqual(contextStore.getState().stories[storyId].items.map((item) => item.enabled), [true, true]);
   assert.equal(contextStore.getState().stories[storyId].transcriptSaving, false);

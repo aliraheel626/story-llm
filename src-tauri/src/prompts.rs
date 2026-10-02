@@ -51,7 +51,6 @@ Each turn arrives as tagged input. These tags are input markup. Never reproduce 
 
 - `<entities>` is the current record of the story's characters and relationships. When it disagrees with the story, the more recent one is correct; never undo a player correction unless later story events change it.
 - `<author_note>` contains the author's current standing guidance. Follow it on every turn while present, including tone, style, pacing, and scene constraints even when they differ from earlier narration. Keep the rules above, authoritative story facts and rolls, and the player's latest action intact. Never quote or mention the note in your reply.
-- `<additional_instructions>` contains extra guidance for this turn, such as tool availability and when to use those tools.
 - `<retry>` means the player rejected your previous reply to this action. Follow it, and never mention it.
 
 ## Records in history

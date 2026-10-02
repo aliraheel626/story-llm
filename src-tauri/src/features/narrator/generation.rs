@@ -110,13 +110,6 @@ pub async fn prepare(inputs: NarratorInputs<'_>) -> AppResult<Prepared> {
         .iter()
         .map(|spec| DynamicTool::from_portable((spec.build)(&deps)))
         .collect();
-    let descriptions = enabled_tools
-        .iter()
-        .map(|spec| context::blocks::ToolDescription {
-            name: spec.name,
-            instruction: spec.instruction,
-        })
-        .collect::<Vec<_>>();
     let context = inputs
         .turn
         .with(|conn| {
@@ -125,7 +118,6 @@ pub async fn prepare(inputs: NarratorInputs<'_>) -> AppResult<Prepared> {
                 conn,
                 story_id: inputs.story_id,
                 context: &context,
-                tools: &descriptions,
                 rejected_reply: inputs.rejected_reply.as_deref(),
             })
         })

@@ -26,7 +26,6 @@ pub struct ToolDeps {
 
 pub struct ToolSpec {
     pub name: &'static str,
-    pub instruction: Option<&'static str>,
     pub needs_turn: bool,
     pub enabled: for<'a> fn(&ToolAvailability<'a>) -> bool,
     pub build: fn(&ToolDeps) -> PortableDynamicTool,

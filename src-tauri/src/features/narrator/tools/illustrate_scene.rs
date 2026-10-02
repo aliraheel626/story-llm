@@ -20,7 +20,6 @@ pub const DESCRIPTION: &str =
      seeing). Write a vivid, concrete visual description of the subject as it appears in the \
      story: subject, setting, composition, lighting. Do not mention art style or medium; \
      that's applied separately.";
-pub const INSTRUCTION: &str = "You have an illustrate_scene tool: always call it when the player sends <see>, and otherwise only for a genuinely striking moment.";
 
 pub fn schema() -> Value {
     json!({
@@ -48,7 +47,6 @@ fn build(deps: &ToolDeps) -> PortableDynamicTool {
 
 pub const SPEC: ToolSpec = ToolSpec {
     name: NAME,
-    instruction: Some(INSTRUCTION),
     needs_turn: false,
     enabled,
     build,

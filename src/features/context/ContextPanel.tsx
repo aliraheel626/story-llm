@@ -56,11 +56,6 @@ export function ContextPanel() {
         className="rounded bg-accent px-2 py-1.5 font-medium text-bg hover:bg-accent-hover disabled:opacity-40 transition-colors">
         {contextSaving ? "Saving..." : "Save"}
       </button>
-      <label className="flex items-center gap-2 text-text">
-        <input type="checkbox" checked={context.tool_instructions} disabled={contextSaving}
-          onChange={(event) => toggle({ tool_instructions: event.target.checked })} className="accent-accent" />
-        Tool instructions
-      </label>
       {state.contextError && <p role="alert" className="text-danger">{state.contextError}</p>}
     </div>
   );

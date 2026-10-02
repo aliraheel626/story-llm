@@ -7,10 +7,7 @@ use crate::features::{transcript::history::{self, ImagePolicy}, stories::setting
 use crate::prompts;
 use crate::shared::error::AppResult;
 
-use super::{
-    build_message_context, combine_context_blocks,
-    blocks::{Inputs, ToolDescription},
-};
+use super::{blocks::Inputs, build_message_context, combine_context_blocks};
 
 #[derive(Serialize, Debug, PartialEq, Eq)]
 pub struct PreviewMessage {
@@ -32,7 +29,6 @@ pub fn build_preview(
     conn: &rusqlite::Connection,
     story_id: &str,
     model: &TextModelConfig,
-    tools: &[ToolDescription<'_>],
 ) -> AppResult<ContextPreview> {
     let settings = settings::read_transcript_settings(conn, story_id)?;
     let context = settings::read_context_settings(conn, story_id)?;
@@ -55,7 +51,6 @@ pub fn build_preview(
         conn,
         story_id,
         context: &context,
-        tools,
         rejected_reply: None,
     })?;
     let last = history.last_mut().expect("synthetic continue turn exists");
@@ -100,13 +95,6 @@ mod tests {
         }
     }
 
-    fn tools() -> [ToolDescription<'static>; 1] {
-        [ToolDescription {
-            name: "roll_check",
-            instruction: Some(crate::features::narrator::tools::roll_check::INSTRUCTION),
-        }]
-    }
-
     #[test]
     fn preview_matches_transcript_and_live_context_without_writes() {
         let pool = crate::shared::db::test_pool();
@@ -114,7 +102,7 @@ mod tests {
         let story_settings = json!({
             "transcript": {"include": {"images": true, "narration.thoughts": true}},
             "context": {"author_note": "Keep it tense.",
-                          "author_note_enabled": true, "tool_instructions": true}
+                          "author_note_enabled": true}
         });
         test_support::story_with_settings(&conn, "s", story_settings);
         entities::create_entity_with_id_sync(
@@ -206,7 +194,7 @@ mod tests {
 
         for supports_images in [true, false] {
             let config = config(supports_images);
-            let preview = build_preview(&conn, "s", &config, &tools()).unwrap();
+            let preview = build_preview(&conn, "s", &config).unwrap();
             let settings = settings::read_transcript_settings(&conn, "s").unwrap();
             let context = settings::read_context_settings(&conn, "s").unwrap();
             let mut history = history::for_model(
@@ -240,7 +228,6 @@ mod tests {
                 conn: &conn,
                 story_id: "s",
                 context: &context,
-                tools: &tools(),
                 rejected_reply: None,
             })
             .unwrap();
@@ -308,7 +295,7 @@ mod tests {
 
         conn.execute("UPDATE stories SET settings_json = '{}' WHERE id = 's'", [])
             .unwrap();
-        let disabled = build_preview(&conn, "s", &config(false), &tools()).unwrap();
+        let disabled = build_preview(&conn, "s", &config(false)).unwrap();
         assert!(!disabled.images_unsupported);
         assert!(disabled
             .messages

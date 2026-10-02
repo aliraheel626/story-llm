@@ -75,7 +75,6 @@ export interface ContextSettings {
   entity_kinds: { character: boolean; relationship: boolean };
   author_note_enabled: boolean;
   author_note: string;
-  tool_instructions: boolean;
 }
 export interface ContextPreview {
   system: string;

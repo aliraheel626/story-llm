@@ -16,14 +16,14 @@ use super::shared::{object_args, resolve_entity};
 
 pub const NAME: &str = "roll_check";
 pub const DESCRIPTION: &str =
-    "Resolve a genuinely uncertain action. With zero factors, chance_percent is optional and \
+    "Resolve a genuinely uncertain action: call this before narrating the result, and do not \
+     roll routine or certain actions. With zero factors, chance_percent is optional and \
      defaults to 50. For one factor, name the acting entity and attribute_name; for two, \
      put the acting pair first and the opposing pair second. The backend reads stored attribute \
      values, normalizes each by its registered min/max, and calculates chance_percent as \
      round(50 + 50 * (actor_normalized - opponent_normalized)); a single factor faces a neutral \
      opponent at 0.5. Do not pass chance_percent with factors, and do not invent attribute \
      values. The tool returns the draw and success or failure.";
-pub const INSTRUCTION: &str = "For a genuinely uncertain outcome, call roll_check before narrating the result. With no factors it defaults to 50% unless you provide chance_percent. For a check based on registered attributes, select one acting entity-attribute pair or two opposing pairs by name; the backend reads their current values and calculates the chance. Never invent attribute values or pass chance_percent together with factors. Do not roll routine or certain actions.";
 
 pub fn schema() -> Value {
     json!({
@@ -70,7 +70,6 @@ fn build(deps: &ToolDeps) -> PortableDynamicTool {
 
 pub const SPEC: ToolSpec = ToolSpec {
     name: NAME,
-    instruction: Some(INSTRUCTION),
     needs_turn: true,
     enabled,
     build,
