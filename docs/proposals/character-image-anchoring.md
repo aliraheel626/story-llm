@@ -172,15 +172,15 @@ All modes first check **Reuse** (below), then make any missing assets **in paral
   2. **Full:** 4 scenes with 1–2 anchors as references. Does identity hold, does the outfit hold, and do the references' plain backgrounds leak into the scene?
   3. **Merge:** background + 2 sprites → 3 scenes. Is the background recognisable? Are the characters placed as asked?
   4. **Sprites:** 3 expressions × 2 poses edited from the anchor. Are they consistent?
-  5. **Stage transparency:** a transparent sprite from one GPT Image model, against the colour-key fallback on Gemini (green, and magenta for a green-clad character), run through the key-out code. How are the edges around hair, and does any clothing get removed? Record each sprite's border-match share to confirm the 90% threshold.
-  6. **API check:** does Gemini through `/api/v1/images` actually honour `input_references` and `aspect_ratio: 16:9`? Use a read-only check of the output size and a side-by-side image with and without the references.
-- **Models:** Gemini (the current default) and Grok Imagine 2.0 side by side. Plus single calls to:
-  - find Grok's default quality tier
-  - try a true-transparency model (GPT Image 1 mini)
-  - check Riverflow's "transparent" output, since its only format is JPEG
-- **Output:** 42 calls, about **$2.50–2.90** (cap $5), saved with a REPORT.md in `docs/report/image-anchoring-probe/`.
+  5. **Stage transparency:** a transparent sprite from one GPT Image model, against the colour-key fallback (green, and magenta for a green-clad character), run through the key-out code. How are the edges around hair, and does any clothing get removed? Record each sprite's border-match share to confirm the 90% threshold.
+  6. **API check:** does `/api/v1/images` actually honour `input_references` and `aspect_ratio: 16:9`? Use a read-only check of the output size and a side-by-side image with and without the references.
+- **Models (budget $1):**
+  - Seedream 5.0 Flash ($0.018 per image, references free) runs every test.
+  - Gemini (the current default) and Grok Imagine 2.0 each get 3 comparison calls on Seedream's anchors: an outfit edit, and a scene with and without references. Grok's calls also show its default quality tier.
+  - One true-transparency call (GPT Image 1 mini).
+- **Output:** 27 calls, about **$0.72–0.84** (cap $1), saved with a REPORT.md in `docs/report/image-anchoring-probe/`.
 
-**Done when:** the report says, with the images as evidence, whether Full and Merge keep identity on Gemini, and whether the colour-key fallback is good enough to be the default for models without transparency.
+**Done when:** the report says, with the images as evidence, whether Full and Merge keep identity on Seedream, how Gemini and Grok compare on the same anchors, and whether the colour-key fallback is good enough to be the default for models without transparency.
 
 ### Phase 1: Anchors and Full mode
 
@@ -228,7 +228,7 @@ All modes first check **Reuse** (below), then make any missing assets **in paral
 
 | Phase | Rough production lines | Image spend |
 | --- | --- | --- |
-| 0. Probe | 0 (script) | $2.50–2.90 |
+| 0. Probe | 0 (script) | $0.72–0.84 (cap $1) |
 | 1. Fields, anchors and Full | +370 to +520 | QA only |
 | 2. Reuse | +150 to +220 | QA only |
 | 3. Merge | +300 to +400 | QA only |
