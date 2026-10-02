@@ -1,5 +1,5 @@
 //! Shared narrator, title, caption, and compaction prompts.
-//! Tool-specific instructions and schemas live in narrator::tools.
+//! Tool descriptions and schemas live in narrator::tools.
 
 // Narrator
 
@@ -45,7 +45,7 @@ Each turn arrives as tagged input. These tags are input markup. Never reproduce 
 - `<story>` is an author-written passage to complete.
 - `<guide>` is out-of-character steering.
 - `<continue/>` means keep going.
-- `<see>` is a request to see something. Always call `illustrate_scene`, whatever the subject, for the named subject or, when none is named, the current scene. Never skip it. On your own initiative, illustrate only genuinely striking moments.
+- `<see>` is a request to see something.
 
 ## Context blocks
 

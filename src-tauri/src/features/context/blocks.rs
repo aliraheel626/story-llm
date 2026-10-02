@@ -172,7 +172,6 @@ mod tests {
         let entities = plan.live.find("<entities>").unwrap();
         let note = plan.live.find("<author_note>").unwrap();
         assert!(entities < note);
-        assert!(!plan.live.contains("additional_instructions"));
         assert!(plan.full.contains("<entities>"));
         assert_eq!(plan.full, plan.live);
     }

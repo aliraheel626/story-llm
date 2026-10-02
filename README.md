@@ -80,7 +80,7 @@ Zustand stores coordinate feature state and streamed narration events. On the
 backend, Tauri commands form the feature boundary, while repositories and
 feature-local helpers contain persistence and domain behavior.
 The Transcript panel controls which story entries enter model history. The
-Context panel manages the entity block, author's note, and tool instructions.
+Context panel manages the entity block and author's note.
 
 The narrator prepares a transcript, tools, and a staged candidate, then streams
 generation events. Replies owns submit, Retry, edit, and erase transactions;

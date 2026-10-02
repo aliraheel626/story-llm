@@ -13,8 +13,9 @@ use super::to_tool_error;
 pub const NAME: &str = "illustrate_scene";
 pub const DESCRIPTION: &str =
     "Generate a scene image. Always call this when the player sends <see>, whatever the \
-     subject: that is an explicit request, so never skip it or answer in prose. Call it at most \
-     once per turn. When you choose \
+     subject: that is an explicit request, so never skip it or answer in prose. Illustrate the \
+     subject <see> names or, when none is named, the current scene. Call it at most once per \
+     turn. When you choose \
      to illustrate on your own, use it sparingly: reserve it for a genuinely striking visual \
      moment (a new place revealed, a character's first appearance, a dramatic turn worth \
      seeing). Write a vivid, concrete visual description of the subject as it appears in the \
