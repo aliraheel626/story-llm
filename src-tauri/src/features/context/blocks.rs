@@ -180,6 +180,7 @@ mod tests {
         entities,
         images::model::ImageRequest,
         narrator::catalog::{self, ToolAvailability, ToolDeps, ToolSpec},
+        narrator::tools::{illustrate_scene, roll_check},
         stories::settings::NarratorToolSettings,
         turn::TurnTx,
     };
@@ -513,8 +514,8 @@ mod tests {
             tool_context(&descriptions(&image)),
             format!(
                 "<additional_instructions>\nAvailable narrator tools for this turn: {}.\n{}\n</additional_instructions>",
-                prompts::ILLUSTRATE_SCENE_TOOL_NAME,
-                prompts::IMAGE_TOOL_AVAILABLE_INSTRUCTION
+                illustrate_scene::NAME,
+                illustrate_scene::INSTRUCTION
             )
         );
 
@@ -528,8 +529,8 @@ mod tests {
             tool_context(&descriptions(&roll)),
             format!(
                 "<additional_instructions>\nAvailable narrator tools for this turn: {}.\n{}\n</additional_instructions>",
-                prompts::ROLL_CHECK_TOOL_NAME,
-                prompts::ROLL_CHECK_AVAILABLE_INSTRUCTION
+                roll_check::NAME,
+                roll_check::INSTRUCTION
             )
         );
     }

@@ -19,6 +19,7 @@ use rig_core::message::{ImageMediaType, MimeType, ToolChoice, UserContent};
 use rig_core::providers::{openai, openrouter};
 use rig_core::streaming::StreamedAssistantContent;
 
+use crate::features::narrator::tools::illustrate_scene;
 use crate::shared::error::{AppError, AppResult};
 use reasoning_strip::ReasoningStripper;
 
@@ -293,7 +294,7 @@ struct ActivityHook {
 
 impl ActivityHook {
     fn tool_result_action(&self, tool_name: &str) -> rig_agent::agent::ToolResultAction {
-        if tool_name == crate::prompts::ILLUSTRATE_SCENE_TOOL_NAME {
+        if tool_name == illustrate_scene::NAME {
             if let Some(reason) = &self.stop_reason {
                 return rig_agent::agent::ToolResultAction::stop(reason.clone());
             }
@@ -982,7 +983,7 @@ mod tests {
             stop_reason: Some(stop_reason.to_string()),
         };
         assert_eq!(
-            hook.tool_result_action(crate::prompts::ILLUSTRATE_SCENE_TOOL_NAME),
+            hook.tool_result_action(illustrate_scene::NAME),
             rig_agent::agent::ToolResultAction::stop(stop_reason)
         );
         assert_eq!(

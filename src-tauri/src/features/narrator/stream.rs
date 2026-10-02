@@ -17,7 +17,7 @@ use crate::shared::error::{AppError, AppResult};
 
 use super::generation::Prepared;
 use super::model::Candidate;
-use super::tools;
+use super::tools::friendly_tool_label;
 
 #[derive(Clone, Serialize)]
 struct NarrationDeltaPayload<'a> {
@@ -187,7 +187,7 @@ where
                             NarrationToolActivityPayload {
                                 stream_id: &stream_id_for_chunks,
                                 call_id,
-                                label: tools::friendly_tool_label(&tool_name, &args),
+                                label: friendly_tool_label(&tool_name, &args),
                                 phase: phase_str,
                                 ok,
                             },
@@ -200,7 +200,7 @@ where
                     serde_json::Value::String(raw) => raw.clone(),
                     value => value.to_string(),
                 };
-                let label = tools::friendly_tool_label(&call.tool, &args_for_label);
+                let label = friendly_tool_label(&call.tool, &args_for_label);
                 turn.with(|conn| {
                     transcript_repository::append_entry(
                         conn,
