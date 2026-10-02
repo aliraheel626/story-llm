@@ -1,0 +1,37 @@
+{
+  "database": "C:\\Users\\User\\AppData\\Roaming\\com.story-llm.app\\story-llm.sqlite3",
+  "mode": "ro",
+  "query": "SELECT e.name,c.location,l.label,a.value AS trust FROM entities e LEFT JOIN characters c ON c.entity_id=e.id LEFT JOIN relationships l ON l.from_id=e.id LEFT JOIN entity_attributes a ON a.entity_id=l.entity_id AND a.attribute_id='1882882f-8f52-4cbf-a9f3-cf080d35b498' WHERE e.story_id='7b6992ba-996a-4b13-9750-bef67d3eb4c0'",
+  "rows": [
+    {
+      "name": null,
+      "location": null,
+      "label": null,
+      "trust": null
+    },
+    {
+      "name": "Isolde Vetch",
+      "location": "corner of the Rusty Anchor",
+      "label": null,
+      "trust": null
+    },
+    {
+      "name": "Mira",
+      "location": "the Rusty Anchor tavern",
+      "label": "resents",
+      "trust": -2.0
+    },
+    {
+      "name": "Tom",
+      "location": "behind the bar",
+      "label": null,
+      "trust": null
+    },
+    {
+      "name": "You",
+      "location": null,
+      "label": null,
+      "trust": null
+    }
+  ]
+}

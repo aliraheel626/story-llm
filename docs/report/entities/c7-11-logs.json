@@ -1,0 +1,25 @@
+{
+  "backend": [
+    {
+      "file": "c7-backend.log",
+      "lines": 26,
+      "error_or_panic_lines": []
+    },
+    {
+      "file": "c7-backend-restart.log",
+      "lines": 18,
+      "error_or_panic_lines": []
+    },
+    {
+      "file": "c7-10-backend.log",
+      "lines": 12,
+      "error_or_panic_lines": []
+    }
+  ],
+  "frontend_console_entries": 1,
+  "frontend_errors_and_warnings": [],
+  "frontend_logs_in_saved_captures": {
+    "entries_scanned": 23,
+    "errors_and_warnings": []
+  }
+}

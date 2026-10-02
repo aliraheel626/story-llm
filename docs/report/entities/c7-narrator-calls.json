@@ -1,0 +1,485 @@
+{
+  "audit_scope": "Offline saved-evidence extraction for checks 3 and 3b only; no app interaction, provider requests or DB access.",
+  "ids": {
+    "story": "7b6992ba-996a-4b13-9750-bef67d3eb4c0",
+    "mira": "0831ca57-a207-40a5-97e4-10495c08c996",
+    "stranger": "aac955c9-b2ac-4876-8d56-8c2cff861f97",
+    "tom": "0834907f-66a8-418b-abff-19d18b92e6f9",
+    "you": "6abab2f7-1876-4ade-9d65-6ca8d72f4751",
+    "relationship": "relationship:0831ca57-a207-40a5-97e4-10495c08c996:6abab2f7-1876-4ade-9d65-6ca8d72f4751"
+  },
+  "plan_full_path": "C:\\Users\\User\\Documents\\GitHub\\story-llm\\docs\\plans\\entities.md",
+  "phases": [
+    {
+      "phase": "3 first Story: narrator did not call",
+      "evidence_full_paths": [
+        "C:\\Users\\User\\Documents\\GitHub\\story-llm\\docs\\report\\entities\\c7-03-narrator-tools.json"
+      ],
+      "turn_id": "e9338b01-2a02-485e-86a0-a8c0f4ae8c44",
+      "input": "My estranged sister Mira waits for me in the Rusty Anchor tavern, wearing our father's grey cloak. She still resents me for leaving.",
+      "tool_calls": [],
+      "narration": {
+        "transcript_entry_id": "77daf03a-10ec-4c71-9d9b-90d79e2a7c1a",
+        "content_verbatim": "The tavern's low light catches the grey of that cloak before it catches her face. You push through the Rusty Anchor's door and the smell of wet wool and spilled ale comes with you, and there she is, already watching the entrance as if she has been counting the minutes you kept her waiting."
+      },
+      "billed_text_calls": 1
+    },
+    {
+      "phase": "3 allowed single Guide",
+      "evidence_full_paths": [
+        "C:\\Users\\User\\Documents\\GitHub\\story-llm\\docs\\report\\entities\\c7-03-guide-tools.json"
+      ],
+      "turn_id": "54620a2b-dc9a-4ffa-bc6e-79cdf41d7890",
+      "input": "Record Mira, where she is, what she wears, and her relationship to me, using your tools.",
+      "tool_calls": [
+        {
+          "evidence_full_path": "C:\\Users\\User\\Documents\\GitHub\\story-llm\\docs\\report\\entities\\c7-03-guide-tools.json",
+          "transcript_entry_id": "e5103558-9a77-408b-a4de-8e8c49ff738f",
+          "seq": 12,
+          "turn_id": "54620a2b-dc9a-4ffa-bc6e-79cdf41d7890",
+          "target_entry_id": "8b8b3277-d650-4bee-a2f5-f9306f727d7a",
+          "content_verbatim": "Recording Mira\u2026",
+          "payload_json_verbatim": "{\"args\":{\"appearance_anchor\":\"wearing a worn grey cloak, face set with old resentment, watching the door\",\"gender\":\"female\",\"location\":\"the Rusty Anchor tavern\",\"name\":\"Mira\",\"outfit\":\"father's grey cloak\",\"role\":\"estranged sister\"},\"ok\":true,\"result\":{\"created\":true,\"kind\":\"character\",\"name\":\"Mira\"},\"tool\":\"save_character\"}",
+          "tool": "save_character",
+          "ok": true,
+          "args": {
+            "appearance_anchor": "wearing a worn grey cloak, face set with old resentment, watching the door",
+            "gender": "female",
+            "location": "the Rusty Anchor tavern",
+            "name": "Mira",
+            "outfit": "father's grey cloak",
+            "role": "estranged sister"
+          },
+          "result": {
+            "created": true,
+            "kind": "character",
+            "name": "Mira"
+          },
+          "args_verbatim_json": "{\"appearance_anchor\":\"wearing a worn grey cloak, face set with old resentment, watching the door\",\"gender\":\"female\",\"location\":\"the Rusty Anchor tavern\",\"name\":\"Mira\",\"outfit\":\"father's grey cloak\",\"role\":\"estranged sister\"}",
+          "result_verbatim_json": "{\"created\":true,\"kind\":\"character\",\"name\":\"Mira\"}"
+        },
+        {
+          "evidence_full_path": "C:\\Users\\User\\Documents\\GitHub\\story-llm\\docs\\report\\entities\\c7-03-guide-tools.json",
+          "transcript_entry_id": "c205f7c4-59ad-4088-80ea-2a1d2ab281b7",
+          "seq": 13,
+          "turn_id": "54620a2b-dc9a-4ffa-bc6e-79cdf41d7890",
+          "target_entry_id": "8b8b3277-d650-4bee-a2f5-f9306f727d7a",
+          "content_verbatim": "Recording a relationship\u2026",
+          "payload_json_verbatim": "{\"args\":{\"description\":\"Siblings. She still resents you for leaving.\",\"direction\":\"both\",\"from\":\"Mira\",\"label\":\"estranged sister\",\"to\":\"You\"},\"ok\":true,\"result\":{\"created\":true,\"kind\":\"relationship\",\"name\":\"Mira \u2194 You: estranged sister\"},\"tool\":\"save_relationship\"}",
+          "tool": "save_relationship",
+          "ok": true,
+          "args": {
+            "description": "Siblings. She still resents you for leaving.",
+            "direction": "both",
+            "from": "Mira",
+            "label": "estranged sister",
+            "to": "You"
+          },
+          "result": {
+            "created": true,
+            "kind": "relationship",
+            "name": "Mira \u2194 You: estranged sister"
+          },
+          "args_verbatim_json": "{\"description\":\"Siblings. She still resents you for leaving.\",\"direction\":\"both\",\"from\":\"Mira\",\"label\":\"estranged sister\",\"to\":\"You\"}",
+          "result_verbatim_json": "{\"created\":true,\"kind\":\"relationship\",\"name\":\"Mira \u2194 You: estranged sister\"}"
+        },
+        {
+          "evidence_full_path": "C:\\Users\\User\\Documents\\GitHub\\story-llm\\docs\\report\\entities\\c7-03-guide-tools.json",
+          "transcript_entry_id": "342414da-aeb8-4bb2-877d-cd5b170dd57d",
+          "seq": 14,
+          "turn_id": "54620a2b-dc9a-4ffa-bc6e-79cdf41d7890",
+          "target_entry_id": "8b8b3277-d650-4bee-a2f5-f9306f727d7a",
+          "content_verbatim": "Recording a relationship\u2026",
+          "payload_json_verbatim": "{\"args\":{\"description\":\"She still resents you for leaving home.\",\"direction\":\"one_way\",\"from\":\"Mira\",\"label\":\"resents\",\"to\":\"You\"},\"ok\":true,\"result\":{\"created\":false,\"kind\":\"relationship\",\"name\":\"Mira \u2192 You: resents\"},\"tool\":\"save_relationship\"}",
+          "tool": "save_relationship",
+          "ok": true,
+          "args": {
+            "description": "She still resents you for leaving home.",
+            "direction": "one_way",
+            "from": "Mira",
+            "label": "resents",
+            "to": "You"
+          },
+          "result": {
+            "created": false,
+            "kind": "relationship",
+            "name": "Mira \u2192 You: resents"
+          },
+          "args_verbatim_json": "{\"description\":\"She still resents you for leaving home.\",\"direction\":\"one_way\",\"from\":\"Mira\",\"label\":\"resents\",\"to\":\"You\"}",
+          "result_verbatim_json": "{\"created\":false,\"kind\":\"relationship\",\"name\":\"Mira \u2192 You: resents\"}"
+        }
+      ],
+      "narration": {
+        "transcript_entry_id": "8b8b3277-d650-4bee-a2f5-f9306f727d7a",
+        "content_verbatim": "Mira does not rise when she sees you. She sits with her back to the far wall, the grey cloak pooled over the bench like a second shadow, its hem frayed where your father's boots used to catch it. Her hands rest on the scarred table, empty of a cup, as if she came to wait and nothing else.\n\nAcross the room, Tom works the bar without looking up, the stained apron catching the lamplight as he wipes a ring that will not come out of the wood. The tavern holds its usual murmur, but the space between you and your sister is quiet enough to hear the cloak's wool shift when she finally turns her head.\n\nHer eyes find yours and do not soften. Whatever welcome might once have lived there has been worn down to something harder, something that has been rehearsing this moment since the day you left. She studies your face the way a person studies a debt, and the cloak\u2014his cloak\u2014sits on her shoulders like an accusation she has chosen not to take off."
+      },
+      "billed_text_calls": 2
+    },
+    {
+      "phase": "3b hooded stranger",
+      "evidence_full_paths": [
+        "C:\\Users\\User\\Documents\\GitHub\\story-llm\\docs\\report\\entities\\c7-03b-stranger.json"
+      ],
+      "turn_id": "a4002c61-fb28-4a78-b508-42e663993c02",
+      "input": "A hooded stranger in the corner hasn't taken her eyes off us.",
+      "tool_calls": [
+        {
+          "evidence_full_path": "C:\\Users\\User\\Documents\\GitHub\\story-llm\\docs\\report\\entities\\c7-03b-stranger.json",
+          "transcript_entry_id": "93513711-657e-4479-b6f0-cb236084a9a0",
+          "seq": 18,
+          "turn_id": "a4002c61-fb28-4a78-b508-42e663993c02",
+          "target_entry_id": "defb5f3d-e6fa-48c7-befa-ee3420e7cda7",
+          "content_verbatim": "Recording Isolde Vetch\u2026",
+          "payload_json_verbatim": "{\"args\":{\"appearance_anchor\":\"woman in a deep dark hood, only the lower half of a sharp pale face and steady pale eyes visible, still as stone\",\"gender\":\"female\",\"known_as\":\"the hooded stranger\",\"location\":\"corner of the Rusty Anchor\",\"name\":\"Isolde Vetch\",\"outfit\":\"dark hooded cloak, face shadowed\",\"role\":\"watcher\"},\"ok\":true,\"result\":{\"created\":true,\"kind\":\"character\",\"name\":\"Isolde Vetch\"},\"tool\":\"save_character\"}",
+          "tool": "save_character",
+          "ok": true,
+          "args": {
+            "appearance_anchor": "woman in a deep dark hood, only the lower half of a sharp pale face and steady pale eyes visible, still as stone",
+            "gender": "female",
+            "known_as": "the hooded stranger",
+            "location": "corner of the Rusty Anchor",
+            "name": "Isolde Vetch",
+            "outfit": "dark hooded cloak, face shadowed",
+            "role": "watcher"
+          },
+          "result": {
+            "created": true,
+            "kind": "character",
+            "name": "Isolde Vetch"
+          },
+          "args_verbatim_json": "{\"appearance_anchor\":\"woman in a deep dark hood, only the lower half of a sharp pale face and steady pale eyes visible, still as stone\",\"gender\":\"female\",\"known_as\":\"the hooded stranger\",\"location\":\"corner of the Rusty Anchor\",\"name\":\"Isolde Vetch\",\"outfit\":\"dark hooded cloak, face shadowed\",\"role\":\"watcher\"}",
+          "result_verbatim_json": "{\"created\":true,\"kind\":\"character\",\"name\":\"Isolde Vetch\"}"
+        }
+      ],
+      "narration": {
+        "transcript_entry_id": "defb5f3d-e6fa-48c7-befa-ee3420e7cda7",
+        "content_verbatim": "I'll set the watcher in the corner down in the record before the scene moves on.You feel it before you place it: a weight at the edge of the room, steady as a hand laid flat on a table. In the corner, past the last lamp, a hooded figure sits with her back to the wall and her face cut in half by shadow. Only the lower line of a pale jaw shows, and a pair of eyes that have not left the two of you since you came through the door.\n\nShe does not drink. She does not turn when Tom sets a mug down two tables over, nor when a chair scrapes and a man laughs too loud. The hood is deep and dark, and under it she is still in the way of someone who has already decided what she came to see. When Mira shifts, the grey cloak whispering against the bench, those eyes follow the movement and come back to you, unhurried, as if measuring the distance between sister and sister and finding it exactly as she expected."
+      },
+      "billed_text_calls": 2
+    }
+  ],
+  "assessment": {
+    "true_names": {
+      "status": "PASS",
+      "assertions": [
+        {
+          "assertion": "Character tools use true names",
+          "status": "PASS",
+          "expected": [
+            "Mira",
+            "Isolde Vetch"
+          ],
+          "actual": [
+            "Mira",
+            "Isolde Vetch"
+          ],
+          "actual_missing": false,
+          "evidence_full_paths": [
+            "C:\\Users\\User\\Documents\\GitHub\\story-llm\\docs\\report\\entities\\c7-03-guide-tools.json",
+            "C:\\Users\\User\\Documents\\GitHub\\story-llm\\docs\\report\\entities\\c7-03b-stranger.json"
+          ],
+          "locator": "tool_call args.name"
+        },
+        {
+          "assertion": "Relationship calls reference named Mira and You endpoints",
+          "status": "PASS",
+          "expected": [
+            [
+              "Mira",
+              "You"
+            ],
+            [
+              "Mira",
+              "You"
+            ]
+          ],
+          "actual": [
+            [
+              "Mira",
+              "You"
+            ],
+            [
+              "Mira",
+              "You"
+            ]
+          ],
+          "actual_missing": false,
+          "evidence_full_paths": [
+            "C:\\Users\\User\\Documents\\GitHub\\story-llm\\docs\\report\\entities\\c7-03-guide-tools.json"
+          ],
+          "locator": "tool_call args.from/to"
+        }
+      ],
+      "observation": "save_character names Mira and Isolde Vetch; Mira/You endpoints use actual character names, not titles or invented ids."
+    },
+    "known_as": {
+      "status": "PASS",
+      "assertions": [
+        {
+          "assertion": "Stranger has true name and title alias",
+          "status": "PASS",
+          "expected": [
+            "Isolde Vetch",
+            "the hooded stranger"
+          ],
+          "actual": [
+            "Isolde Vetch",
+            "the hooded stranger"
+          ],
+          "actual_missing": false,
+          "evidence_full_paths": [
+            "C:\\Users\\User\\Documents\\GitHub\\story-llm\\docs\\report\\entities\\c7-03b-stranger.json"
+          ],
+          "locator": "entities[id=stranger id]"
+        },
+        {
+          "assertion": "Stranger tool saves true name with known_as",
+          "status": "PASS",
+          "expected": [
+            [
+              "save_character",
+              "Isolde Vetch",
+              "the hooded stranger",
+              true
+            ]
+          ],
+          "actual": [
+            [
+              "save_character",
+              "Isolde Vetch",
+              "the hooded stranger",
+              true
+            ]
+          ],
+          "actual_missing": false,
+          "evidence_full_paths": [
+            "C:\\Users\\User\\Documents\\GitHub\\story-llm\\docs\\report\\entities\\c7-03b-stranger.json"
+          ],
+          "locator": "tool_call payload"
+        },
+        {
+          "assertion": "Visible narration does not disclose either part of the true name",
+          "status": "PASS",
+          "expected": false,
+          "actual": false,
+          "actual_missing": false,
+          "evidence_full_paths": [
+            "C:\\Users\\User\\Documents\\GitHub\\story-llm\\docs\\report\\entities\\c7-03b-stranger.json"
+          ],
+          "locator": "transcript narration.content only, not hidden thoughts/tool records"
+        }
+      ],
+      "observation": "Isolde Vetch is saved with known_as=the hooded stranger; visible narration uses hood/figure descriptions and never Isolde or Vetch."
+    },
+    "labels_and_directions": {
+      "status": "PASS",
+      "assertions": [
+        {
+          "assertion": "Mutual creation then directed update reuse the same fixed id",
+          "status": "PASS",
+          "expected": [
+            {
+              "id": "relationship:0831ca57-a207-40a5-97e4-10495c08c996:6abab2f7-1876-4ade-9d65-6ca8d72f4751",
+              "label": "estranged sister",
+              "direction": "both"
+            },
+            {
+              "id": "relationship:0831ca57-a207-40a5-97e4-10495c08c996:6abab2f7-1876-4ade-9d65-6ca8d72f4751",
+              "label": "resents",
+              "direction": "one_way"
+            }
+          ],
+          "actual": [
+            {
+              "id": "relationship:0831ca57-a207-40a5-97e4-10495c08c996:6abab2f7-1876-4ade-9d65-6ca8d72f4751",
+              "label": "estranged sister",
+              "direction": "both"
+            },
+            {
+              "id": "relationship:0831ca57-a207-40a5-97e4-10495c08c996:6abab2f7-1876-4ade-9d65-6ca8d72f4751",
+              "label": "resents",
+              "direction": "one_way"
+            }
+          ],
+          "actual_missing": false,
+          "evidence_full_paths": [
+            "C:\\Users\\User\\Documents\\GitHub\\story-llm\\docs\\report\\entities\\c7-03-guide-tools.json",
+            "C:\\Users\\User\\Documents\\GitHub\\story-llm\\docs\\report\\entities\\c7-03-verbatim-tool-events.json"
+          ],
+          "locator": "entity_created and entity_updated payloads for relationship id"
+        },
+        {
+          "assertion": "Current relationship is stored Mira to You, resents, one_way",
+          "status": "PASS",
+          "expected": {
+            "entity_id": "relationship:0831ca57-a207-40a5-97e4-10495c08c996:6abab2f7-1876-4ade-9d65-6ca8d72f4751",
+            "from_id": "0831ca57-a207-40a5-97e4-10495c08c996",
+            "to_id": "6abab2f7-1876-4ade-9d65-6ca8d72f4751",
+            "label": "resents",
+            "direction": "one_way",
+            "description": "She still resents you for leaving home.",
+            "is_present": 1
+          },
+          "actual": {
+            "entity_id": "relationship:0831ca57-a207-40a5-97e4-10495c08c996:6abab2f7-1876-4ade-9d65-6ca8d72f4751",
+            "from_id": "0831ca57-a207-40a5-97e4-10495c08c996",
+            "to_id": "6abab2f7-1876-4ade-9d65-6ca8d72f4751",
+            "label": "resents",
+            "direction": "one_way",
+            "description": "She still resents you for leaving home.",
+            "is_present": 1
+          },
+          "actual_missing": false,
+          "evidence_full_paths": [
+            "C:\\Users\\User\\Documents\\GitHub\\story-llm\\docs\\report\\entities\\c7-03-guide-tools.json"
+          ],
+          "locator": "relationships"
+        }
+      ],
+      "observation": "both/estranged sister is sensible for siblings; the next one_way/resents is sensible for Mira's directed feeling. It updates the same fixed id, not a second row. Current orientation is Mira to You. The mutual sibling label is replaced, not retained as a separate relationship."
+    },
+    "removed_tools": {
+      "status": "PASS",
+      "assertions": [
+        {
+          "assertion": "No removed tool called in either checked turn",
+          "status": "PASS",
+          "expected": [],
+          "actual": [],
+          "actual_missing": false,
+          "evidence_full_paths": [
+            "C:\\Users\\User\\Documents\\GitHub\\story-llm\\docs\\report\\entities\\c7-03-guide-tools.json",
+            "C:\\Users\\User\\Documents\\GitHub\\story-llm\\docs\\report\\entities\\c7-03b-stranger.json"
+          ],
+          "locator": "tool_call names in both turns"
+        }
+      ],
+      "observation": "Calls are save_character/save_relationship only; no create_entity/update_entity/get_entities/adjust_entity_attribute."
+    },
+    "no_stats_before_supplemental": {
+      "status": "PASS",
+      "assertions": [
+        {
+          "assertion": "Attributes absent through Story, Guide, stranger and apology",
+          "status": "PASS",
+          "expected": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "actual": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "actual_missing": false,
+          "evidence_full_paths": [
+            "C:\\Users\\User\\Documents\\GitHub\\story-llm\\docs\\report\\entities\\c7-03-narrator-tools.json",
+            "C:\\Users\\User\\Documents\\GitHub\\story-llm\\docs\\report\\entities\\c7-03-guide-tools.json",
+            "C:\\Users\\User\\Documents\\GitHub\\story-llm\\docs\\report\\entities\\c7-03b-stranger.json",
+            "C:\\Users\\User\\Documents\\GitHub\\story-llm\\docs\\report\\entities\\c7-04-narrator-no-stats.json"
+          ],
+          "locator": "attributes arrays"
+        },
+        {
+          "assertion": "No stats supplied by Guide or stranger tool calls",
+          "status": "PASS",
+          "expected": [],
+          "actual": [],
+          "actual_missing": false,
+          "evidence_full_paths": [
+            "C:\\Users\\User\\Documents\\GitHub\\story-llm\\docs\\report\\entities\\c7-03-guide-tools.json",
+            "C:\\Users\\User\\Documents\\GitHub\\story-llm\\docs\\report\\entities\\c7-03b-stranger.json"
+          ],
+          "locator": "tool_call args stats key"
+        },
+        {
+          "assertion": "UI adds Trust 0 then sets -2 as exactly two user events",
+          "status": "PASS",
+          "expected": [
+            {
+              "before": null,
+              "after": 0,
+              "source": "user",
+              "turn_id": null
+            },
+            {
+              "before": 0,
+              "after": -2,
+              "source": "user",
+              "turn_id": null
+            }
+          ],
+          "actual": [
+            {
+              "before": null,
+              "after": 0,
+              "source": "user",
+              "turn_id": null
+            },
+            {
+              "before": 0,
+              "after": -2,
+              "source": "user",
+              "turn_id": null
+            }
+          ],
+          "actual_missing": false,
+          "evidence_full_paths": [
+            "C:\\Users\\User\\Documents\\GitHub\\story-llm\\docs\\report\\entities\\c7-04-supplemental-ui-trust.json"
+          ],
+          "locator": "transcript relationship entity_attribute_changed records"
+        },
+        {
+          "assertion": "Stored Trust -2 is a user value",
+          "status": "PASS",
+          "expected": [
+            -2,
+            "user"
+          ],
+          "actual": [
+            -2,
+            "user"
+          ],
+          "actual_missing": false,
+          "evidence_full_paths": [
+            "C:\\Users\\User\\Documents\\GitHub\\story-llm\\docs\\report\\entities\\c7-04-supplemental-ui-trust.json"
+          ],
+          "locator": "attributes[canonical_name=Trust]"
+        }
+      ],
+      "observation": "No stats in these calls and attributes arrays are empty through the apology capture. Trust arrives only in later source=user events."
+    },
+    "narration_quality_note": "Stranger narration begins with meta text about putting the watcher in the record; this is not a true-name leak and is not the entity-check pass condition.",
+    "authoritative_results_note": "Guide thoughts claim a failure, but all three saved tool events have ok=true. Both creation and directed update events confirm success."
+  },
+  "relationship_identity": {
+    "id": "relationship:0831ca57-a207-40a5-97e4-10495c08c996:6abab2f7-1876-4ade-9d65-6ca8d72f4751",
+    "created_direction": "both",
+    "created_label": "estranged sister",
+    "updated_direction": "one_way",
+    "updated_label": "resents",
+    "from_id": "0831ca57-a207-40a5-97e4-10495c08c996",
+    "to_id": "6abab2f7-1876-4ade-9d65-6ca8d72f4751",
+    "evidence_full_paths": [
+      "C:\\Users\\User\\Documents\\GitHub\\story-llm\\docs\\report\\entities\\c7-03-guide-tools.json",
+      "C:\\Users\\User\\Documents\\GitHub\\story-llm\\docs\\report\\entities\\c7-03-verbatim-tool-events.json"
+    ]
+  },
+  "reveal": {
+    "pre_evidence_full_path": "C:\\Users\\User\\Documents\\GitHub\\story-llm\\docs\\report\\entities\\c7-03b-stranger.json",
+    "post_evidence_full_path": "C:\\Users\\User\\Documents\\GitHub\\story-llm\\docs\\report\\entities\\c7-03b-revealed-name.json",
+    "pre_expanded": "false",
+    "post_expanded": "true",
+    "stored_known_as_after_ui_reveal": "the hooded stranger"
+  },
+  "counted_provider_calls": {
+    "first_story": 1,
+    "guide": 2,
+    "stranger": 2,
+    "note": "One Guide/player turn is not one provider call. Stranger one-text-call plan limit is a separately recorded deviation."
+  },
+  "verbatim_contract": "payload_json_verbatim is the exact saved DB record value. args/result are unchanged decoded objects, and args_verbatim_json/result_verbatim_json are verified substrings of that saved payload; no claim is made about an uncaptured raw provider wire request."
+}

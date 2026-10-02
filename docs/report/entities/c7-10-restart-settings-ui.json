@@ -1,0 +1,56 @@
+{
+  "captured_after": "app restarted at about 21:25 local; story reopened by clicking it",
+  "tools_checkboxes": [
+    [
+      "Record characters",
+      true
+    ],
+    [
+      "Record relationships",
+      true
+    ],
+    [
+      "Roll uncertain outcomes",
+      true
+    ],
+    [
+      "Illustrate scenes",
+      false
+    ],
+    [
+      "Author's note enabled",
+      true
+    ],
+    [
+      "Tool instructions",
+      true
+    ]
+  ],
+  "context_radios": [
+    [
+      "Characters shown",
+      "on",
+      true
+    ],
+    [
+      "Characters hidden",
+      "on",
+      false
+    ],
+    [
+      "Relationships shown",
+      "on",
+      true
+    ],
+    [
+      "Relationships hidden",
+      "on",
+      false
+    ]
+  ],
+  "reveal_after_click": [
+    "Hide",
+    "true",
+    "Hide\nTrue name: Isolde Vetch"
+  ]
+}

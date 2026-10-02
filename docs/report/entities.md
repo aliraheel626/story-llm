@@ -35,6 +35,32 @@ This report is updated as evidence is collected. Unrun checks are not passes.
 | C5 node tests | PASS | [C:\Users\User\Documents\GitHub\story-llm\docs\report\entities\c5-node-test.txt](C:/Users/User/Documents/GitHub/story-llm/docs/report/entities/c5-node-test.txt) |
 | C5 TypeScript | PASS | [C:\Users\User\Documents\GitHub\story-llm\docs\report\entities\c5-tsc.txt](C:/Users/User/Documents/GitHub/story-llm/docs/report/entities/c5-tsc.txt) |
 | C5 Scoped removal source proof | PASS | [C:\Users\User\Documents\GitHub\story-llm\docs\report\entities\c5-source-scans.json](C:/Users/User/Documents/GitHub/story-llm/docs/report/entities/c5-source-scans.json) |
+| C6 cargo test: 228 | PASS | [C:\Users\User\Documents\GitHub\story-llm\docs\report\entities\c6-cargo-test.txt](C:/Users/User/Documents/GitHub/story-llm/docs/report/entities/c6-cargo-test.txt) |
+| C6 cargo clippy, zero warnings | PASS | [C:\Users\User\Documents\GitHub\story-llm\docs\report\entities\c6-cargo-clippy.txt](C:/Users/User/Documents/GitHub/story-llm/docs/report/entities/c6-cargo-clippy.txt) |
+| C6 node tests: 56 | PASS | [C:\Users\User\Documents\GitHub\story-llm\docs\report\entities\c6-node-test.txt](C:/Users/User/Documents/GitHub/story-llm/docs/report/entities/c6-node-test.txt) |
+| C6 TypeScript | PASS | [C:\Users\User\Documents\GitHub\story-llm\docs\report\entities\c6-tsc.txt](C:/Users/User/Documents/GitHub/story-llm/docs/report/entities/c6-tsc.txt) |
+| C7 setup | PASS | [C:\Users\User\Documents\GitHub\story-llm\docs\report\entities\c7-00-setup.json](C:/Users/User/Documents/GitHub/story-llm/docs/report/entities/c7-00-setup.json) |
+| C7 1 fresh database and defaults | PASS | [C:\Users\User\Documents\GitHub\story-llm\docs\report\entities\c7-01-fresh-defaults.json](C:/Users/User/Documents/GitHub/story-llm/docs/report/entities/c7-01-fresh-defaults.json) |
+| C7 2 UI creates a character with fields | PASS | [C:\Users\User\Documents\GitHub\story-llm\docs\report\entities\c7-02-ui-create.json](C:/Users/User/Documents/GitHub/story-llm/docs/report/entities/c7-02-ui-create.json) |
+| C7 2b UI edits and clears fields | PASS | [C:\Users\User\Documents\GitHub\story-llm\docs\report\entities\c7-02b-gender-cleared.json](C:/Users/User/Documents/GitHub/story-llm/docs/report/entities/c7-02b-gender-cleared.json) |
+| C7 2c player edits are labelled | PASS | [C:\Users\User\Documents\GitHub\story-llm\docs\report\entities\c7-02c-player-rename.json](C:/Users/User/Documents/GitHub/story-llm/docs/report/entities/c7-02c-player-rename.json) |
+| C7 3 the narrator uses the tools (after the one allowed Guide) | PASS | [C:\Users\User\Documents\GitHub\story-llm\docs\report\entities\c7-03-guide-tools.json](C:/Users/User/Documents/GitHub/story-llm/docs/report/entities/c7-03-guide-tools.json) |
+| C7 3b true name behind a title (one input made two billed requests; see Narrator Calls) | PASS | [C:\Users\User\Documents\GitHub\story-llm\docs\report\entities\c7-03b-stranger.json](C:/Users/User/Documents/GitHub/story-llm/docs/report/entities/c7-03b-stranger.json) |
+| C7 4 stats on a relationship | NARRATOR DIDN'T CALL | [C:\Users\User\Documents\GitHub\story-llm\docs\report\entities\c7-04-narrator-no-stats.json](C:/Users/User/Documents/GitHub/story-llm/docs/report/entities/c7-04-narrator-no-stats.json) |
+| C7 5 the narrator sees the record | PASS | [C:\Users\User\Documents\GitHub\story-llm\docs\report\entities\c7-05-context.json](C:/Users/User/Documents/GitHub/story-llm/docs/report/entities/c7-05-context.json) |
+| C7 5b Record and Show switches | PASS | [C:\Users\User\Documents\GitHub\story-llm\docs\report\entities\c7-05b-relationships-off-hidden.json](C:/Users/User/Documents/GitHub/story-llm/docs/report/entities/c7-05b-relationships-off-hidden.json) |
+| C7 6 moving | PASS | [C:\Users\User\Documents\GitHub\story-llm\docs\report\entities\c7-06-move.json](C:/Users/User/Documents/GitHub/story-llm/docs/report/entities/c7-06-move.json) |
+| C7 7 retry the move turn | PASS | [C:\Users\User\Documents\GitHub\story-llm\docs\report\entities\c7-07-retry.json](C:/Users/User/Documents/GitHub/story-llm/docs/report/entities/c7-07-retry.json) |
+| C7 8 erase the move turn | PASS | [C:\Users\User\Documents\GitHub\story-llm\docs\report\entities\c7-08-erase.json](C:/Users/User/Documents/GitHub/story-llm/docs/report/entities/c7-08-erase.json) |
+| C7 9 deleting a character hides its relationships | PASS | [C:\Users\User\Documents\GitHub\story-llm\docs\report\entities\c7-09-deleted-endpoint.json](C:/Users/User/Documents/GitHub/story-llm/docs/report/entities/c7-09-deleted-endpoint.json) |
+| C7 10 persistence after restart (database and Characters tab) | PASS | [C:\Users\User\Documents\GitHub\story-llm\docs\report\entities\c7-10-restart-characters.json](C:/Users/User/Documents/GitHub/story-llm/docs/report/entities/c7-10-restart-characters.json) |
+| C7 10 persistence after restart (Record/Show settings and Reveal in the UI) | PASS | [C:\Users\User\Documents\GitHub\story-llm\docs\report\entities\c7-10-restart-settings-ui.json](C:/Users/User/Documents/GitHub/story-llm/docs/report/entities/c7-10-restart-settings-ui.json) |
+| C7 11 logs: no backend ERROR or panic, no frontend error or warning | PASS | [C:\Users\User\Documents\GitHub\story-llm\docs\report\entities\c7-11-logs.json](C:/Users/User/Documents/GitHub/story-llm/docs/report/entities/c7-11-logs.json) |
+| C7 audit of checks 1-9 | PASS | [C:\Users\User\Documents\GitHub\story-llm\docs\report\entities\c7-results-1-9.json](C:/Users/User/Documents/GitHub/story-llm/docs/report/entities/c7-results-1-9.json) |
+| Final checks on the branch head: cargo test 228 | PASS | [C:\Users\User\Documents\GitHub\story-llm\docs\report\entities\c8-cargo-test.txt](C:/Users/User/Documents/GitHub/story-llm/docs/report/entities/c8-cargo-test.txt) |
+| Final checks on the branch head: cargo clippy, zero warnings | PASS | [C:\Users\User\Documents\GitHub\story-llm\docs\report\entities\c8-cargo-clippy.txt](C:/Users/User/Documents/GitHub/story-llm/docs/report/entities/c8-cargo-clippy.txt) |
+| Final checks on the branch head: node tests 56 | PASS | [C:\Users\User\Documents\GitHub\story-llm\docs\report\entities\c8-node-test.txt](C:/Users/User/Documents/GitHub/story-llm/docs/report/entities/c8-node-test.txt) |
+| Final checks on the branch head: TypeScript | PASS | [C:\Users\User\Documents\GitHub\story-llm\docs\report\entities\c8-tsc.txt](C:/Users/User/Documents/GitHub/story-llm/docs/report/entities/c8-tsc.txt) |
 
 ## Commits and Line Counts
 
@@ -47,6 +73,7 @@ Counts are derived from staged `git diff --numstat`, with test lines classified 
 | C3 `c667184` | +1042 / -466, net +576 | +1140 / -75, net +1065 | [C:\Users\User\Documents\GitHub\story-llm\docs\report\entities\c3-audit.json](C:/Users/User/Documents/GitHub/story-llm/docs/report/entities/c3-audit.json) |
 | C4 `8a5947c` | +480 / -438, net +42 | +591 / -313, net +278 | [C:\Users\User\Documents\GitHub\story-llm\docs\report\entities\c4-audit.json](C:/Users/User/Documents/GitHub/story-llm/docs/report/entities/c4-audit.json) |
 | C5 `37f8ae9` | +57 / -122, net -65 | +56 / -120, net -64 | [C:\Users\User\Documents\GitHub\story-llm\docs\report\entities\c5-audit.json](C:/Users/User/Documents/GitHub/story-llm/docs/report/entities/c5-audit.json) |
+| C6 `d43e985` | +388 / -237, net +151 | +231 / -1, net +230 | [C:\Users\User\Documents\GitHub\story-llm\docs\report\entities\c6-audit.json](C:/Users/User/Documents/GitHub/story-llm/docs/report/entities/c6-audit.json) |
 
 C1 production net is within the estimate (+40 to +70). Test net is 22 rather than -5 to +10 because the relocated tests need per-module imports and test-module scaffolding. No permanent test was added or deleted. Gross counts include moved lines; raw numstat uses `--no-renames` for deterministic classification. The required initial `git mv` was performed; Git's final commit represents the multi-file split as deletion/additions because rename detection is content-based.
 
@@ -61,6 +88,10 @@ C4 net +42 production exceeds the estimated -95 to -15. Correct explicit-null se
 C4 preflight retained evidence of a content-format mismatch, the follow-up richer-location expectation, the enlarged event enum warning, and a stale frontend `create_entity` settings fixture. Short-field changes now include a prior value when present; the `after` snapshot is boxed to reduce enum size without changing JSON; the frontend fixture uses `save_character`. A Windows evidence-runner encoding error was fixed to print UTF-8; its already-written Cargo failure log was preserved. All four required post-C4 checks passed on their first run.
 
 C5 removes more than the estimated -10 to -5 production / +0 to +10 test net. Complete Scoped removal also eliminates now-unused `Inputs.history`/`config`, their actual `narrator/generation.rs` caller, configuration fixtures and test helpers, plus summary-line branches. Visibility cases were folded into existing tests; only the explicitly retired touched-entity query test function was removed (229 to 228). There is no dead-code allowance or compatibility select/mapping. Development and required post-commit checks both passed first time.
+
+C6 net +151 production is inside the +127 to +185 estimate. Tests net +230 exceed +25 to +45 because the per-entity stat queue, reload-after-delete and attribute loading are covered by store tests with controlled delays, not by a single smoke case.
+
+**Plan total:** production net +775 across C1-C6 (estimate about +168 to +466). Most of the difference is C3 (+576), whose stricter validation, explicit stored/shown loaders and atomic two-phase saves were larger than estimated, as explained above.
 
 ## Choices
 
@@ -81,13 +112,26 @@ C5 removes more than the estimated -10 to -5 production / +0 to +10 test net. Co
 
 ## Narrator Calls
 
-Not yet run.
+Verbatim calls are saved in [C:\Users\User\Documents\GitHub\story-llm\docs\report\entities\c7-narrator-calls.json](C:/Users/User/Documents/GitHub/story-llm/docs/report/entities/c7-narrator-calls.json).
+
+- **Check 3, first Story input** ("My estranged sister Mira waits for me in the Rusty Anchor tavern..."): the narrator wrote prose and called no tools.
+- **Check 3, the one allowed Guide** ("Record Mira, where she is, what she wears, and her relationship to me, using your tools."):
+  - `save_character {name: "Mira", gender: "female", role: "estranged sister", location: "the Rusty Anchor tavern", outfit: "father's grey cloak", appearance_anchor: "wearing a worn grey cloak, face set with old resentment, watching the door"}`: created
+  - `save_relationship {from: "Mira", to: "You", label: "estranged sister", direction: "both", description: "Siblings. She still resents you for leaving."}`: created `Mira ↔ You: estranged sister`
+  - `save_relationship {from: "Mira", to: "You", label: "resents", direction: "one_way", description: "She still resents you for leaving home."}`: updated that same relationship to `Mira → You: resents`
+- **Check 3b** ("A hooded stranger in the corner hasn't taken her eyes off us."): `save_character {name: "Isolde Vetch", known_as: "the hooded stranger", gender: "female", role: "watcher", location: "corner of the Rusty Anchor", outfit: "dark hooded cloak, face shadowed", appearance_anchor: ...}`. The narration never used the name.
+- **Check 4** ("I apologize to Mira and mean it."): only `roll_check` (failed, 54 against 35%), no `save_relationship` stats. Recorded as NARRATOR DIDN'T CALL. A player-set Trust of -2 was used afterwards for checks 5 and 9.
+
+**Assessment:** true names, `known_as`, name references and directions were used correctly. Two observations:
+- The narrator wanted two facts about Mira and You (a mutual "estranged sister" and a one-way "resents"). The plan's one-relationship-per-pair rule merged them, so the second call replaced the first label. That is the designed behaviour, but the narrator's intent was richer than the rule allows.
+- The narrator recorded nothing until an explicit Guide (check 3), and didn't change relationship stats on its own (check 4).
+
+**Check 3b and the call count:** the plan said "one text call". The single input produced two billed requests, because a tool call needs a continuation request. Every behavioural assertion passed, and the user doesn't want per-check call budgets enforced, so 3b is recorded as PASS.
 
 ## Spending
 
-QA text calls: 0. QA image calls: 0. QA caption calls: 0.
-The final totals and cost will be captured read-only from `usage_records`.
+From `usage_records`, read-only ([C:\Users\User\Documents\GitHub\story-llm\docs\report\entities\c7-final-budget.json](C:/Users/User/Documents/GitHub/story-llm/docs/report/entities/c7-final-budget.json)): **11 text calls**, all narration (no title or summary calls), total **$0.110782**. **0 images, 0 captions.** Within the cap of 15 text calls.
 
 ## Merge
 
-Not yet evaluated. `main` remains at `71ef4b8` until all required checks have acceptable, saved evidence.
+Every check from C1 to C7 passed, except C7 check 4 (NARRATOR DIDN'T CALL, explained above). Codex's session expired after checks 1-9; checks 10 and 11, the final four checks on the branch head, and this report were completed afterwards. Per the plan, `main` is fast-forwarded to `entities` with `git merge --ff-only`, and nothing is pushed.
