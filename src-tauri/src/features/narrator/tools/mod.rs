@@ -1,7 +1,7 @@
 //! Narrator tool modules and shared activity labels.
 
 pub(crate) mod illustrate_scene;
-pub(crate) mod roll_check;
+pub(crate) mod diceroll;
 pub(crate) mod save_character;
 pub(crate) mod save_relationship;
 mod shared;
@@ -83,8 +83,8 @@ mod turn_tests {
             "Recording Mira…"
         );
         assert_eq!(
-            friendly_tool_label("roll_check", r#"{"reason":"escaping"}"#),
-            "Rolling for escaping…"
+            friendly_tool_label("diceroll", r#"{"reason":"escaping"}"#),
+            "Diceroll for escaping…"
         );
         assert_eq!(friendly_tool_label("unknown", "{}"), "Running unknown…");
         let settings = NarratorToolSettings::default();
@@ -94,9 +94,9 @@ mod turn_tests {
             illustrate: false,
         });
         assert_eq!(specs.len(), 3);
-        assert_eq!(specs[0].name, "roll_check");
+        assert_eq!(specs[0].name, "diceroll");
         assert_eq!(specs.iter().map(|spec| spec.name).collect::<Vec<_>>(),
-            ["roll_check", "save_character", "save_relationship"]);
+            ["diceroll", "save_character", "save_relationship"]);
         let (_pool, turn, target, turn_id) = fixture();
         let deps = ToolDeps {
             turn: Some(turn),
@@ -105,18 +105,18 @@ mod turn_tests {
             embedding_api_key: String::new(),
             image_requests: Arc::new(Mutex::new(Vec::new())),
         };
-        assert_eq!((specs[0].build)(&deps).name(), "roll_check");
+        assert_eq!((specs[0].build)(&deps).name(), "diceroll");
         assert_eq!((specs[1].build)(&deps).name(), "save_character");
     }
 
     #[test]
     fn character_toggle_preserves_final_catalog_order() {
         assert_eq!(catalog::TOOLS.iter().map(|spec| spec.name).collect::<Vec<_>>(),
-            ["roll_check", "save_character", "save_relationship", "illustrate_scene"]);
+            ["diceroll", "save_character", "save_relationship", "illustrate_scene"]);
         let settings = NarratorToolSettings { save_character: false, ..Default::default() };
         let enabled = catalog::enabled(&ToolAvailability { settings: &settings, image_enabled: true, illustrate: false });
         assert_eq!(enabled.iter().map(|spec| spec.name).collect::<Vec<_>>(),
-            ["roll_check", "save_relationship", "illustrate_scene"]);
+            ["diceroll", "save_relationship", "illustrate_scene"]);
         let image_only = catalog::enabled(&ToolAvailability { settings: &settings, image_enabled: true, illustrate: true });
         assert_eq!(image_only.iter().map(|spec| spec.name).collect::<Vec<_>>(), ["illustrate_scene"]);
     }

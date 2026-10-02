@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { rollFromEntry, type TranscriptEntry } from "../../shared/types";
+import { dicerollFromEntry, type TranscriptEntry } from "../../shared/types";
 
 export interface ToolCall { key: string; label: string; done: boolean; ok: boolean | null }
 export interface TurnActivityData { thoughts?: string | null; tools: ToolCall[] }
@@ -17,8 +17,8 @@ const TOOL_EVENT_KINDS = new Set([
 
 const eventLabel = (entry: TranscriptEntry): string => {
   if (entry.kind === "diceroll") {
-    const roll = rollFromEntry(entry);
-    if (roll) return `Roll${roll.reason ? ` for ${roll.reason}` : ""}: ${roll.outcome}`;
+    const diceroll = dicerollFromEntry(entry);
+    if (diceroll) return `Diceroll${diceroll.reason ? ` for ${diceroll.reason}` : ""}: ${diceroll.outcome}`;
   }
   return entry.content || entry.kind.replace(/_/g, " ");
 };

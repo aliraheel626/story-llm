@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef } from "react";
-import { groupRollsByEntry, transcriptInputMode, type ActionMode } from "../../shared/types";
+import { groupDicerollsByEntry, transcriptInputMode, type ActionMode } from "../../shared/types";
 import type { TranscriptEntry, NarrativePayload } from "../../shared/types";
 import { useStoryStore } from "../story/store";
 import { StoryHeader } from "../usage/StoryHeader";
@@ -27,7 +27,7 @@ export function StoryView() {
   const streaming = useStoryStore((s) => activeStoryId ? s.bundles[activeStoryId]?.streaming : undefined);
   const hidden = useStoryStore((s) => activeStoryId ? s.bundles[activeStoryId]?.hidden : undefined);
   const turns = useStoryStore((s) => activeStoryId ? s.bundles[activeStoryId]?.turns : undefined);
-  const rollsByEntry = useMemo(() => groupRollsByEntry(hidden ?? EMPTY_ENTRIES), [hidden]);
+  const dicerollsByEntry = useMemo(() => groupDicerollsByEntry(hidden ?? EMPTY_ENTRIES), [hidden]);
   const lastTurnActivity = useStoryStore((s) => activeStoryId ? s.bundles[activeStoryId]?.turnActivity : undefined);
   const scrollRef = useRef<HTMLDivElement>(null);
   const pinRef = useRef<HTMLDivElement>(null);
@@ -131,7 +131,7 @@ export function StoryView() {
                   retryEntryId={retryEntryId}
                   turnFailed={isLastEntry && !!retryTurnId && turns?.some((turn) => turn.id === retryTurnId && turn.status === "failed")}
                   images={imagesByEntry?.[entry.id]}
-                  rolls={rollsByEntry?.[entry.id]}
+                  dicerolls={dicerollsByEntry?.[entry.id]}
                 />
               </div>
             );

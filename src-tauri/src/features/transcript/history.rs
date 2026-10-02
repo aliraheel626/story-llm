@@ -418,7 +418,7 @@ mod tests {
     }
 
     #[test]
-    fn dice_rolls_are_always_contextual() {
+    fn dicerolls_are_always_contextual() {
         let rows = vec![
             entry("n1", 0, kind::NARRATION, Some("The door opens."), json!({})),
             entry(
@@ -454,7 +454,7 @@ mod tests {
     }
 
     #[test]
-    fn player_narration_and_dice_roll_have_distinct_history_roles() {
+    fn player_narration_and_diceroll_have_distinct_history_roles() {
         let rows = vec![
             entry(
                 "player",
@@ -494,14 +494,14 @@ mod tests {
     }
 
     #[test]
-    fn for_model_keeps_dice_rolls_with_current_defaults() {
+    fn for_model_keeps_dicerolls_with_current_defaults() {
         let pool = crate::shared::db::test_pool();
         let conn = pool.get().unwrap();
         crate::shared::test_support::story(&conn, "s");
-        let roll_id = crate::shared::test_support::record(
+        let diceroll_id = crate::shared::test_support::record(
             &conn, "s", kind::DICEROLL, Some("Stealth succeeded."), json!({}), None, None,
         );
-        let roll = repository::get_entry(&conn, &roll_id).unwrap();
+        let diceroll = repository::get_entry(&conn, &diceroll_id).unwrap();
         drop(conn);
         let history = for_model(
             &pool.get().unwrap(),
@@ -511,7 +511,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(history.len(), 1);
-        assert_eq!(history[0].entry_id.as_deref(), Some(roll.id.as_str()));
+        assert_eq!(history[0].entry_id.as_deref(), Some(diceroll.id.as_str()));
     }
 
     #[tokio::test]

@@ -1,19 +1,19 @@
-import type { Roll } from "../../shared/types";
+import type { Diceroll } from "../../shared/types";
 
-export function RollDisclosure({ roll }: { roll: Roll }) {
-  const source = roll.chance_source
-    ? { default: "Default", narrator: "Narrator", attributes: "Attributes" }[roll.chance_source]
+export function DicerollDisclosure({ diceroll }: { diceroll: Diceroll }) {
+  const source = diceroll.chance_source
+    ? { default: "Default", narrator: "Narrator", attributes: "Attributes" }[diceroll.chance_source]
     : "Unspecified";
-  const factors = roll.factors ?? [];
+  const factors = diceroll.factors ?? [];
   return (
     <details className="text-[11px] text-muted">
       <summary className="cursor-pointer text-left hover:text-text">
-        Roll: {roll.reason ? `${roll.reason} · ` : ""}{source} · {roll.chance_percent}% chance · needed {roll.needed}+ · rolled {roll.roll} · {roll.outcome}
+        Diceroll: {diceroll.reason ? `${diceroll.reason} · ` : ""}{source} · {diceroll.chance_percent}% chance · needed {diceroll.needed}+ · rolled {diceroll.roll} · {diceroll.outcome}
         {factors.length > 0 && ` · ${factors.map((factor) => `${factor.entity_name}: ${factor.attribute_name}`).join(" vs ")}`}
       </summary>
       <div className="mt-1.5 rounded border border-border bg-bg px-2.5 py-2 leading-5">
-        {roll.reason && <p className="text-text">Reason: {roll.reason}</p>}
-        <p>Chance source: {source}. Chance: {roll.chance_percent}%. Needed: {roll.needed} or higher. Actual roll: {roll.roll}. Outcome: {roll.outcome}. Seed: {roll.seed}.</p>
+        {diceroll.reason && <p className="text-text">Reason: {diceroll.reason}</p>}
+        <p>Chance source: {source}. Chance: {diceroll.chance_percent}%. Needed: {diceroll.needed} or higher. Actual roll: {diceroll.roll}. Outcome: {diceroll.outcome}. Seed: {diceroll.seed}.</p>
         {factors.length > 0 ? (
           <>
             <p>Values are normalized to their ranges. The first factor acts; the second opposes it, or a neutral midpoint is used when absent.</p>

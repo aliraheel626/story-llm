@@ -587,7 +587,7 @@ pub async fn describe_image(
 /// Model round-trips a tool-calling turn may take. Rig's builder defaults to
 /// `max_turns: 1`, which aborts the whole turn the moment the model calls any
 /// tool (`MaxTurnsError`) — it never gets to see the tool result and narrate.
-/// This allows a realistic sequence (look up entities, roll, adjust state,
+/// This allows a realistic sequence (look up entities, diceroll, adjust state,
 /// then narrate) while still bounding a confused model's loop.
 const MAX_TOOL_TURNS: usize = 8;
 
@@ -987,7 +987,7 @@ mod tests {
             rig_agent::agent::ToolResultAction::stop(stop_reason)
         );
         assert_eq!(
-            hook.tool_result_action("roll_check"),
+            hook.tool_result_action("diceroll"),
             rig_agent::agent::ToolResultAction::Keep
         );
 
@@ -1042,7 +1042,7 @@ mod tests {
         let failure = ToolResult::failed(rig_agent::tool::ToolExecutionError::invalid_args(
             "bad arguments",
         ));
-        let captured = completed_tool_call("roll_check", "not-json", &failure);
+        let captured = completed_tool_call("diceroll", "not-json", &failure);
         assert_eq!(captured.args, serde_json::json!("not-json"));
         assert_eq!(captured.result, serde_json::json!("bad arguments"));
         assert!(!captured.ok);

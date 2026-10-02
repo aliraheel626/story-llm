@@ -14,7 +14,7 @@ use crate::shared::error::{AppError, AppResult};
 pub struct NarratorToolSettings {
     pub save_relationship: bool,
     pub save_character: bool,
-    pub roll_check: bool,
+    pub diceroll: bool,
     pub illustrate_scene: bool,
 }
 
@@ -23,7 +23,7 @@ impl Default for NarratorToolSettings {
         Self {
             save_relationship: true,
             save_character: true,
-            roll_check: true,
+            diceroll: true,
             illustrate_scene: true,
         }
     }
@@ -298,7 +298,7 @@ mod tests {
         );
         assert_eq!(read_story_reasoning_effort(&pool, "first").unwrap(), "");
         let tools = NarratorToolSettings {
-            roll_check: false,
+            diceroll: false,
             ..NarratorToolSettings::default()
         };
         save_narrator_tools(&pool, "first", tools).unwrap();
@@ -333,8 +333,8 @@ mod tests {
 
     #[test]
     fn tool_shape_defaults_missing_fields_and_rejects_unknown_fields() {
-        let tools = serde_json::from_value::<NarratorToolSettings>(json!({"roll_check": false})).unwrap();
-        assert!(!tools.roll_check);
+        let tools = serde_json::from_value::<NarratorToolSettings>(json!({"diceroll": false})).unwrap();
+        assert!(!tools.diceroll);
         assert!(tools.save_relationship);
         let mut value = json!(NarratorToolSettings::default());
         value["unexpected"] = json!(true);
@@ -351,7 +351,7 @@ mod tests {
         ).unwrap();
         let tx = conn.transaction().unwrap();
         let tools = NarratorToolSettings {
-            roll_check: false,
+            diceroll: false,
             ..NarratorToolSettings::default()
         };
         tx.execute(

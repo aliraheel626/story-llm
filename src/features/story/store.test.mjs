@@ -25,11 +25,11 @@ let nextContextSave;
 let server;
 let store;
 let contextStore;
-let RollDisclosure;
+let DicerollDisclosure;
 let TranscriptEntryView;
 let ImagePlaceholder;
-let rollFromEntry;
-let groupRollsByEntry;
+let dicerollFromEntry;
+let groupDicerollsByEntry;
 let toolCallsFromEvents;
 
 const deferred = () => {
@@ -68,7 +68,7 @@ const entityFixture = async (storyId, kind = "character") => {
   return entity;
 };
 
-const rollEvent = (id, target_entry_id, payload) => ({
+const dicerollEvent = (id, target_entry_id, payload) => ({
   id, story_id: "story", seq: 1, kind: "diceroll", visibility: "hidden",
   content: null, target_entry_id, turn_id: null, created_at: "2026-09-23T12:00:00Z", payload,
 });
@@ -78,7 +78,7 @@ const renderedReply = (storyId) => {
   const entry = bundle.entries.find((item) => item.kind === "narration");
   return renderToStaticMarkup(createElement(TranscriptEntryView, {
     entry, storyId, isLast: true, retryEntryId: entry.id,
-    rolls: groupRollsByEntry(bundle.hidden)[entry.id],
+    dicerolls: groupDicerollsByEntry(bundle.hidden)[entry.id],
   }));
 };
 
@@ -98,7 +98,7 @@ globalThis.__storyTestInvoke = async (command, args = {}) => {
       const blank = [...stories].reverse().find(([id, saved]) => saved.title === "New story" && !saved.played && !entries.get(id)?.length);
       if (blank) return { id: blank[0], title: "New story", settings_json: "{}" };
       const id = `story-${stories.size + 1}`;
-      const tools = { save_character: true, save_relationship: true, roll_check: true, illustrate_scene: true };
+      const tools = { save_character: true, save_relationship: true, diceroll: true, illustrate_scene: true };
       stories.set(id, { title: "New story", narrator_tools: tools });
       return { id, title: "New story", settings_json: "{}" };
     }
@@ -234,11 +234,11 @@ before(async () => {
   server = await createServer({ configFile: false, optimizeDeps: { noDiscovery: true }, server: { middlewareMode: true } });
   ({ useStoryStore: store } = await server.ssrLoadModule("/src/features/story/store.ts"));
   ({ useContextStore: contextStore } = await server.ssrLoadModule("/src/features/context/store.ts"));
-  ({ RollDisclosure } = await server.ssrLoadModule("/src/features/transcript/RollDisclosure.tsx"));
+  ({ DicerollDisclosure } = await server.ssrLoadModule("/src/features/transcript/DicerollDisclosure.tsx"));
   ({ TranscriptEntryView } = await server.ssrLoadModule("/src/features/transcript/TranscriptEntryView.tsx"));
   ({ ImagePlaceholder } = await server.ssrLoadModule("/src/features/transcript/ImagePlaceholder.tsx"));
   ({ toolCallsFromEvents } = await server.ssrLoadModule("/src/features/transcript/TurnActivity.tsx"));
-  ({ rollFromEntry, groupRollsByEntry } = await server.ssrLoadModule("/src/shared/types.ts"));
+  ({ dicerollFromEntry, groupDicerollsByEntry } = await server.ssrLoadModule("/src/shared/types.ts"));
 });
 
 after(async () => { await server?.close(); });
@@ -366,10 +366,10 @@ test("new story is created and active at once", async () => {
   assert.equal(store.getState().stories[0].id, story.id);
   await store.getState().loadNarratorTools(story.id);
   await store.getState().loadReasoningEffort(story.id);
-  await store.getState().saveNarratorTools(story.id, { roll_check: false });
+  await store.getState().saveNarratorTools(story.id, { diceroll: false });
   await store.getState().saveReasoningEffort(story.id, "high");
   const saved = stories.get(story.id);
-  assert.equal(saved.narrator_tools.roll_check, false);
+  assert.equal(saved.narrator_tools.diceroll, false);
   assert.equal(saved.narrator_tools.illustrate_scene, true);
   assert.equal(saved.reasoning_effort, "high");
 });
@@ -393,12 +393,12 @@ test("rapid independent toggles remain isolated by story and failed saves roll b
   await Promise.all([
     store.getState().saveNarratorTools(first, { save_relationship: false }),
     store.getState().saveNarratorTools(first, { illustrate_scene: false }),
-    store.getState().saveNarratorTools(second, { roll_check: false }),
+    store.getState().saveNarratorTools(second, { diceroll: false }),
   ]);
   assert.equal(stories.get(first).narrator_tools.save_relationship, false);
   assert.equal(stories.get(first).narrator_tools.illustrate_scene, false);
-  assert.equal(stories.get(first).narrator_tools.roll_check, false);
-  assert.equal(stories.get(second).narrator_tools.roll_check, false);
+  assert.equal(stories.get(first).narrator_tools.diceroll, false);
+  assert.equal(stories.get(second).narrator_tools.diceroll, false);
   assert.equal(stories.get(second).narrator_tools.illustrate_scene, true);
   failTools = true;
   await assert.rejects(store.getState().saveNarratorTools(second, { save_character: false }), /save rejected/);
@@ -411,7 +411,7 @@ test("replacement keeps original through streaming and failure, then clears old 
   const original = { id: "original", story_id: storyId, kind: "narration", payload: { input_mode: "generated" }, content: "Original", turn_id: "turn-original" };
   const replacement = { ...original, id: "replacement", content: "Replacement", turn_id: "turn-replacement" };
   entries.set(storyId, [original]);
-  hiddenEntries.set(storyId, [rollEvent("old-roll", original.id, { chance_percent: 50, roll: 90, needed: 50, outcome: "success", seed: 1, reason: "Old roll" })]);
+  hiddenEntries.set(storyId, [dicerollEvent("old-roll", original.id, { chance_percent: 50, roll: 90, needed: 50, outcome: "success", seed: 1, reason: "Old roll" })]);
   images.set(storyId, [{ id: "old-image", entry_id: original.id }]);
   await Promise.all([store.getState().loadTranscript(storyId), store.getState().loadImagesForStory(storyId)]);
   await store.getState().retryNarration(storyId, original.id);
@@ -420,24 +420,24 @@ test("replacement keeps original through streaming and failure, then clears old 
   assert.equal(store.getState().bundles[storyId].entries[0].content, "Original");
   store.getState()._fail(stream, "provider failed");
   assert.equal(store.getState().bundles[storyId].entries[0].id, original.id);
-  assert.equal(groupRollsByEntry(store.getState().bundles[storyId].hidden)[original.id][0].id, "old-roll");
+  assert.equal(groupDicerollsByEntry(store.getState().bundles[storyId].hidden)[original.id][0].id, "old-roll");
   assert.match(renderedReply(storyId), /Old roll/);
   assert.equal(store.getState().bundles[storyId].imagesByEntry[original.id][0].id, "old-image");
 
   await store.getState().retryNarration(storyId, original.id);
   stream = store.getState().bundles[storyId].streaming.streamId;
   entries.set(storyId, [replacement]);
-  hiddenEntries.set(storyId, [rollEvent("new-roll", replacement.id, { chance_percent: 40, roll: 72, needed: 60, outcome: "success", seed: 2, reason: "New roll" })]);
+  hiddenEntries.set(storyId, [dicerollEvent("new-roll", replacement.id, { chance_percent: 40, roll: 72, needed: 60, outcome: "success", seed: 2, reason: "New roll" })]);
   images.set(storyId, []);
   store.getState()._finalize({ stream_id: stream, entry: replacement });
   assert.equal(store.getState().bundles[storyId].entries[0].id, replacement.id);
   assert.equal(store.getState().bundles[storyId].imagesByEntry[original.id], undefined);
-  assert.equal(groupRollsByEntry(store.getState().bundles[storyId].hidden)[original.id], undefined);
+  assert.equal(groupDicerollsByEntry(store.getState().bundles[storyId].hidden)[original.id], undefined);
   assert.doesNotMatch(renderedReply(storyId), /Old roll/);
   await store.getState().loadTranscript(storyId);
   assert.deepEqual(store.getState().bundles[storyId].turns, [{ id: "turn-replacement", status: "complete" }]);
   assert.equal(store.getState().bundles[storyId].entries.some((entry) => entry.turn_id === "turn-original"), false);
-  assert.equal(groupRollsByEntry(store.getState().bundles[storyId].hidden)[replacement.id][0].id, "new-roll");
+  assert.equal(groupDicerollsByEntry(store.getState().bundles[storyId].hidden)[replacement.id][0].id, "new-roll");
   const html = renderedReply(storyId);
   assert.match(html, /New roll/);
   assert.doesNotMatch(html, /Old roll/);
@@ -846,13 +846,13 @@ test("a new turn waits for in-flight tool saves", async () => {
   const submitsBefore = calls.filter(({ command }) => command === "submit_turn").length;
   let releaseSave;
   nextToolsSave = new Promise((resolve) => { releaseSave = resolve; });
-  const save = store.getState().saveNarratorTools(storyId, { roll_check: true });
+  const save = store.getState().saveNarratorTools(storyId, { diceroll: true });
   const submitted = store.getState().submitTurn(storyId, "do", "Try the door");
   await Promise.resolve();
   assert.equal(calls.filter(({ command }) => command === "submit_turn").length, submitsBefore);
   releaseSave();
   await Promise.all([save, submitted]);
-  assert.equal(stories.get(storyId).narrator_tools.roll_check, true);
+  assert.equal(stories.get(storyId).narrator_tools.diceroll, true);
   assert.equal(calls.filter(({ command }) => command === "submit_turn").length, submitsBefore + 1);
   store.getState()._fail(store.getState().bundles[storyId].streaming.streamId, "test cleanup");
 });
@@ -879,14 +879,14 @@ test("erasing a trailing See refreshes images attached to prior narration", asyn
   assert.equal(entityCalls(storyId, "list_story_attributes").length, attributesBefore + 1);
 });
 
-test("snapshot roll selector preserves both factor snapshots and optional fields", () => {
+test("snapshot diceroll selector preserves both factor snapshots and optional fields", () => {
   const factors = [
     { entity_id: "player", entity_name: "You", attribute_id: "stealth", attribute_name: "Stealth", value: 8, min: 0, max: 10 },
     { entity_id: "guard", entity_name: "Guard", attribute_id: "perception", attribute_name: "Perception", value: 6, min: 0, max: 10 },
   ];
   const payload = { chance_percent: 60, roll: 70, needed: 40, outcome: "success", reason: "Sneak", chance_source: "attributes", factors, seed: 42 };
-  const event = rollEvent("factored", "narration", payload);
-  const grouped = groupRollsByEntry([rollEvent("earlier", "other", { chance_percent: 50, roll: 50, needed: 50, outcome: "success", seed: 1 }), event]);
+  const event = dicerollEvent("factored", "narration", payload);
+  const grouped = groupDicerollsByEntry([dicerollEvent("earlier", "other", { chance_percent: 50, roll: 50, needed: 50, outcome: "success", seed: 1 }), event]);
   assert.deepEqual(grouped.narration, [{
     id: "factored", entry_id: "narration", created_at: event.created_at,
     reason: "Sneak", chance_percent: 60, roll: 70, needed: 40, outcome: "success", seed: 42,
@@ -895,10 +895,10 @@ test("snapshot roll selector preserves both factor snapshots and optional fields
   assert.equal(grouped.other[0].chance_source, null);
   assert.equal(grouped.other[0].reason, null);
   assert.deepEqual(grouped.other[0].factors, []);
-  assert.equal(rollFromEntry(rollEvent("legacy", "narration", { ...payload, chance_source: undefined, reason: false, factors: undefined })).chance_source, null);
+  assert.equal(dicerollFromEntry(dicerollEvent("legacy", "narration", { ...payload, chance_source: undefined, reason: false, factors: undefined })).chance_source, null);
 });
 
-test("snapshot selector validates roll shapes without interpreting outcomes", () => {
+test("snapshot selector validates diceroll shapes without interpreting outcomes", () => {
   const base = { chance_percent: 50, roll: 50, needed: 50, outcome: "success", seed: 42 };
   const factor = { entity_id: "p", entity_name: "You", attribute_id: "a", attribute_name: "Agility", value: 5, min: 0, max: 10 };
   const invalid = [
@@ -909,28 +909,28 @@ test("snapshot selector validates roll shapes without interpreting outcomes", ()
     { factors: [{ ...factor, value: 11 }] }, { factors: [{ ...factor, value: Infinity }] },
     { chance_source: "unknown" }, { chance_source: 7 },
   ];
-  const events = invalid.map((patch, index) => rollEvent(`invalid-${index}`, "narration", { ...base, ...patch }));
-  events.push(rollEvent("untargeted", null, base));
-  events.push({ ...rollEvent("not-a-roll", "narration", base), kind: "entity_updated" });
-  events.push(rollEvent("null-payload", "narration", null));
-  events.push(rollEvent("array-payload", "narration", []));
-  assert.deepEqual(Object.keys(groupRollsByEntry(events)), []);
-  assert.equal(rollFromEntry(rollEvent("good", "narration", { ...base, chance_source: "default" })).chance_source, "default");
-  const permissive = rollFromEntry(rollEvent("permissive", "narration", {
+  const events = invalid.map((patch, index) => dicerollEvent(`invalid-${index}`, "narration", { ...base, ...patch }));
+  events.push(dicerollEvent("untargeted", null, base));
+  events.push({ ...dicerollEvent("not-a-roll", "narration", base), kind: "entity_updated" });
+  events.push(dicerollEvent("null-payload", "narration", null));
+  events.push(dicerollEvent("array-payload", "narration", []));
+  assert.deepEqual(Object.keys(groupDicerollsByEntry(events)), []);
+  assert.equal(dicerollFromEntry(dicerollEvent("good", "narration", { ...base, chance_source: "default" })).chance_source, "default");
+  const permissive = dicerollFromEntry(dicerollEvent("permissive", "narration", {
     ...base, chance_percent: 101, roll: -1, needed: 900, outcome: "critical", chance_source: "attributes",
   }));
   assert.equal(permissive.outcome, "critical");
   assert.equal(permissive.needed, 900);
-  assert.equal(rollFromEntry(rollEvent("disagreement", "narration", {
+  assert.equal(dicerollFromEntry(dicerollEvent("disagreement", "narration", {
     ...base, roll: 99, outcome: "failure",
   })).outcome, "failure");
 });
 
-test("snapshot roll grouping safely handles inherited-property target IDs", () => {
+test("snapshot diceroll grouping safely handles inherited-property target IDs", () => {
   const payload = { chance_percent: 50, roll: 50, needed: 50, outcome: "success", seed: 42 };
-  const grouped = groupRollsByEntry([
-    rollEvent("prototype-roll", "__proto__", payload),
-    rollEvent("constructor-roll", "constructor", payload),
+  const grouped = groupDicerollsByEntry([
+    dicerollEvent("prototype-roll", "__proto__", payload),
+    dicerollEvent("constructor-roll", "constructor", payload),
   ]);
   assert.equal(Object.getPrototypeOf(grouped), null);
   assert.equal(grouped.__proto__[0].id, "prototype-roll");
@@ -955,18 +955,18 @@ test("turn activity prefers captured tool calls and preserves false outcomes", (
   assert.deepEqual(toolCallsFromEvents("narration", [hidden[0]]), [
     { key: "effect", label: "Legacy effect", done: true, ok: true },
   ]);
-  const roll = rollEvent("roll", "narration", {
+  const diceroll = dicerollEvent("roll", "narration", {
     chance_percent: 50, roll: 12, needed: 50, outcome: "complication", seed: 7, reason: "opening the vault",
   });
-  roll.content = "Resultado de dados heredado";
-  assert.deepEqual(toolCallsFromEvents("narration", [roll]), [
-    { key: "roll", label: "Roll for opening the vault: complication", done: true, ok: true },
+  diceroll.content = "Resultado de dados heredado";
+  assert.deepEqual(toolCallsFromEvents("narration", [diceroll]), [
+    { key: "roll", label: "Diceroll for opening the vault: complication", done: true, ok: true },
   ]);
 });
 
-test("default chance rolls show their source and no factors alongside threshold, draw, and seed", () => {
-  const roll = { id: "r", entry_id: "replacement", reason: "Leap across the gap", chance_percent: 50, chance_source: "default", factors: [], roll: 72, needed: 47, outcome: "success", seed: 42 };
-  const html = renderToStaticMarkup(createElement(RollDisclosure, { roll }));
+test("default chance dicerolls show their source and no factors alongside threshold, draw, and seed", () => {
+  const diceroll = { id: "r", entry_id: "replacement", reason: "Leap across the gap", chance_percent: 50, chance_source: "default", factors: [], roll: 72, needed: 47, outcome: "success", seed: 42 };
+  const html = renderToStaticMarkup(createElement(DicerollDisclosure, { diceroll }));
   assert.match(html, /Leap across the gap/);
   assert.match(html, /Chance source: Default/);
   assert.match(html, /No attribute factors/);
@@ -977,8 +977,8 @@ test("default chance rolls show their source and no factors alongside threshold,
   assert.doesNotMatch(html, /<li>/);
 });
 
-test("attribute chance rolls show both factor snapshot names, values, and ranges", () => {
-  const roll = {
+test("attribute chance dicerolls show both factor snapshot names, values, and ranges", () => {
+  const diceroll = {
     id: "r2", entry_id: "replacement", reason: "Outrun the guard", chance_percent: 65,
     chance_source: "attributes", roll: 80, needed: 31, outcome: "success", seed: 123,
     factors: [
@@ -986,7 +986,7 @@ test("attribute chance rolls show both factor snapshot names, values, and ranges
       { entity_id: "guard", entity_name: "Guard", attribute_id: "awareness", attribute_name: "Awareness", value: 3, min: 1, max: 12 },
     ],
   };
-  const html = renderToStaticMarkup(createElement(RollDisclosure, { roll }));
+  const html = renderToStaticMarkup(createElement(DicerollDisclosure, { diceroll }));
   assert.match(html, /Chance source: Attributes/);
   assert.match(html, /Mira: Speed 8 \(range 0-10\)/);
   assert.match(html, /Guard: Awareness 3 \(range 1-12\)/);
@@ -995,9 +995,9 @@ test("attribute chance rolls show both factor snapshot names, values, and ranges
   assert.match(html, /Seed: 123/);
 });
 
-test("chance-only legacy rolls do not claim a default or attribute source", () => {
-  const roll = { id: "old", entry_id: "replacement", reason: null, chance_percent: 40, roll: 72, needed: 60, outcome: "success", seed: 9 };
-  const html = renderToStaticMarkup(createElement(RollDisclosure, { roll }));
+test("chance-only legacy dicerolls do not claim a default or attribute source", () => {
+  const diceroll = { id: "old", entry_id: "replacement", reason: null, chance_percent: 40, roll: 72, needed: 60, outcome: "success", seed: 9 };
+  const html = renderToStaticMarkup(createElement(DicerollDisclosure, { diceroll }));
   assert.match(html, /Chance source: Unspecified/);
 });
 

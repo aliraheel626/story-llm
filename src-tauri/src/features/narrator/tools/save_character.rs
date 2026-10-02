@@ -129,7 +129,7 @@ pub(super) fn tool(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use super::super::{roll_check::tool as roll_check_tool, shared::resolve_entity, test_support::fixture};
+    use super::super::{diceroll::tool as diceroll_tool, shared::resolve_entity, test_support::fixture};
     use crate::features::entities::{attributes, model::Entity, registry};
 
     async fn character(turn: &TurnTx, name: &str) -> Entity {
@@ -293,18 +293,18 @@ mod tests {
         let save = tool(turn.clone(), target.clone(), turn_id.clone(), String::new());
         let minted = save.execute(json!({"name":"Prism","stats":[{"attribute":"Resonance","delta":1,"reason":"resonating"}]})).await.unwrap();
         assert_eq!(minted.as_json().unwrap()["stats"][0], json!({"attribute":"Resonance","before":5.0,"after":6.0}));
-        let roll = roll_check_tool(turn.clone(), target, turn_id);
-        let first_roll = roll.execute(json!({"factors":[{"entity":"Prism","attribute_name":"Resonance"}]})).await.unwrap();
-        assert_eq!(first_roll.as_json().unwrap()["factors"][0]["value"], 6.0);
+        let diceroll = diceroll_tool(turn.clone(), target, turn_id);
+        let first_diceroll = diceroll.execute(json!({"factors":[{"entity":"Prism","attribute_name":"Resonance"}]})).await.unwrap();
+        assert_eq!(first_diceroll.as_json().unwrap()["factors"][0]["value"], 6.0);
         turn.with(|conn| {
             let attribute = registry::find_exact_match(conn, "Resonance")?.unwrap();
             registry::add_alias(conn, &attribute.id, "Harmony")
         }).await.unwrap();
         let aliased = save.execute(json!({"name":"Prism","stats":[{"attribute":"Harmony","delta":-1,"reason":"quieting"}]})).await.unwrap();
         assert_eq!(aliased.as_json().unwrap()["stats"][0], json!({"attribute":"Resonance","before":6.0,"after":5.0}));
-        let alias_roll = roll.execute(json!({"factors":[{"entity":"Prism","attribute_name":"Harmony"}]})).await.unwrap();
-        assert_eq!(alias_roll.as_json().unwrap()["factors"][0]["attribute_name"], "Resonance");
-        assert_eq!(alias_roll.as_json().unwrap()["factors"][0]["value"], 5.0);
+        let alias_diceroll = diceroll.execute(json!({"factors":[{"entity":"Prism","attribute_name":"Harmony"}]})).await.unwrap();
+        assert_eq!(alias_diceroll.as_json().unwrap()["factors"][0]["attribute_name"], "Resonance");
+        assert_eq!(alias_diceroll.as_json().unwrap()["factors"][0]["value"], 5.0);
         for name in ["Resonance", "Harmony"] {
             assert!(registry::find_exact_match(&pool.get().unwrap(), name).unwrap().is_none());
         }

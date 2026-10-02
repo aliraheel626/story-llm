@@ -37,7 +37,7 @@ const FIXED_ITEMS: &[(&str, &str, &str, bool)] = &[
 // been sent to the narrator.
 fn record_label(kind: &str) -> (&'static str, bool) {
     match kind {
-        kind::DICEROLL => ("Dice rolls", true),
+        kind::DICEROLL => ("Dicerolls", true),
         kind::IMAGE_GENERATED => ("Image prompts", false),
         kind::IMAGE_CAPTIONED => ("Image captions", true),
         kind::TOOL_CALL => ("Tool calls", false),

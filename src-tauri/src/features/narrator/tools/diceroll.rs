@@ -6,7 +6,7 @@ use serde_json::{json, Value};
 use crate::features::entities::attributes;
 use crate::features::narrator::{
     catalog::{self, ToolAvailability, ToolDeps, ToolSpec},
-    dice::{chance_from_factors, resolve_roll, RollFactor, RollPayload},
+    diceroll::{chance_from_factors, resolve_diceroll, DicerollFactor, DicerollPayload},
 };
 use crate::features::transcript;
 use crate::features::turn::TurnTx;
@@ -14,10 +14,10 @@ use crate::shared::error::{AppError, AppResult};
 
 use super::shared::{object_args, resolve_entity};
 
-pub const NAME: &str = "roll_check";
+pub const NAME: &str = "diceroll";
 pub const DESCRIPTION: &str =
     "Resolve a genuinely uncertain action: call this before narrating the result, and do not \
-     roll routine or certain actions. With zero factors, chance_percent is optional and \
+     call it for routine or certain actions. With zero factors, chance_percent is optional and \
      defaults to 50. For one factor, name the acting entity and attribute_name; for two, \
      put the acting pair first and the opposing pair second. The backend reads stored attribute \
      values, normalizes each by its registered min/max, and calculates chance_percent as \
@@ -30,7 +30,7 @@ pub fn schema() -> Value {
         "type": "object",
         "properties": {
             "chance_percent": {"type": "integer", "minimum": 0, "maximum": 100, "description": "Optional narrator-estimated chance when no factors are given; defaults to 50%. Must be omitted when factors are present."},
-            "reason": {"type": "string", "description": "A short description of the uncertain action and why it needs a roll."},
+            "reason": {"type": "string", "description": "A short description of the uncertain action and why it needs a diceroll."},
             "factors": {
                 "type": "array", "maxItems": 2,
                 "description": "Zero, one acting, or two acting-then-opposing registered entity attributes. Values are fetched by the backend; never supply numbers here.",
@@ -51,7 +51,7 @@ pub fn schema() -> Value {
 
 fn label(args: &Value) -> String {
     format!(
-        "Rolling for {}…",
+        "Diceroll for {}…",
         args.get("reason")
             .and_then(|value| value.as_str())
             .map(str::to_string)
@@ -60,7 +60,7 @@ fn label(args: &Value) -> String {
 }
 
 fn enabled(availability: &ToolAvailability<'_>) -> bool {
-    catalog::normal_mode(availability) && availability.settings.roll_check
+    catalog::normal_mode(availability) && availability.settings.diceroll
 }
 
 fn build(deps: &ToolDeps) -> PortableDynamicTool {
@@ -81,7 +81,7 @@ fn factor_reading(
     story_id: &str,
     reference: &str,
     attribute_name: &str,
-) -> AppResult<RollFactor> {
+) -> AppResult<DicerollFactor> {
     let entity = resolve_entity(conn, story_id, reference)?;
     let registry_match = attributes::find_exact_match(conn, attribute_name)?;
     let values = attributes::list_entity_attributes_sync(conn, story_id, &entity.id)?;
@@ -112,7 +112,7 @@ fn factor_reading(
             entity.name, value.canonical_name
         )));
     }
-    Ok(RollFactor {
+    Ok(DicerollFactor {
         entity_id: entity.id,
         entity_name: entity.name,
         attribute_id: value.attribute_id,
@@ -138,14 +138,14 @@ pub(super) fn tool(
             let turn_id = turn_id.clone();
             Box::pin(async move {
                 let fields = args.as_object().ok_or_else(|| {
-                    ToolExecutionError::invalid_args("roll_check expects an object")
+                    ToolExecutionError::invalid_args("diceroll expects an object")
                 })?;
                 if fields
                     .keys()
                     .any(|key| !matches!(key.as_str(), "chance_percent" | "reason" | "factors"))
                 {
                     return Err(ToolExecutionError::invalid_args(
-                        "roll_check accepts only chance_percent, reason, and factors",
+                        "diceroll accepts only chance_percent, reason, and factors",
                     ));
                 }
                 let explicit_chance = match args.get("chance_percent") {
@@ -220,12 +220,12 @@ pub(super) fn tool(
                         } else {
                             (chance_from_factors(&factors), "attributes")
                         };
-                        let output = resolve_roll(chance_percent);
+                        let output = resolve_diceroll(chance_percent);
                         let content = format!(
-                            "Dice-roll outcome: rolled {} with {}% chance and got {}.",
+                            "Diceroll outcome: rolled {} with {}% chance and got {}.",
                             output.roll, output.chance_percent, output.outcome,
                         );
-                        let payload = serde_json::to_value(RollPayload {
+                        let payload = serde_json::to_value(DicerollPayload {
                             chance_percent,
                             roll: output.roll,
                             needed: output.needed,
@@ -268,14 +268,14 @@ mod turn_tests {
         save_character::tool as save_character_tool, test_support::fixture,
         save_relationship::tool as save_relationship_tool,
     };
-    use super::schema as roll_check_schema;
-    use super::tool as roll_check_tool;
+    use super::schema as diceroll_schema;
+    use super::tool as diceroll_tool;
     use crate::features::entities::attributes;
     use serde_json::json;
 
     #[test]
-    fn roll_check_schema_accepts_optional_chance_or_two_attribute_references() {
-        let schema = roll_check_schema();
+    fn diceroll_schema_accepts_optional_chance_or_two_attribute_references() {
+        let schema = diceroll_schema();
         assert!(schema.get("required").is_none());
         assert_eq!(schema["properties"]["chance_percent"]["minimum"], 0);
         assert_eq!(schema["properties"]["chance_percent"]["maximum"], 100);
@@ -290,16 +290,16 @@ mod turn_tests {
     #[tokio::test]
     async fn roll_is_written_in_turn_with_exact_payload_and_target() {
         let (pool, turn, target, turn_id) = fixture();
-        let roll = roll_check_tool(turn.clone(), target.clone(), turn_id.clone());
+        let diceroll = diceroll_tool(turn.clone(), target.clone(), turn_id.clone());
         for args in [
             json!({"chance_percent":-1}),
             json!({"chance_percent":101}),
             json!({"factors":"not array"}),
             json!({"chance_percent":55.2}),
         ] {
-            assert!(roll.execute(args).await.is_err());
+            assert!(diceroll.execute(args).await.is_err());
         }
-        let out = roll
+        let out = diceroll
             .execute(json!({"chance_percent":35,"reason":" escaping a ghoul "}))
             .await
             .unwrap();
@@ -322,7 +322,7 @@ mod turn_tests {
                 "SELECT content, payload_json, target_entry_id, turn_id FROM transcript_entries WHERE kind='diceroll'",
                 [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?;
             assert_eq!((entry, tid), (target.clone(), turn_id.clone()));
-            assert_eq!(content, format!("Dice-roll outcome: rolled {} with 35% chance and got {}.", out["roll"], out["outcome"].as_str().unwrap()));
+            assert_eq!(content, format!("Diceroll outcome: rolled {} with 35% chance and got {}.", out["roll"], out["outcome"].as_str().unwrap()));
             let payload: serde_json::Value = serde_json::from_str(&raw).unwrap();
             assert_eq!(payload.as_object().unwrap().len(), 8);
             for key in ["chance_percent", "roll", "needed", "outcome", "reason", "chance_source", "factors", "seed"] {
@@ -352,8 +352,8 @@ mod turn_tests {
             .await.unwrap();
         let id = turn.with(|conn| Ok(super::resolve_entity(conn, turn.story_id(), "You")?.id))
             .await.unwrap();
-        let roll = roll_check_tool(turn.clone(), target, turn_id);
-        let result = roll
+        let diceroll = diceroll_tool(turn.clone(), target, turn_id);
+        let result = diceroll
             .execute(json!({"factors":[{"entity":"you","attribute_name":"Stealth"}]}))
             .await
             .unwrap();
@@ -365,7 +365,7 @@ mod turn_tests {
         })
         .await
         .unwrap();
-        let alias = roll
+        let alias = diceroll
             .execute(json!({"factors":[{"entity":id,"attribute_name":"Sneaking"}]}))
             .await
             .unwrap();
@@ -373,7 +373,7 @@ mod turn_tests {
             alias.as_json().unwrap()["factors"][0]["attribute_name"],
             json!("Stealth")
         );
-        assert!(roll
+        assert!(diceroll
             .execute(json!({"factors":[{"entity":"missing","attribute_name":"Stealth"}]}))
             .await
             .is_err());
@@ -393,18 +393,18 @@ mod turn_tests {
                 "stats":[{"attribute":"Affection","delta":2,"reason":"a truce"}]})).await.unwrap();
         let relationship_id = turn.with(|conn| Ok(super::resolve_entity(conn, turn.story_id(), "Mira → Varro")?.id))
             .await.unwrap();
-        let roll = roll_check_tool(turn.clone(), target, turn_id);
-        let character = roll.execute(json!({"factors":[{"entity":"MIRA","attribute_name":"Stealth"}]})).await.unwrap();
+        let diceroll = diceroll_tool(turn.clone(), target, turn_id);
+        let character = diceroll.execute(json!({"factors":[{"entity":"MIRA","attribute_name":"Stealth"}]})).await.unwrap();
         assert_eq!(character.as_json().unwrap()["factors"][0]["entity_id"], mira_id);
         assert_eq!(character.as_json().unwrap()["factors"][0]["value"], 8.0);
         for reference in ["Mira → Varro", "mira -> varro"] {
-            let relation = roll.execute(json!({"factors":[{"entity":reference,"attribute_name":"Affection"}]})).await.unwrap();
+            let relation = diceroll.execute(json!({"factors":[{"entity":reference,"attribute_name":"Affection"}]})).await.unwrap();
             assert_eq!(relation.as_json().unwrap()["factors"][0]["entity_id"], relationship_id);
             assert_eq!(relation.as_json().unwrap()["factors"][0]["value"], 2.0);
         }
-        assert!(roll.execute(json!({"factors":[{"entity":"Varro -> Mira","attribute_name":"Affection"}]})).await.is_err());
-        assert!(roll.execute(json!({"factors":[{"entity":"Mira","attribute_name":"Stealth","extra":1}]})).await.is_err());
-        assert!(roll.execute(json!({"reason":null})).await.is_err());
+        assert!(diceroll.execute(json!({"factors":[{"entity":"Varro -> Mira","attribute_name":"Affection"}]})).await.is_err());
+        assert!(diceroll.execute(json!({"factors":[{"entity":"Mira","attribute_name":"Stealth","extra":1}]})).await.is_err());
+        assert!(diceroll.execute(json!({"reason":null})).await.is_err());
         turn.rollback().await.unwrap();
     }
 }

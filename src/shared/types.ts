@@ -1,4 +1,4 @@
-import type { RollPayload } from "./generated/Roll";
+import type { DicerollPayload } from "./generated/Diceroll";
 
 export interface Story {
   id: string; title: string; created_at: string; updated_at: string;
@@ -135,7 +135,7 @@ export interface Entity extends CharacterFields {
 export interface NarratorToolSettings {
   save_relationship: boolean;
   save_character: boolean;
-  roll_check: boolean;
+  diceroll: boolean;
   illustrate_scene: boolean;
 }
 export type ReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
@@ -158,13 +158,13 @@ export interface EntityAttributeValue {
   story_id: string; entity_id: string; attribute_id: string; canonical_name: string;
   value: number; min: number; max: number; updated_at: string; source: string;
 }
-export type RollFactor = RollPayload["factors"][number];
-export type Roll = RollPayload & { id: string; entry_id: string; created_at: string };
+export type DicerollFactor = DicerollPayload["factors"][number];
+export type Diceroll = DicerollPayload & { id: string; entry_id: string; created_at: string };
 
 export function transcriptInputMode(entry: TranscriptEntry): InputMode {
   return ("input_mode" in entry.payload ? entry.payload.input_mode as InputMode | undefined : undefined) ?? "generated";
 }
-export function rollFromEntry(entry: TranscriptEntry): Roll | null {
+export function dicerollFromEntry(entry: TranscriptEntry): Diceroll | null {
   if (entry.payload === null || typeof entry.payload !== "object" || Array.isArray(entry.payload)) return null;
   const p = entry.payload as unknown as Record<string, unknown>;
   const { chance_percent: chance, roll, needed, outcome, seed } = p;
@@ -178,9 +178,9 @@ export function rollFromEntry(entry: TranscriptEntry): Roll | null {
   ) return null;
 
   const factors: unknown = p.factors === undefined ? [] : p.factors;
-  if (!Array.isArray(factors) || factors.length > 2 || !factors.every((factor: unknown): factor is RollFactor => {
+  if (!Array.isArray(factors) || factors.length > 2 || !factors.every((factor: unknown): factor is DicerollFactor => {
     if (factor === null || typeof factor !== "object") return false;
-    const value = factor as Partial<RollFactor>;
+    const value = factor as Partial<DicerollFactor>;
     return typeof value.entity_id === "string" && typeof value.entity_name === "string" &&
       typeof value.attribute_id === "string" && typeof value.attribute_name === "string" &&
       Number.isFinite(value.value) && Number.isFinite(value.min) && Number.isFinite(value.max) &&
@@ -198,12 +198,12 @@ export function rollFromEntry(entry: TranscriptEntry): Roll | null {
   };
 }
 
-export function groupRollsByEntry(hidden: readonly TranscriptEntry[]): Record<string, Roll[]> {
-  const grouped: Record<string, Roll[]> = Object.create(null);
+export function groupDicerollsByEntry(hidden: readonly TranscriptEntry[]): Record<string, Diceroll[]> {
+  const grouped: Record<string, Diceroll[]> = Object.create(null);
   for (const entry of hidden) {
     if (entry.kind !== "diceroll") continue;
-    const roll = rollFromEntry(entry);
-    if (roll) (grouped[roll.entry_id] ??= []).push(roll);
+    const diceroll = dicerollFromEntry(entry);
+    if (diceroll) (grouped[diceroll.entry_id] ??= []).push(diceroll);
   }
   return grouped;
 }

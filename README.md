@@ -2,7 +2,7 @@
 
 story-llm is a local-first AI storytelling desktop app built with Tauri, React,
 TypeScript, and Rust. Stories, transcript entries, characters, writing-style notes,
-rolls, model settings, and generated-image metadata live in a local SQLite
+dicerolls, model settings, and generated-image metadata live in a local SQLite
 database. Text generation supports OpenRouter and Nous Portal; image generation
 uses OpenRouter when configured.
 
@@ -85,7 +85,7 @@ Context panel manages the entity block and author's note.
 The narrator prepares a transcript, tools, and a staged candidate, then streams
 generation events. Replies owns submit, Retry, edit, and erase transactions;
 Retry replaces the old reply and its effects only after successful generation.
-Rolls are hidden `diceroll` transcript entries and are displayed directly from the
+Dicerolls are hidden `diceroll` transcript entries and are displayed directly from the
 transcript snapshot. Images and entity projections follow their owning events.
 
 ## Local data

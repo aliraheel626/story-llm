@@ -166,7 +166,7 @@ mod tests {
     fn story_creation_validates_draft_and_seeds_canonical_player() {
         let pool = test_pool();
         let tools = NarratorToolSettings {
-            roll_check: false,
+            diceroll: false,
             ..NarratorToolSettings::default()
         };
         let created = create_story_in_pool(

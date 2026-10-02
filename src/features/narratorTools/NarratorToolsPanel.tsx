@@ -11,9 +11,9 @@ const GROUPS: { title: string; items: { key: keyof NarratorToolSettings; label: 
     ],
   },
   {
-    title: "Dice",
+    title: "Diceroll",
     items: [
-      { key: "roll_check", label: "Roll uncertain outcomes", description: "The narrator may give a chance or reference up to two stored attributes. Rolls read stats but never change them." },
+      { key: "diceroll", label: "Diceroll uncertain outcomes", description: "The narrator may give a chance or reference up to two stored attributes. Dicerolls read stats but never change them." },
     ],
   },
   {
@@ -48,7 +48,7 @@ export function NarratorToolsPanel() {
   return (
     <div className="flex flex-col gap-3 text-xs">
       <p className="rounded border border-border bg-bg px-2 py-2 leading-5 text-muted">
-        All tools start on for every story. Entity tools can change persistent world state; dice and image calls can add cost. Turn off any tool independently before writing.
+        All tools start on for every story. Entity tools can change persistent world state; diceroll and image calls can add cost. Turn off any tool independently before writing.
       </p>
       {GROUPS.map((group) => (
         <fieldset key={group.title} className="flex flex-col gap-1.5 border-t border-border pt-2">

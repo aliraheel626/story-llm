@@ -1,6 +1,6 @@
 pub mod catalog;
 mod commands;
-pub mod dice;
+pub mod diceroll;
 mod generation;
 pub mod model;
 mod stream;

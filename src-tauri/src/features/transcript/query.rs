@@ -149,7 +149,7 @@ mod tests {
             json!({"input_mode":"do"}),
             None,
         );
-        let roll = append(&conn, kind::DICEROLL, None, json!({"roll":5}), None);
+        let diceroll = append(&conn, kind::DICEROLL, None, json!({"roll":5}), None);
         let rows = select(
             &conn,
             "story",
@@ -161,7 +161,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             rows.iter().map(|row| row.id.as_str()).collect::<Vec<_>>(),
-            vec![roll.id.as_str()]
+            vec![diceroll.id.as_str()]
         );
     }
 

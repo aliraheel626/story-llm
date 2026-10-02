@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { isPlayerEntry, transcriptInputMode, type ActionMode, type TranscriptEntry, type Roll, type StoryImage } from "../../shared/types";
+import { isPlayerEntry, transcriptInputMode, type ActionMode, type TranscriptEntry, type Diceroll, type StoryImage } from "../../shared/types";
 import { useStoryStore } from "../story/store";
 import { formatSeconds, formatUsd, useUsageStore } from "../usage/store";
 import { ImagePlaceholder } from "./ImagePlaceholder";
-import { RollDisclosure } from "./RollDisclosure";
+import { DicerollDisclosure } from "./DicerollDisclosure";
 import { modeDefinition } from "./Composer";
 import { entryDisplay } from "./replacement";
 
@@ -16,10 +16,10 @@ interface TranscriptEntryViewProps {
   canRetry?: boolean;
   turnFailed?: boolean;
   images?: StoryImage[];
-  rolls?: Roll[];
+  dicerolls?: Diceroll[];
 }
 
-export function TranscriptEntryView({ entry, storyId, isLast, retryEntryId, canRetry = true, turnFailed = false, images, rolls }: TranscriptEntryViewProps) {
+export function TranscriptEntryView({ entry, storyId, isLast, retryEntryId, canRetry = true, turnFailed = false, images, dicerolls }: TranscriptEntryViewProps) {
   const streaming = useStoryStore((s) => s.bundles[storyId]?.streaming);
   const requestPending = useStoryStore((s) => s.bundles[storyId]?.requestPending ?? false);
   const retryNarration = useStoryStore((s) => s.retryNarration);
@@ -172,8 +172,8 @@ export function TranscriptEntryView({ entry, storyId, isLast, retryEntryId, canR
 
       {isBeingReplaced && <p className="text-xs italic text-muted" role="status">Retrying. The original comes back if this fails.</p>}
 
-      {display.showOldExtras && rolls?.map((roll) => (
-        <RollDisclosure key={roll.id} roll={roll} />
+      {display.showOldExtras && dicerolls?.map((diceroll) => (
+        <DicerollDisclosure key={diceroll.id} diceroll={diceroll} />
       ))}
 
       {display.showOldExtras && images?.map((image) => {

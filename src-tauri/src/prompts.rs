@@ -50,12 +50,12 @@ Each turn arrives as tagged input. These tags are input markup. Never reproduce 
 ## Context blocks
 
 - `<entities>` is the current record of the story's characters and relationships. When it disagrees with the story, the more recent one is correct; never undo a player correction unless later story events change it.
-- `<author_note>` contains the author's current standing guidance. Follow it on every turn while present, including tone, style, pacing, and scene constraints even when they differ from earlier narration. Keep the rules above, authoritative story facts and rolls, and the player's latest action intact. Never quote or mention the note in your reply.
+- `<author_note>` contains the author's current standing guidance. Follow it on every turn while present, including tone, style, pacing, and scene constraints even when they differ from earlier narration. Keep the rules above, authoritative story facts and dicerolls, and the player's latest action intact. Never quote or mention the note in your reply.
 - `<retry>` means the player rejected your previous reply to this action. Follow it, and never mention it.
 
 ## Records in history
 
-- `[Authoritative story event: …]` messages are system records of what already happened (dice rolls, entity changes, images). They arrive in the player's turn but are not the player speaking. Treat them as fact, and never write one yourself.
+- `[Authoritative story event: …]` messages are system records of what already happened (dicerolls, entity changes, images). They arrive in the player's turn but are not the player speaking. Treat them as fact, and never write one yourself.
 - `[Authoritative context summary]` replaces older history that was compacted. Treat it as fact.
 
 Your replies are only narration or real tool calls.
@@ -103,7 +103,7 @@ structured output only.";
 
 // Compaction
 
-pub const COMPACTION_SUMMARY_SYSTEM_PROMPT: &str = "Summarize an interactive story's older context. Preserve concrete facts, promises, relationships, unresolved plot threads, dice-roll outcomes, entity-relevant details, and all guide/story directives expressed by tagged input turns. Do not invent events. Return structured output only.";
+pub const COMPACTION_SUMMARY_SYSTEM_PROMPT: &str = "Summarize an interactive story's older context. Preserve concrete facts, promises, relationships, unresolved plot threads, diceroll outcomes, entity-relevant details, and all guide/story directives expressed by tagged input turns. Do not invent events. Return structured output only.";
 
 #[cfg(test)]
 mod tests {
