@@ -1,0 +1,14 @@
+C0 baseline: main at 71ef4b8; git status clean; entities branch created.
+App process story-llm: not running at inspection.
+Read-only database: C:\Users\User\AppData\Roaming\com.story-llm.app\story-llm.sqlite3 (mode=ro).
+Query: SELECT json_extract(value, '$.provider') AS provider, json_extract(value, '$.model') AS model FROM settings WHERE key = 'text_model_default'
+Result: no saved row. No other settings values read or saved.
+Effective current provider: openrouter
+Effective current model: x-ai/grok-4.7
+Default source: src-tauri/src/features/settings/model.rs lines 14-15.
+Choice: select this effective default in C7 because the settings row is absent.
+Deleted, each by exact name: story-llm.sqlite3, story-llm.sqlite3-wal, story-llm.sqlite3-shm.
+All three database filenames absent after deletion.
+secrets.json exists before deletion: true.
+secrets.json exists after deletion: true.
+secrets.json was not opened, printed, copied, overwritten, or deleted.

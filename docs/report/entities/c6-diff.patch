@@ -1,0 +1,954 @@
+diff --git a/src-tauri/src/features/entities/commands.rs b/src-tauri/src/features/entities/commands.rs
+index 991401d..bad61e7 100644
+--- a/src-tauri/src/features/entities/commands.rs
++++ b/src-tauri/src/features/entities/commands.rs
+@@ -0,0 +1 @@
++use std::collections::HashMap;
+@@ -8 +9,2 @@ use super::attributes::{
+-    list_entity_attributes_sync, remove_entity_attribute_sync, set_entity_attribute_sync,
++    list_entity_attributes_for_entities_sync, list_entity_attributes_sync,
++    remove_entity_attribute_sync, set_entity_attribute_sync,
+@@ -10 +12 @@ use super::attributes::{
+-use super::model::{AttributeRegistryEntry, CharacterFields, CharacterPatch, Entity, EntityAttributeValue, CHARACTER};
++use super::model::{AttributeRegistryEntry, CharacterFields, CharacterPatch, Entity, EntityAttributeValue, CHARACTER, RELATIONSHIP};
+@@ -12 +14 @@ use super::registry::list_attribute_registry_sync;
+-use super::repository::{create_character_sync, delete_entity_sync, update_character_sync};
++use super::repository::{create_character_sync, delete_entity_sync, load_entity_raw, update_character_sync, update_link_sync};
+@@ -63 +65 @@ pub async fn update_entity(
+-    name: String,
++    name: Option<String>,
+@@ -72,0 +75,5 @@ pub async fn update_entity(
++            let before = load_entity_raw(tx, &story_id, &entity_id)?
++                .ok_or_else(|| AppError::NotFound(format!("entity {entity_id}")))?;
++            if before.kind == RELATIONSHIP {
++                return update_link_sync(tx, &story_id, &entity_id, name.as_deref(), None, None, "user", None, None);
++            }
+@@ -75 +82 @@ pub async fn update_entity(
+-                    tx, &story_id, &entity_id, Some(&name), &fields, "user", None, None,
++                    tx, &story_id, &entity_id, name.as_deref(), &fields, "user", None, None,
+@@ -78 +85 @@ pub async fn update_entity(
+-                    tx, &story_id, &entity_id, &name, appearance_anchor.as_deref(), "user", None, None,
++                    tx, &story_id, &entity_id, name.as_deref().unwrap_or(&before.name), appearance_anchor.as_deref(), "user", None, None,
+@@ -114,0 +122,11 @@ pub fn list_entity_attributes(
++#[tauri::command]
++pub fn list_story_attributes(
++    pool: State<Pool>,
++    story_id: String,
++) -> AppResult<HashMap<String, Vec<EntityAttributeValue>>> {
++    let conn = pool.get()?;
++    let entities = list_entities_sync(&conn, &story_id, None)?;
++    let ids = entities.iter().map(|entity| entity.id.as_str()).collect::<Vec<_>>();
++    list_entity_attributes_for_entities_sync(&conn, &story_id, &ids)
++}
++
+diff --git a/src-tauri/src/lib.rs b/src-tauri/src/lib.rs
+index c9eefdf..3e8fd1c 100644
+--- a/src-tauri/src/lib.rs
++++ b/src-tauri/src/lib.rs
+@@ -98,0 +99 @@ pub fn run() {
++            features::entities::list_story_attributes,
+diff --git a/src/features/characters/CharactersPanel.tsx b/src/features/characters/CharactersPanel.tsx
+index f2e4c29..f5c7747 100644
+--- a/src/features/characters/CharactersPanel.tsx
++++ b/src/features/characters/CharactersPanel.tsx
+@@ -2 +2,2 @@ import { useEffect, useState } from "react";
+-import type { AttributeRegistryEntry, Entity, EntityAttributeValue } from "../../shared/types";
++import { CHARACTER_FIELD_LABELS } from "../../shared/types";
++import type { AttributeRegistryEntry, CharacterFields, CharacterPatch, Entity, EntityAttributeValue } from "../../shared/types";
+@@ -6 +7,32 @@ import { charactersApi } from "./api";
+-const EMPTY_CHARACTERS: Entity[] = [];
++const EMPTY_ENTITIES: Entity[] = [];
++const EMPTY_ATTRIBUTES: EntityAttributeValue[] = [];
++const EMPTY_ATTRIBUTE_MAP: Record<string, EntityAttributeValue[]> = {};
++const CHARACTER_KEYS = Object.keys(CHARACTER_FIELD_LABELS) as (keyof CharacterFields)[];
++const FIELD_CLASS = "w-full rounded border border-border bg-surface px-2 py-1 text-xs text-text focus:outline-none focus:border-accent disabled:opacity-40";
++type CharacterDrafts = Record<keyof CharacterFields, string>;
++type CharacterForm = { token: symbol; name: string; fields: CharacterDrafts; busy: boolean };
++type EditForm = CharacterForm & {
++  original: Entity;
++  attributeDrafts: Record<string, { value: string }>;
++  removedAttributes: string[];
++  attributeToAdd: string;
++};
++
++const preferredTab = (storyId: string | null): Entity["kind"] => {
++  try {
++    if (storyId && window.localStorage.getItem(`story-llm:entity-tab:${storyId}`) === "relationship") return "relationship";
++  } catch { /* UI preferences are optional when storage is unavailable. */ }
++  return "character";
++};
++
++const characterDrafts = (entity?: CharacterFields): CharacterDrafts =>
++  Object.fromEntries(CHARACTER_KEYS.map((field) => [field, entity?.[field] ?? ""])) as CharacterDrafts;
++
++const changedFields = (drafts: CharacterDrafts, original?: CharacterFields): CharacterPatch => {
++  const patch: CharacterPatch = {};
++  for (const field of CHARACTER_KEYS) {
++    const value = drafts[field].trim() || null;
++    if (value !== (original?.[field] ?? null)) patch[field] = value;
++  }
++  return patch;
++};
+@@ -10,15 +42,14 @@ export function CharactersPanel() {
+-  const characters = useStoryStore((s) => activeStoryId ? (s.bundles[activeStoryId]?.characters ?? EMPTY_CHARACTERS) : EMPTY_CHARACTERS);
+-  const loading = useStoryStore((s) => activeStoryId ? (s.bundles[activeStoryId]?.charactersLoading ?? false) : false);
+-  const loadCharacters = useStoryStore((s) => s.loadCharacters);
+-  const createCharacter = useStoryStore((s) => s.createCharacter);
+-  const updateCharacter = useStoryStore((s) => s.updateCharacter);
+-  const deleteCharacter = useStoryStore((s) => s.deleteCharacter);
+-
+-  const [creating, setCreating] = useState(false);
+-  const [name, setName] = useState("");
+-  const [anchor, setAnchor] = useState("");
+-  const [editingId, setEditingId] = useState<string | null>(null);
+-  const [editName, setEditName] = useState("");
+-  const [editAnchor, setEditAnchor] = useState("");
+-  const [busy, setBusy] = useState(false);
+-  const [attributes, setAttributes] = useState<EntityAttributeValue[]>([]);
++  const entities = useStoryStore((s) => activeStoryId ? (s.bundles[activeStoryId]?.entities ?? EMPTY_ENTITIES) : EMPTY_ENTITIES);
++  const loading = useStoryStore((s) => activeStoryId ? (s.bundles[activeStoryId]?.entitiesLoading ?? false) : false);
++  const attributesByEntity = useStoryStore((s) => activeStoryId ? (s.bundles[activeStoryId]?.attributesByEntity ?? EMPTY_ATTRIBUTE_MAP) : EMPTY_ATTRIBUTE_MAP);
++  const loadEntities = useStoryStore((s) => s.loadEntities);
++  const createEntity = useStoryStore((s) => s.createEntity);
++  const updateEntity = useStoryStore((s) => s.updateEntity);
++  const deleteEntity = useStoryStore((s) => s.deleteEntity);
++  const setEntityAttribute = useStoryStore((s) => s.setEntityAttribute);
++  const removeEntityAttribute = useStoryStore((s) => s.removeEntityAttribute);
++
++  const [tab, setTab] = useState<Entity["kind"]>("character");
++  const [creating, setCreating] = useState<CharacterForm | null>(null);
++  const [editing, setEditing] = useState<EditForm | null>(null);
++  const [revealedIds, setRevealedIds] = useState<string[]>([]);
+@@ -26,2 +56,0 @@ export function CharactersPanel() {
+-  const [attributeDrafts, setAttributeDrafts] = useState<Record<string, string>>({});
+-  const [attributeToAdd, setAttributeToAdd] = useState("");
+@@ -30,3 +59,6 @@ export function CharactersPanel() {
+-    if (activeStoryId) loadCharacters(activeStoryId);
+-  }, [activeStoryId, loadCharacters]);
+-
++    setTab(preferredTab(activeStoryId));
++    setCreating(null);
++    setEditing(null);
++    setRevealedIds([]);
++    if (activeStoryId) loadEntities(activeStoryId).catch(console.error);
++  }, [activeStoryId, loadEntities]);
+@@ -35,3 +67 @@ export function CharactersPanel() {
+-  if (!activeStoryId) {
+-    return <div className="text-xs text-muted py-1">Open a story first.</div>;
+-  }
++  if (!activeStoryId) return <div className="text-xs text-muted py-1">Open a story first.</div>;
+@@ -39,14 +69,9 @@ export function CharactersPanel() {
+-  const submitNew = async () => {
+-    const trimmed = name.trim();
+-    if (!trimmed || busy) return;
+-    setBusy(true);
+-    try {
+-      await createCharacter(activeStoryId, trimmed, anchor.trim() || undefined);
+-      setName("");
+-      setAnchor("");
+-      setCreating(false);
+-    } catch (e) {
+-      console.error(e);
+-    } finally {
+-      setBusy(false);
+-    }
++  const updateEdit = (form: EditForm, change: (current: EditForm) => EditForm | null) =>
++    setEditing((current) => current?.token === form.token ? change(current) : current);
++  const attributes = editing ? (attributesByEntity[editing.original.id] ?? EMPTY_ATTRIBUTES) : EMPTY_ATTRIBUTES;
++  const availableAttributes = editing ? registry.filter((definition) =>
++    !attributes.some((item) => item.attribute_id === definition.id) && !editing.attributeDrafts[definition.id]
++    && JSON.parse(definition.entity_kinds_json).includes(editing.original.kind)) : [];
++  const endpointName = (id: string) => {
++    const endpoint = entities.find((entity) => entity.id === id && entity.kind === "character");
++    return endpoint ? (endpoint.known_as ?? endpoint.name) : "Unknown character";
+@@ -53,0 +79,15 @@ export function CharactersPanel() {
++  const relationshipTitle = (entity: Entity) => entity.link
++    ? `${endpointName(entity.link.from_id)} ${entity.link.direction === "both" ? "\u2194" : "\u2192"} ${endpointName(entity.link.to_id)}`
++    : "Relationship";
++  const renderFields = (form: CharacterForm, onChange: (field: keyof CharacterFields, value: string) => void) =>
++    CHARACTER_KEYS.map((field) => (
++      <label key={field} className="flex flex-col gap-1 text-xs text-muted">{CHARACTER_FIELD_LABELS[field]}
++        {field === "appearance_anchor" ? (
++          <textarea aria-label={CHARACTER_FIELD_LABELS[field]} value={form.fields[field]} disabled={form.busy} rows={3}
++            onChange={(event) => onChange(field, event.target.value)} className={`${FIELD_CLASS} resize-none`} />
++        ) : (
++          <input aria-label={CHARACTER_FIELD_LABELS[field]} value={form.fields[field]} disabled={form.busy}
++            onChange={(event) => onChange(field, event.target.value)} className={FIELD_CLASS} />
++        )}
++      </label>
++    ));
+@@ -55,4 +95,4 @@ export function CharactersPanel() {
+-  const startEdit = async (entity: Entity) => {
+-    setEditingId(entity.id);
+-    setEditName(entity.name);
+-    setEditAnchor(entity.appearance_anchor ?? "");
++  const submitNew = async () => {
++    const form = creating;
++    if (!form || form.busy || !form.name.trim()) return;
++    setCreating((current) => current?.token === form.token ? { ...current, busy: true } : current);
+@@ -60,4 +100,2 @@ export function CharactersPanel() {
+-      const values = await charactersApi.listAttributes(activeStoryId, entity.id);
+-      setAttributes(values);
+-      setAttributeDrafts(Object.fromEntries(values.map((value) => [value.attribute_id, String(value.value)])));
+-      setAttributeToAdd("");
++      await createEntity(activeStoryId, form.name.trim(), changedFields(form.fields));
++      setCreating((current) => current?.token === form.token ? null : current);
+@@ -64,0 +103,8 @@ export function CharactersPanel() {
++    finally { setCreating((current) => current?.token === form.token ? { ...current, busy: false } : current); }
++  };
++
++  const startEdit = (entity: Entity) => {
++    setEditing({
++      token: Symbol(), original: { ...entity }, name: entity.kind === "character" ? entity.name : (entity.link?.label ?? ""),
++      fields: characterDrafts(entity), busy: false, attributeDrafts: {}, removedAttributes: [], attributeToAdd: "",
++    });
+@@ -68,4 +114,10 @@ export function CharactersPanel() {
+-    if (!editingId || busy) return;
+-    const trimmed = editName.trim();
+-    if (!trimmed) return;
+-    setBusy(true);
++    const form = editing;
++    if (!form || form.busy || !form.name.trim()) return;
++    const originalName = form.original.kind === "character" ? form.original.name : form.original.link?.label;
++    const name = form.name.trim() === originalName ? undefined : form.name.trim();
++    // Keep the edit-open baseline: stat reloads may contain unrelated, newer narration facts.
++    const fields = form.original.kind === "character" ? changedFields(form.fields, form.original) : {};
++    const drafts = Object.fromEntries(Object.entries(form.attributeDrafts)
++      .filter(([id, draft]) => !form.removedAttributes.includes(id) && draft.value.trim() !== "" && Number.isFinite(Number(draft.value)))
++      .map(([id, draft]) => [id, draft.value]));
++    updateEdit(form, (current) => ({ ...current, busy: true }));
+@@ -73,13 +125,4 @@ export function CharactersPanel() {
+-      for (const attribute of attributes) {
+-        const value = Number(attributeDrafts[attribute.attribute_id] ?? attribute.value);
+-        if (Number.isFinite(value) && value !== attribute.value) {
+-          await charactersApi.setAttribute(activeStoryId, editingId, attribute.attribute_id, value);
+-        }
+-      }
+-      await updateCharacter(activeStoryId, editingId, trimmed, editAnchor.trim() || undefined);
+-      setEditingId(null);
+-    } catch (e) {
+-      console.error(e);
+-    } finally {
+-      setBusy(false);
+-    }
++      await updateEntity(form.original.story_id, form.original.id, name, fields, drafts);
++      updateEdit(form, () => null);
++    } catch (error) { console.error(error); }
++    finally { updateEdit(form, (current) => ({ ...current, busy: false })); }
+@@ -88,2 +130,0 @@ export function CharactersPanel() {
+-  // Only closes the edit card on success, so a failed delete leaves the row
+-  // open to retry.
+@@ -91,2 +132,3 @@ export function CharactersPanel() {
+-    if (busy || !editingId) return;
+-    setBusy(true);
++    const form = editing;
++    if (!form || form.busy) return;
++    updateEdit(form, (current) => ({ ...current, busy: true }));
+@@ -94,7 +136,4 @@ export function CharactersPanel() {
+-      await deleteCharacter(activeStoryId, editingId);
+-      setEditingId(null);
+-    } catch (e) {
+-      console.error(e);
+-    } finally {
+-      setBusy(false);
+-    }
++      await deleteEntity(form.original.story_id, form.original.id);
++      updateEdit(form, () => null);
++    } catch (error) { console.error(error); }
++    finally { updateEdit(form, (current) => ({ ...current, busy: false })); }
+@@ -103,8 +142,10 @@ export function CharactersPanel() {
+-  const saveAttribute = async (attributeId: string) => {
+-    if (!editingId) return;
+-    const value = Number(attributeDrafts[attributeId]);
+-    if (!Number.isFinite(value)) return;
+-    const saved = await charactersApi.setAttribute(activeStoryId, editingId, attributeId, value);
+-    setAttributes((current) => current.some((item) => item.attribute_id === attributeId)
+-      ? current.map((item) => item.attribute_id === attributeId ? saved : item)
+-      : [...current, saved].sort((a, b) => a.canonical_name.localeCompare(b.canonical_name)));
++  const saveAttribute = async (form: EditForm, attributeId: string, draft: { value: string }) => {
++    if (!draft.value.trim() || !Number.isFinite(Number(draft.value))) return;
++    await setEntityAttribute(form.original.story_id, form.original.id, attributeId, Number(draft.value));
++    updateEdit(form, (current) => {
++      // Identity also rejects remove/re-add and same-value retyping while the set was pending.
++      if (current.attributeDrafts[attributeId] !== draft) return current;
++      const attributeDrafts = { ...current.attributeDrafts };
++      delete attributeDrafts[attributeId];
++      return { ...current, attributeDrafts };
++    });
+@@ -113,4 +154,8 @@ export function CharactersPanel() {
+-  const removeAttribute = async (attributeId: string) => {
+-    if (!editingId) return;
+-    await charactersApi.removeAttribute(activeStoryId, editingId, attributeId);
+-    setAttributes((current) => current.filter((item) => item.attribute_id !== attributeId));
++  const removeAttribute = async (form: EditForm, attributeId: string) => {
++    updateEdit(form, (current) => {
++      const attributeDrafts = { ...current.attributeDrafts };
++      delete attributeDrafts[attributeId];
++      return { ...current, attributeDrafts, removedAttributes: [...current.removedAttributes, attributeId] };
++    });
++    try { await removeEntityAttribute(form.original.story_id, form.original.id, attributeId); }
++    finally { updateEdit(form, (current) => ({ ...current, removedAttributes: current.removedAttributes.filter((id) => id !== attributeId) })); }
+@@ -120,8 +165,15 @@ export function CharactersPanel() {
+-    const definition = registry.find((item) => item.id === attributeToAdd);
+-    if (!definition) return;
+-    const midpoint = (definition.min + definition.max) / 2;
+-    setAttributeDrafts((current) => ({ ...current, [definition.id]: String(midpoint) }));
+-    if (!editingId) return;
+-    const saved = await charactersApi.setAttribute(activeStoryId, editingId, definition.id, midpoint);
+-    setAttributes((current) => [...current, saved].sort((a, b) => a.canonical_name.localeCompare(b.canonical_name)));
+-    setAttributeToAdd("");
++    const form = editing;
++    const definition = availableAttributes.find((item) => item.id === form?.attributeToAdd);
++    if (!form || !definition || form.busy) return;
++    const draft = { value: String((definition.min + definition.max) / 2) };
++    updateEdit(form, (current) => ({ ...current, attributeDrafts: { ...current.attributeDrafts, [definition.id]: draft }, attributeToAdd: "" }));
++    try { await saveAttribute(form, definition.id, draft); }
++    catch (error) {
++      updateEdit(form, (current) => {
++        if (current.attributeDrafts[definition.id] !== draft) return current;
++        const attributeDrafts = { ...current.attributeDrafts };
++        delete attributeDrafts[definition.id];
++        return { ...current, attributeDrafts, attributeToAdd: current.attributeToAdd || definition.id };
++      });
++      throw error;
++    }
+@@ -129,0 +182 @@ export function CharactersPanel() {
++  const shown = entities.filter((entity) => entity.kind === tab);
+@@ -132,16 +185,22 @@ export function CharactersPanel() {
+-      {creating ? (
+-        <div className="flex flex-col gap-1.5 rounded border border-border bg-bg p-2">
+-          <input
+-            autoFocus
+-            value={name}
+-            onChange={(e) => setName(e.target.value)}
+-            placeholder="Name"
+-            className="w-full rounded bg-surface border border-border px-2 py-1 text-sm text-text placeholder:text-muted focus:outline-none focus:border-accent"
+-          />
+-          <textarea
+-            value={anchor}
+-            onChange={(e) => setAnchor(e.target.value)}
+-            placeholder="Appearance (used to keep generated images consistent)..."
+-            rows={3}
+-            className="w-full resize-none rounded bg-surface border border-border px-2 py-1 text-xs text-text placeholder:text-muted focus:outline-none focus:border-accent"
+-          />
++      <div role="group" aria-label="Entity tabs" className="flex gap-1.5">
++        {(["character", "relationship"] as const).map((kind) => (
++          <button key={kind} type="button" aria-label={kind === "character" ? "Characters" : "Relationships"} aria-pressed={tab === kind}
++            onClick={() => {
++              if (tab === kind) return;
++              setTab(kind);
++              setEditing(null);
++              try { window.localStorage.setItem(`story-llm:entity-tab:${activeStoryId}`, kind); }
++              catch { /* Keep the tab usable without persistent storage. */ }
++            }}
++            className={`min-w-0 flex-1 rounded border px-2 py-1 text-xs transition-colors ${tab === kind ? "border-accent text-text" : "border-border text-muted hover:text-text"}`}>
++            {kind === "character" ? "Characters" : "Relationships"}
++          </button>
++        ))}
++      </div>
++      {tab === "character" && (creating ? (
++        <div aria-label="New character" className="flex flex-col gap-1.5 rounded border border-border bg-bg p-2">
++          <label className="flex flex-col gap-1 text-xs text-muted">Name
++            <input autoFocus aria-label="Name" value={creating.name} disabled={creating.busy}
++              onChange={(event) => { const name = event.target.value; setCreating((current) => current ? { ...current, name } : current); }} className={FIELD_CLASS} />
++          </label>
++          {renderFields(creating, (field, value) => setCreating((current) => current ? { ...current, fields: { ...current.fields, [field]: value } } : current))}
+@@ -149,10 +208,4 @@ export function CharactersPanel() {
+-            <button
+-              onClick={submitNew}
+-              disabled={busy || !name.trim()}
+-              className="flex-1 rounded bg-accent px-2 py-1 text-xs font-medium text-bg hover:bg-accent-hover disabled:opacity-40"
+-            >
+-              Create
+-            </button>
+-            <button onClick={() => setCreating(false)} className="rounded border border-border px-2 py-1 text-xs text-muted hover:text-text">
+-              Cancel
+-            </button>
++            <button type="button" aria-label="Create character" onClick={submitNew} disabled={creating.busy || !creating.name.trim()}
++              className="flex-1 rounded bg-accent px-2 py-1 text-xs font-medium text-bg hover:bg-accent-hover disabled:opacity-40">Create</button>
++            <button type="button" aria-label="Cancel new character" onClick={() => setCreating(null)}
++              className="rounded border border-border px-2 py-1 text-xs text-muted hover:text-text">Cancel</button>
+@@ -162,8 +215,3 @@ export function CharactersPanel() {
+-        <button
+-          onClick={() => setCreating(true)}
+-          className="w-full rounded border border-dashed border-border px-2 py-1.5 text-xs text-muted hover:text-text hover:border-accent transition-colors"
+-        >
+-          + New character
+-        </button>
+-      )}
+-
++        <button type="button" aria-label="New character" onClick={() => setCreating({ token: Symbol(), name: "", fields: characterDrafts(), busy: false })}
++          className="w-full rounded border border-dashed border-border px-2 py-1.5 text-xs text-muted hover:text-text hover:border-accent transition-colors">+ New character</button>
++      ))}
+@@ -171,2 +219 @@ export function CharactersPanel() {
+-      {!loading && characters.length === 0 && <div className="text-xs text-muted py-1">No characters yet.</div>}
+-
++      {!loading && shown.length === 0 && <div className="text-xs text-muted py-1">{tab === "character" ? "No characters yet." : "No relationships yet."}</div>}
+@@ -174,14 +221,20 @@ export function CharactersPanel() {
+-        {characters.map((entity) =>
+-          editingId === entity.id ? (
+-            <div key={entity.id} className="flex flex-col gap-1.5 rounded border border-accent bg-bg p-2">
+-              <input
+-                value={editName}
+-                onChange={(e) => setEditName(e.target.value)}
+-                className="w-full rounded bg-surface border border-border px-2 py-1 text-sm text-text focus:outline-none focus:border-accent"
+-              />
+-              <textarea
+-                value={editAnchor}
+-                onChange={(e) => setEditAnchor(e.target.value)}
+-                rows={3}
+-                className="w-full resize-none rounded bg-surface border border-border px-2 py-1 text-xs text-text focus:outline-none focus:border-accent"
+-              />
++        {shown.map((entity) => {
++          const form = editing?.original.id === entity.id ? editing : null;
++          if (form) return (
++            <div key={entity.id} data-entity-id={entity.id} className="flex flex-col gap-1.5 rounded border border-accent bg-bg p-2">
++              {entity.kind === "relationship" && <div className="text-sm text-text">{relationshipTitle(entity)}</div>}
++              <label className="flex flex-col gap-1 text-xs text-muted">{entity.kind === "character" ? "Name" : "Label"}
++                <input aria-label={entity.kind === "character" ? "Name" : "Label"} value={form.name} disabled={form.busy}
++                  onChange={(event) => { const name = event.target.value; updateEdit(form, (current) => ({ ...current, name })); }} className={FIELD_CLASS} />
++              </label>
++              {entity.kind === "character" ? renderFields(form, (field, value) =>
++                updateEdit(form, (current) => ({ ...current, fields: { ...current.fields, [field]: value } }))) : (
++                <>
++                  <label className="flex flex-col gap-1 text-xs text-muted">Direction
++                    <input aria-label="Direction" readOnly value={entity.link?.direction === "both" ? "Both" : "One way"} className={`${FIELD_CLASS} text-muted`} />
++                  </label>
++                  <label className="flex flex-col gap-1 text-xs text-muted">Description
++                    <textarea aria-label="Description" readOnly value={entity.link?.description ?? ""} rows={2} className={`${FIELD_CLASS} resize-none text-muted`} />
++                  </label>
++                </>
++              )}
+@@ -190,9 +243,11 @@ export function CharactersPanel() {
+-                {attributes.map((attribute) => (
+-                  <div key={attribute.attribute_id} className="grid grid-cols-[1fr_5rem_auto] items-center gap-1.5 text-xs">
+-                    <label className="text-text">{attribute.canonical_name}</label>
+-                    <input type="number" min={attribute.min} max={attribute.max} step="0.5"
+-                      value={attributeDrafts[attribute.attribute_id] ?? String(attribute.value)}
+-                      onChange={(event) => setAttributeDrafts((current) => ({ ...current, [attribute.attribute_id]: event.target.value }))}
+-                      onBlur={() => saveAttribute(attribute.attribute_id).catch(console.error)}
+-                      className="w-full rounded border border-border bg-bg px-1.5 py-1 text-right text-text" />
+-                    <button onClick={() => removeAttribute(attribute.attribute_id).catch(console.error)} className="text-danger" title="Remove attribute">×</button>
++                {attributes.filter((attribute) => !form.removedAttributes.includes(attribute.attribute_id)).map((attribute) => (
++                  <div key={attribute.attribute_id} className="grid grid-cols-[minmax(0,1fr)_5rem_auto] items-center gap-1.5 text-xs">
++                    <label htmlFor={`attribute-${entity.id}-${attribute.attribute_id}`} className="break-words text-text">{attribute.canonical_name}</label>
++                    <input id={`attribute-${entity.id}-${attribute.attribute_id}`} aria-label={attribute.canonical_name} type="number"
++                      min={attribute.min} max={attribute.max} step="0.5" disabled={form.busy}
++                      value={form.attributeDrafts[attribute.attribute_id]?.value ?? String(attribute.value)}
++                      onChange={(event) => { const value = event.target.value; updateEdit(form, (current) => ({ ...current, attributeDrafts: { ...current.attributeDrafts, [attribute.attribute_id]: { value } } })); }}
++                      onBlur={() => { const draft = form.attributeDrafts[attribute.attribute_id]; if (draft) saveAttribute(form, attribute.attribute_id, draft).catch(console.error); }}
++                      className="w-full rounded border border-border bg-bg px-1.5 py-1 text-right text-text disabled:opacity-40" />
++                    <button type="button" aria-label={`Remove ${attribute.canonical_name}`} disabled={form.busy}
++                      onClick={() => removeAttribute(form, attribute.attribute_id).catch(console.error)} className="text-danger disabled:opacity-40">{"\u00d7"}</button>
+@@ -202,4 +257,5 @@ export function CharactersPanel() {
+-                  <select value={attributeToAdd} onChange={(event) => setAttributeToAdd(event.target.value)} className="min-w-0 flex-1 rounded border border-border bg-bg px-1.5 py-1 text-xs text-text">
+-                    <option value="">Add attribute…</option>
+-                    {registry.filter((definition) => !attributes.some((item) => item.attribute_id === definition.id) && JSON.parse(definition.entity_kinds_json).includes("character"))
+-                      .map((definition) => <option key={definition.id} value={definition.id}>{definition.canonical_name}</option>)}
++                  <select aria-label="Attribute to add" value={form.attributeToAdd} disabled={form.busy}
++                    onChange={(event) => { const attributeToAdd = event.target.value; updateEdit(form, (current) => ({ ...current, attributeToAdd })); }}
++                    className="min-w-0 flex-1 rounded border border-border bg-bg px-1.5 py-1 text-xs text-text">
++                    <option value="">{"Add attribute\u2026"}</option>
++                    {availableAttributes.map((definition) => <option key={definition.id} value={definition.id}>{definition.canonical_name}</option>)}
+@@ -207 +263,2 @@ export function CharactersPanel() {
+-                  <button onClick={() => addAttribute().catch(console.error)} disabled={!attributeToAdd} className="rounded border border-border px-2 py-1 text-xs text-muted disabled:opacity-40">Add</button>
++                  <button type="button" aria-label="Add attribute" onClick={() => addAttribute().catch(console.error)} disabled={form.busy || !form.attributeToAdd}
++                    className="rounded border border-border px-2 py-1 text-xs text-muted disabled:opacity-40">Add</button>
+@@ -211,17 +268,6 @@ export function CharactersPanel() {
+-                <button
+-                  onClick={submitEdit}
+-                  disabled={busy || !editName.trim()}
+-                  className="flex-1 rounded bg-accent px-2 py-1 text-xs font-medium text-bg hover:bg-accent-hover disabled:opacity-40"
+-                >
+-                  Save
+-                </button>
+-                <button onClick={() => setEditingId(null)} className="rounded border border-border px-2 py-1 text-xs text-muted hover:text-text">
+-                  Cancel
+-                </button>
+-                <button
+-                  onClick={onDelete}
+-                  disabled={busy}
+-                  className="rounded border border-border px-2 py-1 text-xs text-danger hover:opacity-80 disabled:opacity-40"
+-                >
+-                  Delete
+-                </button>
++                <button type="button" aria-label={`Save ${entity.kind}`} onClick={submitEdit} disabled={form.busy || !form.name.trim()}
++                  className="flex-1 rounded bg-accent px-2 py-1 text-xs font-medium text-bg hover:bg-accent-hover disabled:opacity-40">Save</button>
++                <button type="button" aria-label={`Cancel ${entity.kind} edit`} onClick={() => setEditing(null)}
++                  className="rounded border border-border px-2 py-1 text-xs text-muted hover:text-text">Cancel</button>
++                <button type="button" aria-label={`Delete ${entity.kind}`} onClick={onDelete} disabled={form.busy}
++                  className="rounded border border-border px-2 py-1 text-xs text-danger hover:opacity-80 disabled:opacity-40">Delete</button>
+@@ -230,11 +276,32 @@ export function CharactersPanel() {
+-          ) : (
+-            <button
+-              key={entity.id}
+-              onClick={() => startEdit(entity)}
+-              className="w-full rounded border border-border bg-bg px-2 py-1.5 text-left text-sm text-text hover:border-accent transition-colors"
+-            >
+-              <div className="font-medium">{entity.name}</div>
+-              {entity.appearance_anchor && <div className="mt-0.5 truncate text-xs text-muted">{entity.appearance_anchor}</div>}
+-            </button>
+-          ),
+-        )}
++          );
++          return (
++            <div key={entity.id} data-entity-id={entity.id} className="rounded border border-border bg-bg text-text hover:border-accent transition-colors">
++              <button type="button" aria-label={`Edit ${entity.kind}`} onClick={() => startEdit(entity)} className="w-full px-2 py-1.5 text-left text-sm">
++                {entity.kind === "character" ? (
++                  <>
++                    <div className="font-medium">{entity.known_as ?? entity.name}</div>
++                    {entity.location && <div className="mt-0.5 break-words text-xs text-muted">{entity.location}</div>}
++                    {entity.outfit && <div className="mt-0.5 break-words text-xs text-muted">{entity.outfit}</div>}
++                    {[entity.gender, entity.age, entity.role].some(Boolean) && <div className="mt-0.5 break-words text-xs text-muted">{[entity.gender, entity.age, entity.role].filter(Boolean).join(" \u00b7 ")}</div>}
++                    {entity.appearance_anchor && <div className="mt-0.5 break-words text-xs text-muted">{entity.appearance_anchor}</div>}
++                  </>
++                ) : (
++                  <>
++                    <div className="break-words">{relationshipTitle(entity)}</div>
++                    <div className="font-semibold">{entity.link?.label}</div>
++                    {entity.link?.description && <div className="mt-0.5 break-words text-xs text-muted">{entity.link.description}</div>}
++                    {(attributesByEntity[entity.id]?.length ?? 0) > 0 && <div className="mt-0.5 break-words text-xs text-muted">{attributesByEntity[entity.id].map((attribute) => `${attribute.canonical_name} ${attribute.value}`).join(" \u00b7 ")}</div>}
++                  </>
++                )}
++              </button>
++              {entity.kind === "character" && entity.known_as && (
++                <div className="px-2 pb-1.5 text-xs text-muted">
++                  <button type="button" aria-label={revealedIds.includes(entity.id) ? "Hide true name" : "Reveal true name"} aria-expanded={revealedIds.includes(entity.id)}
++                    onClick={() => setRevealedIds((current) => current.includes(entity.id) ? current.filter((id) => id !== entity.id) : [...current, entity.id])}
++                    className="hover:text-text">{revealedIds.includes(entity.id) ? "Hide" : "Reveal"}</button>
++                  {revealedIds.includes(entity.id) && <div className="mt-0.5">True name: {entity.name}</div>}
++                </div>
++              )}
++            </div>
++          );
++        })}
+diff --git a/src/features/characters/api.ts b/src/features/characters/api.ts
+index cc48bcf..d89cab4 100644
+--- a/src/features/characters/api.ts
++++ b/src/features/characters/api.ts
+@@ -2 +2 @@ import { invoke } from "@tauri-apps/api/core";
+-import type { AttributeRegistryEntry, Entity, EntityAttributeValue, EntityKind } from "../../shared/types";
++import type { AttributeRegistryEntry, CharacterPatch, Entity, EntityAttributeValue, EntityKind } from "../../shared/types";
+@@ -5,5 +5,5 @@ export const charactersApi = {
+-  list: (storyId: string) => invoke<Entity[]>("list_entities", { storyId, kind: "character" }),
+-  create: (storyId: string, name: string, appearanceAnchor?: string) =>
+-    invoke<Entity>("create_entity", { storyId, kind: "character" satisfies EntityKind, name, appearanceAnchor: appearanceAnchor ?? null }),
+-  update: (storyId: string, entityId: string, name: string, appearanceAnchor?: string) =>
+-    invoke<Entity>("update_entity", { storyId, entityId, name, appearanceAnchor: appearanceAnchor ?? null }),
++  list: (storyId: string) => invoke<Entity[]>("list_entities", { storyId, kind: null }),
++  create: (storyId: string, name: string, fields: CharacterPatch) =>
++    invoke<Entity>("create_entity", { storyId, kind: "character" satisfies EntityKind, name, fields }),
++  update: (storyId: string, entityId: string, name: string | undefined, fields: CharacterPatch) =>
++    invoke<Entity>("update_entity", { storyId, entityId, name: name ?? null, fields }),
+@@ -10,0 +11 @@ export const charactersApi = {
++  listStoryAttributes: (storyId: string) => invoke<Record<string, EntityAttributeValue[]>>("list_story_attributes", { storyId }),
+diff --git a/src/features/story/store.test.mjs b/src/features/story/store.test.mjs
+index 249d56f..d9dc5f3 100644
+--- a/src/features/story/store.test.mjs
++++ b/src/features/story/store.test.mjs
+@@ -11,0 +12,3 @@ const entries = new Map();
++const entitiesByStory = new Map();
++const entityAttributes = new Map();
++const entityCommands = new Map();
+@@ -31,0 +35,36 @@ let toolCallsFromEvents;
++const deferred = () => {
++  let resolve, reject;
++  const promise = new Promise((done, fail) => { resolve = done; reject = fail; });
++  return { promise, resolve, reject };
++};
++const delayEntityCommand = (storyId, command) => {
++  const result = deferred(), started = deferred();
++  entityCommands.set(`${storyId}:${command}`, { result, started });
++  return { ...result, started: started.promise };
++};
++const entityCalls = (storyId, command) => calls.filter((call) => call.args.storyId === storyId && (!command || call.command === command));
++const character = (storyId, id, name) => ({
++  id, story_id: storyId, name, kind: "character", link: null, created_at: "now",
++  known_as: null, appearance_anchor: null, gender: null, age: null, role: null, location: null, outfit: null,
++});
++const attribute = (storyId, entityId, value, attributeId = "health") => ({
++  story_id: storyId, entity_id: entityId, attribute_id: attributeId, canonical_name: attributeId === "health" ? "Health" : "Trust",
++  value, min: attributeId === "health" ? 0 : -10, max: 10, updated_at: "saved", source: "user",
++});
++const shownEntities = (storyId) => {
++  const known = entitiesByStory.get(storyId) ?? [];
++  return known.filter((entity) => !entity.link || [entity.link.from_id, entity.link.to_id]
++    .every((id) => known.some((endpoint) => endpoint.id === id && endpoint.kind === "character")));
++};
++const entityFixture = async (storyId, kind = "character") => {
++  const mira = { ...character(storyId, `${storyId}-mira`, "Mira"), role: "smuggler", location: "tavern" };
++  const you = character(storyId, `${storyId}-you`, "You");
++  const relationship = { ...character(storyId, `${storyId}-link`, "Mira -> You"), kind: "relationship",
++    link: { from_id: mira.id, to_id: you.id, label: "Resentment", direction: "one_way", description: "Estranged" } };
++  const entity = kind === "character" ? mira : relationship;
++  entitiesByStory.set(storyId, [mira, you, relationship]);
++  entityAttributes.set(entity.id, [attribute(storyId, entity.id, 5, kind === "character" ? "health" : "trust")]);
++  await store.getState().loadEntities(storyId);
++  return entity;
++};
++
+@@ -47,0 +87,7 @@ globalThis.__storyTestInvoke = async (command, args = {}) => {
++  const key = `${args.storyId}:${command}`, delayed = entityCommands.get(key);
++  if (delayed) {
++    entityCommands.delete(key);
++    delayed.started.resolve();
++    const response = await delayed.result.promise;
++    if (response !== undefined) return response;
++  }
+@@ -132 +178,29 @@ globalThis.__storyTestInvoke = async (command, args = {}) => {
+-    case "list_entities": return [];
++    case "list_entities": return shownEntities(args.storyId).filter((entity) => args.kind === null || entity.kind === args.kind);
++    case "list_story_attributes": return Object.fromEntries(shownEntities(args.storyId)
++      .map((entity) => [entity.id, entityAttributes.get(entity.id) ?? []]));
++    case "create_entity": {
++      const entity = { ...character(args.storyId, `${args.storyId}-new`, args.name), ...args.fields };
++      entitiesByStory.set(args.storyId, [...(entitiesByStory.get(args.storyId) ?? []), entity]);
++      return entity;
++    }
++    case "update_entity": {
++      const known = entitiesByStory.get(args.storyId) ?? [], current = known.find((entity) => entity.id === args.entityId);
++      if (!current) throw new Error("Entity missing");
++      const entity = { ...current, ...args.fields, ...(args.name == null ? {} : current.link
++        ? { link: { ...current.link, label: args.name } } : { name: args.name }) };
++      entitiesByStory.set(args.storyId, known.map((item) => item.id === entity.id ? entity : item));
++      return entity;
++    }
++    case "delete_entity":
++      entitiesByStory.set(args.storyId, (entitiesByStory.get(args.storyId) ?? []).filter((entity) => entity.id !== args.entityId));
++      entityAttributes.delete(args.entityId);
++      return;
++    case "set_entity_attribute": {
++      const saved = attribute(args.storyId, args.entityId, args.value, args.attributeId);
++      entityAttributes.set(args.entityId, [...(entityAttributes.get(args.entityId) ?? [])
++        .filter((item) => item.attribute_id !== args.attributeId), saved]);
++      return saved;
++    }
++    case "remove_entity_attribute":
++      entityAttributes.set(args.entityId, (entityAttributes.get(args.entityId) ?? []).filter((item) => item.attribute_id !== args.attributeId));
++      return;
+@@ -371,0 +446 @@ test("replacement keeps original through streaming and failure, then clears old
++  assert.ok(calls.some(({ command }) => command === "list_story_attributes"));
+@@ -800,0 +876 @@ test("erasing a trailing See refreshes images attached to prior narration", asyn
++  const attributesBefore = entityCalls(storyId, "list_story_attributes").length;
+@@ -802,0 +879 @@ test("erasing a trailing See refreshes images attached to prior narration", asyn
++  assert.equal(entityCalls(storyId, "list_story_attributes").length, attributesBefore + 1);
+@@ -925,0 +1003,153 @@ test("chance-only legacy rolls do not claim a default or attribute source", () =
++
++test("entity loads ignore older overlapping entity and attribute responses", async () => {
++  const storyId = "entity-load-race", entity = await entityFixture(storyId);
++  const oldEntities = delayEntityCommand(storyId, "list_entities"), oldAttributes = delayEntityCommand(storyId, "list_story_attributes");
++  const old = store.getState().loadEntities(storyId);
++  await Promise.all([oldEntities.started, oldAttributes.started]);
++  entitiesByStory.set(storyId, shownEntities(storyId).map((item) => item.id === entity.id ? { ...item, location: "docks" } : item));
++  entityAttributes.set(entity.id, [attribute(storyId, entity.id, 8)]);
++  await store.getState().loadEntities(storyId);
++  oldEntities.resolve([entity]);
++  oldAttributes.resolve({ [entity.id]: [attribute(storyId, entity.id, 5)] });
++  await old;
++  const bundle = store.getState().bundles[storyId];
++  assert.equal(bundle.entities.find((item) => item.id === entity.id).location, "docks");
++  assert.equal(bundle.attributesByEntity[entity.id][0].value, 8);
++  assert.equal(bundle.entitiesLoading, false);
++  assert.ok(entityCalls(storyId, "list_entities").every(({ args }) => args.kind === null));
++});
++
++test("a slow stat set followed by a fast remove runs in order for both entity kinds", async () => {
++  for (const kind of ["character", "relationship"]) {
++    const storyId = `entity-set-remove-${kind}`, entity = await entityFixture(storyId, kind);
++    const attributeId = kind === "character" ? "health" : "trust";
++    const wait = delayEntityCommand(storyId, "set_entity_attribute");
++    const setting = store.getState().setEntityAttribute(storyId, entity.id, attributeId, 8);
++    await wait.started;
++    const removing = store.getState().removeEntityAttribute(storyId, entity.id, attributeId);
++    assert.equal(entityCalls(storyId, "remove_entity_attribute").length, 0);
++    wait.resolve();
++    const [saved] = await Promise.all([setting, removing]);
++    assert.equal(saved.value, 8);
++    assert.deepEqual(entityCalls(storyId).filter(({ command }) => command.endsWith("_entity_attribute"))
++      .map(({ command }) => command), ["set_entity_attribute", "remove_entity_attribute"]);
++    assert.deepEqual(entityAttributes.get(entity.id), []);
++    assert.deepEqual(store.getState().bundles[storyId].attributesByEntity[entity.id], []);
++  }
++});
++
++test("Save while a stat set is pending sends it once and captures its field and stat drafts", async () => {
++  const storyId = "entity-pending-save", entity = await entityFixture(storyId);
++  const wait = delayEntityCommand(storyId, "set_entity_attribute");
++  const setting = store.getState().setEntityAttribute(storyId, entity.id, "health", 8);
++  await wait.started;
++  const drafts = { health: "8" }, fields = { gender: "female" };
++  const saving = store.getState().updateEntity(storyId, entity.id, undefined, fields, drafts);
++  drafts.health = "9";
++  fields.gender = "male";
++  assert.equal(entityCalls(storyId, "update_entity").length, 0);
++  wait.resolve();
++  await Promise.all([setting, saving]);
++  assert.equal(entityCalls(storyId, "set_entity_attribute").length, 1);
++  assert.deepEqual(entityCalls(storyId, "update_entity")[0].args, { storyId, entityId: entity.id, name: null, fields: { gender: "female" } });
++  const bundle = store.getState().bundles[storyId];
++  assert.equal(bundle.attributesByEntity[entity.id][0].value, 8);
++  assert.equal(bundle.entities.find((item) => item.id === entity.id).gender, "female");
++  assert.equal(bundle.entities.find((item) => item.id === entity.id).role, "smuggler");
++});
++
++test("Delete starts only after a pending stat set and its reload have settled", async () => {
++  const storyId = "entity-pending-delete", entity = await entityFixture(storyId);
++  const wait = delayEntityCommand(storyId, "set_entity_attribute"), deleteWait = delayEntityCommand(storyId, "delete_entity");
++  const setting = store.getState().setEntityAttribute(storyId, entity.id, "health", 8);
++  await wait.started;
++  const deleting = store.getState().deleteEntity(storyId, entity.id);
++  assert.equal(entityCalls(storyId, "delete_entity").length, 0);
++  wait.resolve();
++  await setting;
++  await deleteWait.started;
++  assert.equal(store.getState().bundles[storyId].attributesByEntity[entity.id][0].value, 8);
++  assert.deepEqual(entityCalls(storyId).slice(-3).map(({ command }) => command), ["list_entities", "list_story_attributes", "delete_entity"]);
++  deleteWait.resolve();
++  await deleting;
++  assert.equal(store.getState().bundles[storyId].entities.some((item) => item.id === entity.id), false);
++});
++
++test("a failed entity operation does not block the next operation already queued", async () => {
++  const storyId = "entity-failed-queue", entity = await entityFixture(storyId);
++  const wait = delayEntityCommand(storyId, "set_entity_attribute");
++  const setting = store.getState().setEntityAttribute(storyId, entity.id, "health", 8);
++  const rejected = assert.rejects(setting, /set rejected/);
++  await wait.started;
++  const removing = store.getState().removeEntityAttribute(storyId, entity.id, "health");
++  wait.reject(new Error("set rejected"));
++  await Promise.all([rejected, removing]);
++  assert.equal(entityCalls(storyId, "remove_entity_attribute").length, 1);
++  assert.deepEqual(store.getState().bundles[storyId].attributesByEntity[entity.id], []);
++});
++
++test("deleting a character reloads the list and hides its still-present relationship", async () => {
++  const storyId = "entity-delete-reload", entity = await entityFixture(storyId);
++  const relationship = shownEntities(storyId).find((item) => item.kind === "relationship");
++  entityAttributes.set(relationship.id, [attribute(storyId, relationship.id, 7, "trust")]);
++  await store.getState().loadEntities(storyId);
++  assert.equal(store.getState().bundles[storyId].attributesByEntity[relationship.id][0].value, 7);
++  await store.getState().deleteEntity(storyId, entity.id);
++  assert.ok(entitiesByStory.get(storyId).some((item) => item.id === relationship.id));
++  assert.deepEqual(store.getState().bundles[storyId].entities.map((item) => item.name), ["You"]);
++  assert.equal(store.getState().bundles[storyId].attributesByEntity[relationship.id], undefined);
++  assert.equal(entityCalls(storyId, "list_entities").length, 3);
++  assert.equal(entityCalls(storyId, "list_story_attributes").length, 3);
++});
++
++test("stat edits reload all story attributes after set, remove and add", async () => {
++  const storyId = "entity-stat-reload", entity = await entityFixture(storyId);
++  await store.getState().setEntityAttribute(storyId, entity.id, "health", 8);
++  assert.equal(store.getState().bundles[storyId].attributesByEntity[entity.id][0].value, 8);
++  await store.getState().removeEntityAttribute(storyId, entity.id, "health");
++  assert.deepEqual(store.getState().bundles[storyId].attributesByEntity[entity.id], []);
++  await store.getState().setEntityAttribute(storyId, entity.id, "health", 5);
++  assert.equal(store.getState().bundles[storyId].attributesByEntity[entity.id][0].value, 5);
++  assert.equal(entityCalls(storyId, "list_story_attributes").length, 4);
++});
++
++test("a returned stat stays cached if reload fails so Save does not resend it", async () => {
++  const storyId = "entity-stat-read-failure", entity = await entityFixture(storyId);
++  const wait = delayEntityCommand(storyId, "list_story_attributes");
++  const previousError = console.error;
++  console.error = () => {};
++  try {
++    const setting = store.getState().setEntityAttribute(storyId, entity.id, "health", 8);
++    await wait.started;
++    assert.equal(store.getState().bundles[storyId].attributesByEntity[entity.id][0].value, 8);
++    wait.reject(new Error("attributes read failed"));
++    const saved = await setting;
++    assert.equal(store.getState().bundles[storyId].attributesByEntity[entity.id][0], saved);
++    assert.equal(store.getState().bundles[storyId].entitiesLoading, false);
++    await store.getState().updateEntity(storyId, entity.id, undefined, {}, { health: "8" });
++    assert.equal(entityCalls(storyId, "set_entity_attribute").length, 1);
++  } finally { console.error = previousError; }
++});
++
++test("entity create and update send flat character patches and use the relationship label as name", async () => {
++  const storyId = "entity-field-api";
++  await entityFixture(storyId);
++  const fields = { role: "innkeeper", location: "bar", outfit: "apron" };
++  await store.getState().createEntity(storyId, "Tom", fields);
++  assert.deepEqual(entityCalls(storyId, "create_entity")[0].args, { storyId, kind: "character", name: "Tom", fields });
++  const created = store.getState().bundles[storyId].entities.find((item) => item.name === "Tom");
++  assert.equal(created.link, null);
++  await store.getState().updateEntity(storyId, created.id, undefined, { gender: "female", role: null });
++  const edited = store.getState().bundles[storyId].entities.find((item) => item.id === created.id);
++  assert.equal(edited.gender, "female");
++  assert.equal(edited.role, null);
++  assert.equal(edited.location, "bar");
++  assert.equal(edited.outfit, "apron");
++  const relationship = store.getState().bundles[storyId].entities.find((item) => item.kind === "relationship");
++  await store.getState().updateEntity(storyId, relationship.id, "Allies", {});
++  const link = store.getState().bundles[storyId].entities.find((item) => item.id === relationship.id);
++  assert.equal(link.name, "Mira -> You");
++  assert.equal(link.link.label, "Allies");
++  assert.equal(link.link.description, "Estranged");
++  assert.equal(link.link.direction, "one_way");
++});
+diff --git a/src/features/story/store.ts b/src/features/story/store.ts
+index c0d6e79..e641cdc 100644
+--- a/src/features/story/store.ts
++++ b/src/features/story/store.ts
+@@ -3,0 +4 @@ import type {
++  CharacterPatch,
+@@ -4,0 +6 @@ import type {
++  EntityAttributeValue,
+@@ -62,2 +64,3 @@ export interface StoryBundle {
+-  characters: Entity[];
+-  charactersLoading: boolean;
++  entities: Entity[];
++  entitiesLoading: boolean;
++  attributesByEntity: Record<string, EntityAttributeValue[]>;
+@@ -103,4 +106,6 @@ interface StoryStoreState {
+-  loadCharacters: (storyId: string) => Promise<void>;
+-  createCharacter: (storyId: string, name: string, appearanceAnchor?: string) => Promise<void>;
+-  updateCharacter: (storyId: string, entityId: string, name: string, appearanceAnchor?: string) => Promise<void>;
+-  deleteCharacter: (storyId: string, entityId: string) => Promise<void>;
++  loadEntities: (storyId: string) => Promise<void>;
++  createEntity: (storyId: string, name: string, fields: CharacterPatch) => Promise<void>;
++  updateEntity: (storyId: string, entityId: string, name: string | undefined, fields: CharacterPatch, attributeDrafts?: Record<string, string>) => Promise<void>;
++  deleteEntity: (storyId: string, entityId: string) => Promise<void>;
++  setEntityAttribute: (storyId: string, entityId: string, attributeId: string, value: number) => Promise<EntityAttributeValue>;
++  removeEntityAttribute: (storyId: string, entityId: string, attributeId: string) => Promise<void>;
+@@ -128,2 +133,3 @@ const newBundle = (id: string): StoryBundle => ({
+-  characters: [],
+-  charactersLoading: false,
++  entities: [],
++  entitiesLoading: false,
++  attributesByEntity: {},
+@@ -195,0 +202 @@ const imageEventGenerations = new Map<string, number>();
++const entityGenerations = new Map<string, number>();
+@@ -214,0 +222,23 @@ const enqueueSettings = (queues: Map<string, Promise<void>>, storyId: string, op
++const entityQueues = new Map<string, Promise<unknown>>();
++const enqueueEntity = <T>(entityId: string, operation: () => Promise<T>): Promise<T> => {
++  const current = (entityQueues.get(entityId) ?? Promise.resolve()).catch(() => undefined).then(operation);
++  entityQueues.set(entityId, current);
++  return current.finally(() => {
++    if (entityQueues.get(entityId) === current) entityQueues.delete(entityId);
++  });
++};
++
++// Already inside the entity queue, including Save; never enqueue again here.
++const saveAttribute = async (storyId: string, entityId: string, attributeId: string, value: number): Promise<EntityAttributeValue> => {
++  const current = useStoryStore.getState().bundles[storyId]?.attributesByEntity[entityId]?.find((item) => item.attribute_id === attributeId);
++  if (current?.value === value) return current;
++  const saved = await charactersApi.setAttribute(storyId, entityId, attributeId, value);
++  advanceGeneration(entityGenerations, storyId);
++  useStoryStore.setState((state) => ({ bundles: patchBundle(state.bundles, storyId, (bundle) => {
++    const attributes = bundle.attributesByEntity[entityId] ?? [];
++    return { attributesByEntity: { ...bundle.attributesByEntity, [entityId]: attributes.some((item) => item.attribute_id === attributeId)
++      ? attributes.map((item) => item.attribute_id === attributeId ? saved : item)
++      : [...attributes, saved] } };
++  }) }));
++  return saved;
++};
+@@ -397 +427 @@ export const useStoryStore = create<StoryStoreState>((set, get) => ({
+-    await get().loadCharacters(storyId);
++    await get().loadEntities(storyId);
+@@ -519 +549 @@ export const useStoryStore = create<StoryStoreState>((set, get) => ({
+-    get().loadCharacters(storyId);
++    get().loadEntities(storyId);
+@@ -604,2 +634,3 @@ export const useStoryStore = create<StoryStoreState>((set, get) => ({
+-  loadCharacters: async (storyId) => {
+-    set((state) => ({ bundles: patchBundle(state.bundles, storyId, { charactersLoading: true }) }));
++  loadEntities: async (storyId) => {
++    const generation = advanceGeneration(entityGenerations, storyId);
++    set((state) => ({ bundles: patchBundle(state.bundles, storyId, { entitiesLoading: true }) }));
+@@ -607,2 +638,5 @@ export const useStoryStore = create<StoryStoreState>((set, get) => ({
+-      const characters = await charactersApi.list(storyId);
+-      set((state) => ({ bundles: patchBundle(state.bundles, storyId, { characters, charactersLoading: false }) }));
++      const [entities, attributesByEntity] = await Promise.all([
++        charactersApi.list(storyId), charactersApi.listStoryAttributes(storyId),
++      ]);
++      if (!isCurrentGeneration(entityGenerations, storyId, generation)) return;
++      set((state) => ({ bundles: patchBundle(state.bundles, storyId, { entities, attributesByEntity }) }));
+@@ -610,2 +644,5 @@ export const useStoryStore = create<StoryStoreState>((set, get) => ({
+-      console.error("failed to load characters", error);
+-      set((state) => ({ bundles: patchBundle(state.bundles, storyId, { charactersLoading: false }) }));
++      console.error("failed to load entities", error);
++    } finally {
++      if (isCurrentGeneration(entityGenerations, storyId, generation)) {
++        set((state) => ({ bundles: patchBundle(state.bundles, storyId, { entitiesLoading: false }) }));
++      }
+@@ -614,5 +651,3 @@ export const useStoryStore = create<StoryStoreState>((set, get) => ({
+-  createCharacter: async (storyId, name, appearanceAnchor) => {
+-    const character = await charactersApi.create(storyId, name, appearanceAnchor);
+-    set((state) => ({
+-      bundles: patchBundle(state.bundles, storyId, (bundle) => ({ characters: [...bundle.characters, character] })),
+-    }));
++  createEntity: async (storyId, name, fields) => {
++    await charactersApi.create(storyId, name, fields);
++    await get().loadEntities(storyId);
+@@ -620,7 +655,14 @@ export const useStoryStore = create<StoryStoreState>((set, get) => ({
+-  updateCharacter: async (storyId, entityId, name, appearanceAnchor) => {
+-    const character = await charactersApi.update(storyId, entityId, name, appearanceAnchor);
+-    set((state) => ({
+-      bundles: patchBundle(state.bundles, storyId, (bundle) => ({
+-        characters: bundle.characters.map((entity) => (entity.id === entityId ? character : entity)),
+-      })),
+-    }));
++  updateEntity: (storyId, entityId, name, fields, attributeDrafts) => {
++    const drafts = { ...attributeDrafts };
++    const patch = { ...fields };
++    return enqueueEntity(entityId, async () => {
++      try {
++        for (const [attributeId, draft] of Object.entries(drafts)) {
++          const value = Number(draft);
++          if (Number.isFinite(value)) await saveAttribute(storyId, entityId, attributeId, value);
++        }
++        await charactersApi.update(storyId, entityId, name, patch);
++      } finally {
++        await get().loadEntities(storyId);
++      }
++    });
+@@ -628 +670 @@ export const useStoryStore = create<StoryStoreState>((set, get) => ({
+-  deleteCharacter: async (storyId, entityId) => {
++  deleteEntity: (storyId, entityId) => enqueueEntity(entityId, async () => {
+@@ -630,6 +672,16 @@ export const useStoryStore = create<StoryStoreState>((set, get) => ({
+-    set((state) => ({
+-      bundles: patchBundle(state.bundles, storyId, (bundle) => ({
+-        characters: bundle.characters.filter((entity) => entity.id !== entityId),
+-      })),
+-    }));
+-  },
++    await get().loadEntities(storyId);
++  }),
++  setEntityAttribute: (storyId, entityId, attributeId, value) => enqueueEntity(entityId, async () => {
++    const saved = await saveAttribute(storyId, entityId, attributeId, value);
++    await get().loadEntities(storyId);
++    return saved;
++  }),
++  removeEntityAttribute: (storyId, entityId, attributeId) => enqueueEntity(entityId, async () => {
++    await charactersApi.removeAttribute(storyId, entityId, attributeId);
++    advanceGeneration(entityGenerations, storyId);
++    set((state) => ({ bundles: patchBundle(state.bundles, storyId, (bundle) => ({
++      attributesByEntity: { ...bundle.attributesByEntity,
++        [entityId]: (bundle.attributesByEntity[entityId] ?? []).filter((item) => item.attribute_id !== attributeId) },
++    })) }));
++    await get().loadEntities(storyId);
++  }),
+diff --git a/src/shared/types.ts b/src/shared/types.ts
+index d710981..97478b1 100644
+--- a/src/shared/types.ts
++++ b/src/shared/types.ts
+@@ -118,2 +118 @@ export type EntityKind = "character" | "relationship";
+-export interface Entity {
+-  id: string; story_id: string; kind: EntityKind; name: string;
++export interface CharacterFields {
+@@ -122 +121,14 @@ export interface Entity {
+-  location: string | null; outfit: string | null; created_at: string;
++  location: string | null; outfit: string | null;
++}
++export type CharacterPatch = Partial<CharacterFields>;
++export const CHARACTER_FIELD_LABELS: Record<keyof CharacterFields, string> = {
++  known_as: "Known as", appearance_anchor: "Appearance", gender: "Gender",
++  age: "Age", role: "Role", location: "Location", outfit: "Outfit",
++};
++export interface EntityLink {
++  from_id: string; to_id: string; label: string;
++  direction: "one_way" | "both"; description: string | null;
++}
++export interface Entity extends CharacterFields {
++  id: string; story_id: string; kind: EntityKind; name: string;
++  created_at: string; link: EntityLink | null;

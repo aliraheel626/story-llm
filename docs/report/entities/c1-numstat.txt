@@ -1,0 +1,14 @@
+3	2	src-tauri/src/ai/mod.rs
+5	4	src-tauri/src/features/context/blocks.rs
+9	106	src-tauri/src/features/narrator/catalog.rs
+2	347	src-tauri/src/features/narrator/dice.rs
+3	3	src-tauri/src/features/narrator/stream.rs
+0	649	src-tauri/src/features/narrator/tools.rs
+283	0	src-tauri/src/features/narrator/tools/adjust_entity_attribute.rs
+181	0	src-tauri/src/features/narrator/tools/create_entity.rs
+103	0	src-tauri/src/features/narrator/tools/get_entities.rs
+129	0	src-tauri/src/features/narrator/tools/illustrate_scene.rs
+104	0	src-tauri/src/features/narrator/tools/mod.rs
+403	0	src-tauri/src/features/narrator/tools/roll_check.rs
+113	0	src-tauri/src/features/narrator/tools/update_entity.rs
+2	148	src-tauri/src/prompts.rs

@@ -1,0 +1,5 @@
+Command: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets
+Exit: 0
+
+   Compiling story-llm v0.1.0 (C:\Users\User\Documents\GitHub\story-llm\src-tauri)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 12.02s

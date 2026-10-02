@@ -1,0 +1,78 @@
+*** Begin Patch
+*** Update File: src-tauri/src/features/entities/commands.rs
+@@
++use std::collections::HashMap;
+ use tauri::State;
+@@
+-    list_entity_attributes_sync, remove_entity_attribute_sync, set_entity_attribute_sync,
++    list_entity_attributes_for_entities_sync, list_entity_attributes_sync,
++    remove_entity_attribute_sync, set_entity_attribute_sync,
+@@
+-use super::model::{AttributeRegistryEntry, CharacterFields, CharacterPatch, Entity, EntityAttributeValue, CHARACTER};
++use super::model::{AttributeRegistryEntry, CharacterFields, CharacterPatch, Entity, EntityAttributeValue, CHARACTER, RELATIONSHIP};
+@@
+-use super::repository::{create_character_sync, delete_entity_sync, update_character_sync};
++use super::repository::{create_character_sync, delete_entity_sync, load_entity_raw, update_character_sync, update_link_sync};
+@@
+ pub async fn update_entity(
+@@
+-    name: String,
++    name: Option<String>,
+@@
+             gate.still_idle(&ticket)?;
++            let before = load_entity_raw(tx, &story_id, &entity_id)?
++                .ok_or_else(|| AppError::NotFound(format!("entity {entity_id}")))?;
++            if before.kind == RELATIONSHIP {
++                return update_link_sync(tx, &story_id, &entity_id, name.as_deref(), None, None, "user", None, None);
++            }
+             match fields {
+                 Some(fields) => update_character_sync(
+-                    tx, &story_id, &entity_id, Some(&name), &fields, "user", None, None,
++                    tx, &story_id, &entity_id, name.as_deref(), &fields, "user", None, None,
+                 ),
+                 None => update_entity_sync(
+-                    tx, &story_id, &entity_id, &name, appearance_anchor.as_deref(), "user", None, None,
++                    tx, &story_id, &entity_id, name.as_deref().unwrap_or(&before.name), appearance_anchor.as_deref(), "user", None, None,
+                 ),
+@@
+ #[tauri::command]
++pub fn list_story_attributes(
++    pool: State<Pool>,
++    story_id: String,
++) -> AppResult<HashMap<String, Vec<EntityAttributeValue>>> {
++    let conn = pool.get()?;
++    let entities = list_entities_sync(&conn, &story_id, None)?;
++    let ids = entities.iter().map(|entity| entity.id.as_str()).collect::<Vec<_>>();
++    list_entity_attributes_for_entities_sync(&conn, &story_id, &ids)
++}
++
++#[tauri::command]
+ pub fn list_attribute_registry(pool: State<Pool>) -> AppResult<Vec<AttributeRegistryEntry>> {
+*** Update File: src-tauri/src/lib.rs
+@@
+             features::entities::list_entity_attributes,
++            features::entities::list_story_attributes,
+*** Update File: src/shared/types.ts
+@@
+-export interface Entity {
+-  id: string; story_id: string; kind: EntityKind; name: string;
++export interface CharacterFields {
+   known_as: string | null; appearance_anchor: string | null;
+   gender: string | null; age: string | null; role: string | null;
+-  location: string | null; outfit: string | null; created_at: string;
++  location: string | null; outfit: string | null;
++}
++export type CharacterPatch = Partial<CharacterFields>;
++export const CHARACTER_FIELD_LABELS: Record<keyof CharacterFields, string> = {
++  known_as: "Known as", appearance_anchor: "Appearance", gender: "Gender",
++  age: "Age", role: "Role", location: "Location", outfit: "Outfit",
++};
++export interface EntityLink {
++  from_id: string; to_id: string; label: string;
++  direction: "one_way" | "both"; description: string | null;
++}
++export interface Entity extends CharacterFields {
++  id: string; story_id: string; kind: EntityKind; name: string;
++  created_at: string; link: EntityLink | null;
+ }
+*** End Patch

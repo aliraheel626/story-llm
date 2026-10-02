@@ -1,0 +1,1241 @@
+*** Begin Patch
+*** Update File: src-tauri/src/features/narrator/catalog.rs
+@@
+     tools::roll_check::SPEC,
+-    tools::get_entities::SPEC,
+     tools::create_entity::SPEC,
+     tools::update_entity::SPEC,
+     tools::adjust_entity_attribute::SPEC,
++    tools::save_relationship::SPEC,
+     tools::illustrate_scene::SPEC,
+*** Delete File: src-tauri/src/features/narrator/tools/get_entities.rs
+*** Update File: src-tauri/src/features/narrator/tools/mod.rs
+@@
+ pub(crate) mod create_entity;
+-pub(crate) mod get_entities;
+ pub(crate) mod illustrate_scene;
+ pub(crate) mod roll_check;
++pub(crate) mod save_relationship;
++mod shared;
+ pub(crate) mod update_entity;
+@@
+ fn to_tool_error(e: AppError) -> ToolExecutionError {
+-    ToolExecutionError::other(e.to_string())
++    match e {
++        AppError::Invalid(message) | AppError::NotFound(message) => {
++            ToolExecutionError::invalid_args(message)
++        }
++        _ => ToolExecutionError::other(e.to_string()),
++    }
+@@
+         assert_eq!(specs.len(), 5);
+         assert_eq!(specs[0].name, "roll_check");
++        assert_eq!(specs.iter().map(|spec| spec.name).collect::<Vec<_>>(),
++            ["roll_check", "create_entity", "update_entity", "adjust_entity_attribute", "save_relationship"]);
+*** Update File: src-tauri/src/features/entities/registry.rs
+@@
+     if candidates.is_empty() {
+         return Ok(AttributeResolution::Mint(build_minted_attribute(
+             proposed_name,
+             entity_kind,
+             story_id,
+         )));
+     }
+ 
++    if api_key.trim().is_empty() {
++        return Err(AppError::Invalid(
++            "an embedding API key is required to resolve an unknown attribute".into(),
++        ));
++    }
++
+     let client = openrouter::Client::builder()
+*** Add File: src-tauri/src/features/narrator/tools/shared.rs
++use serde_json::{json, Map, Value};
++
++use crate::features::entities::{
++    self, attributes,
++    model::{Entity, CHARACTER},
++    registry::{self, AttributeResolution},
++};
++use crate::features::turn::TurnTx;
++use crate::shared::error::{AppError, AppResult};
++
++pub(super) fn object_args<'a>(
++    args: &'a Value,
++    allowed: &[&str],
++    tool: &str,
++) -> AppResult<&'a Map<String, Value>> {
++    let fields = args
++        .as_object()
++        .ok_or_else(|| AppError::Invalid(format!("{tool} expects an object")))?;
++    if let Some(key) = fields.keys().find(|key| !allowed.contains(&key.as_str())) {
++        return Err(AppError::Invalid(format!("{tool} does not accept '{key}'")));
++    }
++    Ok(fields)
++}
++
++pub(super) fn required_string(fields: &Map<String, Value>, field: &str) -> AppResult<String> {
++    let value = fields
++        .get(field)
++        .ok_or_else(|| AppError::Invalid(format!("{field} is required")))?;
++    let value = value
++        .as_str()
++        .ok_or_else(|| AppError::Invalid(format!("{field} must be a string")))?
++        .trim();
++    if value.is_empty() {
++        return Err(AppError::Invalid(format!("{field} must not be empty")));
++    }
++    Ok(value.to_string())
++}
++
++pub(super) fn optional_string(
++    fields: &Map<String, Value>,
++    field: &str,
++) -> AppResult<Option<String>> {
++    fields.get(field).map(|_| required_string(fields, field)).transpose()
++}
++
++pub(super) fn nullable_field(
++    fields: &Map<String, Value>,
++    field: &str,
++) -> AppResult<Option<Option<String>>> {
++    match fields.get(field) {
++        None => Ok(None),
++        Some(Value::Null) => Ok(Some(None)),
++        Some(Value::String(value)) => {
++            let value = value.trim();
++            Ok(Some((!value.is_empty()).then(|| value.to_string())))
++        }
++        _ => Err(AppError::Invalid(format!("{field} must be a string or null"))),
++    }
++}
++
++pub(super) fn resolve_entity(
++    conn: &rusqlite::Connection,
++    story_id: &str,
++    reference: &str,
++) -> AppResult<Entity> {
++    let reference = reference.trim();
++    let entities = entities::list_entities_sync(conn, story_id, None)?;
++    if let Some(entity) = entities.iter().find(|entity| entity.id == reference) {
++        return Ok(entity.clone());
++    }
++    if let Some((from, to)) = reference
++        .split_once('→')
++        .or_else(|| reference.split_once("->"))
++    {
++        let character = |name: &str| {
++            entities.iter().find(|entity| {
++                entity.kind == CHARACTER && entity.name.eq_ignore_ascii_case(name.trim())
++            })
++        };
++        if let (Some(from), Some(to)) = (character(from), character(to)) {
++            if let Some(entity) = entities.iter().find(|entity| {
++                entity.link.as_ref().is_some_and(|link| {
++                    (link.from_id == from.id && link.to_id == to.id)
++                        || (link.direction == "both" && link.from_id == to.id && link.to_id == from.id)
++                })
++            }) {
++                return Ok(entity.clone());
++            }
++        }
++    } else if let Some(entity) = entities.iter().find(|entity| {
++        entity.kind == CHARACTER && entity.name.eq_ignore_ascii_case(reference)
++    }) {
++        return Ok(entity.clone());
++    }
++    Err(AppError::Invalid(format!("no entity named '{reference}'")))
++}
++
++pub(super) fn resolve_character(
++    conn: &rusqlite::Connection,
++    story_id: &str,
++    reference: &str,
++) -> AppResult<Entity> {
++    let entity = resolve_entity(conn, story_id, reference)?;
++    if entity.kind != CHARACTER {
++        return Err(AppError::Invalid(format!("'{reference}' must name a character")));
++    }
++    Ok(entity)
++}
++
++#[derive(Clone)]
++pub(super) struct StatChange {
++    pub attribute: String,
++    pub delta: f64,
++    pub reason: String,
++    pub dramatic: bool,
++}
++
++pub(super) fn stats_schema() -> Value {
++    json!({
++        "type": "array",
++        "maxItems": 8,
++        "items": {
++            "type": "object",
++            "properties": {
++                "attribute": {"type": "string", "description": "Attribute name, e.g. Affection or Trust."},
++                "delta": {"type": "number", "description": "Positive or negative change, on the attribute's own scale."},
++                "reason": {"type": "string", "description": "Why this changed, for the audit log."},
++                "dramatic": {"type": "boolean", "description": "True only for a major, story-changing swing."}
++            },
++            "required": ["attribute", "delta", "reason"],
++            "additionalProperties": false
++        }
++    })
++}
++
++pub(super) fn parse_stats(value: Option<&Value>) -> AppResult<Option<Vec<StatChange>>> {
++    let Some(value) = value else {
++        return Ok(None);
++    };
++    let values = value
++        .as_array()
++        .ok_or_else(|| AppError::Invalid("stats must be an array".into()))?;
++    if values.len() > 8 {
++        return Err(AppError::Invalid("stats must contain at most 8 items".into()));
++    }
++    values.iter().enumerate().map(|(index, value)| {
++        let parse = || {
++            let fields = object_args(value, &["attribute", "delta", "reason", "dramatic"], "stat")?;
++            let attribute = required_string(fields, "attribute")?;
++            let reason = required_string(fields, "reason")?;
++            let delta = fields.get("delta").and_then(Value::as_f64).filter(|value| value.is_finite())
++                .ok_or_else(|| AppError::Invalid("delta must be a finite number".into()))?;
++            let dramatic = match fields.get("dramatic") {
++                None => false,
++                Some(Value::Bool(value)) => *value,
++                _ => return Err(AppError::Invalid("dramatic must be a boolean".into())),
++            };
++            Ok(StatChange { attribute, delta, reason, dramatic })
++        };
++        parse().map_err(|error: AppError| AppError::Invalid(format!("stats[{index}]: {error}")))
++    }).collect::<AppResult<Vec<_>>>().map(Some)
++}
++
++pub(super) struct ResolvedStat {
++    change: StatChange,
++    resolution: AttributeResolution,
++}
++
++pub(super) async fn resolve_stats(
++    turn: &TurnTx,
++    embedding_api_key: &str,
++    kind: &str,
++    changes: &[StatChange],
++) -> AppResult<Vec<ResolvedStat>> {
++    let mut resolved = Vec::with_capacity(changes.len());
++    for (index, change) in changes.iter().enumerate() {
++        let resolution = registry::resolve_attribute_in_turn(
++            turn, embedding_api_key, &change.attribute, kind,
++        ).await.map_err(|error| match error {
++            AppError::Invalid(message) | AppError::NotFound(message) => {
++                AppError::Invalid(format!("stats[{index}]: {message}"))
++            }
++            error => AppError::Other(format!("stats[{index}]: {error}")),
++        })?;
++        resolved.push(ResolvedStat { change: change.clone(), resolution });
++    }
++    Ok(resolved)
++}
++
++pub(super) fn apply_resolved_stats(
++    conn: &rusqlite::Connection,
++    story_id: &str,
++    entity_id: &str,
++    resolved: Vec<ResolvedStat>,
++    target_entry_id: &str,
++    turn_id: &str,
++) -> AppResult<Vec<Value>> {
++    let mut results = Vec::with_capacity(resolved.len());
++    for ResolvedStat { change, resolution } in resolved {
++        // Another tool may have added this name while the embedding lookup awaited.
++        let attribute = if let Some(exact) = registry::find_exact_match(conn, &change.attribute)? {
++            exact
++        } else {
++            match resolution {
++                AttributeResolution::Existing(attribute) => attribute,
++                AttributeResolution::AddAlias { attribute, alias } => {
++                    registry::add_alias(conn, &attribute.id, &alias)?;
++                    attribute
++                }
++                AttributeResolution::Mint(attribute) => {
++                    let id = registry::insert_minted_attribute(conn, &attribute)?;
++                    registry::find_attribute_by_id(conn, &id)?
++                }
++            }
++        };
++        let (before, after) = attributes::apply_attribute_delta(
++            conn, story_id, entity_id, &attribute, change.delta, &change.reason,
++            target_entry_id, change.dramatic, Some(turn_id),
++        )?;
++        results.push(json!({"attribute": attribute.canonical_name, "before": before, "after": after}));
++    }
++    Ok(results)
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use super::super::test_support::fixture;
++    use crate::features::entities::{model::EntityLink, repository};
++
++    #[test]
++    fn nullable_fields_trim_clear_and_reject_bad_types() {
++        let fields = json!({"set":"  silver hair  ","clear":null,"empty":"  ","bad":false});
++        let fields = fields.as_object().unwrap();
++        assert_eq!(nullable_field(fields, "missing").unwrap(), None);
++        assert_eq!(nullable_field(fields, "set").unwrap(), Some(Some("silver hair".into())));
++        assert_eq!(nullable_field(fields, "clear").unwrap(), Some(None));
++        assert_eq!(nullable_field(fields, "empty").unwrap(), Some(None));
++        assert!(nullable_field(fields, "bad").unwrap_err().to_string().contains("bad must be a string or null"));
++    }
++
++    #[test]
++    fn stat_parser_checks_limit_unknown_keys_types_and_item_indices() {
++        assert!(parse_stats(None).unwrap().is_none());
++        assert!(parse_stats(Some(&Value::Null)).is_err());
++        let good = json!({"attribute":" Affection ","delta":2,"reason":" reunion "});
++        let parsed = parse_stats(Some(&json!([good]))).unwrap().unwrap();
++        assert_eq!(parsed[0].attribute, "Affection");
++        assert_eq!(parsed[0].reason, "reunion");
++        assert!(!parsed[0].dramatic);
++        assert!(parse_stats(Some(&json!(vec![good.clone(); 9]))).is_err());
++        for bad in [
++            json!(false), json!({"attribute":"Trust","delta":"2","reason":"x"}),
++            json!({"attribute":"Trust","delta":2,"reason":null}),
++            json!({"attribute":"Trust","delta":2,"reason":"x","dramatic":1}),
++            json!({"attribute":"Trust","delta":2,"reason":"x","extra":true}),
++        ] {
++            let error = parse_stats(Some(&json!([good.clone(), bad]))).err().unwrap();
++            assert!(error.to_string().contains("stats[1]"));
++        }
++        assert_eq!(stats_schema()["maxItems"], 8);
++        assert_eq!(stats_schema()["items"]["additionalProperties"], false);
++    }
++
++    #[tokio::test]
++    async fn resolver_reads_present_names_ids_and_relationship_arrows() {
++        let (_pool, turn, target, turn_id) = fixture();
++        turn.with(|conn| {
++            for (id, name) in [("mira", "Mira"), ("varro", "Varro")] {
++                repository::create_entity_with_id_sync(conn, id, turn.story_id(), CHARACTER, name, None,
++                    "narrator_tool", Some(&target), Some(&turn_id))?;
++            }
++            let link = repository::create_link_sync(conn, turn.story_id(), EntityLink {
++                from_id: "mira".into(), to_id: "varro".into(), label: "siblings".into(),
++                direction: "both".into(), description: None,
++            }, "narrator_tool", Some(&target), Some(&turn_id))?;
++            assert_eq!(resolve_entity(conn, turn.story_id(), " mira ")?.id, "mira");
++            assert_eq!(resolve_entity(conn, turn.story_id(), "MIRA")?.id, "mira");
++            for reference in ["Mira → Varro", "mira -> varro", "Varro → Mira", "varro -> mira"] {
++                assert_eq!(resolve_entity(conn, turn.story_id(), reference)?.id, link.id);
++            }
++            assert_eq!(resolve_entity(conn, turn.story_id(), &link.id)?.id, link.id);
++            assert!(resolve_character(conn, turn.story_id(), &link.id).is_err());
++            assert!(resolve_entity(conn, "another-story", "Mira").is_err());
++            repository::delete_entity_sync(conn, turn.story_id(), "varro")?;
++            assert!(resolve_entity(conn, turn.story_id(), "Varro").is_err());
++            assert!(resolve_entity(conn, turn.story_id(), &link.id).is_err());
++            assert!(resolve_entity(conn, turn.story_id(), "Mira -> Varro").is_err());
++            Ok(())
++        }).await.unwrap();
++        turn.rollback().await.unwrap();
++    }
++}
+*** Add File: src-tauri/src/features/narrator/tools/save_relationship.rs
++use std::sync::Arc;
++
++use rig_agent::tool::{PortableDynamicTool, ToolOutput};
++use serde_json::{json, Value};
++
++use crate::features::entities::{
++    self,
++    model::{Entity, EntityLink, RELATIONSHIP},
++    repository,
++};
++use crate::features::narrator::catalog::{self, ToolAvailability, ToolDeps, ToolSpec};
++use crate::features::turn::TurnTx;
++use crate::shared::error::{AppError, AppResult};
++
++use super::shared::{
++    apply_resolved_stats, nullable_field, object_args, optional_string, parse_stats,
++    required_string, resolve_character, resolve_stats, stats_schema,
++};
++use super::to_tool_error;
++
++pub const NAME: &str = "save_relationship";
++pub const DESCRIPTION: &str =
++    "Record how one character relates to another, or update it. There is one relationship per \
++     direction: calling again with the same from and to updates it (a new label replaces the \
++     old one, such as \"former friends\" when a friendship ends). `label` is short (\"estranged \
++     sister\", \"owes money to\", \"siblings\"). Use direction \"both\" only for truly mutual facts \
++     (siblings, married, allies); feelings that differ per side are two one_way relationships. \
++     Use stats for how one feels about the other, such as Affection or Trust.";
++pub const INSTRUCTION: &str = "Use save_relationship when the story establishes or changes how two characters relate.";
++
++pub fn schema() -> Value {
++    json!({
++        "type": "object",
++        "properties": {
++            "from": {"type": "string", "description": "A character name (an id is also accepted)."},
++            "to": {"type": "string", "description": "A character name (an id is also accepted)."},
++            "label": {"type": "string", "description": "Short relationship label, required for a new relationship."},
++            "direction": {"type": "string", "enum": ["one_way", "both"], "description": "one_way for directed feelings; both only for mutual facts. Defaults to one_way when creating."},
++            "description": {"type": ["string", "null"], "description": "Relationship details; null clears it."},
++            "stats": stats_schema()
++        },
++        "required": ["from", "to"],
++        "additionalProperties": false
++    })
++}
++
++fn label(_args: &Value) -> String {
++    "Recording a relationship…".to_string()
++}
++
++fn enabled(availability: &ToolAvailability<'_>) -> bool {
++    catalog::normal_mode(availability) && availability.settings.save_relationship
++}
++
++fn build(deps: &ToolDeps) -> PortableDynamicTool {
++    let (turn, target, turn_id) = catalog::turn(deps);
++    tool(turn, target, turn_id, deps.embedding_api_key.clone())
++}
++
++pub const SPEC: ToolSpec = ToolSpec {
++    name: NAME,
++    instruction: Some(INSTRUCTION),
++    needs_turn: true,
++    enabled,
++    build,
++    label,
++};
++
++fn find_relationship(
++    conn: &rusqlite::Connection,
++    story_id: &str,
++    from: &Entity,
++    to: &Entity,
++    label: Option<&str>,
++    direction: Option<&str>,
++) -> AppResult<Option<Entity>> {
++    if from.id == to.id {
++        return Err(AppError::Invalid("relationship endpoints must be different".into()));
++    }
++    let existing = entities::list_entities_sync(conn, story_id, Some(RELATIONSHIP))?
++        .into_iter().find(|entity| entity.link.as_ref().is_some_and(|link| {
++            (link.from_id == from.id && link.to_id == to.id)
++                || (link.direction == "both" && link.from_id == to.id && link.to_id == from.id)
++        }));
++    if let Some(entity) = &existing {
++        if entity.link.as_ref().is_some_and(|link| {
++            link.direction == "both" && link.from_id != from.id && direction == Some("one_way")
++        }) {
++            return Err(AppError::Invalid(format!(
++                "this relationship is stored as {} ↔ {}; make it one-way in that direction, or record the other direction separately",
++                to.name, from.name,
++            )));
++        }
++    } else if label.is_none() {
++        return Err(AppError::Invalid("label is required for a new relationship".into()));
++    }
++    Ok(existing)
++}
++
++pub(super) fn tool(
++    turn: Arc<TurnTx>,
++    target_entry_id: String,
++    turn_id: String,
++    embedding_api_key: String,
++) -> PortableDynamicTool {
++    PortableDynamicTool::new(NAME, DESCRIPTION, schema(), move |args: Value| {
++        let turn = turn.clone();
++        let target_entry_id = target_entry_id.clone();
++        let turn_id = turn_id.clone();
++        let embedding_api_key = embedding_api_key.clone();
++        Box::pin(async move {
++            let fields = object_args(&args, &["from", "to", "label", "direction", "description", "stats"], NAME)
++                .map_err(to_tool_error)?;
++            let from_reference = required_string(fields, "from").map_err(to_tool_error)?;
++            let to_reference = required_string(fields, "to").map_err(to_tool_error)?;
++            let label = optional_string(fields, "label").map_err(to_tool_error)?;
++            let direction = optional_string(fields, "direction").map_err(to_tool_error)?;
++            if direction.as_deref().is_some_and(|value| !matches!(value, "one_way" | "both")) {
++                return Err(to_tool_error(AppError::Invalid("direction must be one_way or both".into())));
++            }
++            let description = nullable_field(fields, "description").map_err(to_tool_error)?;
++            let stats = parse_stats(fields.get("stats")).map_err(to_tool_error)?;
++            turn.with(|conn| {
++                let from = resolve_character(conn, turn.story_id(), &from_reference)?;
++                let to = resolve_character(conn, turn.story_id(), &to_reference)?;
++                find_relationship(conn, turn.story_id(), &from, &to, label.as_deref(), direction.as_deref())?;
++                Ok(())
++            }).await.map_err(to_tool_error)?;
++            let resolved = resolve_stats(&turn, &embedding_api_key, RELATIONSHIP, stats.as_deref().unwrap_or_default())
++                .await.map_err(to_tool_error)?;
++            let (entity, created, results) = turn.with_savepoint(|conn| {
++                let from = resolve_character(conn, turn.story_id(), &from_reference)?;
++                let to = resolve_character(conn, turn.story_id(), &to_reference)?;
++                let existing = find_relationship(conn, turn.story_id(), &from, &to, label.as_deref(), direction.as_deref())?;
++                let (entity, created) = if let Some(existing) = existing {
++                    (repository::update_link_sync(
++                        conn, turn.story_id(), &existing.id, label.as_deref(), direction.as_deref(),
++                        description.clone(), "narrator_tool", Some(&target_entry_id), Some(&turn_id),
++                    )?, false)
++                } else {
++                    let label = label.clone().ok_or_else(|| AppError::Invalid("label is required for a new relationship".into()))?;
++                    (repository::create_link_sync(conn, turn.story_id(), EntityLink {
++                        from_id: from.id, to_id: to.id, label,
++                        direction: direction.clone().unwrap_or_else(|| "one_way".into()),
++                        description: description.clone().flatten(),
++                    }, "narrator_tool", Some(&target_entry_id), Some(&turn_id))?, true)
++                };
++                let results = apply_resolved_stats(conn, turn.story_id(), &entity.id, resolved, &target_entry_id, &turn_id)?;
++                Ok((entity, created, results))
++            }).await.map_err(to_tool_error)?;
++            let mut output = json!({"name": entity.name, "kind": entity.kind, "created": created});
++            if stats.is_some() {
++                output["stats"] = json!(results);
++            }
++            Ok(ToolOutput::json(output))
++        })
++    })
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use crate::features::entities::{attributes, model::CHARACTER, registry};
++    use crate::shared::db::Pool;
++
++    async fn fixture() -> (Pool, Arc<TurnTx>, String, String) {
++        let (pool, turn, target, turn_id) = super::super::test_support::fixture();
++        turn.with(|conn| {
++            for (id, name) in [("mira", "Mira"), ("varro", "Varro")] {
++                repository::create_entity_with_id_sync(conn, id, turn.story_id(), CHARACTER, name, None,
++                    "narrator_tool", Some(&target), Some(&turn_id))?;
++            }
++            Ok(())
++        }).await.unwrap();
++        (pool, turn, target, turn_id)
++    }
++
++    #[tokio::test]
++    async fn names_repeats_reversed_both_and_relabel_keep_one_relationship() {
++        let (_pool, turn, target, turn_id) = fixture().await;
++        let save = tool(turn.clone(), target, turn_id, String::new());
++        let first = save.execute(json!({"from":" mira ","to":"VARRO","label":" siblings ","direction":"both"}))
++            .await.unwrap();
++        assert_eq!(first.as_json().unwrap(), &json!({"name":"Mira ↔ Varro: siblings","kind":"relationship","created":true}));
++        let second = save.execute(json!({"from":"Varro","to":"Mira"})).await.unwrap();
++        assert_eq!(second.as_json().unwrap(), &json!({"name":"Mira ↔ Varro: siblings","kind":"relationship","created":false}));
++        let same = save.execute(json!({"from":"Mira","to":"Varro","direction":"both","label":"siblings"})).await.unwrap();
++        assert_eq!(same.as_json().unwrap()["created"], false);
++        let changed = save.execute(json!({"from":"Varro","to":"Mira","label":"estranged siblings"})).await.unwrap();
++        assert_eq!(changed.as_json().unwrap()["name"], "Mira ↔ Varro: estranged siblings");
++        turn.with(|conn| {
++            let links = entities::list_entities_sync(conn, turn.story_id(), Some(RELATIONSHIP))?;
++            assert_eq!(links.len(), 1);
++            let link = links[0].link.as_ref().unwrap();
++            assert_eq!((link.from_id.as_str(), link.to_id.as_str(), link.direction.as_str()), ("mira", "varro", "both"));
++            let updates: i64 = conn.query_row("SELECT COUNT(*) FROM transcript_entries WHERE kind='entity_updated'", [], |row| row.get(0))?;
++            assert_eq!(updates, 1);
++            Ok(())
++        }).await.unwrap();
++        turn.rollback().await.unwrap();
++    }
++
++    #[tokio::test]
++    async fn missing_label_unknown_endpoints_and_invalid_arguments_write_nothing() {
++        let (_pool, turn, target, turn_id) = fixture().await;
++        let save = tool(turn.clone(), target, turn_id, String::new());
++        let missing = save.execute(json!({"from":"Mira","to":"Varro"})).await.unwrap_err();
++        assert!(missing.to_string().contains("label is required for a new relationship"));
++        let unknown = save.execute(json!({"from":"Nobody","to":"Varro","label":"rivals"})).await.unwrap_err();
++        assert!(unknown.to_string().contains("no entity named 'Nobody'"));
++        for args in [
++            json!(false), json!({"from":null,"to":"Varro","label":"rivals"}),
++            json!({"from":"Mira","to":"Mira","label":"self"}),
++            json!({"from":"Mira","to":7,"label":"rivals"}),
++            json!({"from":"Mira","to":"Varro","label":null}),
++            json!({"from":"Mira","to":"Varro","label":"rivals","direction":null}),
++            json!({"from":"Mira","to":"Varro","label":"rivals","direction":"sideways"}),
++            json!({"from":"Mira","to":"Varro","label":"rivals","description":false}),
++            json!({"from":"Mira","to":"Varro","label":"rivals","stats":null}),
++            json!({"from":"Mira","to":"Varro","label":"rivals","unknown":true}),
++        ] {
++            assert!(save.execute(args).await.is_err());
++        }
++        turn.with(|conn| {
++            assert!(entities::list_entities_sync(conn, turn.story_id(), Some(RELATIONSHIP))?.is_empty());
++            Ok(())
++        }).await.unwrap();
++        assert_eq!(schema()["required"], json!(["from", "to"]));
++        assert_eq!(schema()["additionalProperties"], false);
++        turn.rollback().await.unwrap();
++    }
++
++    #[tokio::test]
++    async fn reversed_both_to_one_way_is_rejected_instead_of_flipping_meaning() {
++        let (_pool, turn, target, turn_id) = fixture().await;
++        let save = tool(turn.clone(), target, turn_id, String::new());
++        save.execute(json!({"from":"Mira","to":"Varro","label":"allies","direction":"both"})).await.unwrap();
++        let error = save.execute(json!({"from":"Varro","to":"Mira","direction":"one_way","description":"must not write"}))
++            .await.unwrap_err();
++        assert!(error.to_string().contains("this relationship is stored as Mira ↔ Varro; make it one-way in that direction, or record the other direction separately"));
++        turn.with(|conn| {
++            let link = entities::list_entities_sync(conn, turn.story_id(), Some(RELATIONSHIP))?.remove(0).link.unwrap();
++            assert_eq!(link.direction, "both");
++            assert_eq!(link.description, None);
++            Ok(())
++        }).await.unwrap();
++        let forward = save.execute(json!({"from":"Mira","to":"Varro","direction":"one_way"})).await.unwrap();
++        assert_eq!(forward.as_json().unwrap()["name"], "Mira → Varro: allies");
++        turn.rollback().await.unwrap();
++    }
++
++    #[tokio::test]
++    async fn stats_and_nullable_description_return_only_short_results() {
++        let (_pool, turn, target, turn_id) = fixture().await;
++        let save = tool(turn.clone(), target, turn_id, String::new());
++        let first = save.execute(json!({"from":"mira","to":"varro","label":"rivals","description":" old rivalry ",
++            "stats":[{"attribute":"Affection","delta":2,"reason":"a truce"}]})).await.unwrap();
++        assert_eq!(first.as_json().unwrap(), &json!({"name":"Mira → Varro: rivals","kind":"relationship","created":true,
++            "stats":[{"attribute":"Affection","before":0.0,"after":2.0}]}));
++        let second = save.execute(json!({"from":"Mira","to":"Varro",
++            "stats":[{"attribute":"Affection","delta":1,"reason":"cooperation"}]})).await.unwrap();
++        assert_eq!(second.as_json().unwrap()["stats"][0], json!({"attribute":"Affection","before":2.0,"after":3.0}));
++        turn.with(|conn| {
++            let entity = entities::list_entities_sync(conn, turn.story_id(), Some(RELATIONSHIP))?.remove(0);
++            assert_eq!(entity.link.unwrap().description, Some("old rivalry".into()));
++            assert_eq!(attributes::list_entity_attributes_sync(conn, turn.story_id(), &entity.id)?[0].source, "inferred");
++            Ok(())
++        }).await.unwrap();
++        let cleared = save.execute(json!({"from":"Mira","to":"Varro","description":null})).await.unwrap();
++        assert!(cleared.as_json().unwrap().get("stats").is_none());
++        turn.with(|conn| {
++            assert_eq!(entities::list_entities_sync(conn, turn.story_id(), Some(RELATIONSHIP))?[0].link.as_ref().unwrap().description, None);
++            Ok(())
++        }).await.unwrap();
++        turn.rollback().await.unwrap();
++    }
++
++    #[tokio::test]
++    async fn second_stat_prepare_failure_leaves_fields_stats_registry_and_events_unchanged() {
++        let (_pool, turn, target, turn_id) = fixture().await;
++        let save = tool(turn.clone(), target, turn_id, String::new());
++        save.execute(json!({"from":"Mira","to":"Varro","label":"rivals","description":"original"})).await.unwrap();
++        let event_count = turn.with(|conn| {
++            Ok(conn.query_row("SELECT COUNT(*) FROM transcript_entries", [], |row| row.get::<_, i64>(0))?)
++        }).await.unwrap();
++        let error = save.execute(json!({"from":"Mira","to":"Varro","description":"must not remain",
++            "stats":[{"attribute":"Affection","delta":2,"reason":"first"},
++                {"attribute":"Unknown relationship stat","delta":1,"reason":"second"}]})).await.unwrap_err();
++        assert!(error.to_string().contains("stats[1]"));
++        assert!(error.to_string().contains("embedding API key"));
++        turn.with(|conn| {
++            let entity = entities::list_entities_sync(conn, turn.story_id(), Some(RELATIONSHIP))?.remove(0);
++            let raw = repository::load_entity_raw(conn, turn.story_id(), &entity.id)?.unwrap();
++            assert_eq!(raw.link.unwrap().description, Some("original".into()));
++            assert!(attributes::list_entity_attributes_sync(conn, turn.story_id(), &entity.id)?.is_empty());
++            assert!(registry::find_exact_match(conn, "Unknown relationship stat")?.is_none());
++            assert_eq!(conn.query_row("SELECT COUNT(*) FROM transcript_entries", [], |row| row.get::<_, i64>(0))?, event_count);
++            Ok(())
++        }).await.unwrap();
++        turn.rollback().await.unwrap();
++    }
++}
+*** Update File: src-tauri/src/features/narrator/tools/create_entity.rs
+@@
+-use crate::features::entities;
++use crate::features::entities::{self, model::CHARACTER};
+@@
++use super::shared::{nullable_field, object_args, required_string};
+ use super::to_tool_error;
+@@
+-    "Introduce a new entity (character, object, or location) the story just established. \
++    "Introduce a new character the story just established. \
+@@
+-            "kind": {"type": "string", "description": "character, object, location, relationship, or campaign."},
++            "kind": {"type": "string", "enum": ["character"], "description": "character."},
+@@
+-            "appearance_anchor": {"type": "string", "description": "A short, stable visual description to keep the entity consistent."}
++            "appearance_anchor": {"type": ["string", "null"], "description": "A short, stable visual description to keep the character consistent."}
+         },
+-        "required": ["kind", "name"]
++        "required": ["kind", "name"],
++        "additionalProperties": false
+@@
+-                let kind = args
+-                    .get("kind")
+-                    .and_then(|v| v.as_str())
+-                    .filter(|s| !s.trim().is_empty())
+-                    .ok_or_else(|| ToolExecutionError::invalid_args("kind is required"))?;
+-                let name = args
+-                    .get("name")
+-                    .and_then(|v| v.as_str())
+-                    .filter(|s| !s.trim().is_empty())
+-                    .ok_or_else(|| ToolExecutionError::invalid_args("name is required"))?;
+-                let appearance_anchor = args.get("appearance_anchor").and_then(|v| v.as_str());
++                let fields = object_args(&args, &["kind", "name", "appearance_anchor"], NAME).map_err(to_tool_error)?;
++                let kind = required_string(fields, "kind").map_err(to_tool_error)?;
++                if kind != CHARACTER {
++                    return Err(ToolExecutionError::invalid_args("kind must be character"));
++                }
++                let name = required_string(fields, "name").map_err(to_tool_error)?;
++                let appearance_anchor = nullable_field(fields, "appearance_anchor").map_err(to_tool_error)?.flatten();
+ 
+                 let (entity, created) = turn
+-                    .with(|conn| {
++                    .with_savepoint(|conn| {
+                         if let Some(existing) =
+-                            entities::list_entities_sync(conn, turn.story_id(), Some(kind))?
++                            entities::list_entities_sync(conn, turn.story_id(), Some(&kind))?
+                                 .into_iter()
+-                                .find(|entity| entity.name.eq_ignore_ascii_case(name))
++                                .find(|entity| entity.name.eq_ignore_ascii_case(&name))
+@@
+-                            kind,
+-                            name,
+-                            appearance_anchor,
++                            &kind,
++                            &name,
++                            appearance_anchor.as_deref(),
+@@
+-        get_entities::tool as get_entities_tool, test_support::fixture,
++        test_support::fixture,
+         update_entity::tool as update_entity_tool,
+@@
+     use super::tool as create_entity_tool;
++    use crate::features::entities;
+@@
+-        let output = get_entities_tool(turn.clone(), target.clone(), turn_id.clone())
+-            .execute(json!({"kind":"character","name":"mira the bold"}))
++        let output = turn.with(|conn| entities::list_entities_sync(conn, turn.story_id(), Some("character")))
+             .await
+             .unwrap();
+         assert_eq!(
+-            output.as_json().unwrap()["entities"][0]["name"],
+-            json!("Mira the Bold")
++            output[0].name,
++            "Mira the Bold"
+@@
+         turn.rollback().await.unwrap();
+         assert_eq!(
+             pool.get()
+                 .unwrap()
+                 .query_row("SELECT COUNT(*) FROM entities", [], |r| r.get::<_, i64>(0))
+                 .unwrap(),
+             0
+         );
+     }
++
++    #[tokio::test]
++    async fn character_only_schema_and_handler_reject_unknown_keys_and_bad_types() {
++        let (_pool, turn, target, turn_id) = fixture();
++        let create = create_entity_tool(turn.clone(), target, turn_id);
++        for args in [
++            json!({"kind":"relationship","name":"Mira"}),
++            json!({"kind":null,"name":"Mira"}), json!({"kind":"character","name":false}),
++            json!({"kind":"character","name":"Mira","appearance_anchor":7}),
++            json!({"kind":"character","name":"Mira","unknown":true}),
++        ] {
++            assert!(create.execute(args).await.is_err());
++        }
++        assert_eq!(super::schema()["properties"]["kind"]["enum"], json!(["character"]));
++        assert_eq!(super::schema()["additionalProperties"], false);
++        turn.with(|conn| {
++            assert!(entities::list_entities_sync(conn, turn.story_id(), None)?.is_empty());
++            Ok(())
++        }).await.unwrap();
++        turn.rollback().await.unwrap();
++    }
+ }
+*** Update File: src-tauri/src/features/narrator/tools/update_entity.rs
+@@
+-use rig_agent::tool::{PortableDynamicTool, ToolExecutionError, ToolOutput};
++use rig_agent::tool::{PortableDynamicTool, ToolOutput};
+@@
+-use crate::features::entities;
++use crate::features::entities::{model::CHARACTER, repository};
+@@
+ use crate::features::turn::TurnTx;
++use crate::shared::error::AppError;
+ 
++use super::shared::{nullable_field, object_args, required_string};
+ use super::to_tool_error;
+@@
+-    "Rename an entity or update its appearance description. Use a known entity id; look it up first when the lookup tool is available.";
++    "Rename a character or update its appearance description. Use a known character id.";
+@@
+-            "id": {"type": "string", "description": "Entity id from get_entities/create_entity."},
++            "id": {"type": "string", "description": "A known character id."},
+             "name": {"type": "string", "description": "The entity's (possibly unchanged) name."},
+-            "appearance_anchor": {"type": "string", "description": "The entity's (possibly unchanged) appearance description."}
++            "appearance_anchor": {"type": ["string", "null"], "description": "The character's appearance description. Omit to keep it; null clears it."}
+         },
+-        "required": ["id", "name"]
++        "required": ["id", "name"],
++        "additionalProperties": false
+@@
+-                let id = args
+-                    .get("id")
+-                    .and_then(|v| v.as_str())
+-                    .ok_or_else(|| ToolExecutionError::invalid_args("id is required"))?
+-                    .to_string();
+-                let name = args
+-                    .get("name")
+-                    .and_then(|v| v.as_str())
+-                    .filter(|s| !s.trim().is_empty())
+-                    .ok_or_else(|| ToolExecutionError::invalid_args("name is required"))?
+-                    .to_string();
+-                let appearance_anchor = args
+-                    .get("appearance_anchor")
+-                    .and_then(|v| v.as_str())
+-                    .map(str::to_string);
++                let fields = object_args(&args, &["id", "name", "appearance_anchor"], NAME).map_err(to_tool_error)?;
++                let id = required_string(fields, "id").map_err(to_tool_error)?;
++                let name = required_string(fields, "name").map_err(to_tool_error)?;
++                let appearance_anchor = nullable_field(fields, "appearance_anchor").map_err(to_tool_error)?;
+ 
+                 let updated = turn
+-                    .with(|conn| {
+-                        if !entities::list_entities_sync(conn, turn.story_id(), None)?
+-                            .iter()
+-                            .any(|entity| entity.id == id)
+-                        {
+-                            return Ok(false);
++                    .with_savepoint(|conn| {
++                        let before = repository::load_entity_raw(conn, turn.story_id(), &id)?
++                            .ok_or_else(|| AppError::Invalid(format!("no such entity: {id}")))?;
++                        if before.kind != CHARACTER {
++                            return Err(AppError::Invalid("update_entity only updates characters".into()));
+                         }
+-                        entities::update_entity_sync(
++                        let anchor = appearance_anchor.clone().unwrap_or(before.appearance_anchor);
++                        repository::update_entity_sync(
+                             conn,
+                             turn.story_id(),
+                             &id,
+                             &name,
+-                            appearance_anchor.as_deref(),
++                            anchor.as_deref(),
+                             "narrator_tool",
+                             Some(&target_entry_id),
+                             Some(&turn_id),
+-                        )?;
+-                        Ok(true)
++                        )
+                     })
+                     .await
+                     .map_err(to_tool_error)?;
+-                if !updated {
+-                    return Err(ToolExecutionError::invalid_args(format!(
+-                        "no such entity: {id}"
+-                    )));
+-                }
+                 Ok(ToolOutput::json(
+-                    json!({"id": id, "name": name, "appearance_anchor": appearance_anchor}),
++                    json!({"id": id, "name": updated.name, "appearance_anchor": updated.appearance_anchor}),
+                 ))
+@@
+     )
+ }
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use super::super::{create_entity::tool as create_entity_tool, test_support::fixture};
++
++    #[tokio::test]
++    async fn nullable_appearance_preserves_omitted_fields_and_rejects_bad_arguments() {
++        let (_pool, turn, target, turn_id) = fixture();
++        let created = create_entity_tool(turn.clone(), target.clone(), turn_id.clone())
++            .execute(json!({"kind":"character","name":"Mira","appearance_anchor":"silver hair"})).await.unwrap();
++        let id = created.as_json().unwrap()["id"].as_str().unwrap();
++        let update = tool(turn.clone(), target, turn_id);
++        let unchanged = update.execute(json!({"id":id,"name":"Mira"})).await.unwrap();
++        assert_eq!(unchanged.as_json().unwrap()["appearance_anchor"], "silver hair");
++        for args in [
++            json!({"id":7,"name":"Mira"}), json!({"id":id,"name":null}),
++            json!({"id":id,"name":"Mira","appearance_anchor":false}),
++            json!({"id":id,"name":"Mira","unknown":true}),
++        ] {
++            assert!(update.execute(args).await.is_err());
++        }
++        let cleared = update.execute(json!({"id":id,"name":"Mira","appearance_anchor":null})).await.unwrap();
++        assert_eq!(cleared.as_json().unwrap()["appearance_anchor"], Value::Null);
++        assert_eq!(schema()["additionalProperties"], false);
++        turn.rollback().await.unwrap();
++    }
++}
+*** Update File: src-tauri/src/features/narrator/tools/adjust_entity_attribute.rs
+@@
+-use rig_agent::tool::{PortableDynamicTool, ToolExecutionError, ToolOutput};
++use rig_agent::tool::{PortableDynamicTool, ToolOutput};
+@@
+-use crate::features::entities::{self, attributes, registry};
++use crate::features::entities::repository;
+@@
++use super::shared::{apply_resolved_stats, object_args, parse_stats, required_string, resolve_entity, resolve_stats};
+ use super::to_tool_error;
+@@
+-            "entity_id": {"type": "string", "description": "A known entity id from available context or an enabled lookup/create tool. The player character is named \"You\"."},
++            "entity": {"type": "string", "description": "A character name, or a relationship as 'Mira → You'. An id is also accepted."},
+@@
+-        "required": ["entity_id", "attribute", "delta", "reason"]
++        "required": ["entity", "attribute", "delta", "reason"],
++        "additionalProperties": false
+@@
+-                let entity_id = args
+-                    .get("entity_id")
+-                    .and_then(|v| v.as_str())
+-                    .ok_or_else(|| ToolExecutionError::invalid_args("entity_id is required"))?
+-                    .to_string();
+-                let attribute_name = args
+-                    .get("attribute")
+-                    .and_then(|v| v.as_str())
+-                    .filter(|s| !s.trim().is_empty())
+-                    .ok_or_else(|| ToolExecutionError::invalid_args("attribute is required"))?
+-                    .to_string();
+-                let delta = args
+-                    .get("delta")
+-                    .and_then(|v| v.as_f64())
+-                    .ok_or_else(|| ToolExecutionError::invalid_args("delta is required"))?;
+-                let dramatic = args
+-                    .get("dramatic")
+-                    .and_then(|v| v.as_bool())
+-                    .unwrap_or(false);
+-                let reason = args
+-                    .get("reason")
+-                    .and_then(|v| v.as_str())
+-                    .unwrap_or("narration")
+-                    .to_string();
+-
+-                let entity = turn
+-                    .with(|conn| {
+-                        Ok(entities::list_entities_sync(conn, turn.story_id(), None)?
+-                            .into_iter()
+-                            .find(|entity| entity.id == entity_id))
+-                    })
+-                    .await
+-                    .map_err(to_tool_error)?
+-                    .ok_or_else(|| {
+-                        ToolExecutionError::invalid_args(format!("no such entity: {entity_id}"))
+-                    })?;
+-                let resolution = registry::resolve_attribute_in_turn(
+-                    &turn,
+-                    &embedding_api_key,
+-                    &attribute_name,
+-                    &entity.kind,
+-                )
+-                .await
+-                .map_err(to_tool_error)?;
+-                let (before, after, applied) = turn
+-                    .with(|conn| {
+-                        let attribute = if let Some(exact) =
+-                            registry::find_exact_match(conn, &attribute_name)?
+-                        {
+-                            exact
+-                        } else {
+-                            match resolution {
+-                                registry::AttributeResolution::Existing(attribute) => attribute,
+-                                registry::AttributeResolution::AddAlias { attribute, alias } => {
+-                                    registry::add_alias(conn, &attribute.id, &alias)?;
+-                                    attribute
+-                                }
+-                                registry::AttributeResolution::Mint(attribute) => {
+-                                    let id = registry::insert_minted_attribute(conn, &attribute)?;
+-                                    registry::find_attribute_by_id(conn, &id)?
+-                                }
+-                            }
+-                        };
+-                        let (before, source) = attributes::peek_entity_attribute(
+-                            conn,
+-                            turn.story_id(),
+-                            &entity.id,
+-                            &attribute,
+-                        )?;
+-                        if source.as_deref() == Some("user") {
+-                            return Ok((before, before, false));
+-                        }
+-                        let result = attributes::apply_attribute_delta(
+-                            conn,
+-                            turn.story_id(),
+-                            &entity.id,
+-                            &attribute,
+-                            delta,
+-                            &reason,
+-                            &target_entry_id,
+-                            dramatic,
+-                            Some(&turn_id),
+-                        )?;
+-                        Ok((result.0, result.1, true))
+-                    })
+-                    .await
+-                    .map_err(to_tool_error)?;
+-                if !applied {
+-                    return Ok(ToolOutput::json(json!({
+-                        "before": before,
+-                        "after": before,
+-                        "applied": false,
+-                        "reason": "locked to a player-set value",
+-                    })));
+-                }
++                let fields = object_args(&args, &["entity", "attribute", "delta", "reason", "dramatic"], NAME)
++                    .map_err(to_tool_error)?;
++                let reference = required_string(fields, "entity").map_err(to_tool_error)?;
++                let mut change = fields.clone();
++                change.remove("entity");
++                let changes = parse_stats(Some(&Value::Array(vec![Value::Object(change)])))
++                    .map_err(to_tool_error)?.unwrap_or_default();
++                let entity = turn.with(|conn| resolve_entity(conn, turn.story_id(), &reference))
++                    .await.map_err(to_tool_error)?;
++                let resolved = resolve_stats(&turn, &embedding_api_key, &entity.kind, &changes)
++                    .await.map_err(to_tool_error)?;
++                let results = turn.with_savepoint(|conn| {
++                    let current = resolve_entity(conn, turn.story_id(), &entity.id)?;
++                    let current = repository::load_entity_raw(conn, turn.story_id(), &current.id)?
++                        .ok_or_else(|| crate::shared::error::AppError::Invalid(format!("no entity named '{reference}'")))?;
++                    apply_resolved_stats(conn, turn.story_id(), &current.id, resolved, &target_entry_id, &turn_id)
++                }).await.map_err(to_tool_error)?;
+                 Ok(ToolOutput::json(
+-                    json!({"before": before, "after": after, "applied": true}),
++                    json!({"before": results[0]["before"], "after": results[0]["after"], "applied": true}),
+                 ))
+@@
+-        create_entity::tool as create_entity_tool, get_entities::tool as get_entities_tool,
++        create_entity::tool as create_entity_tool,
+@@
+-    async fn attribute_tool_applies_delta_and_honors_player_lock() {
++    async fn attribute_tool_applies_delta_over_a_player_set_value() {
+@@
+-            .execute(json!({"entity_id":id,"attribute":"Stealth","delta":9,"reason":"sneaking"}))
++            .execute(json!({"entity":"Mira","attribute":"Stealth","delta":9,"reason":"sneaking"}))
+@@
+-        let snapshot = get_entities_tool(turn.clone(), target.clone(), turn_id.clone())
+-            .execute(json!({"name":"Mira"}))
++        let snapshot = turn.with(|conn| attributes::list_entity_attributes_sync(conn, turn.story_id(), &id))
+             .await
+             .unwrap();
+         assert_eq!(
+-            snapshot.as_json().unwrap()["entities"][0]["attributes"][0],
++            json!({"name":snapshot[0].canonical_name,"value":snapshot[0].value,"min":snapshot[0].min,"max":snapshot[0].max}),
+             json!({"name":"Stealth","value":8.0,"min":0.0,"max":10.0})
+@@
+-        let locked = adjust
+-            .execute(json!({"entity_id":id,"attribute":"Stealth","delta":5}))
++        let newer = adjust
++            .execute(json!({"entity":id,"attribute":"Stealth","delta":-2,"reason":"later story events"}))
+             .await
+             .unwrap();
+         assert_eq!(
+-            locked.as_json().unwrap(),
+-            &json!({"before":7.0,"after":7.0,"applied":false,"reason":"locked to a player-set value"})
++            newer.as_json().unwrap(),
++            &json!({"before":7.0,"after":5.0,"applied":true})
+         );
++        turn.with(|conn| {
++            let stored = attributes::list_entity_attributes_sync(conn, turn.story_id(), &id)?;
++            assert_eq!(stored[0].source, "inferred");
++            Ok(())
++        }).await.unwrap();
+@@
+     async fn minted_attribute_is_immediately_available_to_later_tools() {
+         let (pool, turn, target, turn_id) = fixture();
++        turn.with(|conn| {
++            conn.execute("DELETE FROM attribute_registry WHERE EXISTS (SELECT 1 FROM json_each(entity_kinds_json) WHERE value = 'character')", [])?;
++            Ok(())
++        }).await.unwrap();
+         let id = create_entity_tool(turn.clone(), target.clone(), turn_id.clone())
+-            .execute(json!({"kind":"artifact","name":"Prism"}))
++            .execute(json!({"kind":"character","name":"Prism"}))
+@@
+-        .execute(json!({"entity_id":id,"attribute":"Resonance","delta":1.0}))
++        .execute(json!({"entity":id,"attribute":"Resonance","delta":1.0,"reason":"resonating"}))
+@@
+-            .execute(json!({"factors":[{"entity_id":id,"attribute_name":"Resonance"}]}))
++            .execute(json!({"factors":[{"entity":id,"attribute_name":"Resonance"}]}))
+*** Update File: src-tauri/src/features/narrator/tools/roll_check.rs
+@@
+-use crate::features::entities::{self, attributes};
++use crate::features::entities::attributes;
+@@
+ use crate::shared::error::{AppError, AppResult};
+ 
++use super::shared::{object_args, resolve_entity};
++
+@@
+-     defaults to 50. For one factor, identify the acting entity_id and attribute_name; for two, \
++     defaults to 50. For one factor, name the acting entity and attribute_name; for two, \
+@@
+-     opponent at 0.5. Do not pass chance_percent with factors, and do not invent entity IDs or \
+-     values. The tool returns the draw and success or failure.";
+-pub const INSTRUCTION: &str = "For a genuinely uncertain outcome, call roll_check before narrating the result. With no factors it defaults to 50% unless you provide chance_percent. For a check based on registered attributes, select one acting entity-attribute pair or two opposing pairs; the backend reads their current values and calculates the chance. Use get_entities to find IDs and attribute names when that tool is available. Never invent attribute values or pass chance_percent together with factors. Do not roll routine or certain actions.";
++     opponent at 0.5. Do not pass chance_percent with factors, and do not invent attribute \
++     values. The tool returns the draw and success or failure.";
++pub const INSTRUCTION: &str = "For a genuinely uncertain outcome, call roll_check before narrating the result. With no factors it defaults to 50% unless you provide chance_percent. For a check based on registered attributes, select one acting entity-attribute pair or two opposing pairs by name; the backend reads their current values and calculates the chance. Never invent attribute values or pass chance_percent together with factors. Do not roll routine or certain actions.";
+@@
+-                        "entity_id": {"type": "string", "description": "Entity id in this story, preferably from get_entities."},
++                        "entity": {"type": "string", "description": "A character name, or a relationship as 'Mira → You'. An id is also accepted."},
+@@
+-                    "required": ["entity_id", "attribute_name"],
++                    "required": ["entity", "attribute_name"],
+@@
+-    entity_id: &str,
++    reference: &str,
+     attribute_name: &str,
+ ) -> AppResult<RollFactor> {
+-    let entity = entities::list_entities_sync(conn, story_id, None)?
+-        .into_iter()
+-        .find(|entity| entity.id == entity_id)
+-        .ok_or_else(|| AppError::NotFound(format!("entity {entity_id} not found in this story")))?;
++    let entity = resolve_entity(conn, story_id, reference)?;
+     let registry_match = attributes::find_exact_match(conn, attribute_name)?;
+-    let values = attributes::list_entity_attributes_sync(conn, story_id, entity_id)?;
++    let values = attributes::list_entity_attributes_sync(conn, story_id, &entity.id)?;
+@@
+-                    None | Some(serde_json::Value::Null) => None,
++                    None => None,
+@@
+-                    let fields = factor.as_object().ok_or_else(|| {
+-                        ToolExecutionError::invalid_args("each factor must be an object")
+-                    })?;
++                    let fields = object_args(factor, &["entity", "attribute_name"], "factor")
++                        .map_err(super::to_tool_error)?;
+                     if fields.len() != 2 {
+                         return Err(ToolExecutionError::invalid_args(
+-                            "each factor requires only entity_id and attribute_name",
++                            "each factor requires only entity and attribute_name",
+@@
+-                    let entity_id = fields
+-                        .get("entity_id")
++                    let entity = fields
++                        .get("entity")
+@@
+-                            ToolExecutionError::invalid_args("factor entity_id is required")
++                            ToolExecutionError::invalid_args("factor entity is required")
+@@
+-                    references.push((entity_id, attribute_name));
++                    references.push((entity, attribute_name));
+@@
+-                    .map_err(|error| match error {
+-                        AppError::NotFound(_) | AppError::Invalid(_) => {
+-                            ToolExecutionError::invalid_args(error.to_string())
+-                        }
+-                        _ => ToolExecutionError::other(error.to_string()),
+-                    })?;
++                    .map_err(super::to_tool_error)?;
+@@
+         create_entity::tool as create_entity_tool, test_support::fixture,
++        save_relationship::tool as save_relationship_tool,
+@@
+-            json!(["entity_id", "attribute_name"])
++            json!(["entity", "attribute_name"])
+@@
+-        .execute(json!({"entity_id":id,"attribute":"Stealth","delta":3}))
++        .execute(json!({"entity":"You","attribute":"Stealth","delta":3,"reason":"training"}))
+@@
+-            .execute(json!({"factors":[{"entity_id":id,"attribute_name":"Stealth"}]}))
++            .execute(json!({"factors":[{"entity":"you","attribute_name":"Stealth"}]}))
+@@
+-            .execute(json!({"factors":[{"entity_id":id,"attribute_name":"Sneaking"}]}))
++            .execute(json!({"factors":[{"entity":id,"attribute_name":"Sneaking"}]}))
+@@
+-            .execute(json!({"factors":[{"entity_id":"missing","attribute_name":"Stealth"}]}))
++            .execute(json!({"factors":[{"entity":"missing","attribute_name":"Stealth"}]}))
+@@
+         turn.rollback().await.unwrap();
+     }
++
++    #[tokio::test]
++    async fn names_and_relationship_arrows_resolve_to_stored_factor_ids() {
++        let (_pool, turn, target, turn_id) = fixture();
++        let create = create_entity_tool(turn.clone(), target.clone(), turn_id.clone());
++        let mira = create.execute(json!({"kind":"character","name":"Mira"})).await.unwrap();
++        let mira_id = mira.as_json().unwrap()["id"].as_str().unwrap();
++        create.execute(json!({"kind":"character","name":"Varro"})).await.unwrap();
++        adjust_entity_attribute_tool(turn.clone(), target.clone(), turn_id.clone(), String::new())
++            .execute(json!({"entity":"Mira","attribute":"Stealth","delta":3,"reason":"practice"})).await.unwrap();
++        save_relationship_tool(turn.clone(), target.clone(), turn_id.clone(), String::new())
++            .execute(json!({"from":"Mira","to":"Varro","label":"rivals",
++                "stats":[{"attribute":"Affection","delta":2,"reason":"a truce"}]})).await.unwrap();
++        let relationship_id = turn.with(|conn| Ok(super::resolve_entity(conn, turn.story_id(), "Mira → Varro")?.id))
++            .await.unwrap();
++        let roll = roll_check_tool(turn.clone(), target, turn_id);
++        let character = roll.execute(json!({"factors":[{"entity":"MIRA","attribute_name":"Stealth"}]})).await.unwrap();
++        assert_eq!(character.as_json().unwrap()["factors"][0]["entity_id"], mira_id);
++        assert_eq!(character.as_json().unwrap()["factors"][0]["value"], 8.0);
++        for reference in ["Mira → Varro", "mira -> varro"] {
++            let relation = roll.execute(json!({"factors":[{"entity":reference,"attribute_name":"Affection"}]})).await.unwrap();
++            assert_eq!(relation.as_json().unwrap()["factors"][0]["entity_id"], relationship_id);
++            assert_eq!(relation.as_json().unwrap()["factors"][0]["value"], 2.0);
++        }
++        assert!(roll.execute(json!({"factors":[{"entity":"Varro -> Mira","attribute_name":"Affection"}]})).await.is_err());
++        assert!(roll.execute(json!({"factors":[{"entity":"Mira","attribute_name":"Stealth","extra":1}]})).await.is_err());
++        assert!(roll.execute(json!({"reason":null})).await.is_err());
++        turn.rollback().await.unwrap();
++    }
+ }
+*** Update File: src-tauri/src/features/narrator/tools/illustrate_scene.rs
+@@
+ use crate::features::narrator::catalog::{ToolAvailability, ToolDeps, ToolSpec};
+ 
++use super::shared::{object_args, required_string};
++use super::to_tool_error;
++
+@@
+-            "character_ids": {"type": "array", "items": {"type": "string"}, "description": "Ids of characters visible in the scene, from get_entities."}
++            "characters": {"type": "array", "items": {"type": "string"}, "description": "Names of characters visible in the scene."}
+         },
+-        "required": ["description"]
++        "required": ["description"],
++        "additionalProperties": false
+@@
+-                let description = args
+-                    .get("description")
+-                    .and_then(|v| v.as_str())
+-                    .map(str::trim)
+-                    .filter(|s| !s.is_empty())
+-                    .ok_or_else(|| ToolExecutionError::invalid_args("description is required"))?
+-                    .to_string();
+-                let character_ids = match args.get("character_ids") {
++                let fields = object_args(&args, &["description", "characters"], NAME).map_err(to_tool_error)?;
++                let description = required_string(fields, "description").map_err(to_tool_error)?;
++                let character_ids = match fields.get("characters") {
+@@
+-                            ToolExecutionError::invalid_args("character_ids must be an array")
++                            ToolExecutionError::invalid_args("characters must be an array")
+@@
+-                            id.as_str().map(str::to_string).ok_or_else(|| {
++                            id.as_str().map(str::trim).filter(|name| !name.is_empty()).map(str::to_string).ok_or_else(|| {
+                                 ToolExecutionError::invalid_args(
+-                                    "character_ids must contain only strings",
++                                    "characters must contain only non-empty strings",
+@@
+         assert_eq!(queued[0].description, "a lighthouse at dusk");
+     }
++
++    #[tokio::test]
++    async fn character_names_are_queued_in_internal_ids_and_arguments_are_strict() {
++        let requests = Arc::new(Mutex::new(Vec::new()));
++        let tool = illustrate_scene_tool(requests.clone());
++        for args in [
++            json!({"description":false}), json!({"description":"scene","characters":null}),
++            json!({"description":"scene","characters":[7]}),
++            json!({"description":"scene","characters":[" "]}),
++            json!({"description":"scene","character_ids":["mira"]}),
++            json!({"description":"scene","unknown":true}),
++        ] {
++            assert!(tool.execute(args).await.is_err());
++        }
++        tool.execute(json!({"description":"  lighthouse  ","characters":[" mira ","Unknown"]})).await.unwrap();
++        let queued = requests.lock().await;
++        assert_eq!(queued.len(), 1);
++        assert_eq!(queued[0].description, "lighthouse");
++        assert_eq!(queued[0].character_ids, ["mira", "Unknown"]);
++        assert_eq!(super::schema()["additionalProperties"], false);
++    }
+ }
+*** End Patch

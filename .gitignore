@@ -24,5 +24,8 @@ dist-ssr
 *.sln
 *.sw?
 
-# Local docs and agent plans (not committed)
-docs/
+# Python caches, editor backups, and local database backups kept next to reports
+__pycache__/
+*.pyc
+*.bkp
+docs/**/db-backup/

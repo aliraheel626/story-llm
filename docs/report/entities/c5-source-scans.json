@@ -1,0 +1,74 @@
+[
+  {
+    "command": [
+      "rg",
+      "-n",
+      "story_entity_state|last_event_id",
+      "src-tauri/src"
+    ],
+    "exit": 0,
+    "stdout": "src-tauri/src\\shared\\db.rs:453:        assert!(!exists(\"story_entity_state\"));\n",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "rg",
+      "-n",
+      "get_entities|GET_ENTITIES",
+      "src-tauri/src",
+      "src"
+    ],
+    "exit": 0,
+    "stdout": "src\\features\\story\\store.test.mjs:870:    { ...base, id: \"failed\", seq: 3, kind: \"tool_call\", content: \"Checking who's here\u2026\", payload: { tool: \"get_entities\", args: {}, result: \"failed\", ok: false } },\nsrc-tauri/src\\features\\transcript\\history.rs:595:                json!({\"tool\":\"get_entities\",\"args\":{},\"result\":{\"entities\":[]},\"ok\":true}),\n",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "rg",
+      "-n",
+      "entity_queried|ENTITY_QUERIED",
+      "src-tauri/src",
+      "src"
+    ],
+    "exit": 0,
+    "stdout": "src-tauri/src\\features\\transcript\\model.rs:101:        assert!(!items.iter().any(|item| item.key == \"record.entity_queried\" || item.label == \"Entity lookups\"));\n",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "rg",
+      "-n",
+      "-i",
+      "campaign|dice_mode|attributes_enabled",
+      "src-tauri/src",
+      "src"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "rg",
+      "-n",
+      "\"(object|location|campaign)\"",
+      "src-tauri/src",
+      "src"
+    ],
+    "exit": 0,
+    "stdout": "src\\shared\\types.ts:157:  if (entry.payload === null || typeof entry.payload !== \"object\" || Array.isArray(entry.payload)) return null;\nsrc\\shared\\types.ts:171:    if (factor === null || typeof factor !== \"object\") return false;\nsrc-tauri/src\\shared\\db.rs:477:            [\"entity_id\", \"known_as\", \"appearance_anchor\", \"gender\", \"age\", \"role\", \"location\", \"outfit\"]\nsrc-tauri/src\\features\\context\\blocks.rs:50:                (\"location\", &entity.character.location),\nsrc-tauri/src\\features\\entities\\model.rs:40:            (\"location\", &self.location),\nsrc-tauri/src\\features\\entities\\model.rs:52:            (\"location\", &mut self.location),\nsrc-tauri/src\\features\\entities\\model.rs:87:            (\"location\", &mut self.location),\nsrc-tauri/src\\features\\entities\\projection.rs:493:            \"age\":\"35\", \"role\":\"innkeeper\", \"location\":\"the inn\", \"outfit\":null\nsrc-tauri/src\\features\\entities\\repository.rs:985:            \"age\": \"30\", \"role\": \"pirate\", \"location\": \"tavern\", \"outfit\": \"cloak\",\nsrc-tauri/src\\features\\entities\\repository.rs:993:            \"known_as\": \" \", \"location\": \" the docks \", \"outfit\": null,\nsrc-tauri/src\\features\\entities\\repository.rs:1004:            \"role\": \"pirate\", \"location\": \"the docks\", \"outfit\": null,\nsrc-tauri/src\\features\\entities\\repository.rs:1028:        for field in [\"known_as\", \"gender\", \"age\", \"role\", \"location\", \"outfit\"] {\nsrc-tauri/src\\features\\entities\\repository.rs:1045:            \"location\": boundary, \"outfit\": boundary, \"appearance_anchor\": \"a\".repeat(401),\nsrc-tauri/src\\features\\narrator\\tools\\illustrate_scene.rs:27:        \"type\": \"object\",\nsrc-tauri/src\\features\\narrator\\tools\\shared.rs:123:            \"type\": \"object\",\nsrc-tauri/src\\features\\narrator\\tools\\save_relationship.rs:33:        \"type\": \"object\",\nsrc-tauri/src\\features\\narrator\\tools\\save_character.rs:33:        \"type\": \"object\",\nsrc-tauri/src\\features\\narrator\\tools\\save_character.rs:41:            \"location\": {\"type\": [\"string\", \"null\"], \"maxLength\": 200, \"description\": \"Where they are now, in a few words, e.g. 'the Rusty Anchor, back room'. Update it when they move.\"},\nsrc-tauri/src\\features\\narrator\\tools\\save_character.rs:87:                &[\"name\", \"known_as\", \"appearance_anchor\", \"gender\", \"age\", \"role\", \"location\", \"outfit\", \"stats\"], NAME)\nsrc-tauri/src\\features\\narrator\\tools\\save_character.rs:97:                location: nullable_field(fields, \"location\").map_err(to_tool_error)?,\nsrc-tauri/src\\features\\narrator\\tools\\save_character.rs:146:            \"location\":\"the old docks\",\"outfit\":\"grey cloak\"})).await.unwrap();\nsrc-tauri/src\\features\\narrator\\tools\\save_character.rs:155:        let updated = save.execute(json!({\"name\":\"mIRA\",\"location\":\"the market\"})).await.unwrap();\nsrc-tauri/src\\features\\narrator\\tools\\save_character.rs:162:        save.execute(json!({\"name\":\"mira\",\"location\":\"the market\"})).await.unwrap();\nsrc-tauri/src\\features\\narrator\\tools\\save_character.rs:169:            assert!(events[1].1.contains(\"location\"));\nsrc-tauri/src\\features\\narrator\\tools\\save_character.rs:184:            \"role\":\"smuggler\",\"location\":\"the docks\",\"outfit\":\"grey cloak\"})).await.unwrap();\nsrc-tauri/src\\features\\narrator\\tools\\save_character.rs:219:        for field in [\"known_as\", \"gender\", \"age\", \"role\", \"location\", \"outfit\"] {\nsrc-tauri/src\\features\\narrator\\tools\\roll_check.rs:30:        \"type\": \"object\",\nsrc-tauri/src\\features\\narrator\\tools\\roll_check.rs:38:                    \"type\": \"object\",\n",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "rg",
+      "-n",
+      "EntityContext|entities_touched_since|touched_entity_ids|detailed_entity_ids",
+      "src-tauri/src",
+      "src"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": ""
+  }
+]

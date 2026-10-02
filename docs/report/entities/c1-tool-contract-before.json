@@ -1,0 +1,284 @@
+[
+  {
+    "description": "Resolve a genuinely uncertain action. With zero factors, chance_percent is optional and defaults to 50. For one factor, identify the acting entity_id and attribute_name; for two, put the acting pair first and the opposing pair second. The backend reads stored attribute values, normalizes each by its registered min/max, and calculates chance_percent as round(50 + 50 * (actor_normalized - opponent_normalized)); a single factor faces a neutral opponent at 0.5. Do not pass chance_percent with factors, and do not invent entity IDs or values. The tool returns the draw and success or failure.",
+    "instruction": "For a genuinely uncertain outcome, call roll_check before narrating the result. With no factors it defaults to 50% unless you provide chance_percent. For a check based on registered attributes, select one acting entity-attribute pair or two opposing pairs; the backend reads their current values and calculates the chance. Use get_entities to find IDs and attribute names when that tool is available. Never invent attribute values or pass chance_percent together with factors. Do not roll routine or certain actions.",
+    "labels": [
+      {
+        "args": {
+          "chance_percent": 35,
+          "reason": "escaping a ghoul"
+        },
+        "friendly_tool_label": "Rolling for escaping a ghoul…"
+      },
+      {
+        "args": {},
+        "friendly_tool_label": "Rolling for a check…"
+      },
+      {
+        "friendly_tool_label": "Rolling for a check…",
+        "raw_args": "not-json"
+      }
+    ],
+    "name": "roll_check",
+    "schema": {
+      "additionalProperties": false,
+      "properties": {
+        "chance_percent": {
+          "description": "Optional narrator-estimated chance when no factors are given; defaults to 50%. Must be omitted when factors are present.",
+          "maximum": 100,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "factors": {
+          "description": "Zero, one acting, or two acting-then-opposing registered entity attributes. Values are fetched by the backend; never supply numbers here.",
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "attribute_name": {
+                "description": "Name of an attribute currently set on the entity.",
+                "type": "string"
+              },
+              "entity_id": {
+                "description": "Entity id in this story, preferably from get_entities.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "entity_id",
+              "attribute_name"
+            ],
+            "type": "object"
+          },
+          "maxItems": 2,
+          "type": "array"
+        },
+        "reason": {
+          "description": "A short description of the uncertain action and why it needs a roll.",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    }
+  },
+  {
+    "description": "List known entities (characters, objects, locations) and their current attribute values. Use this to check who or what is present before narrating or changing entity state.",
+    "instruction": null,
+    "labels": [
+      {
+        "args": {
+          "kind": "character",
+          "name": "Mira"
+        },
+        "friendly_tool_label": "Checking who's here…"
+      },
+      {
+        "args": {},
+        "friendly_tool_label": "Checking who's here…"
+      },
+      {
+        "friendly_tool_label": "Checking who's here…",
+        "raw_args": "not-json"
+      }
+    ],
+    "name": "get_entities",
+    "schema": {
+      "properties": {
+        "kind": {
+          "description": "Filter by kind: character, object, location, relationship, or campaign.",
+          "type": "string"
+        },
+        "name": {
+          "description": "Filter to an exact (case-insensitive) name match.",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    }
+  },
+  {
+    "description": "Introduce a new entity (character, object, or location) the story just established. Idempotent by name — calling this for an entity that already exists just returns it.",
+    "instruction": null,
+    "labels": [
+      {
+        "args": {
+          "appearance_anchor": "silver hair",
+          "kind": "character",
+          "name": "Mira"
+        },
+        "friendly_tool_label": "Introducing Mira…"
+      },
+      {
+        "args": {},
+        "friendly_tool_label": "Introducing someone new…"
+      },
+      {
+        "friendly_tool_label": "Introducing someone new…",
+        "raw_args": "not-json"
+      }
+    ],
+    "name": "create_entity",
+    "schema": {
+      "properties": {
+        "appearance_anchor": {
+          "description": "A short, stable visual description to keep the entity consistent.",
+          "type": "string"
+        },
+        "kind": {
+          "description": "character, object, location, relationship, or campaign.",
+          "type": "string"
+        },
+        "name": {
+          "description": "The entity's name, exactly as it should appear in the story.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "name"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "description": "Rename an entity or update its appearance description. Use a known entity id; look it up first when the lookup tool is available.",
+    "instruction": null,
+    "labels": [
+      {
+        "args": {
+          "appearance_anchor": "silver hair",
+          "id": "mira",
+          "name": "Mira the Bold"
+        },
+        "friendly_tool_label": "Updating an entity…"
+      },
+      {
+        "args": {},
+        "friendly_tool_label": "Updating an entity…"
+      },
+      {
+        "friendly_tool_label": "Updating an entity…",
+        "raw_args": "not-json"
+      }
+    ],
+    "name": "update_entity",
+    "schema": {
+      "properties": {
+        "appearance_anchor": {
+          "description": "The entity's (possibly unchanged) appearance description.",
+          "type": "string"
+        },
+        "id": {
+          "description": "Entity id from get_entities/create_entity.",
+          "type": "string"
+        },
+        "name": {
+          "description": "The entity's (possibly unchanged) name.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "name"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "description": "Change an entity's attribute by a delta implied by what just happened (an injury, growing trust, a depleted resource). Most changes are minor; only set dramatic for a genuinely major, story-changing swing.",
+    "instruction": null,
+    "labels": [
+      {
+        "args": {
+          "attribute": "Stealth",
+          "delta": 3,
+          "entity_id": "mira",
+          "reason": "sneaking"
+        },
+        "friendly_tool_label": "Adjusting Stealth…"
+      },
+      {
+        "args": {},
+        "friendly_tool_label": "Adjusting an attribute…"
+      },
+      {
+        "friendly_tool_label": "Adjusting an attribute…",
+        "raw_args": "not-json"
+      }
+    ],
+    "name": "adjust_entity_attribute",
+    "schema": {
+      "properties": {
+        "attribute": {
+          "description": "Attribute name, e.g. \"Trust\".",
+          "type": "string"
+        },
+        "delta": {
+          "description": "Positive or negative change, on the attribute's own scale.",
+          "type": "number"
+        },
+        "dramatic": {
+          "description": "True only for a major, story-changing swing.",
+          "type": "boolean"
+        },
+        "entity_id": {
+          "description": "A known entity id from available context or an enabled lookup/create tool. The player character is named \"You\".",
+          "type": "string"
+        },
+        "reason": {
+          "description": "Why this changed, for the audit log.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "entity_id",
+        "attribute",
+        "delta",
+        "reason"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "description": "Generate a scene image. Always call this when the player sends <see>, whatever the subject: that is an explicit request, so never skip it or answer in prose. Call it at most once per turn. When you choose to illustrate on your own, use it sparingly: reserve it for a genuinely striking visual moment (a new place revealed, a character's first appearance, a dramatic turn worth seeing). Write a vivid, concrete visual description of the subject as it appears in the story: subject, setting, composition, lighting. Do not mention art style or medium; that's applied separately.",
+    "instruction": "You have an illustrate_scene tool: always call it when the player sends <see>, and otherwise only for a genuinely striking moment.",
+    "labels": [
+      {
+        "args": {
+          "character_ids": [
+            "mira"
+          ],
+          "description": "a lighthouse at dusk"
+        },
+        "friendly_tool_label": "Sketching the scene…"
+      },
+      {
+        "args": {},
+        "friendly_tool_label": "Sketching the scene…"
+      },
+      {
+        "friendly_tool_label": "Sketching the scene…",
+        "raw_args": "not-json"
+      }
+    ],
+    "name": "illustrate_scene",
+    "schema": {
+      "properties": {
+        "character_ids": {
+          "description": "Ids of characters visible in the scene, from get_entities.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "description": {
+          "description": "A vivid, concrete visual description of the scene's subject, setting, composition, and lighting.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "description"
+      ],
+      "type": "object"
+    }
+  }
+]

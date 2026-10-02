@@ -1,0 +1,8 @@
+[
+  {
+    "check": "cargo-test",
+    "exit": 101,
+    "status": "FAIL",
+    "evidence": "C:\\Users\\User\\Documents\\GitHub\\story-llm\\docs\\report\\entities\\c4-development-2-cargo-test.txt"
+  }
+]

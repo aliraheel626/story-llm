@@ -1,0 +1,4 @@
+Command: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets
+Exit: 0
+
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.28s

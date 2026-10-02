@@ -1,0 +1,4 @@
+Read-only excerpt from background process bgp_0f3d20b82001KMx1UjBGC1gIco, captured after check 6. The provider's user_id field is omitted.
+[2026-09-30][20:05:39][story_llm_lib::features::settings::commands][WARN] could not verify caption model image support: openai/does-not-exist
+[2026-09-30][20:06:38][story_llm_lib::features::images::generation][WARN] caption failed for 65458890-20c6-4d56-bc1a-0ad92f670398: caption prompt failed: CompletionError: HttpError: Invalid status code 400 Bad Request with message: {"error":{"message":"openai/does-not-exist is not a valid model ID","code":400}
+No ERROR or panicked entries appeared in the captured backend output. One metadata warning preceded one caption-request warning.

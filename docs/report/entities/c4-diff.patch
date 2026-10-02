@@ -1,0 +1,2064 @@
+diff --git a/src-tauri/src/features/context/blocks.rs b/src-tauri/src/features/context/blocks.rs
+index 5a24418..085e1ce 100644
+--- a/src-tauri/src/features/context/blocks.rs
++++ b/src-tauri/src/features/context/blocks.rs
+@@ -48 +48,3 @@ fn format_entity_context(
+-                format!("- {} ({})", entity.name, entity.kind)
++                let known_as = entity.character.known_as.as_deref()
++                    .map(|text| format!("; known to the player as: {text}")).unwrap_or_default();
++                format!("- {} ({}){known_as}", entity.name, entity.kind)
+@@ -52,2 +54,5 @@ fn format_entity_context(
+-        let details = if let Some(link) = &entity.link {
+-            link.description.as_deref().map(|text| format!("; description: {text}"))
++        let mut details = String::new();
++        if let Some(link) = &entity.link {
++            if let Some(text) = &link.description {
++                details.push_str(&format!("; description: {text}"));
++            }
+@@ -55,2 +60,14 @@ fn format_entity_context(
+-            entity.appearance_anchor.as_deref().map(|text| format!("; appearance: {text}"))
+-        }.unwrap_or_default();
++            for (label, value) in [
++                ("known to the player as", &entity.character.known_as),
++                ("location", &entity.character.location),
++                ("outfit", &entity.character.outfit),
++                ("gender", &entity.character.gender),
++                ("age", &entity.character.age),
++                ("role", &entity.character.role),
++                ("appearance", &entity.character.appearance_anchor),
++            ] {
++                if let Some(text) = value {
++                    details.push_str(&format!("; {label}: {text}"));
++                }
++            }
++        }
+@@ -388 +405 @@ mod tests {
+-            assert_eq!(alice.appearance_anchor.as_deref(), Some("blue coat"));
++            assert_eq!(alice.character.appearance_anchor.as_deref(), Some("blue coat"));
+@@ -494,0 +512,23 @@ mod tests {
++    #[test]
++    fn character_facts_render_in_order_with_true_name_and_perceived_title() {
++        use crate::features::entities::model::CharacterFields;
++        let pool = crate::shared::db::test_pool();
++        let conn = pool.get().unwrap();
++        crate::shared::test_support::story(&conn, "s");
++        let kael = entities::repository::create_character_sync(&conn, "s", "Kael", CharacterFields {
++            known_as: Some("the hooded stranger".into()), appearance_anchor: Some("scarred lip".into()),
++            gender: Some("female".into()), age: Some("34".into()), role: Some("smuggler".into()),
++            location: Some("the Rusty Anchor".into()), outfit: Some("grey cloak".into()),
++        }, "narrator_tool", None, None).unwrap();
++        let health = entities::registry::find_exact_match(&conn, "Health").unwrap().unwrap();
++        entities::attributes::set_entity_attribute_sync(&conn, "s", &kael.id, &health.id, 7.0).unwrap();
++        let data = entities::list_entities_sync(&conn, "s", None).unwrap();
++        let attrs = entities::attributes::list_entity_attributes_for_entities_sync(&conn, "s", &[&kael.id]).unwrap();
++        let text = format_entity_context(&data, &attrs, None);
++        assert!(text.contains("- Kael (character); known to the player as: the hooded stranger; location: the Rusty Anchor; outfit: grey cloak; gender: female; age: 34; role: smuggler; appearance: scarred lip; attributes: Health=7"));
++        assert!(text.contains("Names here are true names."));
++        let summary = format_entity_context(&data, &attrs, Some(&HashSet::new()));
++        assert!(summary.contains("- Kael (character); known to the player as: the hooded stranger"));
++        assert!(!summary.contains("location: the Rusty Anchor"));
++    }
++
+@@ -532,3 +572 @@ mod tests {
+-            create_entity: false,
+-            update_entity: false,
+-            adjust_entity_attribute: false,
++            save_character: false,
+@@ -596,3 +634 @@ mod tests {
+-            create_entity: false,
+-            update_entity: false,
+-            adjust_entity_attribute: false,
++            save_character: false,
+@@ -607 +643 @@ mod tests {
+-                    update_entity: true,
++                    save_character: true,
+diff --git a/src-tauri/src/features/entities/attributes.rs b/src-tauri/src/features/entities/attributes.rs
+index 27c39de..0639348 100644
+--- a/src-tauri/src/features/entities/attributes.rs
++++ b/src-tauri/src/features/entities/attributes.rs
+@@ -297 +297,2 @@ mod tests {
+-                 VALUES ('entity', 'story', 'character', 'Mira', 'now', 'now');",
++                 VALUES ('entity', 'story', 'character', 'Mira', 'now', 'now');
++             INSERT INTO characters (entity_id) VALUES ('entity');",
+diff --git a/src-tauri/src/features/entities/commands.rs b/src-tauri/src/features/entities/commands.rs
+index d12aa52..991401d 100644
+--- a/src-tauri/src/features/entities/commands.rs
++++ b/src-tauri/src/features/entities/commands.rs
+@@ -5 +5 @@ use crate::shared::db::{blocking, with_transaction, Pool};
+-use crate::shared::error::AppResult;
++use crate::shared::error::{AppError, AppResult};
+@@ -10 +10 @@ use super::attributes::{
+-use super::model::{AttributeRegistryEntry, Entity, EntityAttributeValue};
++use super::model::{AttributeRegistryEntry, CharacterFields, CharacterPatch, Entity, EntityAttributeValue, CHARACTER};
+@@ -12 +12 @@ use super::registry::list_attribute_registry_sync;
+-use super::repository::delete_entity_sync;
++use super::repository::{create_character_sync, delete_entity_sync, update_character_sync};
+@@ -32,0 +33 @@ pub async fn create_entity(
++    fields: Option<CharacterFields>,
+@@ -40,9 +41,11 @@ pub async fn create_entity(
+-            create_entity_sync(
+-                tx,
+-                &story_id,
+-                &kind,
+-                &name,
+-                appearance_anchor.as_deref(),
+-                "user",
+-                None,
+-            )
++            match fields {
++                Some(fields) => {
++                    if kind != CHARACTER {
++                        return Err(AppError::Invalid("kind must be character".into()));
++                    }
++                    create_character_sync(tx, &story_id, &name, fields, "user", None, None)
++                }
++                None => create_entity_sync(
++                    tx, &story_id, &kind, &name, appearance_anchor.as_deref(), "user", None,
++                ),
++            }
+@@ -61,0 +65 @@ pub async fn update_entity(
++    fields: Option<CharacterPatch>,
+@@ -69,10 +73,8 @@ pub async fn update_entity(
+-            update_entity_sync(
+-                tx,
+-                &story_id,
+-                &entity_id,
+-                &name,
+-                appearance_anchor.as_deref(),
+-                "user",
+-                None,
+-                None,
+-            )
++            match fields {
++                Some(fields) => update_character_sync(
++                    tx, &story_id, &entity_id, Some(&name), &fields, "user", None, None,
++                ),
++                None => update_entity_sync(
++                    tx, &story_id, &entity_id, &name, appearance_anchor.as_deref(), "user", None, None,
++                ),
++            }
+diff --git a/src-tauri/src/features/entities/events.rs b/src-tauri/src/features/entities/events.rs
+index 3f91637..825e395 100644
+--- a/src-tauri/src/features/entities/events.rs
++++ b/src-tauri/src/features/entities/events.rs
+@@ -5 +5 @@ use crate::features::transcript::model::{kind, TranscriptEntry};
+-use super::model::EntityLink;
++use super::model::{CharacterFields, EntityLink};
+@@ -10 +10 @@ pub struct NameAnchor {
+-    pub appearance_anchor: Option<String>,
++    pub character: CharacterFields,
+@@ -20 +20 @@ pub enum EntityEvent {
+-        appearance_anchor: Option<String>,
++        character: CharacterFields,
+@@ -28 +28 @@ pub enum EntityEvent {
+-        after: NameAnchor,
++        after: Box<NameAnchor>,
+@@ -72 +72 @@ impl EntityEvent {
+-                appearance_anchor,
++                character,
+@@ -81 +80,0 @@ impl EntityEvent {
+-                    "appearance_anchor": appearance_anchor,
+@@ -83,0 +83,5 @@ impl EntityEvent {
++                for (field, value) in character.fields() {
++                    if let Some(value) = value {
++                        payload[field] = json!(value);
++                    }
++                }
+@@ -98,2 +102 @@ impl EntityEvent {
+-                        "name": before.name,
+-                        "appearance_anchor": before.appearance_anchor
++                        "name": before.name
+@@ -102,2 +105 @@ impl EntityEvent {
+-                        "name": after.name,
+-                        "appearance_anchor": after.appearance_anchor
++                        "name": after.name
+@@ -106,0 +109,7 @@ impl EntityEvent {
++                for (key, snapshot) in [("before", before), ("after", after)] {
++                    for (field, value) in snapshot.character.fields() {
++                        if let Some(value) = value {
++                            payload[key][field] = json!(value);
++                        }
++                    }
++                }
+@@ -163,0 +173 @@ impl EntityEvent {
++        let character = |value: &Value| serde_json::from_value::<CharacterFields>(value.clone()).ok();
+@@ -175 +185 @@ impl EntityEvent {
+-                appearance_anchor: string(entry.payload.get("appearance_anchor")),
++                character: character(&entry.payload)?,
+@@ -187 +197 @@ impl EntityEvent {
+-                        appearance_anchor: string(before.get("appearance_anchor")),
++                        character: character(before)?,
+@@ -190 +200 @@ impl EntityEvent {
+-                    after: NameAnchor {
++                    after: Box::new(NameAnchor {
+@@ -192 +202 @@ impl EntityEvent {
+-                        appearance_anchor: string(after.get("appearance_anchor")),
++                        character: character(after)?,
+@@ -194 +204 @@ impl EntityEvent {
+-                    },
++                    }),
+@@ -291 +301 @@ mod tests {
+-                "appearance_anchor": null,
++                "gender": "female",
+@@ -298,2 +308,3 @@ mod tests {
+-            EntityEvent::Created { name: Some(name), link: None, created_at, .. }
+-                if name == "Mira" && created_at == "transcript-created-at"
++            EntityEvent::Created { name: Some(name), character, link: None, created_at, .. }
++                if name == "Mira" && character.gender.as_deref() == Some("female")
++                    && character.age.is_none() && created_at == "transcript-created-at"
+@@ -330 +341 @@ mod tests {
+-            appearance_anchor: None,
++            character: CharacterFields::default(),
+@@ -344 +355 @@ mod tests {
+-                appearance_anchor: None,
++                character: CharacterFields::default(),
+@@ -347 +358 @@ mod tests {
+-            after: NameAnchor {
++            after: Box::new(NameAnchor {
+@@ -349 +360 @@ mod tests {
+-                appearance_anchor: None,
++                character: CharacterFields::default(),
+@@ -351 +362 @@ mod tests {
+-            },
++            }),
+@@ -362 +373,4 @@ mod tests {
+-            appearance_anchor: Some("silver hair".into()),
++            character: CharacterFields {
++                known_as: Some("the hooded stranger".into()),
++                appearance_anchor: Some("silver hair".into()), ..Default::default()
++            },
+@@ -367,0 +382 @@ mod tests {
++        assert!(character.payload().get("age").is_none());
+@@ -374,2 +389,8 @@ mod tests {
+-            before: NameAnchor { name: "Mira".into(), appearance_anchor: None, link: None },
+-            after: NameAnchor { name: "Mira".into(), appearance_anchor: Some("silver hair".into()), link: None },
++            before: NameAnchor {
++                name: "Mira".into(), link: None,
++                character: CharacterFields { known_as: Some("the hooded stranger".into()), ..Default::default() },
++            },
++            after: Box::new(NameAnchor {
++                name: "Mira".into(), link: None,
++                character: CharacterFields { appearance_anchor: Some("silver hair".into()), ..Default::default() },
++            }),
+@@ -380,0 +402,2 @@ mod tests {
++        assert_eq!(payload["before"]["known_as"], "the hooded stranger");
++        assert!(payload["after"].get("known_as").is_none());
+@@ -396,2 +419,2 @@ mod tests {
+-            "before":{"name":"Mira", "appearance_anchor":null},
+-            "after":{"name":"Mira Vale", "appearance_anchor":null}
++            "before":{"name":"Mira", "role":"pirate"},
++            "after":{"name":"Mira Vale", "role":"innkeeper"}
+diff --git a/src-tauri/src/features/entities/model.rs b/src-tauri/src/features/entities/model.rs
+index a557126..cea081b 100644
+--- a/src-tauri/src/features/entities/model.rs
++++ b/src-tauri/src/features/entities/model.rs
+@@ -2,0 +3,2 @@ use serde::{Deserialize, Serialize};
++use crate::shared::error::{AppError, AppResult};
++
+@@ -18,0 +21,106 @@ pub struct EntityLink {
++#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
++pub struct CharacterFields {
++    pub known_as: Option<String>,
++    pub appearance_anchor: Option<String>,
++    pub gender: Option<String>,
++    pub age: Option<String>,
++    pub role: Option<String>,
++    pub location: Option<String>,
++    pub outfit: Option<String>,
++}
++
++impl CharacterFields {
++    pub fn fields(&self) -> [(&'static str, &Option<String>); 7] {
++        [
++            ("known_as", &self.known_as),
++            ("appearance_anchor", &self.appearance_anchor),
++            ("gender", &self.gender),
++            ("age", &self.age),
++            ("role", &self.role),
++            ("location", &self.location),
++            ("outfit", &self.outfit),
++        ]
++    }
++
++    pub fn normalize(mut self) -> AppResult<Self> {
++        for (field, value) in [
++            ("known_as", &mut self.known_as),
++            ("appearance_anchor", &mut self.appearance_anchor),
++            ("gender", &mut self.gender),
++            ("age", &mut self.age),
++            ("role", &mut self.role),
++            ("location", &mut self.location),
++            ("outfit", &mut self.outfit),
++        ] {
++            normalize_character_field(field, value)?;
++        }
++        Ok(self)
++    }
++}
++
++#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
++pub struct CharacterPatch {
++    #[serde(default, deserialize_with = "deserialize_character_patch_field", skip_serializing_if = "Option::is_none")]
++    pub known_as: Option<Option<String>>,
++    #[serde(default, deserialize_with = "deserialize_character_patch_field", skip_serializing_if = "Option::is_none")]
++    pub appearance_anchor: Option<Option<String>>,
++    #[serde(default, deserialize_with = "deserialize_character_patch_field", skip_serializing_if = "Option::is_none")]
++    pub gender: Option<Option<String>>,
++    #[serde(default, deserialize_with = "deserialize_character_patch_field", skip_serializing_if = "Option::is_none")]
++    pub age: Option<Option<String>>,
++    #[serde(default, deserialize_with = "deserialize_character_patch_field", skip_serializing_if = "Option::is_none")]
++    pub role: Option<Option<String>>,
++    #[serde(default, deserialize_with = "deserialize_character_patch_field", skip_serializing_if = "Option::is_none")]
++    pub location: Option<Option<String>>,
++    #[serde(default, deserialize_with = "deserialize_character_patch_field", skip_serializing_if = "Option::is_none")]
++    pub outfit: Option<Option<String>>,
++}
++
++impl CharacterPatch {
++    pub fn normalize(mut self) -> AppResult<Self> {
++        for (field, value) in [
++            ("known_as", &mut self.known_as),
++            ("appearance_anchor", &mut self.appearance_anchor),
++            ("gender", &mut self.gender),
++            ("age", &mut self.age),
++            ("role", &mut self.role),
++            ("location", &mut self.location),
++            ("outfit", &mut self.outfit),
++        ] {
++            if let Some(value) = value {
++                normalize_character_field(field, value)?;
++            }
++        }
++        Ok(self)
++    }
++
++    pub fn apply_to(&self, before: &CharacterFields) -> CharacterFields {
++        CharacterFields {
++            known_as: self.known_as.clone().unwrap_or_else(|| before.known_as.clone()),
++            appearance_anchor: self.appearance_anchor.clone().unwrap_or_else(|| before.appearance_anchor.clone()),
++            gender: self.gender.clone().unwrap_or_else(|| before.gender.clone()),
++            age: self.age.clone().unwrap_or_else(|| before.age.clone()),
++            role: self.role.clone().unwrap_or_else(|| before.role.clone()),
++            location: self.location.clone().unwrap_or_else(|| before.location.clone()),
++            outfit: self.outfit.clone().unwrap_or_else(|| before.outfit.clone()),
++        }
++    }
++}
++
++fn normalize_character_field(field: &'static str, value: &mut Option<String>) -> AppResult<()> {
++    let trimmed = value.as_deref().map(str::trim).filter(|value| !value.is_empty());
++    if field != "appearance_anchor" && trimmed.is_some_and(|value| value.chars().count() > 200) {
++        return Err(AppError::Invalid(format!("{field} must be at most 200 characters")));
++    }
++    *value = trimmed.map(str::to_string);
++    Ok(())
++}
++
++fn deserialize_character_patch_field<'de, D>(deserializer: D) -> Result<Option<Option<String>>, D::Error>
++where
++    D: serde::Deserializer<'de>,
++{
++    // The field default handles absence; a present null is an explicit clear.
++    Option::<String>::deserialize(deserializer).map(Some)
++}
++
+@@ -25 +133,2 @@ pub struct Entity {
+-    pub appearance_anchor: Option<String>,
++    #[serde(flatten)]
++    pub character: CharacterFields,
+@@ -56,0 +166,68 @@ pub struct EntityAttributeValue {
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use serde_json::json;
++
++    #[test]
++    fn character_patch_json_preserves_missing_null_and_string_values() {
++        let absent: CharacterPatch = serde_json::from_value(json!({})).unwrap();
++        assert_eq!(absent.age, None);
++        assert_eq!(absent.known_as, None);
++        assert_eq!(serde_json::to_value(&absent).unwrap(), json!({}));
++        let cleared: CharacterPatch = serde_json::from_value(json!({"age":null, "known_as":null})).unwrap();
++        assert_eq!(cleared.age, Some(None));
++        assert_eq!(cleared.known_as, Some(None));
++        assert_eq!(cleared.role, None);
++        let encoded = serde_json::to_value(&cleared).unwrap();
++        assert_eq!(encoded, json!({"age":null, "known_as":null}));
++        assert_eq!(serde_json::from_value::<CharacterPatch>(encoded).unwrap(), cleared);
++        let changed: CharacterPatch = serde_json::from_value(json!({"age":"34", "known_as":"the hooded stranger"})).unwrap();
++        assert_eq!(changed.age, Some(Some("34".into())));
++        assert_eq!(changed.known_as, Some(Some("the hooded stranger".into())));
++        let before = CharacterFields {
++            age: Some("33".into()), known_as: Some("the traveler".into()),
++            role: Some("smuggler".into()), ..Default::default()
++        };
++        assert_eq!(absent.apply_to(&before), before);
++        let after = cleared.apply_to(&before);
++        assert_eq!(after.age, None);
++        assert_eq!(after.known_as, None);
++        assert_eq!(after.role, before.role);
++        assert!(serde_json::from_value::<CharacterPatch>(json!({"age":34})).is_err());
++        let empty = CharacterFields::default();
++        let serialized = serde_json::to_value(&empty).unwrap();
++        for (field, _) in empty.fields() {
++            assert!(serialized.get(field).unwrap().is_null());
++        }
++    }
++
++    #[test]
++    fn character_normalization_uses_scalar_limits_and_preserves_patch_clears() {
++        let empty = CharacterFields::default();
++        let at_limit = "\u{00e9}".repeat(200);
++        let over_limit = "\u{00e9}".repeat(201);
++        for (field, _) in empty.fields() {
++            let patch: CharacterPatch = serde_json::from_value(json!({(field): format!(" {at_limit} ")})).unwrap();
++            let normalized = patch.normalize().unwrap().apply_to(&empty);
++            assert_eq!(normalized.fields().into_iter().find(|(name, _)| *name == field).unwrap().1.as_deref(), Some(at_limit.as_str()));
++            let patch: CharacterPatch = serde_json::from_value(json!({(field): over_limit.as_str()})).unwrap();
++            let fields: CharacterFields = serde_json::from_value(json!({(field): over_limit.as_str()})).unwrap();
++            if field == "appearance_anchor" {
++                assert!(patch.normalize().is_ok());
++                assert!(fields.normalize().is_ok());
++            } else {
++                assert!(matches!(patch.normalize(), Err(AppError::Invalid(message)) if message.contains(field)));
++                assert!(matches!(fields.normalize(), Err(AppError::Invalid(message)) if message.contains(field)));
++            }
++        }
++        let patch: CharacterPatch = serde_json::from_value(json!({"known_as":" ", "age":null, "role":" innkeeper "})).unwrap();
++        let normalized = patch.normalize().unwrap();
++        assert_eq!(normalized.known_as, Some(None));
++        assert_eq!(normalized.age, Some(None));
++        assert_eq!(normalized.gender, None);
++        assert_eq!(normalized.role, Some(Some("innkeeper".into())));
++        assert_eq!(CharacterFields { known_as: Some(" ".into()), role: Some(" innkeeper ".into()), ..Default::default() }.normalize().unwrap(),
++            CharacterFields { role: Some("innkeeper".into()), ..Default::default() });
++    }
++}
+diff --git a/src-tauri/src/features/entities/projection.rs b/src-tauri/src/features/entities/projection.rs
+index 1ec8544..dc083bb 100644
+--- a/src-tauri/src/features/entities/projection.rs
++++ b/src-tauri/src/features/entities/projection.rs
+@@ -8,0 +9 @@ use super::events::EntityEvent;
++use super::model::CHARACTER;
+@@ -28 +29 @@ pub fn apply(
+-            appearance_anchor,
++            character,
+@@ -35,2 +36,2 @@ pub fn apply(
+-                 (id, story_id, kind, name, appearance_anchor, is_present, created_at, updated_at)
+-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
++                 (id, story_id, kind, name, is_present, created_at, updated_at)
++                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+@@ -38 +39 @@ pub fn apply(
+-                     name=excluded.name, appearance_anchor=excluded.appearance_anchor,
++                     name=excluded.name,
+@@ -46 +46,0 @@ pub fn apply(
+-                    appearance_anchor,
+@@ -51,0 +52,15 @@ pub fn apply(
++            if kind.as_str() == CHARACTER {
++                conn.execute(
++                    "INSERT INTO characters
++                     (entity_id, known_as, appearance_anchor, gender, age, role, location, outfit)
++                     SELECT id, ?3, ?4, ?5, ?6, ?7, ?8, ?9 FROM entities WHERE story_id=?1 AND id=?2
++                     ON CONFLICT(entity_id) DO UPDATE SET
++                         known_as=excluded.known_as, appearance_anchor=excluded.appearance_anchor,
++                         gender=excluded.gender, age=excluded.age, role=excluded.role,
++                         location=excluded.location, outfit=excluded.outfit",
++                    rusqlite::params![
++                        story_id, entity_id, character.known_as, character.appearance_anchor,
++                        character.gender, character.age, character.role, character.location, character.outfit
++                    ],
++                )?;
++            }
+@@ -74,3 +89,2 @@ pub fn apply(
+-                     appearance_anchor=CASE WHEN ?3 THEN ?4 ELSE appearance_anchor END,
+-                     is_present=?5, updated_at=?6
+-                 WHERE story_id=?7 AND id=?8",
++                     is_present=?3, updated_at=?4
++                 WHERE story_id=?5 AND id=?6",
+@@ -80,2 +93,0 @@ pub fn apply(
+-                    character && before.appearance_anchor != after.appearance_anchor,
+-                    after.appearance_anchor,
+@@ -87,0 +100,12 @@ pub fn apply(
++            if character {
++                // Column names come only from the model's fixed field metadata.
++                for ((field, before), (_, after)) in before.character.fields().into_iter().zip(after.character.fields()) {
++                    if before != after {
++                        conn.execute(
++                            &format!("UPDATE characters SET {field}=?1
++                                      WHERE entity_id IN (SELECT id FROM entities WHERE story_id=?2 AND id=?3)"),
++                            rusqlite::params![after, story_id, entity_id],
++                        )?;
++                    }
++                }
++            }
+@@ -251 +275 @@ mod tests {
+-        entities::{attributes, model::{EntityLink, CHARACTER}, repository as entity_repository},
++        entities::{attributes, model::{CharacterFields, CharacterPatch, EntityLink}, repository as entity_repository},
+@@ -256 +280 @@ mod tests {
+-    type StateSnapshot = Vec<(String, Option<String>, Option<String>, i64)>;
++    type StateSnapshot = Vec<(String, Option<String>, CharacterFields, i64)>;
+@@ -263,2 +287,3 @@ mod tests {
+-                    "SELECT id, name, appearance_anchor, is_present
+-                     FROM entities WHERE story_id = 'story' ORDER BY id",
++                    "SELECT e.id, e.name, c.known_as, c.appearance_anchor, c.gender, c.age, c.role, c.location, c.outfit, e.is_present
++                     FROM entities e LEFT JOIN characters c ON c.entity_id=e.id
++                     WHERE e.story_id = 'story' ORDER BY e.id",
+@@ -271,2 +296,5 @@ mod tests {
+-                    row.get(2)?,
+-                    row.get(3)?,
++                    CharacterFields {
++                        known_as: row.get(2)?, appearance_anchor: row.get(3)?, gender: row.get(4)?,
++                        age: row.get(5)?, role: row.get(6)?, location: row.get(7)?, outfit: row.get(8)?,
++                    },
++                    row.get(9)?,
+@@ -445,0 +474,83 @@ mod tests {
++    #[test]
++    fn character_rows_replay_and_erasing_updates_restore_all_fields() {
++        let pool = crate::shared::db::test_pool();
++        let conn = pool.get().unwrap();
++        test_support::story(&conn, "story");
++        let original = CharacterFields {
++            known_as: Some("the hooded stranger".into()), appearance_anchor: Some("silver hair".into()),
++            gender: Some("female".into()), age: Some("34".into()), role: Some("pirate".into()),
++            location: Some("the docks".into()), outfit: Some("a grey cloak".into()),
++        };
++        let mira = entity_repository::create_character_sync(
++            &conn, "story", "Mira", original.clone(), "user", None, None,
++        ).unwrap();
++        let initial = snapshots(&conn);
++        assert_eq!(initial.0[0].2, original);
++        let (turn_id, action_id, narration_id) =
++            test_support::exchange(&conn, "story", "do", "enter the inn", Some("Mira is revealed."));
++        let patch: CharacterPatch = serde_json::from_value(serde_json::json!({
++            "known_as":null, "appearance_anchor":"black armor", "gender":null,
++            "age":"35", "role":"innkeeper", "location":"the inn", "outfit":null
++        })).unwrap();
++        entity_repository::update_character_sync(
++            &conn, "story", &mira.id, None, &patch, "narrator_tool",
++            narration_id.as_deref(), Some(&turn_id),
++        ).unwrap();
++        let updated = snapshots(&conn);
++        assert_eq!(updated.0[0].2, patch.apply_to(&original));
++        let affected = HashSet::from([mira.id.clone()]);
++        replay(&conn, "story", &affected, None).unwrap();
++        assert_eq!(snapshots(&conn), updated);
++        let mira_id = mira.id;
++        drop(conn);
++
++        let removed = with_transaction(&pool, |tx| {
++            let removed = crate::features::transcript::erase::erase_last_exchange_in_tx(tx, "story")?.unwrap();
++            replay_after_erase(tx, "story", &removed.entries)?;
++            Ok(removed.visible_ids)
++        }).unwrap();
++        assert_eq!(removed, vec![action_id, narration_id.unwrap()]);
++        let conn = pool.get().unwrap();
++        assert_eq!(snapshots(&conn), initial);
++        assert_eq!(conn.query_row("SELECT COUNT(*) FROM characters WHERE entity_id=?1", [&mira_id], |row| row.get::<_, i64>(0)).unwrap(), 1);
++    }
++
++    #[test]
++    fn erasing_a_narrated_role_preserves_a_later_player_age_edit() {
++        let pool = crate::shared::db::test_pool();
++        let conn = pool.get().unwrap();
++        test_support::story(&conn, "story");
++        let original = CharacterFields {
++            role: Some("pirate".into()), age: Some("34".into()),
++            appearance_anchor: Some("silver hair".into()), ..Default::default()
++        };
++        let mira = entity_repository::create_character_sync(
++            &conn, "story", "Mira", original.clone(), "user", None, None,
++        ).unwrap();
++        let (turn_id, action_id, narration_id) =
++            test_support::exchange(&conn, "story", "do", "meet Mira", Some("Mira is an innkeeper."));
++        let role: CharacterPatch = serde_json::from_value(serde_json::json!({"role":"innkeeper"})).unwrap();
++        entity_repository::update_character_sync(
++            &conn, "story", &mira.id, None, &role, "narrator_tool",
++            narration_id.as_deref(), Some(&turn_id),
++        ).unwrap();
++        let age: CharacterPatch = serde_json::from_value(serde_json::json!({"age":"35"})).unwrap();
++        entity_repository::update_character_sync(
++            &conn, "story", &mira.id, None, &age, "user", None, None,
++        ).unwrap();
++        let mira_id = mira.id;
++        drop(conn);
++
++        let removed = with_transaction(&pool, |tx| {
++            let removed = crate::features::transcript::erase::erase_last_exchange_in_tx(tx, "story")?.unwrap();
++            replay_after_erase(tx, "story", &removed.entries)?;
++            Ok(removed.visible_ids)
++        }).unwrap();
++        assert_eq!(removed, vec![action_id, narration_id.unwrap()]);
++        let conn = pool.get().unwrap();
++        let stored = entity_repository::load_entity_raw(&conn, "story", &mira_id).unwrap().unwrap();
++        assert_eq!(stored.character, CharacterFields { age: Some("35".into()), ..original });
++        assert_eq!(stored.name, "Mira");
++        assert_eq!(snapshots(&conn).0[0].2, stored.character);
++    }
++
+diff --git a/src-tauri/src/features/entities/repository.rs b/src-tauri/src/features/entities/repository.rs
+index 5053cfc..7e06d44 100644
+--- a/src-tauri/src/features/entities/repository.rs
++++ b/src-tauri/src/features/entities/repository.rs
+@@ -9 +9 @@ use super::{
+-    model::{relationship_id, Entity, EntityLink, CHARACTER, RELATIONSHIP},
++    model::{relationship_id, CharacterFields, CharacterPatch, Entity, EntityLink, CHARACTER, RELATIONSHIP},
+@@ -15 +15,2 @@ const ENTITY_SELECT: &str = "SELECT e.id, e.story_id, e.kind,
+-    e.appearance_anchor, e.created_at, l.from_id, l.to_id, l.label, l.direction, l.description
++    c.appearance_anchor, e.created_at, l.from_id, l.to_id, l.label, l.direction, l.description,
++    c.known_as, c.gender, c.age, c.role, c.location, c.outfit
+@@ -16,0 +18 @@ const ENTITY_SELECT: &str = "SELECT e.id, e.story_id, e.kind,
++    LEFT JOIN characters c ON c.entity_id = e.id
+@@ -40 +42,9 @@ fn row_to_entity(row: &rusqlite::Row) -> rusqlite::Result<Entity> {
+-        appearance_anchor: row.get(4)?,
++        character: CharacterFields {
++            known_as: row.get(11)?,
++            appearance_anchor: row.get(4)?,
++            gender: row.get(12)?,
++            age: row.get(13)?,
++            role: row.get(14)?,
++            location: row.get(15)?,
++            outfit: row.get(16)?,
++        },
+@@ -101 +111 @@ fn trimmed_text(text: Option<&str>) -> Option<String> {
+-fn validated_name(name: &str) -> AppResult<&str> {
++pub(crate) fn validated_name(name: &str) -> AppResult<&str> {
+@@ -115 +125 @@ fn snapshot(entity: &Entity) -> NameAnchor {
+-        appearance_anchor: entity.appearance_anchor.clone(),
++        character: entity.character.clone(),
+@@ -175,0 +186 @@ fn validate_link(
++#[allow(clippy::too_many_arguments)]
+@@ -178 +189,6 @@ fn record_create(
+-    entity: Entity,
++    id: &str,
++    story_id: &str,
++    kind: &str,
++    name: &str,
++    character: CharacterFields,
++    link: Option<EntityLink>,
+@@ -182,0 +199 @@ fn record_create(
++    let character = character.normalize()?;
+@@ -186 +203 @@ fn record_create(
+-            [&entity.id],
++            [id],
+@@ -190,5 +207,2 @@ fn record_create(
+-    if identity.is_some_and(|(story_id, kind)| story_id != entity.story_id || kind != entity.kind) {
+-        return Err(AppError::Invalid(format!(
+-            "entity {} belongs to a different story or kind",
+-            entity.id
+-        )));
++    if identity.is_some_and(|(stored_story, stored_kind)| stored_story != story_id || stored_kind != kind) {
++        return Err(AppError::Invalid(format!("entity {id} belongs to a different story or kind")));
+@@ -196,2 +210,2 @@ fn record_create(
+-    let text = if entity.kind == RELATIONSHIP {
+-        format!("{} (relationship recorded).", entity.name)
++    let text = if kind == RELATIONSHIP {
++        format!("{name} (relationship recorded).")
+@@ -199 +213 @@ fn record_create(
+-        format!("{} was added as a character.", entity.name)
++        format!("{name} was added as a character.")
+@@ -202,5 +216,5 @@ fn record_create(
+-        entity_id: entity.id.clone(),
+-        kind: entity.kind.clone(),
+-        name: (entity.kind == CHARACTER).then(|| entity.name.clone()),
+-        appearance_anchor: entity.appearance_anchor.clone(),
+-        link: entity.link.clone(),
++        entity_id: id.to_string(),
++        kind: kind.to_string(),
++        name: (kind == CHARACTER).then(|| name.to_string()),
++        character,
++        link,
+@@ -208 +222 @@ fn record_create(
+-        created_at: entity.created_at.clone(),
++        created_at: Utc::now().to_rfc3339(),
+@@ -212 +226 @@ fn record_create(
+-        &entity.story_id,
++        story_id,
+@@ -218 +232 @@ fn record_create(
+-    load_entity_raw(conn, &entity.story_id, &entity.id)?
++    load_entity_raw(conn, story_id, id)?
+@@ -250,5 +264,5 @@ pub fn create_entity_with_id_sync(
+-        Entity {
+-            id: id.to_string(),
+-            story_id: story_id.to_string(),
+-            kind: CHARACTER.into(),
+-            name: name.to_string(),
++        id,
++        story_id,
++        CHARACTER,
++        name,
++        CharacterFields {
+@@ -256,2 +270 @@ pub fn create_entity_with_id_sync(
+-            created_at: Utc::now().to_rfc3339(),
+-            link: None,
++            ..Default::default()
+@@ -258,0 +272 @@ pub fn create_entity_with_id_sync(
++        None,
+@@ -289,3 +303,15 @@ pub fn create_entity_sync(
+-/// Renames/updates an entity's appearance, mirroring `create_entity_sync`'s
+-/// `source`/`target_entry_id` shape so both the user-facing command and a
+-/// narrator tool's staged commit can call it identically.
++pub fn create_character_sync(
++    conn: &rusqlite::Connection,
++    story_id: &str,
++    name: &str,
++    fields: CharacterFields,
++    source: &str,
++    target_entry_id: Option<&str>,
++    turn_id: Option<&str>,
++) -> AppResult<Entity> {
++    record_create(
++        conn, &Uuid::new_v4().to_string(), story_id, CHARACTER, validated_name(name)?,
++        fields, None, source, target_entry_id, turn_id,
++    )
++}
++
+@@ -301,0 +328,21 @@ pub fn update_entity_sync(
++) -> AppResult<Entity> {
++    update_character_sync(
++        conn, story_id, entity_id, Some(name),
++        &CharacterPatch {
++            appearance_anchor: Some(appearance_anchor.map(str::to_string)),
++            ..Default::default()
++        },
++        source, target_entry_id, turn_id,
++    )
++}
++
++#[allow(clippy::too_many_arguments)]
++pub fn update_character_sync(
++    conn: &rusqlite::Connection,
++    story_id: &str,
++    entity_id: &str,
++    name: Option<&str>,
++    patch: &CharacterPatch,
++    source: &str,
++    target_entry_id: Option<&str>,
++    turn_id: Option<&str>,
+@@ -307,0 +355 @@ pub fn update_entity_sync(
++    let patch = patch.clone().normalize()?;
+@@ -309,2 +357,5 @@ pub fn update_entity_sync(
+-        name: validated_name(name)?.to_string(),
+-        appearance_anchor: trimmed_text(appearance_anchor),
++        name: match name {
++            Some(name) => validated_name(name)?.to_string(),
++            None => before.name.clone(),
++        },
++        character: patch.apply_to(&before.character),
+@@ -317,4 +368,16 @@ pub fn update_entity_sync(
+-    if before.appearance_anchor != after.appearance_anchor {
+-        changes.push(match &after.appearance_anchor {
+-            Some(anchor) => format!("appearance \u{2192} {anchor:?}"),
+-            None => "appearance cleared".into(),
++    for ((field, old), (_, new)) in before.character.fields().into_iter().zip(after.character.fields()) {
++        if old == new {
++            continue;
++        }
++        let label = match field {
++            "known_as" => "known as",
++            "appearance_anchor" => "appearance",
++            _ => field,
++        };
++        changes.push(match new {
++            Some(value) if field == "appearance_anchor" => format!("{label} \u{2192} {value:?}"),
++            Some(value) => match old.as_deref() {
++                Some(previous) => format!("{label} {previous} \u{2192} {value}"),
++                None => format!("{label} \u{2192} {value}"),
++            },
++            None => format!("{label} cleared"),
+@@ -329 +392 @@ pub fn update_entity_sync(
+-        after: snapshot(&after),
++        after: Box::new(snapshot(&after)),
+@@ -389,9 +452,6 @@ pub fn create_link_sync(
+-        Entity {
+-            id,
+-            story_id: story_id.to_string(),
+-            kind: RELATIONSHIP.into(),
+-            name: link_name(&link, &from, &to),
+-            appearance_anchor: None,
+-            created_at: Utc::now().to_rfc3339(),
+-            link: Some(link),
+-        },
++        &id,
++        story_id,
++        RELATIONSHIP,
++        &link_name(&link, &from, &to),
++        CharacterFields::default(),
++        Some(link),
+@@ -458 +518 @@ pub fn update_link_sync(
+-        after: snapshot(&after),
++        after: Box::new(snapshot(&after)),
+@@ -530 +590 @@ mod tests {
+-            "SELECT e.name, e.appearance_anchor, e.is_present, e.created_at, e.updated_at,
++            "SELECT e.name, c.appearance_anchor, e.is_present, e.created_at, e.updated_at,
+@@ -532,0 +593 @@ mod tests {
++             LEFT JOIN characters c ON c.entity_id = e.id
+@@ -861 +922 @@ mod tests {
+-        assert_eq!(after, snapshot(&renamed));
++        assert_eq!(*after, snapshot(&renamed));
+@@ -905 +966 @@ mod tests {
+-        assert_eq!(after, snapshot(&renamed));
++        assert_eq!(*after, snapshot(&renamed));
+@@ -908 +969 @@ mod tests {
+-        assert_eq!(appearance.appearance_anchor.as_deref(), Some("silver hair"));
++        assert_eq!(appearance.character.appearance_anchor.as_deref(), Some("silver hair"));
+@@ -916,0 +978,77 @@ mod tests {
++
++    #[test]
++    fn deserialized_character_patch_sets_clears_preserves_and_records_only_changes() {
++        let pool = fixture();
++        let conn = pool.get().unwrap();
++        let fields = json!({
++            "known_as": "the stranger", "appearance_anchor": "silver hair", "gender": "woman",
++            "age": "30", "role": "pirate", "location": "tavern", "outfit": "cloak",
++        });
++        let original = create_character_sync(
++            &conn, "story", " Kael ", serde_json::from_value(fields.clone()).unwrap(), "user", None, None,
++        ).unwrap();
++        assert_eq!(serde_json::to_value(&original.character).unwrap(), fields);
++        assert_eq!(original.name, "Kael");
++        let patch: CharacterPatch = serde_json::from_value(json!({
++            "known_as": " ", "location": " the docks ", "outfit": null,
++        })).unwrap();
++        assert_eq!(patch.outfit, Some(None));
++        assert_eq!(patch.role, None);
++        let count = entries(&conn).len();
++        let updated = update_character_sync(
++            &conn, "story", &original.id, None, &patch, "user", None, None,
++        ).unwrap();
++        assert_eq!(entries(&conn).len(), count + 1);
++        assert_eq!(serde_json::to_value(&updated.character).unwrap(), json!({
++            "known_as": null, "appearance_anchor": "silver hair", "gender": "woman", "age": "30",
++            "role": "pirate", "location": "the docks", "outfit": null,
++        }));
++        let entry = entries(&conn).pop().unwrap();
++        assert_eq!(entry.content.as_deref(), Some(
++            "User edit: Kael: known as cleared; location tavern \u{2192} the docks; outfit cleared."
++        ));
++        let EntityEvent::Updated { before, after, .. } = EntityEvent::from_entry(&entry).unwrap() else { panic!("expected Updated") };
++        assert_eq!(before, snapshot(&original));
++        assert_eq!(*after, snapshot(&updated));
++        assert_eq!(snapshot(&load_entity_raw(&conn, "story", &original.id).unwrap().unwrap()), snapshot(&updated));
++        for unchanged in [patch, serde_json::from_value(json!({})).unwrap()] {
++            let same = update_character_sync(
++                &conn, "story", &original.id, Some(" Kael "), &unchanged, "user", None, None,
++            ).unwrap();
++            assert_eq!(snapshot(&same), snapshot(&updated));
++        }
++        assert_eq!(entries(&conn).len(), count + 1);
++    }
++
++    #[test]
++    fn short_character_fields_count_unicode_scalars_and_anchor_is_unlimited() {
++        let pool = fixture();
++        let conn = pool.get().unwrap();
++        let count = entries(&conn).len();
++        for field in ["known_as", "gender", "age", "role", "location", "outfit"] {
++            let mut input = json!({});
++            input[field] = json!("x".repeat(201));
++            assert!(matches!(
++                create_character_sync(&conn, "story", "Invalid", serde_json::from_value(input.clone()).unwrap(), "user", None, None),
++                Err(AppError::Invalid(_))
++            ));
++            let patch = serde_json::from_value(input).unwrap();
++            assert!(matches!(
++                update_character_sync(&conn, "story", "mira", None, &patch, "user", None, None),
++                Err(AppError::Invalid(_))
++            ));
++        }
++        assert_eq!(entries(&conn).len(), count);
++        let boundary = "\u{754c}".repeat(200);
++        let fields = serde_json::from_value(json!({
++            "known_as": boundary, "gender": boundary, "age": boundary, "role": boundary,
++            "location": boundary, "outfit": boundary, "appearance_anchor": "a".repeat(401),
++        })).unwrap();
++        let created = create_character_sync(&conn, "story", "Boundary", fields, "user", None, None).unwrap();
++        assert_eq!(created.character.known_as.as_deref(), Some(boundary.as_str()));
++        assert_eq!(created.character.appearance_anchor.as_deref().unwrap().len(), 401);
++        let patch = serde_json::from_value(json!({"role": boundary, "appearance_anchor": "b".repeat(501)})).unwrap();
++        let updated = update_character_sync(&conn, "story", "mira", None, &patch, "user", None, None).unwrap();
++        assert_eq!(updated.character.role.as_deref(), Some(boundary.as_str()));
++        assert_eq!(updated.character.appearance_anchor.as_deref().unwrap().len(), 501);
++    }
+diff --git a/src-tauri/src/features/images/generation.rs b/src-tauri/src/features/images/generation.rs
+index 4503ac9..96c62df 100644
+--- a/src-tauri/src/features/images/generation.rs
++++ b/src-tauri/src/features/images/generation.rs
+@@ -58,2 +58,2 @@ fn characters_by_ids(
+-        "SELECT entities.name, entities.appearance_anchor
+-         FROM entities
++        "SELECT entities.name, characters.appearance_anchor
++         FROM entities JOIN characters ON characters.entity_id=entities.id
+@@ -62 +62 @@ fn characters_by_ids(
+-           AND entities.appearance_anchor IS NOT NULL
++           AND characters.appearance_anchor IS NOT NULL
+diff --git a/src-tauri/src/features/narrator/catalog.rs b/src-tauri/src/features/narrator/catalog.rs
+index 5da8b13..6366c52 100644
+--- a/src-tauri/src/features/narrator/catalog.rs
++++ b/src-tauri/src/features/narrator/catalog.rs
+@@ -59,3 +59 @@ pub static TOOLS: &[ToolSpec] = &[
+-    tools::create_entity::SPEC,
+-    tools::update_entity::SPEC,
+-    tools::adjust_entity_attribute::SPEC,
++    tools::save_character::SPEC,
+diff --git a/src-tauri/src/features/narrator/tools/adjust_entity_attribute.rs b/src-tauri/src/features/narrator/tools/adjust_entity_attribute.rs
+deleted file mode 100644
+index 1d5d43a..0000000
+--- a/src-tauri/src/features/narrator/tools/adjust_entity_attribute.rs
++++ /dev/null
+@@ -1,215 +0,0 @@
+-use std::sync::Arc;
+-
+-use rig_agent::tool::{PortableDynamicTool, ToolOutput};
+-use serde_json::{json, Value};
+-
+-use crate::features::entities::repository;
+-use crate::features::narrator::catalog::{self, ToolAvailability, ToolDeps, ToolSpec};
+-use crate::features::turn::TurnTx;
+-
+-use super::shared::{apply_resolved_stats, object_args, parse_stats, required_string, resolve_entity, resolve_stats};
+-use super::to_tool_error;
+-
+-pub const NAME: &str = "adjust_entity_attribute";
+-pub const DESCRIPTION: &str =
+-    "Change an entity's attribute by a delta implied by what just happened (an injury, growing \
+-     trust, a depleted resource). Most changes are minor; only set dramatic for a genuinely \
+-     major, story-changing swing.";
+-
+-pub fn schema() -> Value {
+-    json!({
+-        "type": "object",
+-        "properties": {
+-            "entity": {"type": "string", "description": "A character name, or a relationship as 'Mira → You'. An id is also accepted."},
+-            "attribute": {"type": "string", "description": "Attribute name, e.g. \"Trust\"."},
+-            "delta": {"type": "number", "description": "Positive or negative change, on the attribute's own scale."},
+-            "dramatic": {"type": "boolean", "description": "True only for a major, story-changing swing."},
+-            "reason": {"type": "string", "description": "Why this changed, for the audit log."}
+-        },
+-        "required": ["entity", "attribute", "delta", "reason"],
+-        "additionalProperties": false
+-    })
+-}
+-
+-fn label(args: &Value) -> String {
+-    let attribute = args
+-        .get("attribute")
+-        .and_then(|value| value.as_str())
+-        .unwrap_or("an attribute");
+-    format!("Adjusting {attribute}…")
+-}
+-
+-fn enabled(availability: &ToolAvailability<'_>) -> bool {
+-    catalog::normal_mode(availability) && availability.settings.adjust_entity_attribute
+-}
+-
+-fn build(deps: &ToolDeps) -> PortableDynamicTool {
+-    let (turn, target, turn_id) = catalog::turn(deps);
+-    tool(turn, target, turn_id, deps.embedding_api_key.clone())
+-}
+-
+-pub const SPEC: ToolSpec = ToolSpec {
+-    name: NAME,
+-    instruction: None,
+-    needs_turn: true,
+-    enabled,
+-    build,
+-    label,
+-};
+-
+-pub(super) fn tool(
+-    turn: Arc<TurnTx>,
+-    target_entry_id: String,
+-    turn_id: String,
+-    embedding_api_key: String,
+-) -> PortableDynamicTool {
+-    PortableDynamicTool::new(
+-        NAME,
+-        DESCRIPTION,
+-        schema(),
+-        move |args: serde_json::Value| {
+-            let turn = turn.clone();
+-            let target_entry_id = target_entry_id.clone();
+-            let turn_id = turn_id.clone();
+-            let embedding_api_key = embedding_api_key.clone();
+-            Box::pin(async move {
+-                let fields = object_args(&args, &["entity", "attribute", "delta", "reason", "dramatic"], NAME)
+-                    .map_err(to_tool_error)?;
+-                let reference = required_string(fields, "entity").map_err(to_tool_error)?;
+-                let mut change = fields.clone();
+-                change.remove("entity");
+-                let changes = parse_stats(Some(&Value::Array(vec![Value::Object(change)])))
+-                    .map_err(to_tool_error)?.unwrap_or_default();
+-                let entity = turn.with(|conn| resolve_entity(conn, turn.story_id(), &reference))
+-                    .await.map_err(to_tool_error)?;
+-                let resolved = resolve_stats(&turn, &embedding_api_key, &entity.kind, &changes)
+-                    .await.map_err(to_tool_error)?;
+-                let results = turn.with_savepoint(|conn| {
+-                    let current = resolve_entity(conn, turn.story_id(), &entity.id)?;
+-                    let current = repository::load_entity_raw(conn, turn.story_id(), &current.id)?
+-                        .ok_or_else(|| crate::shared::error::AppError::Invalid(format!("no entity named '{reference}'")))?;
+-                    apply_resolved_stats(conn, turn.story_id(), &current.id, resolved, &target_entry_id, &turn_id)
+-                }).await.map_err(to_tool_error)?;
+-                Ok(ToolOutput::json(
+-                    json!({"before": results[0]["before"], "after": results[0]["after"], "applied": true}),
+-                ))
+-            })
+-        },
+-    )
+-}
+-
+-#[cfg(test)]
+-mod turn_tests {
+-    use super::super::{
+-        create_entity::tool as create_entity_tool,
+-        roll_check::tool as roll_check_tool, test_support::fixture,
+-    };
+-    use super::tool as adjust_entity_attribute_tool;
+-    use crate::features::entities::{attributes, registry};
+-    use serde_json::json;
+-
+-    #[tokio::test]
+-    async fn attribute_tool_applies_delta_over_a_player_set_value() {
+-        let (_pool, turn, target, turn_id) = fixture();
+-        let id = create_entity_tool(turn.clone(), target.clone(), turn_id.clone())
+-            .execute(json!({"kind":"character","name":"Mira"}))
+-            .await
+-            .unwrap()
+-            .as_json()
+-            .unwrap()["id"]
+-            .as_str()
+-            .unwrap()
+-            .to_string();
+-        let adjust = adjust_entity_attribute_tool(
+-            turn.clone(),
+-            target.clone(),
+-            turn_id.clone(),
+-            String::new(),
+-        );
+-        let output = adjust
+-            .execute(json!({"entity":"Mira","attribute":"Stealth","delta":9,"reason":"sneaking"}))
+-            .await
+-            .unwrap();
+-        assert_eq!(
+-            output.as_json().unwrap(),
+-            &json!({"before":5.0,"after":8.0,"applied":true})
+-        );
+-        let snapshot = turn.with(|conn| attributes::list_entity_attributes_sync(conn, turn.story_id(), &id))
+-            .await
+-            .unwrap();
+-        assert_eq!(
+-            json!({"name":snapshot[0].canonical_name,"value":snapshot[0].value,"min":snapshot[0].min,"max":snapshot[0].max}),
+-            json!({"name":"Stealth","value":8.0,"min":0.0,"max":10.0})
+-        );
+-        turn.with(|conn| {
+-            let attribute = attributes::find_exact_match(conn, "Stealth")?.unwrap();
+-            let entry: (String, String, String) = conn.query_row(
+-                "SELECT payload_json, target_entry_id, turn_id FROM transcript_entries WHERE kind = 'entity_attribute_changed'",
+-                [], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
+-            assert_eq!(serde_json::from_str::<serde_json::Value>(&entry.0).unwrap()["cause"], json!("sneaking"));
+-            assert_eq!((entry.1, entry.2), (target.clone(), turn_id.clone()));
+-            conn.execute("UPDATE entity_attributes SET value = 7, source = 'user' WHERE entity_id = ?1 AND attribute_id = ?2",
+-                rusqlite::params![id, attribute.id])?;
+-            Ok(())
+-        }).await.unwrap();
+-        let newer = adjust
+-            .execute(json!({"entity":id,"attribute":"Stealth","delta":-2,"reason":"later story events"}))
+-            .await
+-            .unwrap();
+-        assert_eq!(
+-            newer.as_json().unwrap(),
+-            &json!({"before":7.0,"after":5.0,"applied":true})
+-        );
+-        turn.with(|conn| {
+-            let stored = attributes::list_entity_attributes_sync(conn, turn.story_id(), &id)?;
+-            assert_eq!(stored[0].source, "inferred");
+-            Ok(())
+-        }).await.unwrap();
+-        turn.rollback().await.unwrap();
+-    }
+-
+-    #[tokio::test]
+-    async fn minted_attribute_is_immediately_available_to_later_tools() {
+-        let (pool, turn, target, turn_id) = fixture();
+-        turn.with(|conn| {
+-            conn.execute("DELETE FROM attribute_registry WHERE EXISTS (SELECT 1 FROM json_each(entity_kinds_json) WHERE value = 'character')", [])?;
+-            Ok(())
+-        }).await.unwrap();
+-        let id = create_entity_tool(turn.clone(), target.clone(), turn_id.clone())
+-            .execute(json!({"kind":"character","name":"Prism"}))
+-            .await
+-            .unwrap()
+-            .as_json()
+-            .unwrap()["id"]
+-            .as_str()
+-            .unwrap()
+-            .to_owned();
+-        let output = adjust_entity_attribute_tool(
+-            turn.clone(),
+-            target.clone(),
+-            turn_id.clone(),
+-            String::new(),
+-        )
+-        .execute(json!({"entity":id,"attribute":"Resonance","delta":1.0,"reason":"resonating"}))
+-        .await
+-        .unwrap();
+-        assert_eq!(output.as_json().unwrap()["after"], json!(6.0));
+-        let roll = roll_check_tool(turn.clone(), target, turn_id)
+-            .execute(json!({"factors":[{"entity":id,"attribute_name":"Resonance"}]}))
+-            .await
+-            .unwrap();
+-        assert_eq!(roll.as_json().unwrap()["factors"][0]["value"], json!(6.0));
+-        turn.with(|conn| {
+-            assert!(registry::find_exact_match(conn, "Resonance")?.is_some());
+-            Ok(())
+-        })
+-        .await
+-        .unwrap();
+-        assert!(
+-            registry::find_exact_match(&pool.get().unwrap(), "Resonance")
+-                .unwrap()
+-                .is_none()
+-        );
+-        turn.rollback().await.unwrap();
+-    }
+-}
+diff --git a/src-tauri/src/features/narrator/tools/create_entity.rs b/src-tauri/src/features/narrator/tools/create_entity.rs
+deleted file mode 100644
+index 612a4d1..0000000
+--- a/src-tauri/src/features/narrator/tools/create_entity.rs
++++ /dev/null
+@@ -1,200 +0,0 @@
+-use std::sync::Arc;
+-
+-use rig_agent::tool::{PortableDynamicTool, ToolExecutionError, ToolOutput};
+-use serde_json::{json, Value};
+-
+-use crate::features::entities::{self, model::CHARACTER};
+-use crate::features::narrator::catalog::{self, ToolAvailability, ToolDeps, ToolSpec};
+-use crate::features::turn::TurnTx;
+-
+-use super::shared::{nullable_field, object_args, required_string};
+-use super::to_tool_error;
+-
+-pub const NAME: &str = "create_entity";
+-pub const DESCRIPTION: &str =
+-    "Introduce a new character the story just established. \
+-     Idempotent by name — calling this for an entity that already exists just returns it.";
+-
+-pub fn schema() -> Value {
+-    json!({
+-        "type": "object",
+-        "properties": {
+-            "kind": {"type": "string", "enum": ["character"], "description": "character."},
+-            "name": {"type": "string", "description": "The entity's name, exactly as it should appear in the story."},
+-            "appearance_anchor": {"type": ["string", "null"], "description": "A short, stable visual description to keep the character consistent."}
+-        },
+-        "required": ["kind", "name"],
+-        "additionalProperties": false
+-    })
+-}
+-
+-fn label(args: &Value) -> String {
+-    let name = args
+-        .get("name")
+-        .and_then(|value| value.as_str())
+-        .unwrap_or("someone new");
+-    format!("Introducing {name}…")
+-}
+-
+-fn enabled(availability: &ToolAvailability<'_>) -> bool {
+-    catalog::normal_mode(availability) && availability.settings.create_entity
+-}
+-
+-fn build(deps: &ToolDeps) -> PortableDynamicTool {
+-    let (turn, target, turn_id) = catalog::turn(deps);
+-    tool(turn, target, turn_id)
+-}
+-
+-pub const SPEC: ToolSpec = ToolSpec {
+-    name: NAME,
+-    instruction: None,
+-    needs_turn: true,
+-    enabled,
+-    build,
+-    label,
+-};
+-
+-pub(super) fn tool(
+-    turn: Arc<TurnTx>,
+-    target_entry_id: String,
+-    turn_id: String,
+-) -> PortableDynamicTool {
+-    PortableDynamicTool::new(
+-        NAME,
+-        DESCRIPTION,
+-        schema(),
+-        move |args: serde_json::Value| {
+-            let turn = turn.clone();
+-            let target_entry_id = target_entry_id.clone();
+-            let turn_id = turn_id.clone();
+-            Box::pin(async move {
+-                let fields = object_args(&args, &["kind", "name", "appearance_anchor"], NAME).map_err(to_tool_error)?;
+-                let kind = required_string(fields, "kind").map_err(to_tool_error)?;
+-                if kind != CHARACTER {
+-                    return Err(ToolExecutionError::invalid_args("kind must be character"));
+-                }
+-                let name = required_string(fields, "name").map_err(to_tool_error)?;
+-                let appearance_anchor = nullable_field(fields, "appearance_anchor").map_err(to_tool_error)?.flatten();
+-
+-                let (entity, created) = turn
+-                    .with_savepoint(|conn| {
+-                        if let Some(existing) =
+-                            entities::list_entities_sync(conn, turn.story_id(), Some(&kind))?
+-                                .into_iter()
+-                                .find(|entity| entity.name.eq_ignore_ascii_case(&name))
+-                        {
+-                            return Ok((existing, false));
+-                        }
+-                        let entity = entities::create_entity_with_id_sync(
+-                            conn,
+-                            &uuid::Uuid::new_v4().to_string(),
+-                            turn.story_id(),
+-                            &kind,
+-                            &name,
+-                            appearance_anchor.as_deref(),
+-                            "narrator_tool",
+-                            Some(&target_entry_id),
+-                            Some(&turn_id),
+-                        )?;
+-                        Ok((entity, true))
+-                    })
+-                    .await
+-                    .map_err(to_tool_error)?;
+-                Ok(ToolOutput::json(json!({
+-                    "id": entity.id, "kind": entity.kind, "name": entity.name, "created": created,
+-                })))
+-            })
+-        },
+-    )
+-}
+-
+-#[cfg(test)]
+-mod turn_tests {
+-    use super::super::{
+-        test_support::fixture,
+-        update_entity::tool as update_entity_tool,
+-    };
+-    use super::tool as create_entity_tool;
+-    use crate::features::entities;
+-    use serde_json::json;
+-
+-    #[tokio::test]
+-    async fn entity_tools_write_and_read_on_the_turn_connection() {
+-        let (pool, turn, target, turn_id) = fixture();
+-        let create = create_entity_tool(turn.clone(), target.clone(), turn_id.clone());
+-        let first = create
+-            .execute(json!({"kind":"character", "name":"Mira", "appearance_anchor":"silver hair"}))
+-            .await
+-            .unwrap();
+-        let id = first.as_json().unwrap()["id"].as_str().unwrap().to_owned();
+-        assert_eq!(first.as_json().unwrap()["created"], json!(true));
+-        let second = create
+-            .execute(json!({"kind":"character", "name":"mira"}))
+-            .await
+-            .unwrap();
+-        assert_eq!(second.as_json().unwrap()["created"], json!(false));
+-        assert_eq!(second.as_json().unwrap()["id"], json!(id));
+-        assert_eq!(
+-            pool.get()
+-                .unwrap()
+-                .query_row("SELECT COUNT(*) FROM entities", [], |r| r.get::<_, i64>(0))
+-                .unwrap(),
+-            0
+-        );
+-        let update = update_entity_tool(turn.clone(), target.clone(), turn_id.clone());
+-        assert!(update
+-            .execute(json!({"id":"missing", "name":"Nobody"}))
+-            .await
+-            .unwrap_err()
+-            .to_string()
+-            .contains("no such entity"));
+-        update
+-            .execute(json!({"id":id,"name":"Mira the Bold"}))
+-            .await
+-            .unwrap();
+-        let output = turn.with(|conn| entities::list_entities_sync(conn, turn.story_id(), Some("character")))
+-            .await
+-            .unwrap();
+-        assert_eq!(
+-            output[0].name,
+-            "Mira the Bold"
+-        );
+-        turn.with(|conn| {
+-            let mut stmt = conn.prepare("SELECT kind, target_entry_id, turn_id FROM transcript_entries WHERE kind IN ('entity_created', 'entity_updated') ORDER BY seq")?;
+-            let events = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)))?
+-                .collect::<Result<Vec<_>, _>>()?;
+-            assert_eq!(events.len(), 2);
+-            assert!(events.iter().all(|(_, entry, tid)| entry == &target && tid == &turn_id));
+-            Ok(())
+-        }).await.unwrap();
+-        turn.rollback().await.unwrap();
+-        assert_eq!(
+-            pool.get()
+-                .unwrap()
+-                .query_row("SELECT COUNT(*) FROM entities", [], |r| r.get::<_, i64>(0))
+-                .unwrap(),
+-            0
+-        );
+-    }
+-
+-    #[tokio::test]
+-    async fn character_only_schema_and_handler_reject_unknown_keys_and_bad_types() {
+-        let (_pool, turn, target, turn_id) = fixture();
+-        let create = create_entity_tool(turn.clone(), target, turn_id);
+-        for args in [
+-            json!({"kind":"relationship","name":"Mira"}),
+-            json!({"kind":null,"name":"Mira"}), json!({"kind":"character","name":false}),
+-            json!({"kind":"character","name":"Mira","appearance_anchor":7}),
+-            json!({"kind":"character","name":"Mira","unknown":true}),
+-        ] {
+-            assert!(create.execute(args).await.is_err());
+-        }
+-        assert_eq!(super::schema()["properties"]["kind"]["enum"], json!(["character"]));
+-        assert_eq!(super::schema()["additionalProperties"], false);
+-        turn.with(|conn| {
+-            assert!(entities::list_entities_sync(conn, turn.story_id(), None)?.is_empty());
+-            Ok(())
+-        }).await.unwrap();
+-        turn.rollback().await.unwrap();
+-    }
+-}
+diff --git a/src-tauri/src/features/narrator/tools/mod.rs b/src-tauri/src/features/narrator/tools/mod.rs
+index eb53f41..f237f01 100644
+--- a/src-tauri/src/features/narrator/tools/mod.rs
++++ b/src-tauri/src/features/narrator/tools/mod.rs
+@@ -3,2 +2,0 @@
+-pub(crate) mod adjust_entity_attribute;
+-pub(crate) mod create_entity;
+@@ -6,0 +5 @@ pub(crate) mod roll_check;
++pub(crate) mod save_character;
+@@ -9 +7,0 @@ mod shared;
+-pub(crate) mod update_entity;
+@@ -82 +80 @@ mod turn_tests {
+-    fn labels_and_catalog_keep_existing_contract() {
++    fn labels_and_catalog_follow_character_tools() {
+@@ -84,2 +82,2 @@ mod turn_tests {
+-            friendly_tool_label("create_entity", r#"{"name":"Mira"}"#),
+-            "Introducing Mira…"
++            friendly_tool_label("save_character", r#"{"name":"Mira"}"#),
++            "Recording Mira…"
+@@ -98 +96 @@ mod turn_tests {
+-        assert_eq!(specs.len(), 5);
++        assert_eq!(specs.len(), 3);
+@@ -101 +99 @@ mod turn_tests {
+-            ["roll_check", "create_entity", "update_entity", "adjust_entity_attribute", "save_relationship"]);
++            ["roll_check", "save_character", "save_relationship"]);
+@@ -110,0 +109,13 @@ mod turn_tests {
++        assert_eq!((specs[1].build)(&deps).name(), "save_character");
++    }
++
++    #[test]
++    fn character_toggle_preserves_final_catalog_order() {
++        assert_eq!(catalog::TOOLS.iter().map(|spec| spec.name).collect::<Vec<_>>(),
++            ["roll_check", "save_character", "save_relationship", "illustrate_scene"]);
++        let settings = NarratorToolSettings { save_character: false, ..Default::default() };
++        let enabled = catalog::enabled(&ToolAvailability { settings: &settings, image_enabled: true, illustrate: false });
++        assert_eq!(enabled.iter().map(|spec| spec.name).collect::<Vec<_>>(),
++            ["roll_check", "save_relationship", "illustrate_scene"]);
++        let image_only = catalog::enabled(&ToolAvailability { settings: &settings, image_enabled: true, illustrate: true });
++        assert_eq!(image_only.iter().map(|spec| spec.name).collect::<Vec<_>>(), ["illustrate_scene"]);
+diff --git a/src-tauri/src/features/narrator/tools/roll_check.rs b/src-tauri/src/features/narrator/tools/roll_check.rs
+index facd12f..5cf0e1e 100644
+--- a/src-tauri/src/features/narrator/tools/roll_check.rs
++++ b/src-tauri/src/features/narrator/tools/roll_check.rs
+@@ -269,2 +269 @@ mod turn_tests {
+-        adjust_entity_attribute::tool as adjust_entity_attribute_tool,
+-        create_entity::tool as create_entity_tool, test_support::fixture,
++        save_character::tool as save_character_tool, test_support::fixture,
+@@ -352,18 +351,5 @@ mod turn_tests {
+-        let entity =
+-            create_entity_tool(turn.clone(), target.clone(), turn_id.clone())
+-                .execute(json!({"kind":"character","name":"You"}))
+-                .await
+-                .unwrap();
+-        let id = entity.as_json().unwrap()["id"]
+-            .as_str()
+-            .unwrap()
+-            .to_string();
+-        adjust_entity_attribute_tool(
+-            turn.clone(),
+-            target.clone(),
+-            turn_id.clone(),
+-            String::new(),
+-        )
+-        .execute(json!({"entity":"You","attribute":"Stealth","delta":3,"reason":"training"}))
+-        .await
+-        .unwrap();
++        save_character_tool(turn.clone(), target.clone(), turn_id.clone(), String::new())
++            .execute(json!({"name":"You","stats":[{"attribute":"Stealth","delta":3,"reason":"training"}]}))
++            .await.unwrap();
++        let id = turn.with(|conn| Ok(super::resolve_entity(conn, turn.story_id(), "You")?.id))
++            .await.unwrap();
+@@ -401,6 +387,5 @@ mod turn_tests {
+-        let create = create_entity_tool(turn.clone(), target.clone(), turn_id.clone());
+-        let mira = create.execute(json!({"kind":"character","name":"Mira"})).await.unwrap();
+-        let mira_id = mira.as_json().unwrap()["id"].as_str().unwrap();
+-        create.execute(json!({"kind":"character","name":"Varro"})).await.unwrap();
+-        adjust_entity_attribute_tool(turn.clone(), target.clone(), turn_id.clone(), String::new())
+-            .execute(json!({"entity":"Mira","attribute":"Stealth","delta":3,"reason":"practice"})).await.unwrap();
++        let save = save_character_tool(turn.clone(), target.clone(), turn_id.clone(), String::new());
++        save.execute(json!({"name":"Mira","stats":[{"attribute":"Stealth","delta":3,"reason":"practice"}]})).await.unwrap();
++        save.execute(json!({"name":"Varro"})).await.unwrap();
++        let mira_id = turn.with(|conn| Ok(super::resolve_entity(conn, turn.story_id(), "Mira")?.id))
++            .await.unwrap();
+diff --git a/src-tauri/src/features/narrator/tools/save_character.rs b/src-tauri/src/features/narrator/tools/save_character.rs
+new file mode 100644
+index 0000000..84624a7
+--- /dev/null
++++ b/src-tauri/src/features/narrator/tools/save_character.rs
+@@ -0,0 +1,339 @@
++use std::sync::Arc;
++
++use rig_agent::tool::{PortableDynamicTool, ToolOutput};
++use serde_json::{json, Value};
++
++use crate::features::entities::{
++    self,
++    model::{CharacterFields, CharacterPatch, CHARACTER},
++    repository,
++};
++use crate::features::narrator::catalog::{self, ToolAvailability, ToolDeps, ToolSpec};
++use crate::features::turn::TurnTx;
++
++use super::shared::{
++    apply_resolved_stats, nullable_field, object_args, parse_stats, required_string,
++    resolve_stats, stats_schema,
++};
++use super::to_tool_error;
++
++pub const NAME: &str = "save_character";
++pub const DESCRIPTION: &str =
++    "Record a character the story has established, or update one. Always use the character's \
++     true name, decided when you introduce them, even if the player doesn't know it yet; put \
++     how the player knows them in known_as and narrate them only that way until revealed. Keep \
++     location and outfit current as the story moves. Fields you leave out stay as they are; \
++     null clears a field. Use stats for changes such as an injury; most changes are minor, and \
++     dramatic is only for a major, story-changing swing. Only set facts the story has \
++     established or that you have decided for a character you're introducing.";
++pub const INSTRUCTION: &str = "Use save_character for new or changed characters, including where they are and what they wear.";
++
++pub fn schema() -> Value {
++    json!({
++        "type": "object",
++        "properties": {
++            "name": {"type": "string", "description": "The character's true name, even if the player doesn't know it yet. An existing name updates that character."},
++            "known_as": {"type": ["string", "null"], "maxLength": 200, "description": "How the player currently knows them when they don't know the name, e.g. 'the hooded stranger'. Set null when the name is revealed."},
++            "appearance_anchor": {"type": ["string", "null"], "description": "Stable look for images: face, hair, build, signature features."},
++            "gender": {"type": ["string", "null"], "maxLength": 200, "description": "Gender, e.g. female, male, or nonbinary."},
++            "age": {"type": ["string", "null"], "maxLength": 200, "description": "Age, e.g. 34, elderly, or young adult."},
++            "role": {"type": ["string", "null"], "maxLength": 200, "description": "Role in the story, e.g. innkeeper or smuggler."},
++            "location": {"type": ["string", "null"], "maxLength": 200, "description": "Where they are now, in a few words, e.g. 'the Rusty Anchor, back room'. Update it when they move."},
++            "outfit": {"type": ["string", "null"], "maxLength": 200, "description": "What they're wearing now. Update it when it changes."},
++            "stats": stats_schema()
++        },
++        "required": ["name"],
++        "additionalProperties": false
++    })
++}
++
++fn label(args: &Value) -> String {
++    let name = args.get("name").and_then(Value::as_str).map(str::trim)
++        .filter(|name| !name.is_empty()).unwrap_or("a character");
++    format!("Recording {name}…")
++}
++
++fn enabled(availability: &ToolAvailability<'_>) -> bool {
++    catalog::normal_mode(availability) && availability.settings.save_character
++}
++
++fn build(deps: &ToolDeps) -> PortableDynamicTool {
++    let (turn, target, turn_id) = catalog::turn(deps);
++    tool(turn, target, turn_id, deps.embedding_api_key.clone())
++}
++
++pub const SPEC: ToolSpec = ToolSpec {
++    name: NAME,
++    instruction: Some(INSTRUCTION),
++    needs_turn: true,
++    enabled,
++    build,
++    label,
++};
++
++pub(super) fn tool(
++    turn: Arc<TurnTx>,
++    target_entry_id: String,
++    turn_id: String,
++    embedding_api_key: String,
++) -> PortableDynamicTool {
++    PortableDynamicTool::new(NAME, DESCRIPTION, schema(), move |args: Value| {
++        let turn = turn.clone();
++        let target_entry_id = target_entry_id.clone();
++        let turn_id = turn_id.clone();
++        let embedding_api_key = embedding_api_key.clone();
++        Box::pin(async move {
++            let fields = object_args(&args,
++                &["name", "known_as", "appearance_anchor", "gender", "age", "role", "location", "outfit", "stats"], NAME)
++                .map_err(to_tool_error)?;
++            let name = required_string(fields, "name").map_err(to_tool_error)?;
++            repository::validated_name(&name).map_err(to_tool_error)?;
++            let patch = CharacterPatch {
++                known_as: nullable_field(fields, "known_as").map_err(to_tool_error)?,
++                appearance_anchor: nullable_field(fields, "appearance_anchor").map_err(to_tool_error)?,
++                gender: nullable_field(fields, "gender").map_err(to_tool_error)?,
++                age: nullable_field(fields, "age").map_err(to_tool_error)?,
++                role: nullable_field(fields, "role").map_err(to_tool_error)?,
++                location: nullable_field(fields, "location").map_err(to_tool_error)?,
++                outfit: nullable_field(fields, "outfit").map_err(to_tool_error)?,
++            }.normalize().map_err(to_tool_error)?;
++            let stats = parse_stats(fields.get("stats")).map_err(to_tool_error)?;
++            let name = turn.with(|conn| {
++                Ok(entities::list_entities_sync(conn, turn.story_id(), Some(CHARACTER))?
++                    .into_iter().find(|entity| entity.name.eq_ignore_ascii_case(&name))
++                    .map_or_else(|| name.clone(), |entity| entity.name))
++            }).await.map_err(to_tool_error)?;
++            let resolved = resolve_stats(&turn, &embedding_api_key, CHARACTER, stats.as_deref().unwrap_or_default())
++                .await.map_err(to_tool_error)?;
++            let (entity, created, results) = turn.with_savepoint(|conn| {
++                let existing = entities::list_entities_sync(conn, turn.story_id(), Some(CHARACTER))?
++                    .into_iter().find(|entity| entity.name.eq_ignore_ascii_case(&name));
++                let (entity, created) = if let Some(existing) = existing {
++                    (repository::update_character_sync(conn, turn.story_id(), &existing.id, None,
++                        &patch, "narrator_tool", Some(&target_entry_id), Some(&turn_id))?, false)
++                } else {
++                    (repository::create_character_sync(conn, turn.story_id(), &name,
++                        patch.apply_to(&CharacterFields::default()), "narrator_tool", Some(&target_entry_id), Some(&turn_id))?, true)
++                };
++                let results = apply_resolved_stats(conn, turn.story_id(), &entity.id, resolved, &target_entry_id, &turn_id)?;
++                Ok((entity, created, results))
++            }).await.map_err(to_tool_error)?;
++            let mut output = json!({"name": entity.name, "kind": entity.kind, "created": created});
++            if stats.is_some() {
++                output["stats"] = json!(results);
++            }
++            Ok(ToolOutput::json(output))
++        })
++    })
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use super::super::{roll_check::tool as roll_check_tool, shared::resolve_entity, test_support::fixture};
++    use crate::features::entities::{attributes, model::Entity, registry};
++
++    async fn character(turn: &TurnTx, name: &str) -> Entity {
++        turn.with(|conn| resolve_entity(conn, turn.story_id(), name)).await.unwrap()
++    }
++
++    #[tokio::test]
++    async fn saves_fields_and_case_insensitive_updates_on_the_turn_connection() {
++        let (pool, turn, target, turn_id) = fixture();
++        let save = tool(turn.clone(), target.clone(), turn_id.clone(), String::new());
++        let first = save.execute(json!({"name":" Mira ","known_as":" the hooded stranger ",
++            "appearance_anchor":" silver hair ","gender":"female","age":"34","role":"smuggler",
++            "location":"the old docks","outfit":"grey cloak"})).await.unwrap();
++        assert_eq!(first.as_json().unwrap(), &json!({"name":"Mira","kind":"character","created":true}));
++        let original = character(&turn, "Mira").await;
++        assert_eq!(original.character, CharacterFields {
++            known_as: Some("the hooded stranger".into()), appearance_anchor: Some("silver hair".into()),
++            gender: Some("female".into()), age: Some("34".into()), role: Some("smuggler".into()),
++            location: Some("the old docks".into()), outfit: Some("grey cloak".into()),
++        });
++        assert_eq!(pool.get().unwrap().query_row("SELECT COUNT(*) FROM entities", [], |row| row.get::<_, i64>(0)).unwrap(), 0);
++        let updated = save.execute(json!({"name":"mIRA","location":"the market"})).await.unwrap();
++        assert_eq!(updated.as_json().unwrap(), &json!({"name":"Mira","kind":"character","created":false}));
++        let current = character(&turn, "Mira").await;
++        assert_eq!(current.id, original.id);
++        assert_eq!(current.name, "Mira");
++        assert_eq!(current.character.location.as_deref(), Some("the market"));
++        assert_eq!(current.character.outfit, original.character.outfit);
++        save.execute(json!({"name":"mira","location":"the market"})).await.unwrap();
++        turn.with(|conn| {
++            let mut stmt = conn.prepare("SELECT kind, content, target_entry_id, turn_id FROM transcript_entries WHERE kind IN ('entity_created','entity_updated') ORDER BY seq")?;
++            let events = stmt.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, String>(3)?)))?
++                .collect::<Result<Vec<_>, _>>()?;
++            assert_eq!(events.len(), 2);
++            assert_eq!(events[1].0, "entity_updated");
++            assert!(events[1].1.contains("location"));
++            assert!(events[1].1.contains("the market"));
++            assert!(!events[1].1.starts_with("User edit:"));
++            assert!(events.iter().all(|(_, _, entry, tid)| entry == &target && tid == &turn_id));
++            Ok(())
++        }).await.unwrap();
++        turn.rollback().await.unwrap();
++        assert_eq!(pool.get().unwrap().query_row("SELECT COUNT(*) FROM entities", [], |row| row.get::<_, i64>(0)).unwrap(), 0);
++    }
++
++    #[tokio::test]
++    async fn nullable_fields_preserve_omitted_facts_and_clear_known_as() {
++        let (_pool, turn, target, turn_id) = fixture();
++        let save = tool(turn.clone(), target, turn_id, String::new());
++        save.execute(json!({"name":"Mira","known_as":"the hooded stranger","appearance_anchor":"silver hair",
++            "role":"smuggler","location":"the docks","outfit":"grey cloak"})).await.unwrap();
++        save.execute(json!({"name":"mira"})).await.unwrap();
++        assert_eq!(character(&turn, "Mira").await.character.known_as.as_deref(), Some("the hooded stranger"));
++        turn.with(|conn| {
++            assert_eq!(conn.query_row("SELECT COUNT(*) FROM transcript_entries WHERE kind='entity_updated'", [], |row| row.get::<_, i64>(0))?, 0);
++            Ok(())
++        }).await.unwrap();
++        save.execute(json!({"name":"Mira","role":null})).await.unwrap();
++        let current = character(&turn, "Mira").await.character;
++        assert_eq!(current.role, None);
++        assert_eq!(current.location.as_deref(), Some("the docks"));
++        assert_eq!(current.outfit.as_deref(), Some("grey cloak"));
++        assert_eq!(current.appearance_anchor.as_deref(), Some("silver hair"));
++        save.execute(json!({"name":"Mira","known_as":null,"appearance_anchor":null})).await.unwrap();
++        let revealed = character(&turn, "Mira").await.character;
++        assert_eq!(revealed.known_as, None);
++        assert_eq!(revealed.appearance_anchor, None);
++        assert_eq!(revealed.outfit.as_deref(), Some("grey cloak"));
++        turn.with(|conn| {
++            let content: String = conn.query_row("SELECT content FROM transcript_entries WHERE kind='entity_updated' ORDER BY seq DESC LIMIT 1", [], |row| row.get(0))?;
++            assert!(content.contains("known as cleared"));
++            Ok(())
++        }).await.unwrap();
++        turn.rollback().await.unwrap();
++    }
++
++    #[tokio::test]
++    async fn strict_schema_fields_and_indexed_stat_errors_write_nothing() {
++        let (_pool, turn, target, turn_id) = fixture();
++        let save = tool(turn.clone(), target, turn_id, String::new());
++        let contract = schema();
++        assert_eq!(contract["required"], json!(["name"]));
++        assert_eq!(contract["additionalProperties"], false);
++        assert!(contract["properties"].get("new_name").is_none());
++        assert!(contract["properties"]["appearance_anchor"].get("maxLength").is_none());
++        for field in ["known_as", "gender", "age", "role", "location", "outfit"] {
++            assert_eq!(contract["properties"][field]["maxLength"], 200);
++            assert_eq!(contract["properties"][field]["type"], json!(["string", "null"]));
++            let mut args = json!({"name":"Mira","stats":[{"attribute":"Unregistered character stat","delta":1,"reason":"x"}]});
++            args[field] = json!("x".repeat(201));
++            let error = save.execute(args).await.unwrap_err().to_string();
++            assert!(error.contains(field));
++            assert!(!error.contains("embedding API key"));
++        }
++        for args in [
++            json!(false), json!({"name":null}), json!({"name":" "}),
++            json!({"name":"Mira -> Varro"}), json!({"name":"Mira","role":false}),
++            json!({"name":"Mira","appearance_anchor":7}),
++            json!({"name":"Mira","new_name":"Varro"}), json!({"name":"Mira","unknown":true}),
++        ] {
++            assert!(save.execute(args).await.is_err());
++        }
++        let error = save.execute(json!({"name":"Mira","stats":[
++            {"attribute":"Stealth","delta":1,"reason":"first"},
++            {"attribute":"Stealth","delta":"bad","reason":"second"}]})).await.unwrap_err();
++        assert!(error.to_string().contains("stats[1]"));
++        let change = json!({"attribute":"Stealth","delta":1,"reason":"x"});
++        assert!(save.execute(json!({"name":"Mira","stats":vec![change; 9]})).await.is_err());
++        turn.with(|conn| {
++            assert!(entities::list_entities_sync(conn, turn.story_id(), Some(CHARACTER))?.is_empty());
++            Ok(())
++        }).await.unwrap();
++        let long_anchor = "x".repeat(400);
++        let unicode_role = "\u{00e9}".repeat(200);
++        save.execute(json!({"name":"Mira","appearance_anchor":long_anchor,"role":unicode_role})).await.unwrap();
++        let accepted = character(&turn, "Mira").await.character;
++        assert_eq!(accepted.appearance_anchor, Some(long_anchor));
++        assert_eq!(accepted.role, Some(unicode_role));
++        turn.rollback().await.unwrap();
++    }
++
++    #[tokio::test]
++    async fn stats_apply_after_creation_and_over_a_player_set_value() {
++        let (_pool, turn, target, turn_id) = fixture();
++        let save = tool(turn.clone(), target.clone(), turn_id.clone(), String::new());
++        let first = save.execute(json!({"name":"Mira","stats":[{"attribute":"Stealth","delta":9,"reason":"sneaking"}]})).await.unwrap();
++        assert_eq!(first.as_json().unwrap(), &json!({"name":"Mira","kind":"character","created":true,
++            "stats":[{"attribute":"Stealth","before":5.0,"after":8.0}]}));
++        let id = character(&turn, "Mira").await.id;
++        turn.with(|conn| {
++            let stored = attributes::list_entity_attributes_sync(conn, turn.story_id(), &id)?;
++            assert_eq!(json!({"name":stored[0].canonical_name,"value":stored[0].value,"min":stored[0].min,"max":stored[0].max}),
++                json!({"name":"Stealth","value":8.0,"min":0.0,"max":10.0}));
++            let (raw, entry, tid): (String, String, String) = conn.query_row(
++                "SELECT payload_json,target_entry_id,turn_id FROM transcript_entries WHERE kind='entity_attribute_changed'",
++                [], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
++            assert_eq!(serde_json::from_str::<Value>(&raw).unwrap()["cause"], "sneaking");
++            assert_eq!((entry, tid), (target.clone(), turn_id.clone()));
++            let attribute = attributes::find_exact_match(conn, "Stealth")?.unwrap();
++            conn.execute("UPDATE entity_attributes SET value=7,source='user' WHERE entity_id=?1 AND attribute_id=?2",
++                rusqlite::params![id, attribute.id])?;
++            Ok(())
++        }).await.unwrap();
++        let newer = save.execute(json!({"name":"mira","stats":[{"attribute":"Stealth","delta":-2,"reason":"later story events"}]})).await.unwrap();
++        assert_eq!(newer.as_json().unwrap(), &json!({"name":"Mira","kind":"character","created":false,
++            "stats":[{"attribute":"Stealth","before":7.0,"after":5.0}]}));
++        turn.with(|conn| {
++            assert_eq!(attributes::list_entity_attributes_sync(conn, turn.story_id(), &id)?[0].source, "inferred");
++            Ok(())
++        }).await.unwrap();
++        turn.rollback().await.unwrap();
++    }
++
++    #[tokio::test]
++    async fn minted_attribute_and_alias_are_available_to_later_tools_in_turn() {
++        let (pool, turn, target, turn_id) = fixture();
++        turn.with(|conn| {
++            conn.execute("DELETE FROM attribute_registry WHERE EXISTS (SELECT 1 FROM json_each(entity_kinds_json) WHERE value='character')", [])?;
++            Ok(())
++        }).await.unwrap();
++        let save = tool(turn.clone(), target.clone(), turn_id.clone(), String::new());
++        let minted = save.execute(json!({"name":"Prism","stats":[{"attribute":"Resonance","delta":1,"reason":"resonating"}]})).await.unwrap();
++        assert_eq!(minted.as_json().unwrap()["stats"][0], json!({"attribute":"Resonance","before":5.0,"after":6.0}));
++        let roll = roll_check_tool(turn.clone(), target, turn_id);
++        let first_roll = roll.execute(json!({"factors":[{"entity":"Prism","attribute_name":"Resonance"}]})).await.unwrap();
++        assert_eq!(first_roll.as_json().unwrap()["factors"][0]["value"], 6.0);
++        turn.with(|conn| {
++            let attribute = registry::find_exact_match(conn, "Resonance")?.unwrap();
++            registry::add_alias(conn, &attribute.id, "Harmony")
++        }).await.unwrap();
++        let aliased = save.execute(json!({"name":"Prism","stats":[{"attribute":"Harmony","delta":-1,"reason":"quieting"}]})).await.unwrap();
++        assert_eq!(aliased.as_json().unwrap()["stats"][0], json!({"attribute":"Resonance","before":6.0,"after":5.0}));
++        let alias_roll = roll.execute(json!({"factors":[{"entity":"Prism","attribute_name":"Harmony"}]})).await.unwrap();
++        assert_eq!(alias_roll.as_json().unwrap()["factors"][0]["attribute_name"], "Resonance");
++        assert_eq!(alias_roll.as_json().unwrap()["factors"][0]["value"], 5.0);
++        for name in ["Resonance", "Harmony"] {
++            assert!(registry::find_exact_match(&pool.get().unwrap(), name).unwrap().is_none());
++        }
++        turn.rollback().await.unwrap();
++    }
++
++    #[tokio::test]
++    async fn stat_prepare_failure_keeps_existing_fields_and_does_not_create_a_character() {
++        let (_pool, turn, target, turn_id) = fixture();
++        let save = tool(turn.clone(), target, turn_id, String::new());
++        save.execute(json!({"name":"Mira","role":"smuggler"})).await.unwrap();
++        let id = character(&turn, "Mira").await.id;
++        let count = turn.with(|conn| Ok(conn.query_row("SELECT COUNT(*) FROM transcript_entries", [], |row| row.get::<_, i64>(0))?)).await.unwrap();
++        for name in ["Mira", "Nobody"] {
++            let error = save.execute(json!({"name":name,"role":"merchant","stats":[
++                {"attribute":"Stealth","delta":2,"reason":"first"},
++                {"attribute":"Unregistered character stat","delta":1,"reason":"second"}]})).await.unwrap_err();
++            assert!(error.to_string().contains("stats[1]"));
++            assert!(error.to_string().contains("embedding API key"));
++        }
++        assert_eq!(character(&turn, "Mira").await.character.role.as_deref(), Some("smuggler"));
++        turn.with(|conn| {
++            assert_eq!(entities::list_entities_sync(conn, turn.story_id(), Some(CHARACTER))?.len(), 1);
++            assert!(attributes::list_entity_attributes_sync(conn, turn.story_id(), &id)?.is_empty());
++            assert!(registry::find_exact_match(conn, "Unregistered character stat")?.is_none());
++            assert_eq!(conn.query_row("SELECT COUNT(*) FROM transcript_entries", [], |row| row.get::<_, i64>(0))?, count);
++            Ok(())
++        }).await.unwrap();
++        turn.rollback().await.unwrap();
++    }
++}
+diff --git a/src-tauri/src/features/narrator/tools/update_entity.rs b/src-tauri/src/features/narrator/tools/update_entity.rs
+deleted file mode 100644
+index 4730f89..0000000
+--- a/src-tauri/src/features/narrator/tools/update_entity.rs
++++ /dev/null
+@@ -1,127 +0,0 @@
+-use std::sync::Arc;
+-
+-use rig_agent::tool::{PortableDynamicTool, ToolOutput};
+-use serde_json::{json, Value};
+-
+-use crate::features::entities::{model::CHARACTER, repository};
+-use crate::features::narrator::catalog::{self, ToolAvailability, ToolDeps, ToolSpec};
+-use crate::features::turn::TurnTx;
+-use crate::shared::error::AppError;
+-
+-use super::shared::{nullable_field, object_args, required_string};
+-use super::to_tool_error;
+-
+-pub const NAME: &str = "update_entity";
+-pub const DESCRIPTION: &str =
+-    "Rename a character or update its appearance description. Use a known character id.";
+-
+-pub fn schema() -> Value {
+-    json!({
+-        "type": "object",
+-        "properties": {
+-            "id": {"type": "string", "description": "A known character id."},
+-            "name": {"type": "string", "description": "The entity's (possibly unchanged) name."},
+-            "appearance_anchor": {"type": ["string", "null"], "description": "The character's appearance description. Omit to keep it; null clears it."}
+-        },
+-        "required": ["id", "name"],
+-        "additionalProperties": false
+-    })
+-}
+-
+-fn label(_args: &Value) -> String {
+-    "Updating an entity…".to_string()
+-}
+-
+-fn enabled(availability: &ToolAvailability<'_>) -> bool {
+-    catalog::normal_mode(availability) && availability.settings.update_entity
+-}
+-
+-fn build(deps: &ToolDeps) -> PortableDynamicTool {
+-    let (turn, target, turn_id) = catalog::turn(deps);
+-    tool(turn, target, turn_id)
+-}
+-
+-pub const SPEC: ToolSpec = ToolSpec {
+-    name: NAME,
+-    instruction: None,
+-    needs_turn: true,
+-    enabled,
+-    build,
+-    label,
+-};
+-
+-pub(super) fn tool(
+-    turn: Arc<TurnTx>,
+-    target_entry_id: String,
+-    turn_id: String,
+-) -> PortableDynamicTool {
+-    PortableDynamicTool::new(
+-        NAME,
+-        DESCRIPTION,
+-        schema(),
+-        move |args: serde_json::Value| {
+-            let turn = turn.clone();
+-            let target_entry_id = target_entry_id.clone();
+-            let turn_id = turn_id.clone();
+-            Box::pin(async move {
+-                let fields = object_args(&args, &["id", "name", "appearance_anchor"], NAME).map_err(to_tool_error)?;
+-                let id = required_string(fields, "id").map_err(to_tool_error)?;
+-                let name = required_string(fields, "name").map_err(to_tool_error)?;
+-                let appearance_anchor = nullable_field(fields, "appearance_anchor").map_err(to_tool_error)?;
+-
+-                let updated = turn
+-                    .with_savepoint(|conn| {
+-                        let before = repository::load_entity_raw(conn, turn.story_id(), &id)?
+-                            .ok_or_else(|| AppError::Invalid(format!("no such entity: {id}")))?;
+-                        if before.kind != CHARACTER {
+-                            return Err(AppError::Invalid("update_entity only updates characters".into()));
+-                        }
+-                        let anchor = appearance_anchor.clone().unwrap_or(before.appearance_anchor);
+-                        repository::update_entity_sync(
+-                            conn,
+-                            turn.story_id(),
+-                            &id,
+-                            &name,
+-                            anchor.as_deref(),
+-                            "narrator_tool",
+-                            Some(&target_entry_id),
+-                            Some(&turn_id),
+-                        )
+-                    })
+-                    .await
+-                    .map_err(to_tool_error)?;
+-                Ok(ToolOutput::json(
+-                    json!({"id": id, "name": updated.name, "appearance_anchor": updated.appearance_anchor}),
+-                ))
+-            })
+-        },
+-    )
+-}
+-
+-#[cfg(test)]
+-mod tests {
+-    use super::*;
+-    use super::super::{create_entity::tool as create_entity_tool, test_support::fixture};
+-
+-    #[tokio::test]
+-    async fn nullable_appearance_preserves_omitted_fields_and_rejects_bad_arguments() {
+-        let (_pool, turn, target, turn_id) = fixture();
+-        let created = create_entity_tool(turn.clone(), target.clone(), turn_id.clone())
+-            .execute(json!({"kind":"character","name":"Mira","appearance_anchor":"silver hair"})).await.unwrap();
+-        let id = created.as_json().unwrap()["id"].as_str().unwrap();
+-        let update = tool(turn.clone(), target, turn_id);
+-        let unchanged = update.execute(json!({"id":id,"name":"Mira"})).await.unwrap();
+-        assert_eq!(unchanged.as_json().unwrap()["appearance_anchor"], "silver hair");
+-        for args in [
+-            json!({"id":7,"name":"Mira"}), json!({"id":id,"name":null}),
+-            json!({"id":id,"name":"Mira","appearance_anchor":false}),
+-            json!({"id":id,"name":"Mira","unknown":true}),
+-        ] {
+-            assert!(update.execute(args).await.is_err());
+-        }
+-        let cleared = update.execute(json!({"id":id,"name":"Mira","appearance_anchor":null})).await.unwrap();
+-        assert_eq!(cleared.as_json().unwrap()["appearance_anchor"], Value::Null);
+-        assert_eq!(schema()["additionalProperties"], false);
+-        turn.rollback().await.unwrap();
+-    }
+-}
+diff --git a/src-tauri/src/features/stories/settings.rs b/src-tauri/src/features/stories/settings.rs
+index 63a6e72..c6018ca 100644
+--- a/src-tauri/src/features/stories/settings.rs
++++ b/src-tauri/src/features/stories/settings.rs
+@@ -16,3 +16 @@ pub struct NarratorToolSettings {
+-    pub create_entity: bool,
+-    pub update_entity: bool,
+-    pub adjust_entity_attribute: bool,
++    pub save_character: bool,
+@@ -27,3 +25 @@ impl Default for NarratorToolSettings {
+-            create_entity: true,
+-            update_entity: true,
+-            adjust_entity_attribute: true,
++            save_character: true,
+diff --git a/src-tauri/src/features/transcript/commands.rs b/src-tauri/src/features/transcript/commands.rs
+index bada559..0a5fbdd 100644
+--- a/src-tauri/src/features/transcript/commands.rs
++++ b/src-tauri/src/features/transcript/commands.rs
+@@ -120,2 +120,2 @@ mod tests {
+-                "SELECT id, kind, name, appearance_anchor, is_present, created_at, updated_at
+-                 FROM entities WHERE story_id = 's' ORDER BY id",
++                "SELECT e.id, e.kind, e.name, c.appearance_anchor, e.is_present, e.created_at, e.updated_at
++                 FROM entities e JOIN characters c ON c.entity_id=e.id WHERE e.story_id = 's' ORDER BY e.id",
+@@ -163 +163,2 @@ mod tests {
+-            "SELECT name, appearance_anchor, is_present, updated_at FROM entities WHERE story_id = 's' AND id = 'b'",
++            "SELECT e.name, c.appearance_anchor, e.is_present, e.updated_at
++             FROM entities e JOIN characters c ON c.entity_id=e.id WHERE e.story_id = 's' AND e.id = 'b'",
+@@ -175 +176,2 @@ mod tests {
+-            "SELECT name, appearance_anchor, is_present FROM entities WHERE story_id = 's' AND id = 'a'",
++            "SELECT e.name, c.appearance_anchor, e.is_present
++             FROM entities e JOIN characters c ON c.entity_id=e.id WHERE e.story_id = 's' AND e.id = 'a'",
+@@ -179 +181,2 @@ mod tests {
+-            "SELECT name, appearance_anchor, is_present, updated_at FROM entities WHERE story_id = 's' AND id = 'b'",
++            "SELECT e.name, c.appearance_anchor, e.is_present, e.updated_at
++             FROM entities e JOIN characters c ON c.entity_id=e.id WHERE e.story_id = 's' AND e.id = 'b'",
+@@ -214 +217 @@ mod tests {
+-        assert_eq!((present[0].id.as_str(), present[0].name.as_str(), present[0].appearance_anchor.as_deref()),
++        assert_eq!((present[0].id.as_str(), present[0].name.as_str(), present[0].character.appearance_anchor.as_deref()),
+diff --git a/src-tauri/src/features/transcript/erase.rs b/src-tauri/src/features/transcript/erase.rs
+index bffe5f5..89fd516 100644
+--- a/src-tauri/src/features/transcript/erase.rs
++++ b/src-tauri/src/features/transcript/erase.rs
+@@ -335,2 +335,3 @@ mod tests {
+-                "SELECT name, appearance_anchor, is_present, updated_at
+-                 FROM entities WHERE story_id = 's' AND id = 'unrelated'",
++                "SELECT e.name, c.appearance_anchor, e.is_present, e.updated_at
++                 FROM entities e JOIN characters c ON c.entity_id=e.id
++                 WHERE e.story_id = 's' AND e.id = 'unrelated'",
+@@ -474 +475,2 @@ mod tests {
+-                "SELECT name, appearance_anchor FROM entities WHERE story_id = 's' AND id = 'mira'",
++                "SELECT e.name, c.appearance_anchor FROM entities e JOIN characters c ON c.entity_id=e.id
++                 WHERE e.story_id = 's' AND e.id = 'mira'",
+@@ -508,2 +510,3 @@ mod tests {
+-                "SELECT name, appearance_anchor, is_present, updated_at
+-                 FROM entities WHERE story_id = 's' AND id = 'unrelated'",
++                "SELECT e.name, c.appearance_anchor, e.is_present, e.updated_at
++                 FROM entities e JOIN characters c ON c.entity_id=e.id
++                 WHERE e.story_id = 's' AND e.id = 'unrelated'",
+@@ -583 +586 @@ mod tests {
+-                    (SELECT COUNT(*) FROM entities WHERE story_id = 's' AND id = 'temporary'),
++                    (SELECT COUNT(*) FROM characters WHERE entity_id = 'temporary'),
+diff --git a/src-tauri/src/features/transcript/history.rs b/src-tauri/src/features/transcript/history.rs
+index bac87c6..dc7aedb 100644
+--- a/src-tauri/src/features/transcript/history.rs
++++ b/src-tauri/src/features/transcript/history.rs
+@@ -606,0 +607,16 @@ mod tests {
++    #[test]
++    fn hidden_characters_still_send_newer_player_role_corrections_in_history() {
++        use crate::features::{entities::{self, model::{CharacterFields, CharacterPatch}}, stories::settings::{self, ContextSettings, EntityContext}};
++        let pool = crate::shared::db::test_pool();
++        let conn = pool.get().unwrap();
++        crate::shared::test_support::story(&conn, "s");
++        settings::write_context_settings(&conn, "s", ContextSettings { entities: EntityContext::None, ..Default::default() }).unwrap();
++        let mira = entities::repository::create_character_sync(&conn, "s", "Mira", CharacterFields { role: Some("pirate".into()), ..Default::default() }, "narrator_tool", None, None).unwrap();
++        repository::append_entry(&conn, "s", kind::NARRATION, "visible", Some("Mira greets you."), &json!({}), None, None).unwrap();
++        let patch: CharacterPatch = serde_json::from_value(json!({"role":"innkeeper"})).unwrap();
++        entities::repository::update_character_sync(&conn, "s", &mira.id, None, &patch, "user", None, None).unwrap();
++        assert_eq!(settings::read_context_settings(&conn, "s").unwrap().entities, EntityContext::None);
++        let history = for_model(&conn, "s", &TranscriptSettings::default(), ImagePolicy::Unsupported).unwrap();
++        assert!(history.iter().any(|turn| turn.content.contains("User edit: Mira: role pirate → innkeeper")));
++    }
++
+diff --git a/src-tauri/src/prompts.rs b/src-tauri/src/prompts.rs
+index e2520f4..51a05ba 100644
+--- a/src-tauri/src/prompts.rs
++++ b/src-tauri/src/prompts.rs
+@@ -81 +81 @@ pub const ENTITY_CONTEXT_HEADER: &str =
+-    "Current record. When the story and a record disagree, the more recent one is correct. Never undo a player correction unless later story events change it. A → B relationships are one-way; A ↔ B are mutual. Refer to characters by name, and to a relationship as 'A → B'.";
++    "Current record. When the story and a record disagree, the more recent one is correct. Never undo a player correction unless later story events change it. A → B relationships are one-way; A ↔ B are mutual. Refer to characters by name, and to a relationship as 'A → B'. Names here are true names. When an entry says 'known to the player as', narrate it only that way until the story reveals the name.";
+diff --git a/src-tauri/src/shared/db.rs b/src-tauri/src/shared/db.rs
+index e752f46..8ff93c7 100644
+--- a/src-tauri/src/shared/db.rs
++++ b/src-tauri/src/shared/db.rs
+@@ -115 +114,0 @@ fn create_schema(conn: &mut PooledConn) -> AppResult<()> {
+-            appearance_anchor TEXT,
+@@ -124,0 +124,11 @@ fn create_schema(conn: &mut PooledConn) -> AppResult<()> {
++        CREATE TABLE IF NOT EXISTS characters (
++            entity_id TEXT PRIMARY KEY REFERENCES entities(id) ON DELETE CASCADE,
++            known_as TEXT,
++            appearance_anchor TEXT,
++            gender TEXT,
++            age TEXT,
++            role TEXT,
++            location TEXT,
++            outfit TEXT
++        );
++
+@@ -402 +412,2 @@ mod tests {
+-             VALUES ('original','existing','character','yOu',1,'now','now');",
++             VALUES ('original','existing','character','yOu',1,'now','now');
++             INSERT INTO characters (entity_id) VALUES ('original');",
+@@ -444,0 +456 @@ mod tests {
++        assert!(exists("characters"));
+@@ -454 +466,12 @@ mod tests {
+-            ["id", "story_id", "kind", "name", "appearance_anchor", "is_present", "created_at", "updated_at"]
++            ["id", "story_id", "kind", "name", "is_present", "created_at", "updated_at"]
++        );
++        let character_columns = conn
++            .prepare("PRAGMA table_info(characters)")
++            .unwrap()
++            .query_map([], |row| row.get::<_, String>(1))
++            .unwrap()
++            .collect::<Result<Vec<_>, _>>()
++            .unwrap();
++        assert_eq!(
++            character_columns,
++            ["entity_id", "known_as", "appearance_anchor", "gender", "age", "role", "location", "outfit"]
+@@ -582 +605,2 @@ mod tests {
+-                 VALUES ('one', 'first', 'character', 'Mira', 'now', 'now');",
++                 VALUES ('one', 'first', 'character', 'Mira', 'now', 'now');
++             INSERT INTO characters (entity_id) VALUES ('one');",
+@@ -608,0 +633 @@ mod tests {
++        conn.execute("INSERT INTO characters (entity_id) VALUES ('three')", []).unwrap();
+diff --git a/src/features/narratorTools/NarratorToolsPanel.tsx b/src/features/narratorTools/NarratorToolsPanel.tsx
+index e817078..387bb16 100644
+--- a/src/features/narratorTools/NarratorToolsPanel.tsx
++++ b/src/features/narratorTools/NarratorToolsPanel.tsx
+@@ -8,0 +9 @@ const GROUPS: { title: string; items: { key: keyof NarratorToolSettings; label:
++      { key: "save_character", label: "Record characters", description: "The narrator can record character facts and stats, including location and outfit." },
+@@ -10,3 +10,0 @@ const GROUPS: { title: string; items: { key: keyof NarratorToolSettings; label:
+-      { key: "create_entity", label: "Create entities", description: "The narrator can add persistent characters." },
+-      { key: "update_entity", label: "Update entities", description: "The narrator can change persistent world details." },
+-      { key: "adjust_entity_attribute", label: "Adjust attributes", description: "The narrator can change entity stats. Manual edits remain available when off." },
+@@ -53 +51 @@ export function NarratorToolsPanel() {
+-        All six tools start on for every story. Entity tools can change persistent world state; dice and image calls can add cost. Turn off any tool independently before writing.
++        All tools start on for every story. Entity tools can change persistent world state; dice and image calls can add cost. Turn off any tool independently before writing.
+diff --git a/src/features/story/store.test.mjs b/src/features/story/store.test.mjs
+index b11f314..2145b33 100644
+--- a/src/features/story/store.test.mjs
++++ b/src/features/story/store.test.mjs
+@@ -55 +55 @@ globalThis.__storyTestInvoke = async (command, args = {}) => {
+-      const tools = { save_relationship: true, create_entity: true, update_entity: true, adjust_entity_attribute: true, roll_check: true, illustrate_scene: true };
++      const tools = { save_character: true, save_relationship: true, roll_check: true, illustrate_scene: true };
+@@ -330 +330 @@ test("rapid independent toggles remain isolated by story and failed saves roll b
+-  await assert.rejects(store.getState().saveNarratorTools(second, { create_entity: false }), /save rejected/);
++  await assert.rejects(store.getState().saveNarratorTools(second, { save_character: false }), /save rejected/);
+@@ -332 +332 @@ test("rapid independent toggles remain isolated by story and failed saves roll b
+-  assert.equal(store.getState().bundles[second].narratorTools.create_entity, true);
++  assert.equal(store.getState().bundles[second].narratorTools.save_character, true);
+diff --git a/src/shared/types.ts b/src/shared/types.ts
+index 0f1bb6f..0fd672c 100644
+--- a/src/shared/types.ts
++++ b/src/shared/types.ts
+@@ -120 +120,3 @@ export interface Entity {
+-  appearance_anchor: string | null; created_at: string;
++  known_as: string | null; appearance_anchor: string | null;
++  gender: string | null; age: string | null; role: string | null;
++  location: string | null; outfit: string | null; created_at: string;
+@@ -124,3 +126 @@ export interface NarratorToolSettings {
+-  create_entity: boolean;
+-  update_entity: boolean;
+-  adjust_entity_attribute: boolean;
++  save_character: boolean;

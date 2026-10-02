@@ -1,0 +1,10 @@
+Command: rg --line-number \bALTER\b|table_info|migration src src-tauri/src
+Exit: 0
+
+src-tauri/src\shared\db.rs:441:            .prepare("PRAGMA table_info(entities)")
+src-tauri/src\shared\db.rs:452:            .prepare("PRAGMA table_info(entity_attributes)")
+src-tauri/src\shared\db.rs:471:            .prepare("PRAGMA table_info(image_assets)")
+src-tauri/src\shared\db.rs:482:            .prepare("PRAGMA table_info(transcript_entries)")
+src-tauri/src\shared\db.rs:490:            .prepare("PRAGMA table_info(usage_records)")
+src-tauri/src\shared\db.rs:505:        assert_eq!(conn.query_row("SELECT COUNT(*) FROM settings WHERE key LIKE 'migration%'", [], |row| row.get::<_, i64>(0)).unwrap(), 0);
+src-tauri/src\features\turn\retry.rs:370:        // A pre-migration failed turn remains retryable.

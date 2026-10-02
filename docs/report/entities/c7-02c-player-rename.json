@@ -1,0 +1,1734 @@
+{
+  "captured_at": 1790922124.886951,
+  "database": "C:\\Users\\User\\AppData\\Roaming\\com.story-llm.app\\story-llm.sqlite3",
+  "database_mode": "ro",
+  "story_id": "7b6992ba-996a-4b13-9750-bef67d3eb4c0",
+  "tool_settings": {
+    "illustrate_scene": false,
+    "roll_check": true,
+    "save_character": true,
+    "save_relationship": true
+  },
+  "context_settings": {
+    "author_note": "",
+    "author_note_enabled": true,
+    "entity_kinds": {
+      "character": true,
+      "relationship": true
+    },
+    "tool_instructions": true
+  },
+  "transcript_settings": [
+    {
+      "enabled": true,
+      "group": "Player actions",
+      "key": "action.do",
+      "label": "Do"
+    },
+    {
+      "enabled": true,
+      "group": "Player actions",
+      "key": "action.say",
+      "label": "Say"
+    },
+    {
+      "enabled": true,
+      "group": "Player actions",
+      "key": "action.story",
+      "label": "Story"
+    },
+    {
+      "enabled": true,
+      "group": "Player actions",
+      "key": "action.guide",
+      "label": "Guide"
+    },
+    {
+      "enabled": true,
+      "group": "Player actions",
+      "key": "action.continue",
+      "label": "Continue"
+    },
+    {
+      "enabled": false,
+      "group": "Player actions",
+      "key": "action.see",
+      "label": "See"
+    },
+    {
+      "enabled": true,
+      "group": "Narration",
+      "key": "narration",
+      "label": "Narration text"
+    },
+    {
+      "enabled": false,
+      "group": "Narration",
+      "key": "narration.thoughts",
+      "label": "Thoughts (reasoning)"
+    },
+    {
+      "enabled": true,
+      "group": "Records",
+      "key": "record.diceroll",
+      "label": "Dice rolls"
+    },
+    {
+      "enabled": false,
+      "group": "Records",
+      "key": "record.image_generated",
+      "label": "Image prompts"
+    },
+    {
+      "enabled": true,
+      "group": "Records",
+      "key": "record.image_captioned",
+      "label": "Image captions"
+    },
+    {
+      "enabled": false,
+      "group": "Records",
+      "key": "record.tool_call",
+      "label": "Tool calls"
+    },
+    {
+      "enabled": true,
+      "group": "Records",
+      "key": "record.entity_created",
+      "label": "Entity created"
+    },
+    {
+      "enabled": true,
+      "group": "Records",
+      "key": "record.entity_updated",
+      "label": "Entity updated"
+    },
+    {
+      "enabled": true,
+      "group": "Records",
+      "key": "record.entity_deleted",
+      "label": "Entity deleted"
+    },
+    {
+      "enabled": true,
+      "group": "Records",
+      "key": "record.entity_attribute_changed",
+      "label": "Attribute changed"
+    },
+    {
+      "enabled": true,
+      "group": "Records",
+      "key": "record.entity_attribute_removed",
+      "label": "Attribute removed"
+    },
+    {
+      "enabled": false,
+      "group": "Records",
+      "key": "record.context_note_updated",
+      "label": "Author's note updates"
+    },
+    {
+      "enabled": false,
+      "group": "Images",
+      "key": "images",
+      "label": "The images themselves"
+    }
+  ],
+  "snapshot": {
+    "elements": [
+      {
+        "depth": 1,
+        "name": "story-llmStories+ New storyEntities QA✕CharactersC",
+        "ref": "e1",
+        "role": "generic"
+      },
+      {
+        "depth": 3,
+        "name": "Sidebar",
+        "ref": "e2",
+        "role": "complementary"
+      },
+      {
+        "depth": 5,
+        "name": "Close sidebar (Ctrl+B)",
+        "ref": "e3",
+        "role": "button"
+      },
+      {
+        "depth": 7,
+        "name": "Stories",
+        "ref": "e4",
+        "role": "button"
+      },
+      {
+        "depth": 8,
+        "name": "+ New story",
+        "ref": "e5",
+        "role": "button"
+      },
+      {
+        "depth": 10,
+        "name": "Entities QA",
+        "ref": "e6",
+        "role": "button"
+      },
+      {
+        "depth": 10,
+        "name": "✕",
+        "ref": "e7",
+        "role": "button"
+      },
+      {
+        "depth": 7,
+        "name": "Characters",
+        "ref": "e8",
+        "role": "button"
+      },
+      {
+        "depth": 8,
+        "name": "Entity tabs",
+        "ref": "e9",
+        "role": "group"
+      },
+      {
+        "depth": 9,
+        "name": "Characters",
+        "ref": "e10",
+        "role": "button"
+      },
+      {
+        "depth": 9,
+        "name": "Relationships",
+        "ref": "e11",
+        "role": "button"
+      },
+      {
+        "depth": 8,
+        "name": "New character",
+        "ref": "e12",
+        "role": "button"
+      },
+      {
+        "depth": 10,
+        "name": "Edit character",
+        "ref": "e13",
+        "role": "button"
+      },
+      {
+        "depth": 10,
+        "name": "Edit character",
+        "ref": "e14",
+        "role": "button"
+      },
+      {
+        "depth": 7,
+        "name": "Narrator Tools",
+        "ref": "e15",
+        "role": "button"
+      },
+      {
+        "depth": 8,
+        "name": "All tools start on for every story. Entity tools c",
+        "ref": "e16",
+        "role": "paragraph"
+      },
+      {
+        "checked": true,
+        "depth": 10,
+        "ref": "e17",
+        "role": "checkbox",
+        "value": "on"
+      },
+      {
+        "checked": true,
+        "depth": 10,
+        "ref": "e18",
+        "role": "checkbox",
+        "value": "on"
+      },
+      {
+        "checked": true,
+        "depth": 10,
+        "ref": "e19",
+        "role": "checkbox",
+        "value": "on"
+      },
+      {
+        "checked": false,
+        "depth": 10,
+        "ref": "e20",
+        "role": "checkbox",
+        "value": "on"
+      },
+      {
+        "depth": 7,
+        "name": "Transcript",
+        "ref": "e21",
+        "role": "button"
+      },
+      {
+        "checked": true,
+        "depth": 10,
+        "ref": "e22",
+        "role": "checkbox",
+        "value": "on"
+      },
+      {
+        "checked": true,
+        "depth": 10,
+        "ref": "e23",
+        "role": "checkbox",
+        "value": "on"
+      },
+      {
+        "checked": true,
+        "depth": 10,
+        "ref": "e24",
+        "role": "checkbox",
+        "value": "on"
+      },
+      {
+        "checked": true,
+        "depth": 10,
+        "ref": "e25",
+        "role": "checkbox",
+        "value": "on"
+      },
+      {
+        "checked": true,
+        "depth": 10,
+        "ref": "e26",
+        "role": "checkbox",
+        "value": "on"
+      },
+      {
+        "checked": false,
+        "depth": 10,
+        "ref": "e27",
+        "role": "checkbox",
+        "value": "on"
+      },
+      {
+        "checked": true,
+        "depth": 10,
+        "ref": "e28",
+        "role": "checkbox",
+        "value": "on"
+      },
+      {
+        "checked": false,
+        "depth": 10,
+        "ref": "e29",
+        "role": "checkbox",
+        "value": "on"
+      },
+      {
+        "checked": true,
+        "depth": 10,
+        "ref": "e30",
+        "role": "checkbox",
+        "value": "on"
+      },
+      {
+        "checked": false,
+        "depth": 10,
+        "ref": "e31",
+        "role": "checkbox",
+        "value": "on"
+      },
+      {
+        "checked": true,
+        "depth": 10,
+        "ref": "e32",
+        "role": "checkbox",
+        "value": "on"
+      },
+      {
+        "checked": false,
+        "depth": 10,
+        "ref": "e33",
+        "role": "checkbox",
+        "value": "on"
+      },
+      {
+        "checked": true,
+        "depth": 10,
+        "ref": "e34",
+        "role": "checkbox",
+        "value": "on"
+      },
+      {
+        "checked": true,
+        "depth": 10,
+        "ref": "e35",
+        "role": "checkbox",
+        "value": "on"
+      },
+      {
+        "checked": true,
+        "depth": 10,
+        "ref": "e36",
+        "role": "checkbox",
+        "value": "on"
+      },
+      {
+        "checked": true,
+        "depth": 10,
+        "ref": "e37",
+        "role": "checkbox",
+        "value": "on"
+      },
+      {
+        "checked": true,
+        "depth": 10,
+        "ref": "e38",
+        "role": "checkbox",
+        "value": "on"
+      },
+      {
+        "checked": false,
+        "depth": 10,
+        "ref": "e39",
+        "role": "checkbox",
+        "value": "on"
+      },
+      {
+        "checked": false,
+        "depth": 10,
+        "ref": "e40",
+        "role": "checkbox",
+        "value": "on"
+      },
+      {
+        "depth": 8,
+        "name": "Preview next request",
+        "ref": "e41",
+        "role": "button"
+      },
+      {
+        "depth": 9,
+        "name": "System: # Role You are the narrator of an interact",
+        "ref": "e42",
+        "role": "paragraph"
+      },
+      {
+        "depth": 9,
+        "name": "record: [Authoritative story event: entity_created",
+        "ref": "e43",
+        "role": "paragraph"
+      },
+      {
+        "depth": 9,
+        "name": "record: [Authoritative story event: entity_updated",
+        "ref": "e44",
+        "role": "paragraph"
+      },
+      {
+        "depth": 9,
+        "name": "record: [Authoritative story event: entity_updated",
+        "ref": "e45",
+        "role": "paragraph"
+      },
+      {
+        "depth": 9,
+        "name": "record: [Authoritative story event: entity_updated",
+        "ref": "e46",
+        "role": "paragraph"
+      },
+      {
+        "depth": 9,
+        "name": "player: <entities> Current record. When the story ",
+        "ref": "e47",
+        "role": "paragraph"
+      },
+      {
+        "depth": 9,
+        "name": "Injected: <entities> Current record. When the stor",
+        "ref": "e48",
+        "role": "paragraph"
+      },
+      {
+        "depth": 7,
+        "name": "Context",
+        "ref": "e49",
+        "role": "button"
+      },
+      {
+        "checked": true,
+        "depth": 12,
+        "name": "Characters shown",
+        "ref": "e50",
+        "role": "radio",
+        "value": "on"
+      },
+      {
+        "checked": false,
+        "depth": 12,
+        "name": "Characters hidden",
+        "ref": "e51",
+        "role": "radio",
+        "value": "on"
+      },
+      {
+        "checked": true,
+        "depth": 12,
+        "name": "Relationships shown",
+        "ref": "e52",
+        "role": "radio",
+        "value": "on"
+      },
+      {
+        "checked": false,
+        "depth": 12,
+        "name": "Relationships hidden",
+        "ref": "e53",
+        "role": "radio",
+        "value": "on"
+      },
+      {
+        "depth": 8,
+        "name": "Hidden kinds are left out of the entities block. T",
+        "ref": "e54",
+        "role": "paragraph"
+      },
+      {
+        "checked": true,
+        "depth": 9,
+        "ref": "e55",
+        "role": "checkbox",
+        "value": "on"
+      },
+      {
+        "depth": 9,
+        "name": "Tone, ongoing constraints, things to keep in mind.",
+        "ref": "e56",
+        "role": "textbox"
+      },
+      {
+        "depth": 8,
+        "disabled": true,
+        "name": "Save",
+        "ref": "e57",
+        "role": "button"
+      },
+      {
+        "checked": true,
+        "depth": 9,
+        "ref": "e58",
+        "role": "checkbox",
+        "value": "on"
+      },
+      {
+        "depth": 7,
+        "name": "Text Model",
+        "ref": "e59",
+        "role": "button"
+      },
+      {
+        "depth": 9,
+        "name": "OpenRouterNous PortalOllama (ollama-dev.greatworkf",
+        "ref": "e60",
+        "role": "combobox",
+        "value": "openrouter"
+      },
+      {
+        "depth": 9,
+        "name": "Grok 4.7Grok 4.3Claude Sonnet 4.5Hermes 4 70BHerme",
+        "ref": "e61",
+        "role": "combobox",
+        "value": "x-ai/grok-4.7"
+      },
+      {
+        "depth": 9,
+        "name": "•••••••• (leave blank to keep)",
+        "ref": "e62",
+        "role": "textbox"
+      },
+      {
+        "depth": 8,
+        "name": "Save",
+        "ref": "e63",
+        "role": "button"
+      },
+      {
+        "depth": 7,
+        "name": "Image Model",
+        "ref": "e64",
+        "role": "button"
+      },
+      {
+        "depth": 7,
+        "name": "Features",
+        "ref": "e65",
+        "role": "button"
+      },
+      {
+        "depth": 3,
+        "name": "Text $0.00Images $0.00 (0)Cached input 0Total $0.0",
+        "ref": "e66",
+        "role": "main"
+      },
+      {
+        "depth": 7,
+        "name": "Entities QA",
+        "ref": "e67",
+        "role": "heading"
+      },
+      {
+        "depth": 7,
+        "name": "The page is blank. Use Do, Say, or Story below to ",
+        "ref": "e68",
+        "role": "paragraph"
+      },
+      {
+        "depth": 9,
+        "name": "Do",
+        "ref": "e69",
+        "role": "button"
+      },
+      {
+        "depth": 9,
+        "name": "Say",
+        "ref": "e70",
+        "role": "button"
+      },
+      {
+        "depth": 9,
+        "name": "Story",
+        "ref": "e71",
+        "role": "button"
+      },
+      {
+        "depth": 9,
+        "name": "Guide",
+        "ref": "e72",
+        "role": "button"
+      },
+      {
+        "depth": 9,
+        "name": "See",
+        "ref": "e73",
+        "role": "button"
+      },
+      {
+        "depth": 8,
+        "disabled": true,
+        "name": "Continue ⏵",
+        "ref": "e74",
+        "role": "button"
+      },
+      {
+        "depth": 7,
+        "name": "What do you do?",
+        "ref": "e75",
+        "role": "textbox"
+      },
+      {
+        "depth": 10,
+        "name": "DefaultNoneMinimalLowMediumHighExtra highMax",
+        "ref": "e76",
+        "role": "combobox"
+      },
+      {
+        "depth": 9,
+        "disabled": true,
+        "name": "Send",
+        "ref": "e77",
+        "role": "button"
+      }
+    ]
+  },
+  "dom": {
+    "controls": [
+      {
+        "disabled": false,
+        "expanded": "true",
+        "label": "Close sidebar (Ctrl+B)",
+        "pressed": null,
+        "tag": "BUTTON",
+        "text": "",
+        "type": "button",
+        "value": ""
+      },
+      {
+        "disabled": false,
+        "expanded": "true",
+        "label": null,
+        "pressed": null,
+        "tag": "BUTTON",
+        "text": "Stories",
+        "type": "submit",
+        "value": ""
+      },
+      {
+        "disabled": false,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "BUTTON",
+        "text": "+ New story",
+        "type": "submit",
+        "value": ""
+      },
+      {
+        "disabled": false,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "BUTTON",
+        "text": "Entities QA",
+        "type": "submit",
+        "value": ""
+      },
+      {
+        "disabled": false,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "BUTTON",
+        "text": "✕",
+        "type": "submit",
+        "value": ""
+      },
+      {
+        "disabled": false,
+        "expanded": "true",
+        "label": null,
+        "pressed": null,
+        "tag": "BUTTON",
+        "text": "Characters",
+        "type": "submit",
+        "value": ""
+      },
+      {
+        "disabled": false,
+        "expanded": null,
+        "label": "Characters",
+        "pressed": "true",
+        "tag": "BUTTON",
+        "text": "Characters",
+        "type": "button",
+        "value": ""
+      },
+      {
+        "disabled": false,
+        "expanded": null,
+        "label": "Relationships",
+        "pressed": "false",
+        "tag": "BUTTON",
+        "text": "Relationships",
+        "type": "button",
+        "value": ""
+      },
+      {
+        "disabled": false,
+        "expanded": null,
+        "label": "New character",
+        "pressed": null,
+        "tag": "BUTTON",
+        "text": "+ New character",
+        "type": "button",
+        "value": ""
+      },
+      {
+        "disabled": false,
+        "expanded": null,
+        "label": "Edit character",
+        "pressed": null,
+        "tag": "BUTTON",
+        "text": "You",
+        "type": "button",
+        "value": ""
+      },
+      {
+        "disabled": false,
+        "expanded": null,
+        "label": "Edit character",
+        "pressed": null,
+        "tag": "BUTTON",
+        "text": "Tombehind the barstained aproninnkeeper",
+        "type": "button",
+        "value": ""
+      },
+      {
+        "disabled": false,
+        "expanded": "true",
+        "label": null,
+        "pressed": null,
+        "tag": "BUTTON",
+        "text": "Narrator Tools",
+        "type": "submit",
+        "value": ""
+      },
+      {
+        "checked": true,
+        "disabled": false,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "INPUT",
+        "text": "",
+        "type": "checkbox",
+        "value": "on"
+      },
+      {
+        "checked": true,
+        "disabled": false,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "INPUT",
+        "text": "",
+        "type": "checkbox",
+        "value": "on"
+      },
+      {
+        "checked": true,
+        "disabled": false,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "INPUT",
+        "text": "",
+        "type": "checkbox",
+        "value": "on"
+      },
+      {
+        "checked": false,
+        "disabled": false,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "INPUT",
+        "text": "",
+        "type": "checkbox",
+        "value": "on"
+      },
+      {
+        "disabled": false,
+        "expanded": "true",
+        "label": null,
+        "pressed": null,
+        "tag": "BUTTON",
+        "text": "Transcript",
+        "type": "submit",
+        "value": ""
+      },
+      {
+        "checked": true,
+        "disabled": false,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "INPUT",
+        "text": "",
+        "type": "checkbox",
+        "value": "on"
+      },
+      {
+        "checked": true,
+        "disabled": false,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "INPUT",
+        "text": "",
+        "type": "checkbox",
+        "value": "on"
+      },
+      {
+        "checked": true,
+        "disabled": false,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "INPUT",
+        "text": "",
+        "type": "checkbox",
+        "value": "on"
+      },
+      {
+        "checked": true,
+        "disabled": false,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "INPUT",
+        "text": "",
+        "type": "checkbox",
+        "value": "on"
+      },
+      {
+        "checked": true,
+        "disabled": false,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "INPUT",
+        "text": "",
+        "type": "checkbox",
+        "value": "on"
+      },
+      {
+        "checked": false,
+        "disabled": false,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "INPUT",
+        "text": "",
+        "type": "checkbox",
+        "value": "on"
+      },
+      {
+        "checked": true,
+        "disabled": false,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "INPUT",
+        "text": "",
+        "type": "checkbox",
+        "value": "on"
+      },
+      {
+        "checked": false,
+        "disabled": false,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "INPUT",
+        "text": "",
+        "type": "checkbox",
+        "value": "on"
+      },
+      {
+        "checked": true,
+        "disabled": false,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "INPUT",
+        "text": "",
+        "type": "checkbox",
+        "value": "on"
+      },
+      {
+        "checked": false,
+        "disabled": false,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "INPUT",
+        "text": "",
+        "type": "checkbox",
+        "value": "on"
+      },
+      {
+        "checked": true,
+        "disabled": false,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "INPUT",
+        "text": "",
+        "type": "checkbox",
+        "value": "on"
+      },
+      {
+        "checked": false,
+        "disabled": false,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "INPUT",
+        "text": "",
+        "type": "checkbox",
+        "value": "on"
+      },
+      {
+        "checked": true,
+        "disabled": false,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "INPUT",
+        "text": "",
+        "type": "checkbox",
+        "value": "on"
+      },
+      {
+        "checked": true,
+        "disabled": false,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "INPUT",
+        "text": "",
+        "type": "checkbox",
+        "value": "on"
+      },
+      {
+        "checked": true,
+        "disabled": false,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "INPUT",
+        "text": "",
+        "type": "checkbox",
+        "value": "on"
+      },
+      {
+        "checked": true,
+        "disabled": false,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "INPUT",
+        "text": "",
+        "type": "checkbox",
+        "value": "on"
+      },
+      {
+        "checked": true,
+        "disabled": false,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "INPUT",
+        "text": "",
+        "type": "checkbox",
+        "value": "on"
+      },
+      {
+        "checked": false,
+        "disabled": false,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "INPUT",
+        "text": "",
+        "type": "checkbox",
+        "value": "on"
+      },
+      {
+        "checked": false,
+        "disabled": false,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "INPUT",
+        "text": "",
+        "type": "checkbox",
+        "value": "on"
+      },
+      {
+        "disabled": false,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "BUTTON",
+        "text": "Preview next request",
+        "type": "submit",
+        "value": ""
+      },
+      {
+        "disabled": false,
+        "expanded": "true",
+        "label": null,
+        "pressed": null,
+        "tag": "BUTTON",
+        "text": "Context",
+        "type": "submit",
+        "value": ""
+      },
+      {
+        "checked": true,
+        "disabled": false,
+        "expanded": null,
+        "label": "Characters shown",
+        "pressed": null,
+        "tag": "INPUT",
+        "text": "",
+        "type": "radio",
+        "value": "on"
+      },
+      {
+        "checked": false,
+        "disabled": false,
+        "expanded": null,
+        "label": "Characters hidden",
+        "pressed": null,
+        "tag": "INPUT",
+        "text": "",
+        "type": "radio",
+        "value": "on"
+      },
+      {
+        "checked": true,
+        "disabled": false,
+        "expanded": null,
+        "label": "Relationships shown",
+        "pressed": null,
+        "tag": "INPUT",
+        "text": "",
+        "type": "radio",
+        "value": "on"
+      },
+      {
+        "checked": false,
+        "disabled": false,
+        "expanded": null,
+        "label": "Relationships hidden",
+        "pressed": null,
+        "tag": "INPUT",
+        "text": "",
+        "type": "radio",
+        "value": "on"
+      },
+      {
+        "checked": true,
+        "disabled": false,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "INPUT",
+        "text": "",
+        "type": "checkbox",
+        "value": "on"
+      },
+      {
+        "disabled": false,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "TEXTAREA",
+        "text": "",
+        "type": "textarea",
+        "value": ""
+      },
+      {
+        "disabled": true,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "BUTTON",
+        "text": "Save",
+        "type": "submit",
+        "value": ""
+      },
+      {
+        "checked": true,
+        "disabled": false,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "INPUT",
+        "text": "",
+        "type": "checkbox",
+        "value": "on"
+      },
+      {
+        "disabled": false,
+        "expanded": "true",
+        "label": null,
+        "pressed": null,
+        "tag": "BUTTON",
+        "text": "Text Model",
+        "type": "submit",
+        "value": ""
+      },
+      {
+        "disabled": false,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "SELECT",
+        "text": "OpenRouterNous PortalOllama (ollama-dev.greatworkflows.ai)",
+        "type": "select-one",
+        "value": "openrouter"
+      },
+      {
+        "disabled": false,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "SELECT",
+        "text": "Grok 4.7Grok 4.3Claude Sonnet 4.5Hermes 4 70BHermes 4 405BCustom…",
+        "type": "select-one",
+        "value": "x-ai/grok-4.7"
+      },
+      {
+        "checked": false,
+        "disabled": false,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "INPUT",
+        "text": "",
+        "type": "password",
+        "value": "[redacted]"
+      },
+      {
+        "disabled": false,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "BUTTON",
+        "text": "Save",
+        "type": "submit",
+        "value": ""
+      },
+      {
+        "disabled": false,
+        "expanded": "false",
+        "label": null,
+        "pressed": null,
+        "tag": "BUTTON",
+        "text": "Image Model",
+        "type": "submit",
+        "value": ""
+      },
+      {
+        "disabled": false,
+        "expanded": "false",
+        "label": null,
+        "pressed": null,
+        "tag": "BUTTON",
+        "text": "Features",
+        "type": "submit",
+        "value": ""
+      },
+      {
+        "disabled": false,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "BUTTON",
+        "text": "Do",
+        "type": "submit",
+        "value": ""
+      },
+      {
+        "disabled": false,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "BUTTON",
+        "text": "Say",
+        "type": "submit",
+        "value": ""
+      },
+      {
+        "disabled": false,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "BUTTON",
+        "text": "Story",
+        "type": "submit",
+        "value": ""
+      },
+      {
+        "disabled": false,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "BUTTON",
+        "text": "Guide",
+        "type": "submit",
+        "value": ""
+      },
+      {
+        "disabled": false,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "BUTTON",
+        "text": "See",
+        "type": "submit",
+        "value": ""
+      },
+      {
+        "disabled": true,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "BUTTON",
+        "text": "Continue ⏵",
+        "type": "submit",
+        "value": ""
+      },
+      {
+        "disabled": false,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "TEXTAREA",
+        "text": "",
+        "type": "textarea",
+        "value": ""
+      },
+      {
+        "disabled": false,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "SELECT",
+        "text": "DefaultNoneMinimalLowMediumHighExtra highMax",
+        "type": "select-one",
+        "value": ""
+      },
+      {
+        "disabled": true,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "BUTTON",
+        "text": "Send",
+        "type": "submit",
+        "value": ""
+      }
+    ],
+    "text": "story-llm\nSTORIES\n+ New story\nEntities QA\n✕\nCHARACTERS\nCharacters\nRelationships\n+ New character\nYou\nTom\nbehind the bar\nstained apron\ninnkeeper\nNARRATOR TOOLS\n\nAll tools start on for every story. Entity tools can change persistent world state; dice and image calls can add cost. Turn off any tool independently before writing.\n\nENTITY\nRecord characters\nThe narrator can record character facts and stats, including location and outfit.\nRecord relationships\nThe narrator can record how characters relate and change relationship stats.\nDICE\nRoll uncertain outcomes\nThe narrator may give a chance or reference up to two stored attributes. Rolls read stats but never change them.\nIMAGE\nIllustrate scenes\nThe narrator may illustrate striking moments on its own. See works either way, whenever the image service and key are configured. Images may incur provider charges.\nTRANSCRIPT\nPLAYER ACTIONS\nDo\nSay\nStory\nGuide\nContinue\nSee\nNARRATION\nNarration text\nThoughts (reasoning)\nRECORDS\nDice rolls\nImage prompts\nImage captions\nTool calls\nEntity created\nEntity updated\nEntity deleted\nAttribute changed\nAttribute removed\nAuthor's note updates\nIMAGES\nThe images themselves\nPreview next request\n\nSystem: # Role You are the narrator of an interactive story. # Narration - Continue the scene in vivid, literary prose that follows naturally from what has already happened and from the player's latest act\n\nrecord: [Authoritative story event: entity_created] User edit: Old Tom was added as a character.\nImages: 0 | Reasoning: No\n\nrecord: [Authoritative story event: entity_updated] User edit: Old Tom: gender → female.\nImages: 0 | Reasoning: No\n\nrecord: [Authoritative story event: entity_updated] User edit: Old Tom: gender cleared.\nImages: 0 | Reasoning: No\n\nrecord: [Authoritative story event: entity_updated] User edit: Old Tom: name Old Tom → Tom.\nImages: 0 | Reasoning: No\n\nplayer: <entities> Current record. When the story and a record disagree, the more recent one is correct. Never undo a player correction unless later story events change it. A → B relationships are one-way; A\nImages: 0 | Reasoning: No\n\nInjected: <entities> Current record. When the story and a record disagree, the more recent one is correct. Never undo a player correction unless later story events change it. A → B relationships are one-way; A\n\nCONTEXT\nEntities in context\nCharacters\nShown\nHidden\nRelationships\nShown\nHidden\n\nHidden kinds are left out of the entities block. The narrator still sees their changes in history if the Transcript panel includes entity records.\n\nAuthor's note enabled\nAuthor's note\nSave\nTool instructions\nTEXT MODEL\nProvider\nOpenRouter\nNous Portal\nOllama (ollama-dev.greatworkflows.ai)\nModel\nGrok 4.7\nGrok 4.3\nClaude Sonnet 4.5\nHermes 4 70B\nHermes 4 405B\nCustom…\nAPI key (set)\nSave\nIMAGE MODEL\nFEATURES\nText $0.00\nImages $0.00 (0)\nCached input 0\nTotal $0.00\nEntities QA\n\nThe page is blank. Use Do, Say, or Story below to begin.\n\nDo\nSay\nStory\nGuide\nSee\nContinue ⏵\nEnter to send · Shift + Enter for a new line\nEffort\nDefault\nNone\nMinimal\nLow\nMedium\nHigh\nExtra high\nMax\nSend"
+  },
+  "schema": [
+    {
+      "type": "index",
+      "name": "idx_attribute_registry_canonical_ci",
+      "sql": "CREATE UNIQUE INDEX idx_attribute_registry_canonical_ci\n            ON attribute_registry(canonical_name COLLATE NOCASE)"
+    },
+    {
+      "type": "index",
+      "name": "idx_entities_name_ci",
+      "sql": "CREATE UNIQUE INDEX idx_entities_name_ci\n            ON entities(story_id, name COLLATE NOCASE) WHERE is_present = 1"
+    },
+    {
+      "type": "index",
+      "name": "idx_entities_story_name",
+      "sql": "CREATE INDEX idx_entities_story_name ON entities(story_id, name)"
+    },
+    {
+      "type": "index",
+      "name": "idx_image_assets_entry",
+      "sql": "CREATE INDEX idx_image_assets_entry ON image_assets(entry_id)"
+    },
+    {
+      "type": "index",
+      "name": "idx_relationships_pair",
+      "sql": "CREATE UNIQUE INDEX idx_relationships_pair ON relationships(from_id, to_id)"
+    },
+    {
+      "type": "index",
+      "name": "idx_relationships_to",
+      "sql": "CREATE INDEX idx_relationships_to ON relationships(to_id)"
+    },
+    {
+      "type": "index",
+      "name": "idx_transcript_kind",
+      "sql": "CREATE INDEX idx_transcript_kind ON transcript_entries(story_id, kind, seq)"
+    },
+    {
+      "type": "index",
+      "name": "idx_transcript_story_seq",
+      "sql": "CREATE INDEX idx_transcript_story_seq ON transcript_entries(story_id, seq)"
+    },
+    {
+      "type": "index",
+      "name": "idx_transcript_target",
+      "sql": "CREATE INDEX idx_transcript_target ON transcript_entries(target_entry_id)"
+    },
+    {
+      "type": "index",
+      "name": "idx_transcript_turn",
+      "sql": "CREATE INDEX idx_transcript_turn ON transcript_entries(turn_id)"
+    },
+    {
+      "type": "index",
+      "name": "idx_usage_story",
+      "sql": "CREATE INDEX idx_usage_story ON usage_records(story_id)"
+    },
+    {
+      "type": "index",
+      "name": "idx_usage_turn",
+      "sql": "CREATE INDEX idx_usage_turn ON usage_records(turn_id)"
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_attribute_registry_1",
+      "sql": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_attribute_registry_2",
+      "sql": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_characters_1",
+      "sql": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_entities_1",
+      "sql": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_entity_attributes_1",
+      "sql": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_image_assets_1",
+      "sql": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_image_blobs_1",
+      "sql": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_relationships_1",
+      "sql": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_settings_1",
+      "sql": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_stories_1",
+      "sql": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_transcript_entries_1",
+      "sql": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_transcript_entries_2",
+      "sql": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_turns_1",
+      "sql": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_turns_2",
+      "sql": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_usage_records_1",
+      "sql": null
+    },
+    {
+      "type": "table",
+      "name": "attribute_registry",
+      "sql": "CREATE TABLE attribute_registry (\n            id TEXT PRIMARY KEY,\n            canonical_name TEXT NOT NULL UNIQUE,\n            aliases_json TEXT NOT NULL DEFAULT '[]',\n            entity_kinds_json TEXT NOT NULL DEFAULT '[]',\n            min REAL NOT NULL,\n            max REAL NOT NULL,\n            category TEXT NOT NULL,\n            is_user_created INTEGER NOT NULL DEFAULT 0,\n            created_in_story_id TEXT,\n            created_at TEXT NOT NULL\n        )"
+    },
+    {
+      "type": "table",
+      "name": "characters",
+      "sql": "CREATE TABLE characters (\n            entity_id TEXT PRIMARY KEY REFERENCES entities(id) ON DELETE CASCADE,\n            known_as TEXT,\n            appearance_anchor TEXT,\n            gender TEXT,\n            age TEXT,\n            role TEXT,\n            location TEXT,\n            outfit TEXT\n        )"
+    },
+    {
+      "type": "table",
+      "name": "entities",
+      "sql": "CREATE TABLE entities (\n            id TEXT PRIMARY KEY,\n            story_id TEXT NOT NULL REFERENCES stories(id) ON DELETE CASCADE,\n            kind TEXT NOT NULL CHECK (kind IN ('character', 'relationship')),\n            name TEXT,\n            is_present INTEGER NOT NULL DEFAULT 1,\n            created_at TEXT NOT NULL,\n            updated_at TEXT NOT NULL,\n            CHECK ((kind = 'character') = (name IS NOT NULL))\n        )"
+    },
+    {
+      "type": "table",
+      "name": "entity_attributes",
+      "sql": "CREATE TABLE entity_attributes (\n            entity_id TEXT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,\n            attribute_id TEXT NOT NULL REFERENCES attribute_registry(id) ON DELETE CASCADE,\n            value REAL NOT NULL,\n            source TEXT NOT NULL,\n            updated_at TEXT NOT NULL,\n            PRIMARY KEY (entity_id, attribute_id)\n        )"
+    },
+    {
+      "type": "table",
+      "name": "image_assets",
+      "sql": "CREATE TABLE image_assets (\n            id TEXT PRIMARY KEY,\n            entry_id TEXT NOT NULL REFERENCES transcript_entries(id) ON DELETE CASCADE,\n            path TEXT NOT NULL,\n            prompt TEXT NOT NULL,\n            created_at TEXT NOT NULL\n        )"
+    },
+    {
+      "type": "table",
+      "name": "image_blobs",
+      "sql": "CREATE TABLE image_blobs (\n            asset_id TEXT PRIMARY KEY REFERENCES image_assets(id) ON DELETE CASCADE,\n            media_type TEXT NOT NULL,\n            bytes BLOB NOT NULL\n        )"
+    },
+    {
+      "type": "table",
+      "name": "relationships",
+      "sql": "CREATE TABLE relationships (\n            entity_id TEXT PRIMARY KEY REFERENCES entities(id) ON DELETE CASCADE,\n            from_id TEXT NOT NULL,\n            to_id TEXT NOT NULL,\n            label TEXT NOT NULL,\n            direction TEXT NOT NULL CHECK (direction IN ('one_way', 'both')),\n            description TEXT\n        )"
+    },
+    {
+      "type": "table",
+      "name": "settings",
+      "sql": "CREATE TABLE settings (\n            key TEXT PRIMARY KEY,\n            value TEXT NOT NULL\n        )"
+    },
+    {
+      "type": "table",
+      "name": "stories",
+      "sql": "CREATE TABLE stories (\n            id TEXT PRIMARY KEY,\n            title TEXT NOT NULL,\n            created_at TEXT NOT NULL,\n            updated_at TEXT NOT NULL,\n            settings_json TEXT NOT NULL DEFAULT '{}'\n        )"
+    },
+    {
+      "type": "table",
+      "name": "transcript_entries",
+      "sql": "CREATE TABLE transcript_entries (\n            id TEXT PRIMARY KEY,\n            story_id TEXT NOT NULL REFERENCES stories(id) ON DELETE CASCADE,\n            seq INTEGER NOT NULL,\n            kind TEXT NOT NULL,\n            visibility TEXT NOT NULL CHECK (visibility IN ('visible', 'hidden')),\n            content TEXT,\n            payload_json TEXT NOT NULL DEFAULT '{}',\n            target_entry_id TEXT REFERENCES transcript_entries(id) ON DELETE CASCADE,\n            turn_id TEXT REFERENCES turns(id) ON DELETE CASCADE,\n            created_at TEXT NOT NULL,\n            UNIQUE(story_id, seq)\n        )"
+    },
+    {
+      "type": "table",
+      "name": "turns",
+      "sql": "CREATE TABLE turns (\n            id TEXT PRIMARY KEY,\n            story_id TEXT NOT NULL REFERENCES stories(id) ON DELETE CASCADE,\n            seq INTEGER NOT NULL,\n            status TEXT NOT NULL CHECK (status IN ('pending', 'complete', 'failed')),\n            attempt INTEGER NOT NULL DEFAULT 0,\n            created_at TEXT NOT NULL,\n            UNIQUE(story_id, seq)\n        )"
+    },
+    {
+      "type": "table",
+      "name": "usage_records",
+      "sql": "CREATE TABLE usage_records (\n            id TEXT PRIMARY KEY,\n            story_id TEXT NOT NULL REFERENCES stories(id) ON DELETE CASCADE,\n            kind TEXT NOT NULL CHECK (kind IN ('narration', 'summary', 'title', 'image', 'caption')),\n            provider TEXT NOT NULL,\n            model TEXT NOT NULL,\n            response_id TEXT,\n            input_tokens INTEGER NOT NULL DEFAULT 0,\n            output_tokens INTEGER NOT NULL DEFAULT 0,\n            cached_input_tokens INTEGER NOT NULL DEFAULT 0,\n            cache_write_tokens INTEGER NOT NULL DEFAULT 0,\n            cost_usd REAL,\n            created_at TEXT NOT NULL,\n            turn_id TEXT,\n            image_asset_id TEXT,\n            duration_ms INTEGER,\n            earlier_attempt INTEGER NOT NULL DEFAULT 0\n        )"
+    }
+  ],
+  "registry": [
+    {
+      "canonical_name": "Accuracy",
+      "entity_kinds_json": "[\"character\"]",
+      "min": 0.0,
+      "max": 10.0
+    },
+    {
+      "canonical_name": "Affection",
+      "entity_kinds_json": "[\"relationship\"]",
+      "min": -10.0,
+      "max": 10.0
+    },
+    {
+      "canonical_name": "Charisma",
+      "entity_kinds_json": "[\"character\"]",
+      "min": 0.0,
+      "max": 10.0
+    },
+    {
+      "canonical_name": "Evasion",
+      "entity_kinds_json": "[\"character\"]",
+      "min": 0.0,
+      "max": 10.0
+    },
+    {
+      "canonical_name": "Fear",
+      "entity_kinds_json": "[\"relationship\"]",
+      "min": -10.0,
+      "max": 10.0
+    },
+    {
+      "canonical_name": "Health",
+      "entity_kinds_json": "[\"character\"]",
+      "min": 0.0,
+      "max": 10.0
+    },
+    {
+      "canonical_name": "Intelligence",
+      "entity_kinds_json": "[\"character\"]",
+      "min": 0.0,
+      "max": 10.0
+    },
+    {
+      "canonical_name": "Luck",
+      "entity_kinds_json": "[\"character\"]",
+      "min": 0.0,
+      "max": 10.0
+    },
+    {
+      "canonical_name": "Perception",
+      "entity_kinds_json": "[\"character\"]",
+      "min": 0.0,
+      "max": 10.0
+    },
+    {
+      "canonical_name": "Resolve",
+      "entity_kinds_json": "[\"character\"]",
+      "min": 0.0,
+      "max": 10.0
+    },
+    {
+      "canonical_name": "Respect",
+      "entity_kinds_json": "[\"relationship\"]",
+      "min": -10.0,
+      "max": 10.0
+    },
+    {
+      "canonical_name": "Stealth",
+      "entity_kinds_json": "[\"character\"]",
+      "min": 0.0,
+      "max": 10.0
+    },
+    {
+      "canonical_name": "Strength",
+      "entity_kinds_json": "[\"character\"]",
+      "min": 0.0,
+      "max": 10.0
+    },
+    {
+      "canonical_name": "Trust",
+      "entity_kinds_json": "[\"relationship\"]",
+      "min": -10.0,
+      "max": 10.0
+    }
+  ],
+  "story": [
+    {
+      "id": "7b6992ba-996a-4b13-9750-bef67d3eb4c0",
+      "title": "Entities QA",
+      "settings_json": "{\"narrator_tools\":{\"illustrate_scene\":false,\"roll_check\":true,\"save_character\":true,\"save_relationship\":true}}"
+    }
+  ],
+  "entities": [
+    {
+      "id": "6abab2f7-1876-4ade-9d65-6ca8d72f4751",
+      "story_id": "7b6992ba-996a-4b13-9750-bef67d3eb4c0",
+      "kind": "character",
+      "name": "You",
+      "is_present": 1,
+      "created_at": "2026-10-02T05:50:46.949095700+00:00",
+      "updated_at": "2026-10-02T05:50:46.949386900+00:00",
+      "known_as": null,
+      "appearance_anchor": null,
+      "gender": null,
+      "age": null,
+      "role": null,
+      "location": null,
+      "outfit": null
+    },
+    {
+      "id": "0834907f-66a8-418b-abff-19d18b92e6f9",
+      "story_id": "7b6992ba-996a-4b13-9750-bef67d3eb4c0",
+      "kind": "character",
+      "name": "Tom",
+      "is_present": 1,
+      "created_at": "2026-10-02T06:08:15.713414400+00:00",
+      "updated_at": "2026-10-02T06:19:08.512666800+00:00",
+      "known_as": null,
+      "appearance_anchor": null,
+      "gender": null,
+      "age": null,
+      "role": "innkeeper",
+      "location": "behind the bar",
+      "outfit": "stained apron"
+    }
+  ],
+  "relationships": [],
+  "attributes": [],
+  "transcript": [
+    {
+      "id": "d541b95d-7fff-4a65-acf3-7525300dd259",
+      "story_id": "7b6992ba-996a-4b13-9750-bef67d3eb4c0",
+      "seq": 0,
+      "kind": "entity_created",
+      "visibility": "hidden",
+      "content": "You was added as a character.",
+      "payload_json": "{\"entity_id\":\"6abab2f7-1876-4ade-9d65-6ca8d72f4751\",\"kind\":\"character\",\"name\":\"You\",\"source\":\"story_bootstrap\"}",
+      "target_entry_id": null,
+      "turn_id": null,
+      "created_at": "2026-10-02T05:50:46.949095700+00:00"
+    },
+    {
+      "id": "3f70dc08-d4bc-4c6d-add2-b8c5921feccf",
+      "story_id": "7b6992ba-996a-4b13-9750-bef67d3eb4c0",
+      "seq": 1,
+      "kind": "entity_created",
+      "visibility": "hidden",
+      "content": "User edit: Old Tom was added as a character.",
+      "payload_json": "{\"entity_id\":\"0834907f-66a8-418b-abff-19d18b92e6f9\",\"kind\":\"character\",\"location\":\"behind the bar\",\"name\":\"Old Tom\",\"outfit\":\"stained apron\",\"role\":\"innkeeper\",\"source\":\"user\"}",
+      "target_entry_id": null,
+      "turn_id": null,
+      "created_at": "2026-10-02T06:08:15.713414400+00:00"
+    },
+    {
+      "id": "b6f812fa-9b68-4e02-8f9e-242010e2b95e",
+      "story_id": "7b6992ba-996a-4b13-9750-bef67d3eb4c0",
+      "seq": 2,
+      "kind": "entity_updated",
+      "visibility": "hidden",
+      "content": "User edit: Old Tom: gender → female.",
+      "payload_json": "{\"after\":{\"gender\":\"female\",\"location\":\"behind the bar\",\"name\":\"Old Tom\",\"outfit\":\"stained apron\",\"role\":\"innkeeper\"},\"before\":{\"location\":\"behind the bar\",\"name\":\"Old Tom\",\"outfit\":\"stained apron\",\"role\":\"innkeeper\"},\"entity_id\":\"0834907f-66a8-418b-abff-19d18b92e6f9\",\"source\":\"user\"}",
+      "target_entry_id": null,
+      "turn_id": null,
+      "created_at": "2026-10-02T06:16:34.270227500+00:00"
+    },
+    {
+      "id": "44058f26-2de4-43f7-b86a-278ff87a59a6",
+      "story_id": "7b6992ba-996a-4b13-9750-bef67d3eb4c0",
+      "seq": 3,
+      "kind": "entity_updated",
+      "visibility": "hidden",
+      "content": "User edit: Old Tom: gender cleared.",
+      "payload_json": "{\"after\":{\"location\":\"behind the bar\",\"name\":\"Old Tom\",\"outfit\":\"stained apron\",\"role\":\"innkeeper\"},\"before\":{\"gender\":\"female\",\"location\":\"behind the bar\",\"name\":\"Old Tom\",\"outfit\":\"stained apron\",\"role\":\"innkeeper\"},\"entity_id\":\"0834907f-66a8-418b-abff-19d18b92e6f9\",\"source\":\"user\"}",
+      "target_entry_id": null,
+      "turn_id": null,
+      "created_at": "2026-10-02T06:17:23.844780400+00:00"
+    },
+    {
+      "id": "346b95b2-215a-413b-816c-1cf6e4e32e9f",
+      "story_id": "7b6992ba-996a-4b13-9750-bef67d3eb4c0",
+      "seq": 4,
+      "kind": "entity_updated",
+      "visibility": "hidden",
+      "content": "User edit: Old Tom: name Old Tom → Tom.",
+      "payload_json": "{\"after\":{\"location\":\"behind the bar\",\"name\":\"Tom\",\"outfit\":\"stained apron\",\"role\":\"innkeeper\"},\"before\":{\"location\":\"behind the bar\",\"name\":\"Old Tom\",\"outfit\":\"stained apron\",\"role\":\"innkeeper\"},\"entity_id\":\"0834907f-66a8-418b-abff-19d18b92e6f9\",\"source\":\"user\"}",
+      "target_entry_id": null,
+      "turn_id": null,
+      "created_at": "2026-10-02T06:19:08.512303300+00:00"
+    }
+  ],
+  "usage": [],
+  "logs": [
+    {
+      "args": [
+        "%cDownload the React DevTools for a better development experience: https://reactjs.org/link/react-devtools",
+        "font-weight:bold"
+      ],
+      "id": 1,
+      "level": "info",
+      "source": "at http://localhost:1420/node_modules/.vite/deps/react-dom-Cn6-HCcb.js?v=d202a15e:17222:52",
+      "timestamp": 1790919577244
+    }
+  ],
+  "read_only_preview": {
+    "images_unsupported": false,
+    "injected": "<entities>\nCurrent record. When the story and a record disagree, the more recent one is correct. Never undo a player correction unless later story events change it. A → B relationships are one-way; A ↔ B are mutual. Refer to characters by name, and to a relationship as 'A → B'. Names here are true names. When an entry says 'known to the player as', narrate it only that way until the story reveals the name.\n- You (character)\n- Tom (character); location: behind the bar; outfit: stained apron; role: innkeeper\n</entities>\n\n<additional_instructions>\nAvailable narrator tools for this turn: roll_check, save_character, save_relationship.\nFor a genuinely uncertain outcome, call roll_check before narrating the result. With no factors it defaults to 50% unless you provide chance_percent. For a check based on registered attributes, select one acting entity-attribute pair or two opposing pairs by name; the backend reads their current values and calculates the chance. Never invent attribute values or pass chance_percent together with factors. Do not roll routine or certain actions.\nUse save_character for new or changed characters, including where they are and what they wear.\nUse save_relationship when the story establishes or changes how two characters relate.\n</additional_instructions>",
+    "messages": [
+      {
+        "has_reasoning": false,
+        "image_count": 0,
+        "role": "record",
+        "text": "[Authoritative story event: entity_created]\nUser edit: Old Tom was added as a character."
+      },
+      {
+        "has_reasoning": false,
+        "image_count": 0,
+        "role": "record",
+        "text": "[Authoritative story event: entity_updated]\nUser edit: Old Tom: gender → female."
+      },
+      {
+        "has_reasoning": false,
+        "image_count": 0,
+        "role": "record",
+        "text": "[Authoritative story event: entity_updated]\nUser edit: Old Tom: gender cleared."
+      },
+      {
+        "has_reasoning": false,
+        "image_count": 0,
+        "role": "record",
+        "text": "[Authoritative story event: entity_updated]\nUser edit: Old Tom: name Old Tom → Tom."
+      },
+      {
+        "has_reasoning": false,
+        "image_count": 0,
+        "role": "player",
+        "text": "<entities>\nCurrent record. When the story and a record disagree, the more recent one is correct. Never undo a player correction unless later story events change it. A → B relationships are one-way; A ↔ B are mutual. Refer to characters by name, and to a relationship as 'A → B'. Names here are true names. When an entry says 'known to the player as', narrate it only that way until the story reveals the name.\n- You (character)\n- Tom (character); location: behind the bar; outfit: stained apron; role: innkeeper\n</entities>\n\n<additional_instructions>\nAvailable narrator tools for this turn: roll_check, save_character, save_relationship.\nFor a genuinely uncertain outcome, call roll_check before narrating the result. With no factors it defaults to 50% unless you provide chance_percent. For a check based on registered attributes, select one acting entity-attribute pair or two opposing pairs by name; the backend reads their current values and calculates the chance. Never invent attribute values or pass chance_percent together with factors. Do not roll routine or certain actions.\nUse save_character for new or changed characters, including where they are and what they wear.\nUse save_relationship when the story establishes or changes how two characters relate.\n</additional_instructions>\n\n<continue/>"
+      }
+    ],
+    "system": "# Role\n\nYou are the narrator of an interactive story.\n\n# Narration\n\n- Continue the scene in vivid, literary prose that follows naturally from what has already happened and from the player's latest action.\n- Match the established tone, tense, and style unless the current author's note directs otherwise.\n- Always narrate the player's actions and perceptions in the second person (\"you\"). Other characters stay in the third person.\n- Never speak as the player, never break the fourth wall, and never add meta-commentary, author's notes, or content outside the story itself.\n\n# Content\n\nThis is private, single-player fiction the player is authoring for themselves — no one else ever sees it.\n\n- Violence, combat, crime, death, and morally gray or dark themes are ordinary genre content here, not something to avoid, soften, or redirect away from. Narrate them with the same craft as any other scene.\n- Never break narration to refuse, warn, moralize, or ask the player to reconsider. If an action would have serious in-fiction consequences, let those consequences play out in the story itself.\n- The only real-world line: don't render content that would be illegal or genuinely harmful outside the fiction (e.g. actionable real-world instructions for violence, or sexual content involving minors). Ordinary dramatic violence and dark themes are not that.\n\n# Input format\n\nEach turn arrives as tagged input. These tags are input markup. Never reproduce them in output.\n\n## Player turns\n\n- `<do>` is an attempted action.\n- `<say>` is spoken words.\n- `<story>` is an author-written passage to complete.\n- `<guide>` is out-of-character steering.\n- `<continue/>` means keep going.\n- `<see>` is a request to see something. Always call `illustrate_scene`, whatever the subject, for the named subject or, when none is named, the current scene. Never skip it. On your own initiative, illustrate only genuinely striking moments.\n\n## Context blocks\n\n- `<entities>` is the current record of the story's characters and relationships. When it disagrees with the story, the more recent one is correct; never undo a player correction unless later story events change it.\n- `<author_note>` contains the author's current standing guidance. Follow it on every turn while present, including tone, style, pacing, and scene constraints even when they differ from earlier narration. Keep the rules above, authoritative story facts and rolls, and the player's latest action intact. Never quote or mention the note in your reply.\n- `<additional_instructions>` contains extra guidance for this turn, such as tool availability and when to use those tools.\n- `<retry>` means the player rejected your previous reply to this action. Follow it, and never mention it.\n\n## Records in history\n\n- `[Authoritative story event: …]` messages are system records of what already happened (dice rolls, entity changes, images). They arrive in the player's turn but are not the player speaking. Treat them as fact, and never write one yourself.\n- `[Authoritative context summary]` replaces older history that was compacted. Treat it as fact.\n\nYour replies are only narration or real tool calls."
+  }
+}

@@ -1,0 +1,3 @@
+npx tsc --noEmit
+cwd=C:\Users\User\Documents\GitHub\story-llm
+exit=0

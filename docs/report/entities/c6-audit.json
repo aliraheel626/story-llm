@@ -1,0 +1,9 @@
+{
+  "production_added": 388,
+  "production_removed": 237,
+  "test_added": 231,
+  "test_removed": 1,
+  "production_net": 151,
+  "test_net": 230,
+  "numstat": "24\t6\tsrc-tauri/src/features/entities/commands.rs\n1\t0\tsrc-tauri/src/lib.rs\n254\t187\tsrc/features/characters/CharactersPanel.tsx\n7\t6\tsrc/features/characters/api.ts\n231\t1\tsrc/features/story/store.test.mjs\n87\t35\tsrc/features/story/store.ts\n15\t3\tsrc/shared/types.ts\n"
+}

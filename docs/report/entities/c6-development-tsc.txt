@@ -1,0 +1,3 @@
+Command: cmd /c npx tsc --noEmit
+Exit: 0
+

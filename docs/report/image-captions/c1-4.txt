@@ -1,0 +1,3 @@
+npx tsc --noEmit
+cwd=C:\Users\User\AppData\Local\Temp\kilo\story-llm-c1
+exit=0

@@ -1,0 +1,59 @@
+C2 Development Verification
+Base commit: e5e583a (C1, 186 permanent tests).
+
+Applied the ignored C2 patch using apply_patch only. Updated the prepared patch
+with the two reviewed corrections so it also represents the final source edits:
+- Added idx_entities_story_name ON entities(story_id, name).
+- Deleted updates updated_at in both modes; it changes is_present only in Live.
+
+Permanent Rust tests: PASS, 190 passed, 0 failed, 0 ignored, 0 filtered out.
+Evidence: c2-development-cargo-test.txt (initial),
+          c2-development-cargo-test-final.txt (after temporary probe removal).
+Exactly four new permanent tests, with no permanent tests removed:
+- entities::attributes::tests::wrong_story_attribute_reads_are_empty
+- transcript::commands::tests::erasing_a_deletion_cannot_restore_a_reused_present_name
+- transcript::commands::tests::erasing_earlier_narration_allows_reused_historical_names
+- transcript::commands::tests::erasing_narrator_rename_preserves_later_player_anchor_edit
+The three erase regressions use the real erase_with_ticket command transaction.
+Existing last_event_id assertion fields alone were removed; remaining state,
+attribute, unrelated updated_at, erasure and transaction assertions remain.
+
+Clippy: PASS, cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings.
+Evidence: c2-development-cargo-clippy.txt (final, after probe removal).
+No development test or clippy fixes were necessary.
+
+Stable C1 probe: inserted temporarily in narrator/tools/mod.rs with its original
+six sample arguments, changing only its output filename to c2-tool-contract.json.
+Ran the filtered probe with C1_TOOL_CONTRACT_PHASE=after; 1 passed, 190 filtered out.
+Evidence: c2-cargo-test-contract-probe.txt, c2-tool-contract.json.
+Compared against c1-tool-contract-after.json: byte-identical, both 9802 bytes.
+SHA-256: e274b88ddccc0c22914e40f335e1ab7dc813d1235f5bccda8df2b1d5e03085fe
+Evidence: c2-tool-contract-compare.txt, c2-contract-comparison.json.
+Removed the probe and its temporary import with apply_patch before final checks.
+git diff HEAD -- src-tauri/src/features/narrator/tools/mod.rs is empty.
+Evidence: c2-probe-removal.txt. No probe identifiers remain in Rust sources.
+
+Final source scans cover src and src-tauri/src:
+- story_entity_state|last_event_id: only shared/db.rs:438, the assertion that the
+  old table does not exist. No last_event_id matches remain.
+- \bALTER\b|table_info|migration: shared/db.rs:441,452,471,482,490,505 and
+  turn/retry.rs:370. Every hit is under cfg(test); no ALTER matches remain.
+shared/db.rs test module begins at lines 277-278.
+turn/retry.rs test module begins at lines 95-96.
+Evidence: c2-legacy-state-scan.txt, c2-migration-scan.txt.
+No migrations, production schema introspection, or compatibility logic added.
+
+Final changed source files:
+- src-tauri/src/shared/db.rs
+- src-tauri/src/features/entities/repository.rs
+- src-tauri/src/features/entities/projection.rs
+- src-tauri/src/features/entities/attributes.rs
+- src-tauri/src/features/images/generation.rs
+- src-tauri/src/features/stories/repository.rs
+- src-tauri/src/features/transcript/erase.rs
+- src-tauri/src/features/transcript/commands.rs
+
+git diff --check: PASS (only Git LF/CRLF normalization notices).
+git diff --cached --stat: empty. All eight source changes remain unstaged.
+No commit, application invocation, model call, secret access, or unrelated rustfmt.
+Coordinator owns the audit, commit, and mandatory post-commit checks.

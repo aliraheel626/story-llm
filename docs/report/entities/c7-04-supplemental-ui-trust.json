@@ -1,0 +1,2382 @@
+{
+  "captured_at": 1790925259.8487663,
+  "database": "C:\\Users\\User\\AppData\\Roaming\\com.story-llm.app\\story-llm.sqlite3",
+  "database_mode": "ro",
+  "story_id": "7b6992ba-996a-4b13-9750-bef67d3eb4c0",
+  "tool_settings": {
+    "illustrate_scene": false,
+    "roll_check": true,
+    "save_character": true,
+    "save_relationship": true
+  },
+  "context_settings": {
+    "author_note": "",
+    "author_note_enabled": true,
+    "entity_kinds": {
+      "character": true,
+      "relationship": true
+    },
+    "tool_instructions": true
+  },
+  "transcript_settings": [
+    {
+      "enabled": true,
+      "group": "Player actions",
+      "key": "action.do",
+      "label": "Do"
+    },
+    {
+      "enabled": true,
+      "group": "Player actions",
+      "key": "action.say",
+      "label": "Say"
+    },
+    {
+      "enabled": true,
+      "group": "Player actions",
+      "key": "action.story",
+      "label": "Story"
+    },
+    {
+      "enabled": true,
+      "group": "Player actions",
+      "key": "action.guide",
+      "label": "Guide"
+    },
+    {
+      "enabled": true,
+      "group": "Player actions",
+      "key": "action.continue",
+      "label": "Continue"
+    },
+    {
+      "enabled": false,
+      "group": "Player actions",
+      "key": "action.see",
+      "label": "See"
+    },
+    {
+      "enabled": true,
+      "group": "Narration",
+      "key": "narration",
+      "label": "Narration text"
+    },
+    {
+      "enabled": false,
+      "group": "Narration",
+      "key": "narration.thoughts",
+      "label": "Thoughts (reasoning)"
+    },
+    {
+      "enabled": true,
+      "group": "Records",
+      "key": "record.diceroll",
+      "label": "Dice rolls"
+    },
+    {
+      "enabled": false,
+      "group": "Records",
+      "key": "record.image_generated",
+      "label": "Image prompts"
+    },
+    {
+      "enabled": true,
+      "group": "Records",
+      "key": "record.image_captioned",
+      "label": "Image captions"
+    },
+    {
+      "enabled": false,
+      "group": "Records",
+      "key": "record.tool_call",
+      "label": "Tool calls"
+    },
+    {
+      "enabled": true,
+      "group": "Records",
+      "key": "record.entity_created",
+      "label": "Entity created"
+    },
+    {
+      "enabled": true,
+      "group": "Records",
+      "key": "record.entity_updated",
+      "label": "Entity updated"
+    },
+    {
+      "enabled": true,
+      "group": "Records",
+      "key": "record.entity_deleted",
+      "label": "Entity deleted"
+    },
+    {
+      "enabled": true,
+      "group": "Records",
+      "key": "record.entity_attribute_changed",
+      "label": "Attribute changed"
+    },
+    {
+      "enabled": true,
+      "group": "Records",
+      "key": "record.entity_attribute_removed",
+      "label": "Attribute removed"
+    },
+    {
+      "enabled": false,
+      "group": "Records",
+      "key": "record.context_note_updated",
+      "label": "Author's note updates"
+    },
+    {
+      "enabled": false,
+      "group": "Images",
+      "key": "images",
+      "label": "The images themselves"
+    }
+  ],
+  "snapshot": {
+    "elements": [
+      {
+        "depth": 1,
+        "name": "story-llmStories+ New storyEntities QA✕CharactersC",
+        "ref": "e1",
+        "role": "generic"
+      },
+      {
+        "depth": 3,
+        "name": "Sidebar",
+        "ref": "e2",
+        "role": "complementary"
+      },
+      {
+        "depth": 5,
+        "name": "Close sidebar (Ctrl+B)",
+        "ref": "e3",
+        "role": "button"
+      },
+      {
+        "depth": 7,
+        "name": "Stories",
+        "ref": "e4",
+        "role": "button"
+      },
+      {
+        "depth": 8,
+        "name": "+ New story",
+        "ref": "e5",
+        "role": "button"
+      },
+      {
+        "depth": 10,
+        "name": "Entities QA",
+        "ref": "e6",
+        "role": "button"
+      },
+      {
+        "depth": 10,
+        "name": "✕",
+        "ref": "e7",
+        "role": "button"
+      },
+      {
+        "depth": 7,
+        "name": "Characters",
+        "ref": "e8",
+        "role": "button"
+      },
+      {
+        "depth": 8,
+        "name": "Entity tabs",
+        "ref": "e9",
+        "role": "group"
+      },
+      {
+        "depth": 9,
+        "name": "Characters",
+        "ref": "e10",
+        "role": "button"
+      },
+      {
+        "depth": 9,
+        "name": "Relationships",
+        "ref": "e11",
+        "role": "button"
+      },
+      {
+        "depth": 10,
+        "name": "Edit relationship",
+        "ref": "e12",
+        "role": "button"
+      },
+      {
+        "depth": 7,
+        "name": "Narrator Tools",
+        "ref": "e13",
+        "role": "button"
+      },
+      {
+        "depth": 8,
+        "name": "All tools start on for every story. Entity tools c",
+        "ref": "e14",
+        "role": "paragraph"
+      },
+      {
+        "checked": true,
+        "depth": 10,
+        "ref": "e15",
+        "role": "checkbox",
+        "value": "on"
+      },
+      {
+        "checked": true,
+        "depth": 10,
+        "ref": "e16",
+        "role": "checkbox",
+        "value": "on"
+      },
+      {
+        "checked": true,
+        "depth": 10,
+        "ref": "e17",
+        "role": "checkbox",
+        "value": "on"
+      },
+      {
+        "checked": false,
+        "depth": 10,
+        "ref": "e18",
+        "role": "checkbox",
+        "value": "on"
+      },
+      {
+        "depth": 7,
+        "name": "Transcript",
+        "ref": "e19",
+        "role": "button"
+      },
+      {
+        "checked": true,
+        "depth": 10,
+        "ref": "e20",
+        "role": "checkbox",
+        "value": "on"
+      },
+      {
+        "checked": true,
+        "depth": 10,
+        "ref": "e21",
+        "role": "checkbox",
+        "value": "on"
+      },
+      {
+        "checked": true,
+        "depth": 10,
+        "ref": "e22",
+        "role": "checkbox",
+        "value": "on"
+      },
+      {
+        "checked": true,
+        "depth": 10,
+        "ref": "e23",
+        "role": "checkbox",
+        "value": "on"
+      },
+      {
+        "checked": true,
+        "depth": 10,
+        "ref": "e24",
+        "role": "checkbox",
+        "value": "on"
+      },
+      {
+        "checked": false,
+        "depth": 10,
+        "ref": "e25",
+        "role": "checkbox",
+        "value": "on"
+      },
+      {
+        "checked": true,
+        "depth": 10,
+        "ref": "e26",
+        "role": "checkbox",
+        "value": "on"
+      },
+      {
+        "checked": false,
+        "depth": 10,
+        "ref": "e27",
+        "role": "checkbox",
+        "value": "on"
+      },
+      {
+        "checked": true,
+        "depth": 10,
+        "ref": "e28",
+        "role": "checkbox",
+        "value": "on"
+      },
+      {
+        "checked": false,
+        "depth": 10,
+        "ref": "e29",
+        "role": "checkbox",
+        "value": "on"
+      },
+      {
+        "checked": true,
+        "depth": 10,
+        "ref": "e30",
+        "role": "checkbox",
+        "value": "on"
+      },
+      {
+        "checked": false,
+        "depth": 10,
+        "ref": "e31",
+        "role": "checkbox",
+        "value": "on"
+      },
+      {
+        "checked": true,
+        "depth": 10,
+        "ref": "e32",
+        "role": "checkbox",
+        "value": "on"
+      },
+      {
+        "checked": true,
+        "depth": 10,
+        "ref": "e33",
+        "role": "checkbox",
+        "value": "on"
+      },
+      {
+        "checked": true,
+        "depth": 10,
+        "ref": "e34",
+        "role": "checkbox",
+        "value": "on"
+      },
+      {
+        "checked": true,
+        "depth": 10,
+        "ref": "e35",
+        "role": "checkbox",
+        "value": "on"
+      },
+      {
+        "checked": true,
+        "depth": 10,
+        "ref": "e36",
+        "role": "checkbox",
+        "value": "on"
+      },
+      {
+        "checked": false,
+        "depth": 10,
+        "ref": "e37",
+        "role": "checkbox",
+        "value": "on"
+      },
+      {
+        "checked": false,
+        "depth": 10,
+        "ref": "e38",
+        "role": "checkbox",
+        "value": "on"
+      },
+      {
+        "depth": 8,
+        "name": "Preview next request",
+        "ref": "e39",
+        "role": "button"
+      },
+      {
+        "depth": 9,
+        "name": "System: # Role You are the narrator of an interact",
+        "ref": "e40",
+        "role": "paragraph"
+      },
+      {
+        "depth": 9,
+        "name": "record: [Authoritative story event: entity_created",
+        "ref": "e41",
+        "role": "paragraph"
+      },
+      {
+        "depth": 9,
+        "name": "record: [Authoritative story event: entity_updated",
+        "ref": "e42",
+        "role": "paragraph"
+      },
+      {
+        "depth": 9,
+        "name": "record: [Authoritative story event: entity_updated",
+        "ref": "e43",
+        "role": "paragraph"
+      },
+      {
+        "depth": 9,
+        "name": "record: [Authoritative story event: entity_updated",
+        "ref": "e44",
+        "role": "paragraph"
+      },
+      {
+        "depth": 9,
+        "name": "player: <entities> Current record. When the story ",
+        "ref": "e45",
+        "role": "paragraph"
+      },
+      {
+        "depth": 9,
+        "name": "Injected: <entities> Current record. When the stor",
+        "ref": "e46",
+        "role": "paragraph"
+      },
+      {
+        "depth": 7,
+        "name": "Context",
+        "ref": "e47",
+        "role": "button"
+      },
+      {
+        "checked": true,
+        "depth": 12,
+        "name": "Characters shown",
+        "ref": "e48",
+        "role": "radio",
+        "value": "on"
+      },
+      {
+        "checked": false,
+        "depth": 12,
+        "name": "Characters hidden",
+        "ref": "e49",
+        "role": "radio",
+        "value": "on"
+      },
+      {
+        "checked": true,
+        "depth": 12,
+        "name": "Relationships shown",
+        "ref": "e50",
+        "role": "radio",
+        "value": "on"
+      },
+      {
+        "checked": false,
+        "depth": 12,
+        "name": "Relationships hidden",
+        "ref": "e51",
+        "role": "radio",
+        "value": "on"
+      },
+      {
+        "depth": 8,
+        "name": "Hidden kinds are left out of the entities block. T",
+        "ref": "e52",
+        "role": "paragraph"
+      },
+      {
+        "checked": true,
+        "depth": 9,
+        "ref": "e53",
+        "role": "checkbox",
+        "value": "on"
+      },
+      {
+        "depth": 9,
+        "name": "Tone, ongoing constraints, things to keep in mind.",
+        "ref": "e54",
+        "role": "textbox"
+      },
+      {
+        "depth": 8,
+        "disabled": true,
+        "name": "Save",
+        "ref": "e55",
+        "role": "button"
+      },
+      {
+        "checked": true,
+        "depth": 9,
+        "ref": "e56",
+        "role": "checkbox",
+        "value": "on"
+      },
+      {
+        "depth": 7,
+        "name": "Text Model",
+        "ref": "e57",
+        "role": "button"
+      },
+      {
+        "depth": 9,
+        "name": "OpenRouterNous PortalOllama (ollama-dev.greatworkf",
+        "ref": "e58",
+        "role": "combobox",
+        "value": "openrouter"
+      },
+      {
+        "depth": 9,
+        "name": "Grok 4.7Grok 4.3Claude Sonnet 4.5Hermes 4 70BHerme",
+        "ref": "e59",
+        "role": "combobox",
+        "value": "x-ai/grok-4.7"
+      },
+      {
+        "depth": 9,
+        "name": "•••••••• (leave blank to keep)",
+        "ref": "e60",
+        "role": "textbox"
+      },
+      {
+        "depth": 8,
+        "name": "Save",
+        "ref": "e61",
+        "role": "button"
+      },
+      {
+        "depth": 7,
+        "name": "Image Model",
+        "ref": "e62",
+        "role": "button"
+      },
+      {
+        "depth": 7,
+        "name": "Features",
+        "ref": "e63",
+        "role": "button"
+      },
+      {
+        "depth": 3,
+        "name": "Text $0.0566Images $0.00 (0)Cached input 17.2KTota",
+        "ref": "e64",
+        "role": "main"
+      },
+      {
+        "depth": 7,
+        "name": "Entities QA",
+        "ref": "e65",
+        "role": "heading"
+      },
+      {
+        "depth": 9,
+        "name": "StoryMy estranged sister Mira waits for me in the ",
+        "ref": "e66",
+        "role": "paragraph"
+      },
+      {
+        "depth": 10,
+        "name": "Edit",
+        "ref": "e67",
+        "role": "button"
+      },
+      {
+        "depth": 9,
+        "name": "▸ThinkingThe user has submitted a story passage to",
+        "ref": "e68",
+        "role": "button"
+      },
+      {
+        "depth": 9,
+        "name": "The tavern's low light catches the grey of that cl",
+        "ref": "e69",
+        "role": "paragraph"
+      },
+      {
+        "depth": 11,
+        "name": "Edit",
+        "ref": "e70",
+        "role": "button"
+      },
+      {
+        "depth": 10,
+        "name": "Edit",
+        "ref": "e71",
+        "role": "button"
+      },
+      {
+        "depth": 9,
+        "name": "▸Thinking & 3 tool callsThe user wants me to recor",
+        "ref": "e72",
+        "role": "button"
+      },
+      {
+        "depth": 9,
+        "name": "Mira does not rise when she sees you. She sits wit",
+        "ref": "e73",
+        "role": "paragraph"
+      },
+      {
+        "depth": 11,
+        "name": "Edit",
+        "ref": "e74",
+        "role": "button"
+      },
+      {
+        "depth": 9,
+        "name": "StoryA hooded stranger in the corner hasn't taken ",
+        "ref": "e75",
+        "role": "paragraph"
+      },
+      {
+        "depth": 10,
+        "name": "Edit",
+        "ref": "e76",
+        "role": "button"
+      },
+      {
+        "depth": 9,
+        "name": "▸Thinking & 1 tool callThe user wants me to contin",
+        "ref": "e77",
+        "role": "button"
+      },
+      {
+        "depth": 9,
+        "name": "I'll set the watcher in the corner down in the rec",
+        "ref": "e78",
+        "role": "paragraph"
+      },
+      {
+        "depth": 11,
+        "name": "Edit",
+        "ref": "e79",
+        "role": "button"
+      },
+      {
+        "depth": 9,
+        "name": "I apologize to Mira and mean it.",
+        "ref": "e80",
+        "role": "paragraph"
+      },
+      {
+        "depth": 10,
+        "name": "Edit",
+        "ref": "e81",
+        "role": "button"
+      },
+      {
+        "depth": 9,
+        "name": "▸Thinking & 1 tool callThe user wants me to narrat",
+        "ref": "e82",
+        "role": "button"
+      },
+      {
+        "depth": 9,
+        "name": "Whether she believes you is not certain. I'll see ",
+        "ref": "e83",
+        "role": "paragraph"
+      },
+      {
+        "depth": 9,
+        "name": "Roll: Mira still resents the player for leaving; w",
+        "ref": "e84",
+        "role": "group"
+      },
+      {
+        "depth": 11,
+        "name": "Reason: Mira still resents the player for leaving;",
+        "ref": "e85",
+        "role": "paragraph"
+      },
+      {
+        "depth": 11,
+        "name": "Chance source: Narrator. Chance: 35%. Needed: 65 o",
+        "ref": "e86",
+        "role": "paragraph"
+      },
+      {
+        "depth": 11,
+        "name": "No attribute factors.",
+        "ref": "e87",
+        "role": "paragraph"
+      },
+      {
+        "depth": 11,
+        "name": "Edit",
+        "ref": "e88",
+        "role": "button"
+      },
+      {
+        "depth": 11,
+        "name": "Retry",
+        "ref": "e89",
+        "role": "button"
+      },
+      {
+        "depth": 11,
+        "name": "Erase",
+        "ref": "e90",
+        "role": "button"
+      },
+      {
+        "depth": 9,
+        "name": "Do",
+        "ref": "e91",
+        "role": "button"
+      },
+      {
+        "depth": 9,
+        "name": "Say",
+        "ref": "e92",
+        "role": "button"
+      },
+      {
+        "depth": 9,
+        "name": "Story",
+        "ref": "e93",
+        "role": "button"
+      },
+      {
+        "depth": 9,
+        "name": "Guide",
+        "ref": "e94",
+        "role": "button"
+      },
+      {
+        "depth": 9,
+        "name": "See",
+        "ref": "e95",
+        "role": "button"
+      },
+      {
+        "depth": 8,
+        "name": "Continue ⏵",
+        "ref": "e96",
+        "role": "button"
+      },
+      {
+        "depth": 7,
+        "name": "What do you do?",
+        "ref": "e97",
+        "role": "textbox"
+      },
+      {
+        "depth": 10,
+        "name": "DefaultNoneMinimalLowMediumHighExtra highMax",
+        "ref": "e98",
+        "role": "combobox"
+      },
+      {
+        "depth": 9,
+        "disabled": true,
+        "name": "Send",
+        "ref": "e99",
+        "role": "button"
+      }
+    ]
+  },
+  "dom": {
+    "controls": [
+      {
+        "disabled": false,
+        "expanded": "true",
+        "label": "Close sidebar (Ctrl+B)",
+        "pressed": null,
+        "tag": "BUTTON",
+        "text": "",
+        "type": "button",
+        "value": ""
+      },
+      {
+        "disabled": false,
+        "expanded": "true",
+        "label": null,
+        "pressed": null,
+        "tag": "BUTTON",
+        "text": "Stories",
+        "type": "submit",
+        "value": ""
+      },
+      {
+        "disabled": false,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "BUTTON",
+        "text": "+ New story",
+        "type": "submit",
+        "value": ""
+      },
+      {
+        "disabled": false,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "BUTTON",
+        "text": "Entities QA",
+        "type": "submit",
+        "value": ""
+      },
+      {
+        "disabled": false,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "BUTTON",
+        "text": "✕",
+        "type": "submit",
+        "value": ""
+      },
+      {
+        "disabled": false,
+        "expanded": "true",
+        "label": null,
+        "pressed": null,
+        "tag": "BUTTON",
+        "text": "Characters",
+        "type": "submit",
+        "value": ""
+      },
+      {
+        "disabled": false,
+        "expanded": null,
+        "label": "Characters",
+        "pressed": "false",
+        "tag": "BUTTON",
+        "text": "Characters",
+        "type": "button",
+        "value": ""
+      },
+      {
+        "disabled": false,
+        "expanded": null,
+        "label": "Relationships",
+        "pressed": "true",
+        "tag": "BUTTON",
+        "text": "Relationships",
+        "type": "button",
+        "value": ""
+      },
+      {
+        "disabled": false,
+        "expanded": null,
+        "label": "Edit relationship",
+        "pressed": null,
+        "tag": "BUTTON",
+        "text": "Mira → YouresentsShe still resents you for leaving home.Trust -2",
+        "type": "button",
+        "value": ""
+      },
+      {
+        "disabled": false,
+        "expanded": "true",
+        "label": null,
+        "pressed": null,
+        "tag": "BUTTON",
+        "text": "Narrator Tools",
+        "type": "submit",
+        "value": ""
+      },
+      {
+        "checked": true,
+        "disabled": false,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "INPUT",
+        "text": "",
+        "type": "checkbox",
+        "value": "on"
+      },
+      {
+        "checked": true,
+        "disabled": false,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "INPUT",
+        "text": "",
+        "type": "checkbox",
+        "value": "on"
+      },
+      {
+        "checked": true,
+        "disabled": false,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "INPUT",
+        "text": "",
+        "type": "checkbox",
+        "value": "on"
+      },
+      {
+        "checked": false,
+        "disabled": false,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "INPUT",
+        "text": "",
+        "type": "checkbox",
+        "value": "on"
+      },
+      {
+        "disabled": false,
+        "expanded": "true",
+        "label": null,
+        "pressed": null,
+        "tag": "BUTTON",
+        "text": "Transcript",
+        "type": "submit",
+        "value": ""
+      },
+      {
+        "checked": true,
+        "disabled": false,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "INPUT",
+        "text": "",
+        "type": "checkbox",
+        "value": "on"
+      },
+      {
+        "checked": true,
+        "disabled": false,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "INPUT",
+        "text": "",
+        "type": "checkbox",
+        "value": "on"
+      },
+      {
+        "checked": true,
+        "disabled": false,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "INPUT",
+        "text": "",
+        "type": "checkbox",
+        "value": "on"
+      },
+      {
+        "checked": true,
+        "disabled": false,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "INPUT",
+        "text": "",
+        "type": "checkbox",
+        "value": "on"
+      },
+      {
+        "checked": true,
+        "disabled": false,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "INPUT",
+        "text": "",
+        "type": "checkbox",
+        "value": "on"
+      },
+      {
+        "checked": false,
+        "disabled": false,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "INPUT",
+        "text": "",
+        "type": "checkbox",
+        "value": "on"
+      },
+      {
+        "checked": true,
+        "disabled": false,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "INPUT",
+        "text": "",
+        "type": "checkbox",
+        "value": "on"
+      },
+      {
+        "checked": false,
+        "disabled": false,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "INPUT",
+        "text": "",
+        "type": "checkbox",
+        "value": "on"
+      },
+      {
+        "checked": true,
+        "disabled": false,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "INPUT",
+        "text": "",
+        "type": "checkbox",
+        "value": "on"
+      },
+      {
+        "checked": false,
+        "disabled": false,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "INPUT",
+        "text": "",
+        "type": "checkbox",
+        "value": "on"
+      },
+      {
+        "checked": true,
+        "disabled": false,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "INPUT",
+        "text": "",
+        "type": "checkbox",
+        "value": "on"
+      },
+      {
+        "checked": false,
+        "disabled": false,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "INPUT",
+        "text": "",
+        "type": "checkbox",
+        "value": "on"
+      },
+      {
+        "checked": true,
+        "disabled": false,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "INPUT",
+        "text": "",
+        "type": "checkbox",
+        "value": "on"
+      },
+      {
+        "checked": true,
+        "disabled": false,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "INPUT",
+        "text": "",
+        "type": "checkbox",
+        "value": "on"
+      },
+      {
+        "checked": true,
+        "disabled": false,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "INPUT",
+        "text": "",
+        "type": "checkbox",
+        "value": "on"
+      },
+      {
+        "checked": true,
+        "disabled": false,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "INPUT",
+        "text": "",
+        "type": "checkbox",
+        "value": "on"
+      },
+      {
+        "checked": true,
+        "disabled": false,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "INPUT",
+        "text": "",
+        "type": "checkbox",
+        "value": "on"
+      },
+      {
+        "checked": false,
+        "disabled": false,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "INPUT",
+        "text": "",
+        "type": "checkbox",
+        "value": "on"
+      },
+      {
+        "checked": false,
+        "disabled": false,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "INPUT",
+        "text": "",
+        "type": "checkbox",
+        "value": "on"
+      },
+      {
+        "disabled": false,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "BUTTON",
+        "text": "Preview next request",
+        "type": "submit",
+        "value": ""
+      },
+      {
+        "disabled": false,
+        "expanded": "true",
+        "label": null,
+        "pressed": null,
+        "tag": "BUTTON",
+        "text": "Context",
+        "type": "submit",
+        "value": ""
+      },
+      {
+        "checked": true,
+        "disabled": false,
+        "expanded": null,
+        "label": "Characters shown",
+        "pressed": null,
+        "tag": "INPUT",
+        "text": "",
+        "type": "radio",
+        "value": "on"
+      },
+      {
+        "checked": false,
+        "disabled": false,
+        "expanded": null,
+        "label": "Characters hidden",
+        "pressed": null,
+        "tag": "INPUT",
+        "text": "",
+        "type": "radio",
+        "value": "on"
+      },
+      {
+        "checked": true,
+        "disabled": false,
+        "expanded": null,
+        "label": "Relationships shown",
+        "pressed": null,
+        "tag": "INPUT",
+        "text": "",
+        "type": "radio",
+        "value": "on"
+      },
+      {
+        "checked": false,
+        "disabled": false,
+        "expanded": null,
+        "label": "Relationships hidden",
+        "pressed": null,
+        "tag": "INPUT",
+        "text": "",
+        "type": "radio",
+        "value": "on"
+      },
+      {
+        "checked": true,
+        "disabled": false,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "INPUT",
+        "text": "",
+        "type": "checkbox",
+        "value": "on"
+      },
+      {
+        "disabled": false,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "TEXTAREA",
+        "text": "",
+        "type": "textarea",
+        "value": ""
+      },
+      {
+        "disabled": true,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "BUTTON",
+        "text": "Save",
+        "type": "submit",
+        "value": ""
+      },
+      {
+        "checked": true,
+        "disabled": false,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "INPUT",
+        "text": "",
+        "type": "checkbox",
+        "value": "on"
+      },
+      {
+        "disabled": false,
+        "expanded": "true",
+        "label": null,
+        "pressed": null,
+        "tag": "BUTTON",
+        "text": "Text Model",
+        "type": "submit",
+        "value": ""
+      },
+      {
+        "disabled": false,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "SELECT",
+        "text": "OpenRouterNous PortalOllama (ollama-dev.greatworkflows.ai)",
+        "type": "select-one",
+        "value": "openrouter"
+      },
+      {
+        "disabled": false,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "SELECT",
+        "text": "Grok 4.7Grok 4.3Claude Sonnet 4.5Hermes 4 70BHermes 4 405BCustom…",
+        "type": "select-one",
+        "value": "x-ai/grok-4.7"
+      },
+      {
+        "checked": false,
+        "disabled": false,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "INPUT",
+        "text": "",
+        "type": "password",
+        "value": "[redacted]"
+      },
+      {
+        "disabled": false,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "BUTTON",
+        "text": "Save",
+        "type": "submit",
+        "value": ""
+      },
+      {
+        "disabled": false,
+        "expanded": "false",
+        "label": null,
+        "pressed": null,
+        "tag": "BUTTON",
+        "text": "Image Model",
+        "type": "submit",
+        "value": ""
+      },
+      {
+        "disabled": false,
+        "expanded": "false",
+        "label": null,
+        "pressed": null,
+        "tag": "BUTTON",
+        "text": "Features",
+        "type": "submit",
+        "value": ""
+      },
+      {
+        "disabled": false,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "BUTTON",
+        "text": "Edit",
+        "type": "submit",
+        "value": ""
+      },
+      {
+        "disabled": false,
+        "expanded": "false",
+        "label": null,
+        "pressed": null,
+        "tag": "BUTTON",
+        "text": "▸ThinkingThe user has submitted a story passage to complete. I need to continue the scene in second",
+        "type": "submit",
+        "value": ""
+      },
+      {
+        "disabled": false,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "BUTTON",
+        "text": "Edit",
+        "type": "submit",
+        "value": ""
+      },
+      {
+        "disabled": false,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "BUTTON",
+        "text": "Edit",
+        "type": "submit",
+        "value": ""
+      },
+      {
+        "disabled": false,
+        "expanded": "false",
+        "label": null,
+        "pressed": null,
+        "tag": "BUTTON",
+        "text": "▸Thinking & 3 tool callsThe user wants me to record Mira using the tools. I need to save her character and the rel",
+        "type": "submit",
+        "value": ""
+      },
+      {
+        "disabled": false,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "BUTTON",
+        "text": "Edit",
+        "type": "submit",
+        "value": ""
+      },
+      {
+        "disabled": false,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "BUTTON",
+        "text": "Edit",
+        "type": "submit",
+        "value": ""
+      },
+      {
+        "disabled": false,
+        "expanded": "false",
+        "label": null,
+        "pressed": null,
+        "tag": "BUTTON",
+        "text": "▸Thinking & 1 tool callThe user wants me to continue the story. There's a story tag: \"A hooded stranger in the co",
+        "type": "submit",
+        "value": ""
+      },
+      {
+        "disabled": false,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "BUTTON",
+        "text": "Edit",
+        "type": "submit",
+        "value": ""
+      },
+      {
+        "disabled": false,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "BUTTON",
+        "text": "Edit",
+        "type": "submit",
+        "value": ""
+      },
+      {
+        "disabled": false,
+        "expanded": "false",
+        "label": null,
+        "pressed": null,
+        "tag": "BUTTON",
+        "text": "▸Thinking & 1 tool callThe user wants me to narrate an apology to Mira that is meant sincerely. I should continue",
+        "type": "submit",
+        "value": ""
+      },
+      {
+        "disabled": false,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "BUTTON",
+        "text": "Edit",
+        "type": "submit",
+        "value": ""
+      },
+      {
+        "disabled": false,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "BUTTON",
+        "text": "Retry",
+        "type": "submit",
+        "value": ""
+      },
+      {
+        "disabled": false,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "BUTTON",
+        "text": "Erase",
+        "type": "submit",
+        "value": ""
+      },
+      {
+        "disabled": false,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "BUTTON",
+        "text": "Do",
+        "type": "submit",
+        "value": ""
+      },
+      {
+        "disabled": false,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "BUTTON",
+        "text": "Say",
+        "type": "submit",
+        "value": ""
+      },
+      {
+        "disabled": false,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "BUTTON",
+        "text": "Story",
+        "type": "submit",
+        "value": ""
+      },
+      {
+        "disabled": false,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "BUTTON",
+        "text": "Guide",
+        "type": "submit",
+        "value": ""
+      },
+      {
+        "disabled": false,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "BUTTON",
+        "text": "See",
+        "type": "submit",
+        "value": ""
+      },
+      {
+        "disabled": false,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "BUTTON",
+        "text": "Continue ⏵",
+        "type": "submit",
+        "value": ""
+      },
+      {
+        "disabled": false,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "TEXTAREA",
+        "text": "",
+        "type": "textarea",
+        "value": ""
+      },
+      {
+        "disabled": false,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "SELECT",
+        "text": "DefaultNoneMinimalLowMediumHighExtra highMax",
+        "type": "select-one",
+        "value": ""
+      },
+      {
+        "disabled": true,
+        "expanded": null,
+        "label": null,
+        "pressed": null,
+        "tag": "BUTTON",
+        "text": "Send",
+        "type": "submit",
+        "value": ""
+      }
+    ],
+    "text": "story-llm\nSTORIES\n+ New story\nEntities QA\n✕\nCHARACTERS\nCharacters\nRelationships\nMira → You\nresents\nShe still resents you for leaving home.\nTrust -2\nNARRATOR TOOLS\n\nAll tools start on for every story. Entity tools can change persistent world state; dice and image calls can add cost. Turn off any tool independently before writing.\n\nENTITY\nRecord characters\nThe narrator can record character facts and stats, including location and outfit.\nRecord relationships\nThe narrator can record how characters relate and change relationship stats.\nDICE\nRoll uncertain outcomes\nThe narrator may give a chance or reference up to two stored attributes. Rolls read stats but never change them.\nIMAGE\nIllustrate scenes\nThe narrator may illustrate striking moments on its own. See works either way, whenever the image service and key are configured. Images may incur provider charges.\nTRANSCRIPT\nPLAYER ACTIONS\nDo\nSay\nStory\nGuide\nContinue\nSee\nNARRATION\nNarration text\nThoughts (reasoning)\nRECORDS\nDice rolls\nImage prompts\nImage captions\nTool calls\nEntity created\nEntity updated\nEntity deleted\nAttribute changed\nAttribute removed\nAuthor's note updates\nIMAGES\nThe images themselves\nPreview next request\n\nSystem: # Role You are the narrator of an interactive story. # Narration - Continue the scene in vivid, literary prose that follows naturally from what has already happened and from the player's latest act\n\nrecord: [Authoritative story event: entity_created] User edit: Old Tom was added as a character.\nImages: 0 | Reasoning: No\n\nrecord: [Authoritative story event: entity_updated] User edit: Old Tom: gender → female.\nImages: 0 | Reasoning: No\n\nrecord: [Authoritative story event: entity_updated] User edit: Old Tom: gender cleared.\nImages: 0 | Reasoning: No\n\nrecord: [Authoritative story event: entity_updated] User edit: Old Tom: name Old Tom → Tom.\nImages: 0 | Reasoning: No\n\nplayer: <entities> Current record. When the story and a record disagree, the more recent one is correct. Never undo a player correction unless later story events change it. A → B relationships are one-way; A\nImages: 0 | Reasoning: No\n\nInjected: <entities> Current record. When the story and a record disagree, the more recent one is correct. Never undo a player correction unless later story events change it. A → B relationships are one-way; A\n\nCONTEXT\nEntities in context\nCharacters\nShown\nHidden\nRelationships\nShown\nHidden\n\nHidden kinds are left out of the entities block. The narrator still sees their changes in history if the Transcript panel includes entity records.\n\nAuthor's note enabled\nAuthor's note\nSave\nTool instructions\nTEXT MODEL\nProvider\nOpenRouter\nNous Portal\nOllama (ollama-dev.greatworkflows.ai)\nModel\nGrok 4.7\nGrok 4.3\nClaude Sonnet 4.5\nHermes 4 70B\nHermes 4 405B\nCustom…\nAPI key (set)\nSave\nIMAGE MODEL\nFEATURES\nText $0.0566\nImages $0.00 (0)\nCached input 17.2K\nTotal $0.0566\nEntities QA\n\nSTORYMy estranged sister Mira waits for me in the Rusty Anchor tavern, wearing our father's grey cloak. She still resents me for leaving.\n\nEdit\n▸\nThinking\nThe user has submitted a story passage to complete. I need to continue the scene in second\n\nThe tavern's low light catches the grey of that cloak before it catches her face. You push through the Rusty Anchor's door and the smell of wet wool and spilled ale comes with you, and there she is, already watching the entrance as if she has been counting the minutes you kept her waiting.\n\n$0.0122\nEdit\nGUIDERecord Mira, where she is, what she wears, and her relationship to me, using your tools.\nEdit\n▸\nThinking & 3 tool calls\nThe user wants me to record Mira using the tools. I need to save her character and the rel\n\nMira does not rise when she sees you. She sits with her back to the far wall, the grey cloak pooled over the bench like a second shadow, its hem frayed where your father's boots used to catch it. Her hands rest on the scarred table, empty of a cup, as if she came to wait and nothing else.\n\nAcross the room, Tom works the bar without looking up, the stained apron catching the lamplight as he wipes a ring that will not come out of the wood. The tavern holds its usual murmur, but the space between you and your sister is quiet enough to hear the cloak's wool shift when she finally turns her head.\n\nHer eyes find yours and do not soften. Whatever welcome might once have lived there has been worn down to something harder, something that has been rehearsing this moment since the day you left. She studies your face the way a person studies a debt, and the cloak—his cloak—sits on her shoulders like an accusation she has chosen not to take off.\n\n$0.0137\nEdit\n\nSTORYA hooded stranger in the corner hasn't taken her eyes off us.\n\nEdit\n▸\nThinking & 1 tool call\nThe user wants me to continue the story. There's a story tag: \"A hooded stranger in the co\n\nI'll set the watcher in the corner down in the record before the scene moves on.You feel it before you place it: a weight at the edge of the room, steady as a hand laid flat on a table. In the corner, past the last lamp, a hooded figure sits with her back to the wall and her face cut in half by shadow. Only the lower line of a pale jaw shows, and a pair of eyes that have not left the two of you since you came through the door.\n\nShe does not drink. She does not turn when Tom sets a mug down two tables over, nor when a chair scrapes and a man laughs too loud. The hood is deep and dark, and under it she is still in the way of someone who has already decided what she came to see. When Mira shifts, the grey cloak whispering against the bench, those eyes follow the movement and come back to you, unhurried, as if measuring the distance between sister and sister and finding it exactly as she expected.\n\n$0.0149\nEdit\n\nI apologize to Mira and mean it.\n\nEdit\n▸\nThinking & 1 tool call\nThe user wants me to narrate an apology to Mira that is meant sincerely. I should continue\n\nWhether she believes you is not certain. I'll see how the apology lands before the scene moves.You sit across from her and say it plainly, without the old excuses, without the story you have told yourself about why you had to go. The words come out rough and smaller than you meant them to be. You tell her you are sorry for leaving. You tell her you mean it.\n\nMira listens the way stone listens. Her hands stay flat on the scarred wood, and the grey cloak does not shift. When you finish, the quiet between you holds a moment longer than kindness would allow.\n\n\"You mean it,\" she says, and it is not a question. Her mouth tightens at one corner, not quite a smile. \"You meant it the morning you walked out, too. You meant every letter you never sent.\" She draws the cloak closer, your father's wool settling over her shoulders like a verdict. \"Sorry is a word you can afford now that you're back in the room. It doesn't buy back the years I spent waiting for a door that didn't open.\"\n\nHer eyes do not leave yours. Whatever you hoped the apology might move in her stays where it has lived since the day you left, hard and settled and untouched. Across the tavern, the hooded stranger in the corner has not looked away.\n\n$0.0158\nRoll: Mira still resents the player for leaving; whether a sincere apology softens her is uncertain. · Narrator · 35% chance · needed 65+ · rolled 54 · failure\nEdit\nRetry\nErase\nDo\nSay\nStory\nGuide\nSee\nContinue ⏵\nEnter to send · Shift + Enter for a new line\nEffort\nDefault\nNone\nMinimal\nLow\nMedium\nHigh\nExtra high\nMax\nSend"
+  },
+  "schema": [
+    {
+      "type": "index",
+      "name": "idx_attribute_registry_canonical_ci",
+      "sql": "CREATE UNIQUE INDEX idx_attribute_registry_canonical_ci\n            ON attribute_registry(canonical_name COLLATE NOCASE)"
+    },
+    {
+      "type": "index",
+      "name": "idx_entities_name_ci",
+      "sql": "CREATE UNIQUE INDEX idx_entities_name_ci\n            ON entities(story_id, name COLLATE NOCASE) WHERE is_present = 1"
+    },
+    {
+      "type": "index",
+      "name": "idx_entities_story_name",
+      "sql": "CREATE INDEX idx_entities_story_name ON entities(story_id, name)"
+    },
+    {
+      "type": "index",
+      "name": "idx_image_assets_entry",
+      "sql": "CREATE INDEX idx_image_assets_entry ON image_assets(entry_id)"
+    },
+    {
+      "type": "index",
+      "name": "idx_relationships_pair",
+      "sql": "CREATE UNIQUE INDEX idx_relationships_pair ON relationships(from_id, to_id)"
+    },
+    {
+      "type": "index",
+      "name": "idx_relationships_to",
+      "sql": "CREATE INDEX idx_relationships_to ON relationships(to_id)"
+    },
+    {
+      "type": "index",
+      "name": "idx_transcript_kind",
+      "sql": "CREATE INDEX idx_transcript_kind ON transcript_entries(story_id, kind, seq)"
+    },
+    {
+      "type": "index",
+      "name": "idx_transcript_story_seq",
+      "sql": "CREATE INDEX idx_transcript_story_seq ON transcript_entries(story_id, seq)"
+    },
+    {
+      "type": "index",
+      "name": "idx_transcript_target",
+      "sql": "CREATE INDEX idx_transcript_target ON transcript_entries(target_entry_id)"
+    },
+    {
+      "type": "index",
+      "name": "idx_transcript_turn",
+      "sql": "CREATE INDEX idx_transcript_turn ON transcript_entries(turn_id)"
+    },
+    {
+      "type": "index",
+      "name": "idx_usage_story",
+      "sql": "CREATE INDEX idx_usage_story ON usage_records(story_id)"
+    },
+    {
+      "type": "index",
+      "name": "idx_usage_turn",
+      "sql": "CREATE INDEX idx_usage_turn ON usage_records(turn_id)"
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_attribute_registry_1",
+      "sql": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_attribute_registry_2",
+      "sql": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_characters_1",
+      "sql": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_entities_1",
+      "sql": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_entity_attributes_1",
+      "sql": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_image_assets_1",
+      "sql": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_image_blobs_1",
+      "sql": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_relationships_1",
+      "sql": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_settings_1",
+      "sql": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_stories_1",
+      "sql": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_transcript_entries_1",
+      "sql": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_transcript_entries_2",
+      "sql": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_turns_1",
+      "sql": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_turns_2",
+      "sql": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_usage_records_1",
+      "sql": null
+    },
+    {
+      "type": "table",
+      "name": "attribute_registry",
+      "sql": "CREATE TABLE attribute_registry (\n            id TEXT PRIMARY KEY,\n            canonical_name TEXT NOT NULL UNIQUE,\n            aliases_json TEXT NOT NULL DEFAULT '[]',\n            entity_kinds_json TEXT NOT NULL DEFAULT '[]',\n            min REAL NOT NULL,\n            max REAL NOT NULL,\n            category TEXT NOT NULL,\n            is_user_created INTEGER NOT NULL DEFAULT 0,\n            created_in_story_id TEXT,\n            created_at TEXT NOT NULL\n        )"
+    },
+    {
+      "type": "table",
+      "name": "characters",
+      "sql": "CREATE TABLE characters (\n            entity_id TEXT PRIMARY KEY REFERENCES entities(id) ON DELETE CASCADE,\n            known_as TEXT,\n            appearance_anchor TEXT,\n            gender TEXT,\n            age TEXT,\n            role TEXT,\n            location TEXT,\n            outfit TEXT\n        )"
+    },
+    {
+      "type": "table",
+      "name": "entities",
+      "sql": "CREATE TABLE entities (\n            id TEXT PRIMARY KEY,\n            story_id TEXT NOT NULL REFERENCES stories(id) ON DELETE CASCADE,\n            kind TEXT NOT NULL CHECK (kind IN ('character', 'relationship')),\n            name TEXT,\n            is_present INTEGER NOT NULL DEFAULT 1,\n            created_at TEXT NOT NULL,\n            updated_at TEXT NOT NULL,\n            CHECK ((kind = 'character') = (name IS NOT NULL))\n        )"
+    },
+    {
+      "type": "table",
+      "name": "entity_attributes",
+      "sql": "CREATE TABLE entity_attributes (\n            entity_id TEXT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,\n            attribute_id TEXT NOT NULL REFERENCES attribute_registry(id) ON DELETE CASCADE,\n            value REAL NOT NULL,\n            source TEXT NOT NULL,\n            updated_at TEXT NOT NULL,\n            PRIMARY KEY (entity_id, attribute_id)\n        )"
+    },
+    {
+      "type": "table",
+      "name": "image_assets",
+      "sql": "CREATE TABLE image_assets (\n            id TEXT PRIMARY KEY,\n            entry_id TEXT NOT NULL REFERENCES transcript_entries(id) ON DELETE CASCADE,\n            path TEXT NOT NULL,\n            prompt TEXT NOT NULL,\n            created_at TEXT NOT NULL\n        )"
+    },
+    {
+      "type": "table",
+      "name": "image_blobs",
+      "sql": "CREATE TABLE image_blobs (\n            asset_id TEXT PRIMARY KEY REFERENCES image_assets(id) ON DELETE CASCADE,\n            media_type TEXT NOT NULL,\n            bytes BLOB NOT NULL\n        )"
+    },
+    {
+      "type": "table",
+      "name": "relationships",
+      "sql": "CREATE TABLE relationships (\n            entity_id TEXT PRIMARY KEY REFERENCES entities(id) ON DELETE CASCADE,\n            from_id TEXT NOT NULL,\n            to_id TEXT NOT NULL,\n            label TEXT NOT NULL,\n            direction TEXT NOT NULL CHECK (direction IN ('one_way', 'both')),\n            description TEXT\n        )"
+    },
+    {
+      "type": "table",
+      "name": "settings",
+      "sql": "CREATE TABLE settings (\n            key TEXT PRIMARY KEY,\n            value TEXT NOT NULL\n        )"
+    },
+    {
+      "type": "table",
+      "name": "stories",
+      "sql": "CREATE TABLE stories (\n            id TEXT PRIMARY KEY,\n            title TEXT NOT NULL,\n            created_at TEXT NOT NULL,\n            updated_at TEXT NOT NULL,\n            settings_json TEXT NOT NULL DEFAULT '{}'\n        )"
+    },
+    {
+      "type": "table",
+      "name": "transcript_entries",
+      "sql": "CREATE TABLE transcript_entries (\n            id TEXT PRIMARY KEY,\n            story_id TEXT NOT NULL REFERENCES stories(id) ON DELETE CASCADE,\n            seq INTEGER NOT NULL,\n            kind TEXT NOT NULL,\n            visibility TEXT NOT NULL CHECK (visibility IN ('visible', 'hidden')),\n            content TEXT,\n            payload_json TEXT NOT NULL DEFAULT '{}',\n            target_entry_id TEXT REFERENCES transcript_entries(id) ON DELETE CASCADE,\n            turn_id TEXT REFERENCES turns(id) ON DELETE CASCADE,\n            created_at TEXT NOT NULL,\n            UNIQUE(story_id, seq)\n        )"
+    },
+    {
+      "type": "table",
+      "name": "turns",
+      "sql": "CREATE TABLE turns (\n            id TEXT PRIMARY KEY,\n            story_id TEXT NOT NULL REFERENCES stories(id) ON DELETE CASCADE,\n            seq INTEGER NOT NULL,\n            status TEXT NOT NULL CHECK (status IN ('pending', 'complete', 'failed')),\n            attempt INTEGER NOT NULL DEFAULT 0,\n            created_at TEXT NOT NULL,\n            UNIQUE(story_id, seq)\n        )"
+    },
+    {
+      "type": "table",
+      "name": "usage_records",
+      "sql": "CREATE TABLE usage_records (\n            id TEXT PRIMARY KEY,\n            story_id TEXT NOT NULL REFERENCES stories(id) ON DELETE CASCADE,\n            kind TEXT NOT NULL CHECK (kind IN ('narration', 'summary', 'title', 'image', 'caption')),\n            provider TEXT NOT NULL,\n            model TEXT NOT NULL,\n            response_id TEXT,\n            input_tokens INTEGER NOT NULL DEFAULT 0,\n            output_tokens INTEGER NOT NULL DEFAULT 0,\n            cached_input_tokens INTEGER NOT NULL DEFAULT 0,\n            cache_write_tokens INTEGER NOT NULL DEFAULT 0,\n            cost_usd REAL,\n            created_at TEXT NOT NULL,\n            turn_id TEXT,\n            image_asset_id TEXT,\n            duration_ms INTEGER,\n            earlier_attempt INTEGER NOT NULL DEFAULT 0\n        )"
+    }
+  ],
+  "registry": [
+    {
+      "canonical_name": "Accuracy",
+      "entity_kinds_json": "[\"character\"]",
+      "min": 0.0,
+      "max": 10.0
+    },
+    {
+      "canonical_name": "Affection",
+      "entity_kinds_json": "[\"relationship\"]",
+      "min": -10.0,
+      "max": 10.0
+    },
+    {
+      "canonical_name": "Charisma",
+      "entity_kinds_json": "[\"character\"]",
+      "min": 0.0,
+      "max": 10.0
+    },
+    {
+      "canonical_name": "Evasion",
+      "entity_kinds_json": "[\"character\"]",
+      "min": 0.0,
+      "max": 10.0
+    },
+    {
+      "canonical_name": "Fear",
+      "entity_kinds_json": "[\"relationship\"]",
+      "min": -10.0,
+      "max": 10.0
+    },
+    {
+      "canonical_name": "Health",
+      "entity_kinds_json": "[\"character\"]",
+      "min": 0.0,
+      "max": 10.0
+    },
+    {
+      "canonical_name": "Intelligence",
+      "entity_kinds_json": "[\"character\"]",
+      "min": 0.0,
+      "max": 10.0
+    },
+    {
+      "canonical_name": "Luck",
+      "entity_kinds_json": "[\"character\"]",
+      "min": 0.0,
+      "max": 10.0
+    },
+    {
+      "canonical_name": "Perception",
+      "entity_kinds_json": "[\"character\"]",
+      "min": 0.0,
+      "max": 10.0
+    },
+    {
+      "canonical_name": "Resolve",
+      "entity_kinds_json": "[\"character\"]",
+      "min": 0.0,
+      "max": 10.0
+    },
+    {
+      "canonical_name": "Respect",
+      "entity_kinds_json": "[\"relationship\"]",
+      "min": -10.0,
+      "max": 10.0
+    },
+    {
+      "canonical_name": "Stealth",
+      "entity_kinds_json": "[\"character\"]",
+      "min": 0.0,
+      "max": 10.0
+    },
+    {
+      "canonical_name": "Strength",
+      "entity_kinds_json": "[\"character\"]",
+      "min": 0.0,
+      "max": 10.0
+    },
+    {
+      "canonical_name": "Trust",
+      "entity_kinds_json": "[\"relationship\"]",
+      "min": -10.0,
+      "max": 10.0
+    }
+  ],
+  "story": [
+    {
+      "id": "7b6992ba-996a-4b13-9750-bef67d3eb4c0",
+      "title": "Entities QA",
+      "settings_json": "{\"narrator_tools\":{\"illustrate_scene\":false,\"roll_check\":true,\"save_character\":true,\"save_relationship\":true}}"
+    }
+  ],
+  "entities": [
+    {
+      "id": "6abab2f7-1876-4ade-9d65-6ca8d72f4751",
+      "story_id": "7b6992ba-996a-4b13-9750-bef67d3eb4c0",
+      "kind": "character",
+      "name": "You",
+      "is_present": 1,
+      "created_at": "2026-10-02T05:50:46.949095700+00:00",
+      "updated_at": "2026-10-02T05:50:46.949386900+00:00",
+      "known_as": null,
+      "appearance_anchor": null,
+      "gender": null,
+      "age": null,
+      "role": null,
+      "location": null,
+      "outfit": null
+    },
+    {
+      "id": "0834907f-66a8-418b-abff-19d18b92e6f9",
+      "story_id": "7b6992ba-996a-4b13-9750-bef67d3eb4c0",
+      "kind": "character",
+      "name": "Tom",
+      "is_present": 1,
+      "created_at": "2026-10-02T06:08:15.713414400+00:00",
+      "updated_at": "2026-10-02T06:19:08.512666800+00:00",
+      "known_as": null,
+      "appearance_anchor": null,
+      "gender": null,
+      "age": null,
+      "role": "innkeeper",
+      "location": "behind the bar",
+      "outfit": "stained apron"
+    },
+    {
+      "id": "0831ca57-a207-40a5-97e4-10495c08c996",
+      "story_id": "7b6992ba-996a-4b13-9750-bef67d3eb4c0",
+      "kind": "character",
+      "name": "Mira",
+      "is_present": 1,
+      "created_at": "2026-10-02T06:44:03.605923+00:00",
+      "updated_at": "2026-10-02T06:44:03.606035300+00:00",
+      "known_as": null,
+      "appearance_anchor": "wearing a worn grey cloak, face set with old resentment, watching the door",
+      "gender": "female",
+      "age": null,
+      "role": "estranged sister",
+      "location": "the Rusty Anchor tavern",
+      "outfit": "father's grey cloak"
+    },
+    {
+      "id": "relationship:0831ca57-a207-40a5-97e4-10495c08c996:6abab2f7-1876-4ade-9d65-6ca8d72f4751",
+      "story_id": "7b6992ba-996a-4b13-9750-bef67d3eb4c0",
+      "kind": "relationship",
+      "name": null,
+      "is_present": 1,
+      "created_at": "2026-10-02T06:44:03.607970300+00:00",
+      "updated_at": "2026-10-02T06:44:03.611258900+00:00",
+      "known_as": null,
+      "appearance_anchor": null,
+      "gender": null,
+      "age": null,
+      "role": null,
+      "location": null,
+      "outfit": null
+    },
+    {
+      "id": "aac955c9-b2ac-4876-8d56-8c2cff861f97",
+      "story_id": "7b6992ba-996a-4b13-9750-bef67d3eb4c0",
+      "kind": "character",
+      "name": "Isolde Vetch",
+      "is_present": 1,
+      "created_at": "2026-10-02T06:57:01.927805800+00:00",
+      "updated_at": "2026-10-02T06:57:01.927994800+00:00",
+      "known_as": "the hooded stranger",
+      "appearance_anchor": "woman in a deep dark hood, only the lower half of a sharp pale face and steady pale eyes visible, still as stone",
+      "gender": "female",
+      "age": null,
+      "role": "watcher",
+      "location": "corner of the Rusty Anchor",
+      "outfit": "dark hooded cloak, face shadowed"
+    }
+  ],
+  "relationships": [
+    {
+      "entity_id": "relationship:0831ca57-a207-40a5-97e4-10495c08c996:6abab2f7-1876-4ade-9d65-6ca8d72f4751",
+      "from_id": "0831ca57-a207-40a5-97e4-10495c08c996",
+      "to_id": "6abab2f7-1876-4ade-9d65-6ca8d72f4751",
+      "label": "resents",
+      "direction": "one_way",
+      "description": "She still resents you for leaving home.",
+      "is_present": 1
+    }
+  ],
+  "attributes": [
+    {
+      "entity_id": "relationship:0831ca57-a207-40a5-97e4-10495c08c996:6abab2f7-1876-4ade-9d65-6ca8d72f4751",
+      "attribute_id": "1882882f-8f52-4cbf-a9f3-cf080d35b498",
+      "value": -2.0,
+      "source": "user",
+      "updated_at": "2026-10-02T07:14:05.466079500+00:00",
+      "canonical_name": "Trust"
+    }
+  ],
+  "transcript": [
+    {
+      "id": "d541b95d-7fff-4a65-acf3-7525300dd259",
+      "story_id": "7b6992ba-996a-4b13-9750-bef67d3eb4c0",
+      "seq": 0,
+      "kind": "entity_created",
+      "visibility": "hidden",
+      "content": "You was added as a character.",
+      "payload_json": "{\"entity_id\":\"6abab2f7-1876-4ade-9d65-6ca8d72f4751\",\"kind\":\"character\",\"name\":\"You\",\"source\":\"story_bootstrap\"}",
+      "target_entry_id": null,
+      "turn_id": null,
+      "created_at": "2026-10-02T05:50:46.949095700+00:00"
+    },
+    {
+      "id": "3f70dc08-d4bc-4c6d-add2-b8c5921feccf",
+      "story_id": "7b6992ba-996a-4b13-9750-bef67d3eb4c0",
+      "seq": 1,
+      "kind": "entity_created",
+      "visibility": "hidden",
+      "content": "User edit: Old Tom was added as a character.",
+      "payload_json": "{\"entity_id\":\"0834907f-66a8-418b-abff-19d18b92e6f9\",\"kind\":\"character\",\"location\":\"behind the bar\",\"name\":\"Old Tom\",\"outfit\":\"stained apron\",\"role\":\"innkeeper\",\"source\":\"user\"}",
+      "target_entry_id": null,
+      "turn_id": null,
+      "created_at": "2026-10-02T06:08:15.713414400+00:00"
+    },
+    {
+      "id": "b6f812fa-9b68-4e02-8f9e-242010e2b95e",
+      "story_id": "7b6992ba-996a-4b13-9750-bef67d3eb4c0",
+      "seq": 2,
+      "kind": "entity_updated",
+      "visibility": "hidden",
+      "content": "User edit: Old Tom: gender → female.",
+      "payload_json": "{\"after\":{\"gender\":\"female\",\"location\":\"behind the bar\",\"name\":\"Old Tom\",\"outfit\":\"stained apron\",\"role\":\"innkeeper\"},\"before\":{\"location\":\"behind the bar\",\"name\":\"Old Tom\",\"outfit\":\"stained apron\",\"role\":\"innkeeper\"},\"entity_id\":\"0834907f-66a8-418b-abff-19d18b92e6f9\",\"source\":\"user\"}",
+      "target_entry_id": null,
+      "turn_id": null,
+      "created_at": "2026-10-02T06:16:34.270227500+00:00"
+    },
+    {
+      "id": "44058f26-2de4-43f7-b86a-278ff87a59a6",
+      "story_id": "7b6992ba-996a-4b13-9750-bef67d3eb4c0",
+      "seq": 3,
+      "kind": "entity_updated",
+      "visibility": "hidden",
+      "content": "User edit: Old Tom: gender cleared.",
+      "payload_json": "{\"after\":{\"location\":\"behind the bar\",\"name\":\"Old Tom\",\"outfit\":\"stained apron\",\"role\":\"innkeeper\"},\"before\":{\"gender\":\"female\",\"location\":\"behind the bar\",\"name\":\"Old Tom\",\"outfit\":\"stained apron\",\"role\":\"innkeeper\"},\"entity_id\":\"0834907f-66a8-418b-abff-19d18b92e6f9\",\"source\":\"user\"}",
+      "target_entry_id": null,
+      "turn_id": null,
+      "created_at": "2026-10-02T06:17:23.844780400+00:00"
+    },
+    {
+      "id": "346b95b2-215a-413b-816c-1cf6e4e32e9f",
+      "story_id": "7b6992ba-996a-4b13-9750-bef67d3eb4c0",
+      "seq": 4,
+      "kind": "entity_updated",
+      "visibility": "hidden",
+      "content": "User edit: Old Tom: name Old Tom → Tom.",
+      "payload_json": "{\"after\":{\"location\":\"behind the bar\",\"name\":\"Tom\",\"outfit\":\"stained apron\",\"role\":\"innkeeper\"},\"before\":{\"location\":\"behind the bar\",\"name\":\"Old Tom\",\"outfit\":\"stained apron\",\"role\":\"innkeeper\"},\"entity_id\":\"0834907f-66a8-418b-abff-19d18b92e6f9\",\"source\":\"user\"}",
+      "target_entry_id": null,
+      "turn_id": null,
+      "created_at": "2026-10-02T06:19:08.512303300+00:00"
+    },
+    {
+      "id": "76c0c4e2-a0b0-4ab5-acb0-1ab4ad819715",
+      "story_id": "7b6992ba-996a-4b13-9750-bef67d3eb4c0",
+      "seq": 5,
+      "kind": "player_message",
+      "visibility": "visible",
+      "content": "My estranged sister Mira waits for me in the Rusty Anchor tavern, wearing our father's grey cloak. She still resents me for leaving.",
+      "payload_json": "{\"input_mode\":\"story\"}",
+      "target_entry_id": null,
+      "turn_id": "e9338b01-2a02-485e-86a0-a8c0f4ae8c44",
+      "created_at": "2026-10-02T06:31:47.339337100+00:00"
+    },
+    {
+      "id": "77daf03a-10ec-4c71-9d9b-90d79e2a7c1a",
+      "story_id": "7b6992ba-996a-4b13-9750-bef67d3eb4c0",
+      "seq": 6,
+      "kind": "narration",
+      "visibility": "visible",
+      "content": "The tavern's low light catches the grey of that cloak before it catches her face. You push through the Rusty Anchor's door and the smell of wet wool and spilled ale comes with you, and there she is, already watching the entrance as if she has been counting the minutes you kept her waiting.",
+      "payload_json": "{\"input_mode\":\"generated\",\"thoughts\":\"The user has submitted a story passage to complete. I need to continue the scene in second person narration based on the story they wrote.\\nYou push open the heavy oak door of the Rusty Anchor, the familiar creak of hinges greeting you like an old friend. The tavern smells of spilled ale, roasted meat, and woodsmoke, the low hum of conversation wrapping around you. Behind the bar stands Tom, wiping glasses with a stained apron, his eyes flicking up to meet yours for a moment before he nods.\\n\\nAt the far end of the room, near the hearth, Mira sits alone at a scarred wooden table. She wears the faded grey cloak your father once favored, the fabric worn thin at the elbows and hem. Her dark hair is pulled back simply, but her posture is rigid, shoulders squared as if bracing for a fight. When she sees you, her jaw tightens and her eyes narrow, the old resentment simmering just beneath the surface.\\n\\nShe doesn’t smile. She doesn’t wave.\"}",
+      "target_entry_id": null,
+      "turn_id": "e9338b01-2a02-485e-86a0-a8c0f4ae8c44",
+      "created_at": "2026-10-02T06:31:47.340925300+00:00"
+    },
+    {
+      "id": "e770a51c-6414-4023-979f-923463ae2ef3",
+      "story_id": "7b6992ba-996a-4b13-9750-bef67d3eb4c0",
+      "seq": 7,
+      "kind": "player_message",
+      "visibility": "visible",
+      "content": "Record Mira, where she is, what she wears, and her relationship to me, using your tools.",
+      "payload_json": "{\"input_mode\":\"guide\"}",
+      "target_entry_id": null,
+      "turn_id": "54620a2b-dc9a-4ffa-bc6e-79cdf41d7890",
+      "created_at": "2026-10-02T06:43:56.521515500+00:00"
+    },
+    {
+      "id": "8b8b3277-d650-4bee-a2f5-f9306f727d7a",
+      "story_id": "7b6992ba-996a-4b13-9750-bef67d3eb4c0",
+      "seq": 8,
+      "kind": "narration",
+      "visibility": "visible",
+      "content": "Mira does not rise when she sees you. She sits with her back to the far wall, the grey cloak pooled over the bench like a second shadow, its hem frayed where your father's boots used to catch it. Her hands rest on the scarred table, empty of a cup, as if she came to wait and nothing else.\n\nAcross the room, Tom works the bar without looking up, the stained apron catching the lamplight as he wipes a ring that will not come out of the wood. The tavern holds its usual murmur, but the space between you and your sister is quiet enough to hear the cloak's wool shift when she finally turns her head.\n\nHer eyes find yours and do not soften. Whatever welcome might once have lived there has been worn down to something harder, something that has been rehearsing this moment since the day you left. She studies your face the way a person studies a debt, and the cloak—his cloak—sits on her shoulders like an accusation she has chosen not to take off.",
+      "payload_json": "{\"input_mode\":\"generated\",\"thoughts\":\"The user wants me to record Mira using the tools. I need to save her character and the relationship to the player. The story says Mira is the player's estranged sister, waiting in the Rusty Anchor tav...The second relationship failed because one already exists between Mira and You. The both relationship was created as estranged sister. The one_way failed because a relationship already exists in that ...\"}",
+      "target_entry_id": null,
+      "turn_id": "54620a2b-dc9a-4ffa-bc6e-79cdf41d7890",
+      "created_at": "2026-10-02T06:43:56.523047100+00:00"
+    },
+    {
+      "id": "c06cb646-dd2f-4d70-a162-6745625fbb5c",
+      "story_id": "7b6992ba-996a-4b13-9750-bef67d3eb4c0",
+      "seq": 9,
+      "kind": "entity_created",
+      "visibility": "hidden",
+      "content": "Mira was added as a character.",
+      "payload_json": "{\"appearance_anchor\":\"wearing a worn grey cloak, face set with old resentment, watching the door\",\"entity_id\":\"0831ca57-a207-40a5-97e4-10495c08c996\",\"gender\":\"female\",\"kind\":\"character\",\"location\":\"the Rusty Anchor tavern\",\"name\":\"Mira\",\"outfit\":\"father's grey cloak\",\"role\":\"estranged sister\",\"source\":\"narrator_tool\"}",
+      "target_entry_id": "8b8b3277-d650-4bee-a2f5-f9306f727d7a",
+      "turn_id": "54620a2b-dc9a-4ffa-bc6e-79cdf41d7890",
+      "created_at": "2026-10-02T06:44:03.605923+00:00"
+    },
+    {
+      "id": "a34127c4-6e58-4b95-914d-6ecdbe707f54",
+      "story_id": "7b6992ba-996a-4b13-9750-bef67d3eb4c0",
+      "seq": 10,
+      "kind": "entity_created",
+      "visibility": "hidden",
+      "content": "Mira ↔ You: estranged sister (relationship recorded).",
+      "payload_json": "{\"entity_id\":\"relationship:0831ca57-a207-40a5-97e4-10495c08c996:6abab2f7-1876-4ade-9d65-6ca8d72f4751\",\"kind\":\"relationship\",\"link\":{\"description\":\"Siblings. She still resents you for leaving.\",\"direction\":\"both\",\"from_id\":\"0831ca57-a207-40a5-97e4-10495c08c996\",\"label\":\"estranged sister\",\"to_id\":\"6abab2f7-1876-4ade-9d65-6ca8d72f4751\"},\"name\":null,\"source\":\"narrator_tool\"}",
+      "target_entry_id": "8b8b3277-d650-4bee-a2f5-f9306f727d7a",
+      "turn_id": "54620a2b-dc9a-4ffa-bc6e-79cdf41d7890",
+      "created_at": "2026-10-02T06:44:03.607970300+00:00"
+    },
+    {
+      "id": "c5b09774-eac8-4546-a1b0-ba98a42ab93c",
+      "story_id": "7b6992ba-996a-4b13-9750-bef67d3eb4c0",
+      "seq": 11,
+      "kind": "entity_updated",
+      "visibility": "hidden",
+      "content": "Mira ↔ You: estranged sister: label estranged sister → resents; direction both → one_way; description → \"She still resents you for leaving home.\".",
+      "payload_json": "{\"after\":{\"link\":{\"description\":\"She still resents you for leaving home.\",\"direction\":\"one_way\",\"from_id\":\"0831ca57-a207-40a5-97e4-10495c08c996\",\"label\":\"resents\",\"to_id\":\"6abab2f7-1876-4ade-9d65-6ca8d72f4751\"},\"name\":\"Mira → You: resents\"},\"before\":{\"link\":{\"description\":\"Siblings. She still resents you for leaving.\",\"direction\":\"both\",\"from_id\":\"0831ca57-a207-40a5-97e4-10495c08c996\",\"label\":\"estranged sister\",\"to_id\":\"6abab2f7-1876-4ade-9d65-6ca8d72f4751\"},\"name\":\"Mira ↔ You: estranged sister\"},\"entity_id\":\"relationship:0831ca57-a207-40a5-97e4-10495c08c996:6abab2f7-1876-4ade-9d65-6ca8d72f4751\",\"source\":\"narrator_tool\"}",
+      "target_entry_id": "8b8b3277-d650-4bee-a2f5-f9306f727d7a",
+      "turn_id": "54620a2b-dc9a-4ffa-bc6e-79cdf41d7890",
+      "created_at": "2026-10-02T06:44:03.610924100+00:00"
+    },
+    {
+      "id": "e5103558-9a77-408b-a4de-8e8c49ff738f",
+      "story_id": "7b6992ba-996a-4b13-9750-bef67d3eb4c0",
+      "seq": 12,
+      "kind": "tool_call",
+      "visibility": "hidden",
+      "content": "Recording Mira…",
+      "payload_json": "{\"args\":{\"appearance_anchor\":\"wearing a worn grey cloak, face set with old resentment, watching the door\",\"gender\":\"female\",\"location\":\"the Rusty Anchor tavern\",\"name\":\"Mira\",\"outfit\":\"father's grey cloak\",\"role\":\"estranged sister\"},\"ok\":true,\"result\":{\"created\":true,\"kind\":\"character\",\"name\":\"Mira\"},\"tool\":\"save_character\"}",
+      "target_entry_id": "8b8b3277-d650-4bee-a2f5-f9306f727d7a",
+      "turn_id": "54620a2b-dc9a-4ffa-bc6e-79cdf41d7890",
+      "created_at": "2026-10-02T06:44:11.446873700+00:00"
+    },
+    {
+      "id": "c205f7c4-59ad-4088-80ea-2a1d2ab281b7",
+      "story_id": "7b6992ba-996a-4b13-9750-bef67d3eb4c0",
+      "seq": 13,
+      "kind": "tool_call",
+      "visibility": "hidden",
+      "content": "Recording a relationship…",
+      "payload_json": "{\"args\":{\"description\":\"Siblings. She still resents you for leaving.\",\"direction\":\"both\",\"from\":\"Mira\",\"label\":\"estranged sister\",\"to\":\"You\"},\"ok\":true,\"result\":{\"created\":true,\"kind\":\"relationship\",\"name\":\"Mira ↔ You: estranged sister\"},\"tool\":\"save_relationship\"}",
+      "target_entry_id": "8b8b3277-d650-4bee-a2f5-f9306f727d7a",
+      "turn_id": "54620a2b-dc9a-4ffa-bc6e-79cdf41d7890",
+      "created_at": "2026-10-02T06:44:11.447140200+00:00"
+    },
+    {
+      "id": "342414da-aeb8-4bb2-877d-cd5b170dd57d",
+      "story_id": "7b6992ba-996a-4b13-9750-bef67d3eb4c0",
+      "seq": 14,
+      "kind": "tool_call",
+      "visibility": "hidden",
+      "content": "Recording a relationship…",
+      "payload_json": "{\"args\":{\"description\":\"She still resents you for leaving home.\",\"direction\":\"one_way\",\"from\":\"Mira\",\"label\":\"resents\",\"to\":\"You\"},\"ok\":true,\"result\":{\"created\":false,\"kind\":\"relationship\",\"name\":\"Mira → You: resents\"},\"tool\":\"save_relationship\"}",
+      "target_entry_id": "8b8b3277-d650-4bee-a2f5-f9306f727d7a",
+      "turn_id": "54620a2b-dc9a-4ffa-bc6e-79cdf41d7890",
+      "created_at": "2026-10-02T06:44:11.447330100+00:00"
+    },
+    {
+      "id": "fc500041-88dd-4a5d-8ea5-e9e7b5ba7b05",
+      "story_id": "7b6992ba-996a-4b13-9750-bef67d3eb4c0",
+      "seq": 15,
+      "kind": "player_message",
+      "visibility": "visible",
+      "content": "A hooded stranger in the corner hasn't taken her eyes off us.",
+      "payload_json": "{\"input_mode\":\"story\"}",
+      "target_entry_id": null,
+      "turn_id": "a4002c61-fb28-4a78-b508-42e663993c02",
+      "created_at": "2026-10-02T06:56:51.945446900+00:00"
+    },
+    {
+      "id": "defb5f3d-e6fa-48c7-befa-ee3420e7cda7",
+      "story_id": "7b6992ba-996a-4b13-9750-bef67d3eb4c0",
+      "seq": 16,
+      "kind": "narration",
+      "visibility": "visible",
+      "content": "I'll set the watcher in the corner down in the record before the scene moves on.You feel it before you place it: a weight at the edge of the room, steady as a hand laid flat on a table. In the corner, past the last lamp, a hooded figure sits with her back to the wall and her face cut in half by shadow. Only the lower line of a pale jaw shows, and a pair of eyes that have not left the two of you since you came through the door.\n\nShe does not drink. She does not turn when Tom sets a mug down two tables over, nor when a chair scrapes and a man laughs too loud. The hood is deep and dark, and under it she is still in the way of someone who has already decided what she came to see. When Mira shifts, the grey cloak whispering against the bench, those eyes follow the movement and come back to you, unhurried, as if measuring the distance between sister and sister and finding it exactly as she expected.",
+      "payload_json": "{\"input_mode\":\"generated\",\"thoughts\":\"The user wants me to continue the story. There's a story tag: \\\"A hooded stranger in the corner hasn't taken her eyes off us.\\\"\\nThe hooded stranger's gaze lingers, heavy and unblinking, as if she’s been waiting for you to notice her. The tavern’s low hum fades to a distant murmur, the crackle of the hearth the only sound that cuts through the tension.The character was created. Now I narrate the scene in second person, literary prose, without mentioning the true name Isolde Vetch - the player knows her as the hooded stranger.\"}",
+      "target_entry_id": null,
+      "turn_id": "a4002c61-fb28-4a78-b508-42e663993c02",
+      "created_at": "2026-10-02T06:56:51.947588+00:00"
+    },
+    {
+      "id": "9ba94e39-a296-41b4-9d25-c90f6ebb093d",
+      "story_id": "7b6992ba-996a-4b13-9750-bef67d3eb4c0",
+      "seq": 17,
+      "kind": "entity_created",
+      "visibility": "hidden",
+      "content": "Isolde Vetch was added as a character.",
+      "payload_json": "{\"appearance_anchor\":\"woman in a deep dark hood, only the lower half of a sharp pale face and steady pale eyes visible, still as stone\",\"entity_id\":\"aac955c9-b2ac-4876-8d56-8c2cff861f97\",\"gender\":\"female\",\"kind\":\"character\",\"known_as\":\"the hooded stranger\",\"location\":\"corner of the Rusty Anchor\",\"name\":\"Isolde Vetch\",\"outfit\":\"dark hooded cloak, face shadowed\",\"role\":\"watcher\",\"source\":\"narrator_tool\"}",
+      "target_entry_id": "defb5f3d-e6fa-48c7-befa-ee3420e7cda7",
+      "turn_id": "a4002c61-fb28-4a78-b508-42e663993c02",
+      "created_at": "2026-10-02T06:57:01.927805800+00:00"
+    },
+    {
+      "id": "93513711-657e-4479-b6f0-cb236084a9a0",
+      "story_id": "7b6992ba-996a-4b13-9750-bef67d3eb4c0",
+      "seq": 18,
+      "kind": "tool_call",
+      "visibility": "hidden",
+      "content": "Recording Isolde Vetch…",
+      "payload_json": "{\"args\":{\"appearance_anchor\":\"woman in a deep dark hood, only the lower half of a sharp pale face and steady pale eyes visible, still as stone\",\"gender\":\"female\",\"known_as\":\"the hooded stranger\",\"location\":\"corner of the Rusty Anchor\",\"name\":\"Isolde Vetch\",\"outfit\":\"dark hooded cloak, face shadowed\",\"role\":\"watcher\"},\"ok\":true,\"result\":{\"created\":true,\"kind\":\"character\",\"name\":\"Isolde Vetch\"},\"tool\":\"save_character\"}",
+      "target_entry_id": "defb5f3d-e6fa-48c7-befa-ee3420e7cda7",
+      "turn_id": "a4002c61-fb28-4a78-b508-42e663993c02",
+      "created_at": "2026-10-02T06:57:06.879804800+00:00"
+    },
+    {
+      "id": "181f0529-461d-436a-a8e4-d6c436d5efc6",
+      "story_id": "7b6992ba-996a-4b13-9750-bef67d3eb4c0",
+      "seq": 19,
+      "kind": "player_message",
+      "visibility": "visible",
+      "content": "I apologize to Mira and mean it.",
+      "payload_json": "{\"input_mode\":\"do\"}",
+      "target_entry_id": null,
+      "turn_id": "7e553d6b-a937-435d-bc70-e431f856e683",
+      "created_at": "2026-10-02T07:03:51.383989100+00:00"
+    },
+    {
+      "id": "6d1eb3c2-3ed6-49b3-9fce-2bc0d582457d",
+      "story_id": "7b6992ba-996a-4b13-9750-bef67d3eb4c0",
+      "seq": 20,
+      "kind": "narration",
+      "visibility": "visible",
+      "content": "Whether she believes you is not certain. I'll see how the apology lands before the scene moves.You sit across from her and say it plainly, without the old excuses, without the story you have told yourself about why you had to go. The words come out rough and smaller than you meant them to be. You tell her you are sorry for leaving. You tell her you mean it.\n\nMira listens the way stone listens. Her hands stay flat on the scarred wood, and the grey cloak does not shift. When you finish, the quiet between you holds a moment longer than kindness would allow.\n\n\"You mean it,\" she says, and it is not a question. Her mouth tightens at one corner, not quite a smile. \"You meant it the morning you walked out, too. You meant every letter you never sent.\" She draws the cloak closer, your father's wool settling over her shoulders like a verdict. \"Sorry is a word you can afford now that you're back in the room. It doesn't buy back the years I spent waiting for a door that didn't open.\"\n\nHer eyes do not leave yours. Whatever you hoped the apology might move in her stays where it has lived since the day you left, hard and settled and untouched. Across the tavern, the hooded stranger in the corner has not looked away.",
+      "payload_json": "{\"input_mode\":\"generated\",\"thoughts\":\"The user wants me to narrate an apology to Mira that is meant sincerely. I should continue the story in second person, literary prose.\\nI step forward, the tavern's low hum fading as I meet Mira's gaze. \\\"Mira... I know I've hurt you. Leaving like that, without a word—I'm sorry. I was wrong, and I never meant to make you feel this way.The roll failed. Mira doesn't soften. I should narrate the sincere apology and her refusal to accept it, staying in second person literary prose. Don't mention the roll. Don't break fourth wall.\"}",
+      "target_entry_id": null,
+      "turn_id": "7e553d6b-a937-435d-bc70-e431f856e683",
+      "created_at": "2026-10-02T07:03:51.386116300+00:00"
+    },
+    {
+      "id": "8b72d34b-1589-4abd-80dd-7b90d8e51e09",
+      "story_id": "7b6992ba-996a-4b13-9750-bef67d3eb4c0",
+      "seq": 21,
+      "kind": "diceroll",
+      "visibility": "hidden",
+      "content": "Dice-roll outcome: rolled 54 with 35% chance and got failure.",
+      "payload_json": "{\"chance_percent\":35,\"chance_source\":\"narrator\",\"factors\":[],\"needed\":65,\"outcome\":\"failure\",\"reason\":\"Mira still resents the player for leaving; whether a sincere apology softens her is uncertain.\",\"roll\":54,\"seed\":1067381546}",
+      "target_entry_id": "6d1eb3c2-3ed6-49b3-9fce-2bc0d582457d",
+      "turn_id": "7e553d6b-a937-435d-bc70-e431f856e683",
+      "created_at": "2026-10-02T07:04:00.076399600+00:00"
+    },
+    {
+      "id": "a2798052-56f3-4d04-a60e-06c0d3fbb35d",
+      "story_id": "7b6992ba-996a-4b13-9750-bef67d3eb4c0",
+      "seq": 22,
+      "kind": "tool_call",
+      "visibility": "hidden",
+      "content": "Rolling for Mira still resents the player for leaving; whether a sincere apology softens her is uncertain.…",
+      "payload_json": "{\"args\":{\"chance_percent\":35,\"reason\":\"Mira still resents the player for leaving; whether a sincere apology softens her is uncertain.\"},\"ok\":true,\"result\":{\"chance_percent\":35,\"chance_source\":\"narrator\",\"factors\":[],\"needed\":65,\"outcome\":\"failure\",\"reason\":\"Mira still resents the player for leaving; whether a sincere apology softens her is uncertain.\",\"roll\":54,\"seed\":1067381546},\"tool\":\"roll_check\"}",
+      "target_entry_id": "6d1eb3c2-3ed6-49b3-9fce-2bc0d582457d",
+      "turn_id": "7e553d6b-a937-435d-bc70-e431f856e683",
+      "created_at": "2026-10-02T07:04:08.878172700+00:00"
+    },
+    {
+      "id": "53c42b31-0064-4134-9b2a-811eafd46e2a",
+      "story_id": "7b6992ba-996a-4b13-9750-bef67d3eb4c0",
+      "seq": 23,
+      "kind": "entity_attribute_changed",
+      "visibility": "hidden",
+      "content": "User changed Trust from unset to 0.",
+      "payload_json": "{\"after\":0.0,\"attribute_id\":\"1882882f-8f52-4cbf-a9f3-cf080d35b498\",\"attribute_name\":\"Trust\",\"before\":null,\"entity_id\":\"relationship:0831ca57-a207-40a5-97e4-10495c08c996:6abab2f7-1876-4ade-9d65-6ca8d72f4751\",\"source\":\"user\"}",
+      "target_entry_id": null,
+      "turn_id": null,
+      "created_at": "2026-10-02T07:13:25.072614400+00:00"
+    },
+    {
+      "id": "5f3b5d11-1c7d-4198-962b-cb793b0ee5f0",
+      "story_id": "7b6992ba-996a-4b13-9750-bef67d3eb4c0",
+      "seq": 24,
+      "kind": "entity_attribute_changed",
+      "visibility": "hidden",
+      "content": "User changed Trust from 0 to -2.",
+      "payload_json": "{\"after\":-2.0,\"attribute_id\":\"1882882f-8f52-4cbf-a9f3-cf080d35b498\",\"attribute_name\":\"Trust\",\"before\":0.0,\"entity_id\":\"relationship:0831ca57-a207-40a5-97e4-10495c08c996:6abab2f7-1876-4ade-9d65-6ca8d72f4751\",\"source\":\"user\"}",
+      "target_entry_id": null,
+      "turn_id": null,
+      "created_at": "2026-10-02T07:14:05.465941500+00:00"
+    }
+  ],
+  "usage": [
+    {
+      "id": "4f0ad96f-c57f-45ac-adeb-c85c9afcfa19",
+      "story_id": "7b6992ba-996a-4b13-9750-bef67d3eb4c0",
+      "kind": "narration",
+      "provider": "openrouter",
+      "model": "x-ai/grok-4.7",
+      "response_id": "gen-1790922708-o6H1cHjK1m4LpLLnUXPu",
+      "input_tokens": 3745,
+      "output_tokens": 1070,
+      "cached_input_tokens": 1152,
+      "cache_write_tokens": 0,
+      "cost_usd": 0.012182,
+      "created_at": "2026-10-02T06:32:04.487466900+00:00",
+      "turn_id": "e9338b01-2a02-485e-86a0-a8c0f4ae8c44",
+      "image_asset_id": null,
+      "duration_ms": null,
+      "earlier_attempt": 0
+    },
+    {
+      "id": "edfb8075-5208-4a8d-9349-e0d6a00e395f",
+      "story_id": "7b6992ba-996a-4b13-9750-bef67d3eb4c0",
+      "kind": "narration",
+      "provider": "openrouter",
+      "model": "x-ai/grok-4.7",
+      "response_id": "gen-1790923437-rFyGaHly8EpX11Z0qWe7",
+      "input_tokens": 3840,
+      "output_tokens": 438,
+      "cached_input_tokens": 1152,
+      "cache_write_tokens": 0,
+      "cost_usd": 0.00858,
+      "created_at": "2026-10-02T06:44:11.447985600+00:00",
+      "turn_id": "54620a2b-dc9a-4ffa-bc6e-79cdf41d7890",
+      "image_asset_id": null,
+      "duration_ms": null,
+      "earlier_attempt": 0
+    },
+    {
+      "id": "c71d5bab-f662-49d7-b11b-b863169c02ce",
+      "story_id": "7b6992ba-996a-4b13-9750-bef67d3eb4c0",
+      "kind": "narration",
+      "provider": "openrouter",
+      "model": "x-ai/grok-4.7",
+      "response_id": "gen-1790923444-v85BAPI4nhPeeLRAfYN5",
+      "input_tokens": 4353,
+      "output_tokens": 359,
+      "cached_input_tokens": 3840,
+      "cache_write_tokens": 0,
+      "cost_usd": 0.0051,
+      "created_at": "2026-10-02T06:44:11.448177400+00:00",
+      "turn_id": "54620a2b-dc9a-4ffa-bc6e-79cdf41d7890",
+      "image_asset_id": null,
+      "duration_ms": null,
+      "earlier_attempt": 0
+    },
+    {
+      "id": "42d3b4fb-59dd-4e0d-ae38-930f77123db8",
+      "story_id": "7b6992ba-996a-4b13-9750-bef67d3eb4c0",
+      "kind": "narration",
+      "provider": "openrouter",
+      "model": "x-ai/grok-4.7",
+      "response_id": "gen-1790924213-XFNODhGVIPkwIC8o6g4R",
+      "input_tokens": 4233,
+      "output_tokens": 580,
+      "cached_input_tokens": 1152,
+      "cache_write_tokens": 0,
+      "cost_usd": 0.010218,
+      "created_at": "2026-10-02T06:57:06.880838500+00:00",
+      "turn_id": "a4002c61-fb28-4a78-b508-42e663993c02",
+      "image_asset_id": null,
+      "duration_ms": null,
+      "earlier_attempt": 0
+    },
+    {
+      "id": "0312a75c-6c5e-4576-bb0b-b435d24dffbd",
+      "story_id": "7b6992ba-996a-4b13-9750-bef67d3eb4c0",
+      "kind": "narration",
+      "provider": "openrouter",
+      "model": "x-ai/grok-4.7",
+      "response_id": "gen-1790924222-J3YTCHk2BI7uZEeySfCs",
+      "input_tokens": 4842,
+      "output_tokens": 228,
+      "cached_input_tokens": 4224,
+      "cache_write_tokens": 0,
+      "cost_usd": 0.004716,
+      "created_at": "2026-10-02T06:57:06.881042600+00:00",
+      "turn_id": "a4002c61-fb28-4a78-b508-42e663993c02",
+      "image_asset_id": null,
+      "duration_ms": null,
+      "earlier_attempt": 0
+    },
+    {
+      "id": "4122e04d-f492-452f-9212-8851ec5a6fc6",
+      "story_id": "7b6992ba-996a-4b13-9750-bef67d3eb4c0",
+      "kind": "narration",
+      "provider": "openrouter",
+      "model": "x-ai/grok-4.7",
+      "response_id": "gen-1790924632-0U5O8LEBsf49yTw1HHQi",
+      "input_tokens": 4556,
+      "output_tokens": 455,
+      "cached_input_tokens": 1152,
+      "cache_write_tokens": 0,
+      "cost_usd": 0.010114,
+      "created_at": "2026-10-02T07:04:08.879447700+00:00",
+      "turn_id": "7e553d6b-a937-435d-bc70-e431f856e683",
+      "image_asset_id": null,
+      "duration_ms": null,
+      "earlier_attempt": 0
+    },
+    {
+      "id": "92be6268-b3cf-4833-8d31-ac4710bf2c88",
+      "story_id": "7b6992ba-996a-4b13-9750-bef67d3eb4c0",
+      "kind": "narration",
+      "provider": "openrouter",
+      "model": "x-ai/grok-4.7",
+      "response_id": "gen-1790924641-2blIUJYxkK3Qd9MgvXNu",
+      "input_tokens": 5085,
+      "output_tokens": 378,
+      "cached_input_tokens": 4480,
+      "cache_write_tokens": 0,
+      "cost_usd": 0.005718,
+      "created_at": "2026-10-02T07:04:08.879730100+00:00",
+      "turn_id": "7e553d6b-a937-435d-bc70-e431f856e683",
+      "image_asset_id": null,
+      "duration_ms": null,
+      "earlier_attempt": 0
+    }
+  ],
+  "logs": [
+    {
+      "args": [
+        "%cDownload the React DevTools for a better development experience: https://reactjs.org/link/react-devtools",
+        "font-weight:bold"
+      ],
+      "id": 1,
+      "level": "info",
+      "source": "at http://localhost:1420/node_modules/.vite/deps/react-dom-Cn6-HCcb.js?v=d202a15e:17222:52",
+      "timestamp": 1790919577244
+    }
+  ]
+}

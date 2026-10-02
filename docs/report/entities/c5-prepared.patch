@@ -1,0 +1,490 @@
+*** Begin Patch
+*** Update File: src-tauri/src/features/stories/settings.rs
+@@
+-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+-#[serde(rename_all = "snake_case")]
+-pub enum EntityContext {
+-    #[default]
+-    All,
+-    Scoped,
+-    None,
++#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
++#[serde(default)]
++pub struct EntityVisibility {
++    pub character: bool,
++    pub relationship: bool,
++}
++
++impl Default for EntityVisibility {
++    fn default() -> Self {
++        Self {
++            character: true,
++            relationship: true,
++        }
++    }
+ }
+@@
+ pub struct ContextSettings {
+-    pub entities: EntityContext,
++    pub entity_kinds: EntityVisibility,
+@@
+-            entities: EntityContext::All,
++            entity_kinds: EntityVisibility::default(),
+@@
+-            "context": {"author_note": "n", "entities": "scoped"}
++            "context": {"author_note": "n", "entity_kinds": {"character": false, "relationship": true}}
+@@
+-        assert_eq!(context.entities, EntityContext::Scoped);
++        assert_eq!(context.entity_kinds, EntityVisibility { character: false, relationship: true });
+@@
+     fn partial_context_uses_serde_defaults() {
++        assert_eq!(EntityVisibility::default(), EntityVisibility { character: true, relationship: true });
+         let pool = stories();
+         let conn = pool.get().unwrap();
+-        conn.execute("UPDATE stories SET settings_json = '{\"context\":{\"author_note\":\"x\"}}' WHERE id = 'first'", []).unwrap();
++        conn.execute("UPDATE stories SET settings_json = ?1 WHERE id = 'first'",
++            [json!({"context": {"author_note": "x", "entity_kinds": {"relationship": false}}}).to_string()]).unwrap();
+         assert_eq!(
+             read_context_settings(&conn, "first").unwrap(),
+             ContextSettings {
++                entity_kinds: EntityVisibility { relationship: false, ..Default::default() },
+                 author_note: "x".into(),
+@@
+-        context.entities = EntityContext::Scoped;
++        context.entity_kinds.relationship = false;
+*** Update File: src-tauri/src/features/context/blocks.rs
+@@
+-use std::collections::{HashMap, HashSet};
++use std::collections::HashMap;
+ 
+-use crate::ai::{HistoryTurn, TextModelConfig};
+ use crate::features::entities::{
+     self,
+-    model::{Entity, EntityAttributeValue},
++    model::{Entity, EntityAttributeValue, CHARACTER, RELATIONSHIP},
+ };
+-use crate::features::transcript::{query, repository};
+-use crate::features::stories::settings::{EntityContext, ContextSettings};
++use crate::features::stories::settings::{ContextSettings, EntityVisibility};
+ use crate::prompts;
+ use crate::shared::error::AppResult;
+ 
+-use super::raw_tail_boundary;
+-
+ pub(crate) struct ToolDescription<'a> {
+@@
+     pub story_id: &'a str,
+-    pub history: &'a [HistoryTurn],
+-    pub config: &'a TextModelConfig,
+     pub context: &'a ContextSettings,
+@@
+ fn format_entity_context(
+     data: &[Entity],
+     attributes: &HashMap<String, Vec<EntityAttributeValue>>,
+-    detailed_entity_ids: Option<&HashSet<String>>,
++    visibility: EntityVisibility,
+ ) -> String {
+-    let mut lines = vec![prompts::ENTITY_CONTEXT_HEADER.to_string()];
+-    for entity in data {
+-        if detailed_entity_ids.is_some_and(|entity_ids| !entity_ids.contains(&entity.id)) {
+-            lines.push(if entity.link.is_some() {
+-                format!("- {}", entity.name)
+-            } else {
+-                let known_as = entity.character.known_as.as_deref()
+-                    .map(|text| format!("; known to the player as: {text}")).unwrap_or_default();
+-                format!("- {} ({}){known_as}", entity.name, entity.kind)
+-            });
+-            continue;
+-        }
++    let mut lines = Vec::new();
++    for entity in data.iter().filter(|entity| match entity.kind.as_str() {
++        CHARACTER => visibility.character,
++        RELATIONSHIP => visibility.relationship,
++        _ => false,
++    }) {
+         let mut details = String::new();
+@@
+-    format!("<entities>\n{}\n</entities>", lines.join("\n"))
+-}
+-
+-fn touched_entity_ids(
+-    conn: &rusqlite::Connection,
+-    raw_tail: &[HistoryTurn],
+-) -> AppResult<HashSet<String>> {
+-    let Some(first_id) = raw_tail
+-        .iter()
+-        .filter_map(|turn| turn.entry_id.as_deref())
+-        .next()
+-    else {
+-        return Ok(HashSet::new());
+-    };
+-    let first = repository::get_entry(conn, first_id)?;
+-    query::entities_touched_since(conn, &first.story_id, first.seq)
++    if lines.is_empty() {
++        String::new()
++    } else {
++        format!("<entities>\n{}\n{}\n</entities>", prompts::ENTITY_CONTEXT_HEADER, lines.join("\n"))
++    }
+ }
+@@
+ pub(crate) fn build_message_context(inputs: &Inputs<'_>) -> AppResult<ContextPlan> {
+-    let (entities, attributes) = if inputs.context.entities == EntityContext::None {
++    let (entities, attributes) = if !inputs.context.entity_kinds.character && !inputs.context.entity_kinds.relationship {
+@@
+-    let entities_full = if inputs.context.entities == EntityContext::None {
+-        String::new()
+-    } else {
+-        format_entity_context(&entities, &attributes, None)
+-    };
++    let entities_full = format_entity_context(&entities, &attributes, inputs.context.entity_kinds);
+@@
+-    let full = combine_context_blocks(&[entities_full.clone(), author_note.clone(), tools.clone()]);
+-    let entities_live = if inputs.context.entities != EntityContext::Scoped {
+-        entities_full
+-    } else {
+-        let split = raw_tail_boundary(
+-            inputs.history,
+-            inputs.config,
+-            &prompts::narrator_system_prompt(),
+-            &full,
+-        );
+-        let touched = touched_entity_ids(inputs.conn, &inputs.history[split..])?;
+-        format_entity_context(&entities, &attributes, Some(&touched))
+-    };
++    let full = combine_context_blocks(&[entities_full, author_note, tools]);
+@@
+-    let live = combine_context_blocks(&[entities_live, author_note, tools, retry]);
++    let live = combine_context_blocks(&[full.clone(), retry]);
+@@
+ mod tests {
+     use super::*;
+-    use crate::ai::{HistoryRole, HistoryTurnMarker};
+-    use crate::features::transcript::model::kind as transcript_kind;
+@@
+-    fn config() -> TextModelConfig {
+-        TextModelConfig {
+-            provider: "openrouter".into(),
+-            model: "test".into(),
+-            api_key: "test".into(),
+-            context_window: 32_768,
+-            supports_images: false,
+-        }
+-    }
+-
+     fn descriptions<'a>(specs: &'a [&'a ToolSpec]) -> Vec<ToolDescription<'a>> {
+@@
+-    fn story_with_entity_query() -> (Pool, HistoryTurn) {
++    fn story() -> Pool {
+@@
+-            &conn, "s", json!({"author_note":"Keep it terse."}),
++            &conn, "s", json!({"context": {"author_note":"Keep it terse."}}),
+@@
+-        let query_id = crate::shared::test_support::record(
+-            &conn, "s", transcript_kind::ENTITY_UPDATED, Some("Bob's appearance changed."),
+-            json!({"entity_ids":["bob"]}), None, None,
+-        );
+-        conn.execute(
+-            "UPDATE stories SET settings_json = ?1 WHERE id = 's'",
+-            [json!({"context": {"entities":"scoped", "author_note":"Keep it terse.", "author_note_enabled":true, "tool_instructions":true}}).to_string()],
+-        )
+-        .unwrap();
+         drop(conn);
+-
+-        (
+-            pool,
+-            HistoryTurn {
+-                entry_id: Some(query_id),
+-                role: HistoryRole::Narrator,
+-                content: "[Authoritative story event: entity_updated]\nBob's appearance changed.".into(),
+-                marker: HistoryTurnMarker::Transcript,
+-                images: Vec::new(),
+-                reasoning: None,
+-            },
+-        )
++        pool
+@@
+     async fn pipeline_builds_all_blocks_in_fixed_order() {
+-        let (pool, history_turn) = story_with_entity_query();
+-        let history = vec![history_turn];
+-        let config = config();
++        let pool = story();
+@@
+                     story_id: "s",
+-                    history: &history,
+-                    config: &config,
+                     context: &context,
+@@
+         assert!(plan.full.contains("<entities>"));
++        assert_eq!(plan.full, plan.live);
+@@
+     async fn context_sees_uncommitted_story_and_entity_changes() {
+-        let (pool, history_turn) = story_with_entity_query();
++        let pool = story();
+@@
+-                [json!({"context": {"entities":"scoped", "author_note":"A new direction.", "author_note_enabled":true, "tool_instructions":true}}).to_string()],
++                [json!({"context": {"author_note":"A new direction.", "author_note_enabled":true, "tool_instructions":true}}).to_string()],
+@@
+-        let history = vec![history_turn];
+         let plan = turn
+@@
+                     story_id: "s",
+-                    history: &history,
+-                    config: &config(),
+                     context: &context,
+@@
+             let context = ContextSettings {
+-                entities: EntityContext::All,
++                entity_kinds: EntityVisibility::default(),
+@@
+                 story_id: "s",
+-                history: &[],
+-                config: &config(),
+                 context: &context,
+@@
+     async fn muted_note_and_tool_instructions_leave_offered_tools_unchanged() {
+-        let (pool, history_turn) = story_with_entity_query();
++        let pool = story();
+@@
+                 let context = ContextSettings {
+-                    entities: EntityContext::None,
++                    entity_kinds: EntityVisibility { character: false, relationship: false },
+@@
+                     story_id: "s",
+-                    history: &[history_turn],
+-                    config: &config(),
+                     context: &context,
+@@
+     async fn retry_adds_rejected_text_only_to_live_context_after_tools() {
+-        let (pool, history_turn) = story_with_entity_query();
++        let pool = story();
+@@
+-            let history = [history_turn];
+             let base = Inputs {
+@@
+                 story_id: "s",
+-                history: &history,
+-                config: &config(),
+                 context: &context,
+@@
+-        let text = format_entity_context(&data, &attrs, None);
++        let text = format_entity_context(&data, &attrs, EntityVisibility::default());
+         assert!(text.contains("- Kael (character); known to the player as: the hooded stranger; location: the Rusty Anchor; outfit: grey cloak; gender: female; age: 34; role: smuggler; appearance: scarred lip; attributes: Health=7"));
+         assert!(text.contains("Names here are true names."));
+-        let summary = format_entity_context(&data, &attrs, Some(&HashSet::new()));
+-        assert!(summary.contains("- Kael (character); known to the player as: the hooded stranger"));
+-        assert!(!summary.contains("location: the Rusty Anchor"));
+@@
+-        let text = format_entity_context(&data, &attrs, None);
++        let text = format_entity_context(&data, &attrs, EntityVisibility::default());
+         assert!(text.starts_with(&format!("<entities>\n{}", prompts::ENTITY_CONTEXT_HEADER)));
+         assert!(text.contains("- Mira → You: estranged sister (relationship); description: Still resents your departure; attributes: Affection=8, Trust=-2"));
+         assert!(text.contains("- Mira ↔ Varro: siblings (relationship)"));
+-        let summary = format_entity_context(&data, &attrs, Some(&HashSet::new()));
+-        assert!(summary.contains("\n- Mira → You: estranged sister\n"));
+-        assert!(!summary.contains("Still resents"));
++        for (character, relationship) in [(true, false), (false, true), (false, false)] {
++            let context = ContextSettings {
++                entity_kinds: EntityVisibility { character, relationship },
++                author_note_enabled: false,
++                tool_instructions: false,
++                ..Default::default()
++            };
++            let plan = build_message_context(&Inputs {
++                conn: &conn, story_id: "s", context: &context, tools: &[], rejected_reply: None,
++            }).unwrap();
++            assert_eq!(plan.full, plan.live);
++            assert_eq!(plan.live.lines().any(|line| line.starts_with("- ") && line.contains("(character)")), character);
++            assert_eq!(plan.live.lines().any(|line| line.starts_with("- ") && line.contains(" → ")), relationship);
++            assert_eq!(plan.live.contains("\n- Mira ↔ Varro: siblings (relationship)"), relationship);
++            assert_eq!(plan.live.contains("<entities>"), character || relationship);
++            if relationship {
++                assert!(plan.live.contains("- Mira → You: estranged sister (relationship); description: Still resents your departure; attributes: Affection=8, Trust=-2"));
++            }
++        }
++        assert_eq!(format_entity_context(&[], &HashMap::new(), EntityVisibility::default()), "");
+*** Update File: src-tauri/src/features/context/preview.rs
+@@
+         story_id,
+-        history: &history,
+-        config: model,
+         context: &context,
+@@
+-            "context": {"entities": "scoped", "author_note": "Keep it tense.",
++            "context": {"author_note": "Keep it tense.",
+@@
+                 story_id: "s",
+-                history: &history,
+-                config: &config,
+                 context: &context,
+*** Update File: src-tauri/src/features/narrator/generation.rs
+@@
+                 story_id: inputs.story_id,
+-                history: &inputs.transcript,
+-                config: &config,
+                 context: &context,
+*** Update File: src-tauri/src/features/transcript/query.rs
+@@
+-use crate::shared::error::{AppError, AppResult};
++use crate::shared::error::AppResult;
+@@
+-/// Entity ids named by entity events with `seq >= since_seq`.
+-pub fn entities_touched_since(
+-    conn: &rusqlite::Connection,
+-    story_id: &str,
+-    since_seq: i64,
+-) -> AppResult<HashSet<String>> {
+-    let mut stmt = conn.prepare(
+-        "SELECT payload_json FROM transcript_entries
+-         WHERE story_id = ?1 AND seq >= ?2
+-            AND kind IN (?3, ?4, ?5, ?6, ?7)",
+-    )?;
+-    let rows = stmt.query_map(
+-        rusqlite::params![
+-            story_id,
+-            since_seq,
+-            kind::ENTITY_CREATED,
+-            kind::ENTITY_UPDATED,
+-            kind::ENTITY_DELETED,
+-            kind::ENTITY_ATTRIBUTE_CHANGED,
+-            kind::ENTITY_ATTRIBUTE_REMOVED,
+-        ],
+-        |row| row.get::<_, String>(0),
+-    )?;
+-    let mut touched = HashSet::new();
+-    for row in rows {
+-        let payload = serde_json::from_str::<serde_json::Value>(&row?)
+-            .map_err(|error| AppError::Other(format!("invalid transcript payload JSON: {error}")))?;
+-        if let Some(id) = payload.get("entity_id").and_then(serde_json::Value::as_str) {
+-            touched.insert(id.to_string());
+-        }
+-        if let Some(ids) = payload
+-            .get("entity_ids")
+-            .and_then(serde_json::Value::as_array)
+-        {
+-            touched.extend(ids.iter().filter_map(|id| id.as_str().map(str::to_string)));
+-        }
+-    }
+-    Ok(touched)
+-}
+-
+ /// The latest active narration entry id, if any.
+@@
+-    #[test]
+-    fn touched_entities_reads_single_and_multiple_ids_from_the_raw_tail() {
+-        let pool = story();
+-        let conn = pool.get().unwrap();
+-        append(
+-            &conn,
+-            kind::ENTITY_CREATED,
+-            None,
+-            json!({"entity_id":"before"}),
+-            None,
+-        );
+-        let boundary = append(
+-            &conn,
+-            kind::ENTITY_UPDATED,
+-            None,
+-            json!({"entity_id":"one"}),
+-            None,
+-        );
+-        append(
+-            &conn,
+-            kind::ENTITY_UPDATED,
+-            None,
+-            json!({"entity_ids":["two","three"]}),
+-            None,
+-        );
+-        let touched = entities_touched_since(&conn, "story", boundary.seq).unwrap();
+-        assert_eq!(
+-            touched,
+-            ["one", "two", "three"]
+-                .into_iter()
+-                .map(str::to_string)
+-                .collect()
+-        );
+-    }
+ }
+*** Update File: src-tauri/src/features/transcript/history.rs
+@@
+-        use crate::features::{entities::{self, model::{CharacterFields, CharacterPatch}}, stories::settings::{self, ContextSettings, EntityContext}};
++        use crate::features::{entities::{self, model::{CharacterFields, CharacterPatch}}, stories::settings::{self, ContextSettings, EntityVisibility}};
+@@
+-        settings::write_context_settings(&conn, "s", ContextSettings { entities: EntityContext::None, ..Default::default() }).unwrap();
++        settings::write_context_settings(&conn, "s", ContextSettings { entity_kinds: EntityVisibility { character: false, relationship: true }, ..Default::default() }).unwrap();
+@@
+-        assert_eq!(settings::read_context_settings(&conn, "s").unwrap().entities, EntityContext::None);
++        assert_eq!(settings::read_context_settings(&conn, "s").unwrap().entity_kinds, EntityVisibility { character: false, relationship: true });
+*** Update File: src/shared/types.ts
+@@
+ export interface ContextSettings {
+-  entities: "none" | "all" | "scoped";
++  entity_kinds: { character: boolean; relationship: boolean };
+*** Update File: src/features/context/ContextPanel.tsx
+@@
+-      <label className="flex flex-col gap-1 text-muted">Entities
+-        <select value={context.entities} disabled={contextSaving}
+-          onChange={(event) => toggle({ entities: event.target.value as ContextSettings["entities"] })}
+-          className="w-full rounded border border-border bg-bg px-2 py-1.5 text-text focus:outline-none focus:border-accent">
+-          <option value="none">Off</option>
+-          <option value="all">All</option>
+-          <option value="scoped">Only recent</option>
+-        </select>
+-      </label>
++      <fieldset className="flex flex-col gap-2" disabled={contextSaving}>
++        <legend className="mb-1 text-muted">Entities in context</legend>
++        {([["character", "Characters"], ["relationship", "Relationships"]] as const).map(([kind, label]) => (
++          <div key={kind} className="flex items-center justify-between gap-2">
++            <span className="text-text">{label}</span>
++            <div className="flex items-center gap-3">
++              {[true, false].map((shown) => (
++                <label key={String(shown)} className="flex items-center gap-1.5 text-text">
++                  <input type="radio" name={`${storyId}-context-${kind}`} aria-label={`${label} ${shown ? "shown" : "hidden"}`}
++                    checked={context.entity_kinds[kind] === shown}
++                    onChange={() => toggle({ entity_kinds: { ...context.entity_kinds, [kind]: shown } })}
++                    className="accent-accent" />
++                  {shown ? "Shown" : "Hidden"}
++                </label>
++              ))}
++            </div>
++          </div>
++        ))}
++      </fieldset>
++      <p className="text-muted">Hidden kinds are left out of the entities block. The narrator still sees their changes in history if the Transcript panel includes entity records.</p>
+*** Update File: src/features/story/store.test.mjs
+@@
+-      const settings = { entities: "all", author_note_enabled: true, author_note: `Note ${args.storyId}`, tool_instructions: true };
++      const settings = { entity_kinds: { character: true, relationship: true }, author_note_enabled: true, author_note: `Note ${args.storyId}`, tool_instructions: true };
+@@
+-  const contextSave = contextStore.getState().saveContextSettings("A", { entities: "scoped" });
++  const contextSave = contextStore.getState().saveContextSettings("A", { entity_kinds: { character: true, relationship: false } });
+   assert.equal(contextStore.getState().stories.A.items[0].enabled, true);
+-  assert.equal(contextStore.getState().stories.A.context.entities, "scoped");
++  assert.deepEqual(contextStore.getState().stories.A.context.entity_kinds, { character: true, relationship: false });
+@@
+-  assert.equal(visible().context.entities, "all");
++  assert.deepEqual(visible().context.entity_kinds, { character: true, relationship: true });
+   assert.equal(contextStore.getState().stories.A.items[0].enabled, false);
+-  assert.equal(contextStore.getState().stories.A.context.entities, "all");
++  assert.deepEqual(contextStore.getState().stories.A.context.entity_kinds, { character: true, relationship: true });
+@@
+-  const firstContext = contextStore.getState().saveContextSettings(storyId, { entities: "scoped" });
++  const firstContext = contextStore.getState().saveContextSettings(storyId, { entity_kinds: { character: true, relationship: false } });
+   const secondContext = contextStore.getState().saveContextSettings(storyId, { tool_instructions: false });
+   assert.deepEqual(contextStore.getState().stories[storyId].items.map((item) => item.enabled), [true, true]);
+-  assert.equal(contextStore.getState().stories[storyId].context.entities, "scoped");
++  assert.deepEqual(contextStore.getState().stories[storyId].context.entity_kinds, { character: true, relationship: false });
+@@
+-  assert.deepEqual(calls.filter(({ command, args }) => command === "save_story_context_settings" && args.storyId === storyId).map(({ args }) => [args.settings.entities, args.settings.tool_instructions]),
+-    [["scoped", true]]);
++  assert.deepEqual(calls.filter(({ command, args }) => command === "save_story_context_settings" && args.storyId === storyId).map(({ args }) => [args.settings.entity_kinds, args.settings.tool_instructions]),
++    [[{ character: true, relationship: false }, true]]);
+@@
+-  const failedContext = contextStore.getState().saveContextSettings(storyId, { entities: "scoped" });
++  const failedContext = contextStore.getState().saveContextSettings(storyId, { entity_kinds: { character: true, relationship: false } });
+@@
+-  assert.equal(contextStore.getState().stories[storyId].context.entities, "all");
++  assert.deepEqual(contextStore.getState().stories[storyId].context.entity_kinds, { character: true, relationship: true });
+@@
+-  const save = contextStore.getState().saveContextSettings(storyId, { entities: "none" });
++  const save = contextStore.getState().saveContextSettings(storyId, { entity_kinds: { character: false, relationship: false } });
+*** End Patch

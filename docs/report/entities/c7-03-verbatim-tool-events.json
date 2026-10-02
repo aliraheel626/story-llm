@@ -1,0 +1,62 @@
+{
+  "database": "C:\\Users\\User\\AppData\\Roaming\\com.story-llm.app\\story-llm.sqlite3",
+  "mode": "ro",
+  "query": "SELECT kind,content,payload_json FROM transcript_entries WHERE story_id='7b6992ba-996a-4b13-9750-bef67d3eb4c0' AND kind IN ('tool_call','entity_created','entity_updated','entity_attribute_changed') ORDER BY seq",
+  "rows": [
+    {
+      "kind": "entity_created",
+      "content": "You was added as a character.",
+      "payload_json": "{\"entity_id\":\"6abab2f7-1876-4ade-9d65-6ca8d72f4751\",\"kind\":\"character\",\"name\":\"You\",\"source\":\"story_bootstrap\"}"
+    },
+    {
+      "kind": "entity_created",
+      "content": "User edit: Old Tom was added as a character.",
+      "payload_json": "{\"entity_id\":\"0834907f-66a8-418b-abff-19d18b92e6f9\",\"kind\":\"character\",\"location\":\"behind the bar\",\"name\":\"Old Tom\",\"outfit\":\"stained apron\",\"role\":\"innkeeper\",\"source\":\"user\"}"
+    },
+    {
+      "kind": "entity_updated",
+      "content": "User edit: Old Tom: gender → female.",
+      "payload_json": "{\"after\":{\"gender\":\"female\",\"location\":\"behind the bar\",\"name\":\"Old Tom\",\"outfit\":\"stained apron\",\"role\":\"innkeeper\"},\"before\":{\"location\":\"behind the bar\",\"name\":\"Old Tom\",\"outfit\":\"stained apron\",\"role\":\"innkeeper\"},\"entity_id\":\"0834907f-66a8-418b-abff-19d18b92e6f9\",\"source\":\"user\"}"
+    },
+    {
+      "kind": "entity_updated",
+      "content": "User edit: Old Tom: gender cleared.",
+      "payload_json": "{\"after\":{\"location\":\"behind the bar\",\"name\":\"Old Tom\",\"outfit\":\"stained apron\",\"role\":\"innkeeper\"},\"before\":{\"gender\":\"female\",\"location\":\"behind the bar\",\"name\":\"Old Tom\",\"outfit\":\"stained apron\",\"role\":\"innkeeper\"},\"entity_id\":\"0834907f-66a8-418b-abff-19d18b92e6f9\",\"source\":\"user\"}"
+    },
+    {
+      "kind": "entity_updated",
+      "content": "User edit: Old Tom: name Old Tom → Tom.",
+      "payload_json": "{\"after\":{\"location\":\"behind the bar\",\"name\":\"Tom\",\"outfit\":\"stained apron\",\"role\":\"innkeeper\"},\"before\":{\"location\":\"behind the bar\",\"name\":\"Old Tom\",\"outfit\":\"stained apron\",\"role\":\"innkeeper\"},\"entity_id\":\"0834907f-66a8-418b-abff-19d18b92e6f9\",\"source\":\"user\"}"
+    },
+    {
+      "kind": "entity_created",
+      "content": "Mira was added as a character.",
+      "payload_json": "{\"appearance_anchor\":\"wearing a worn grey cloak, face set with old resentment, watching the door\",\"entity_id\":\"0831ca57-a207-40a5-97e4-10495c08c996\",\"gender\":\"female\",\"kind\":\"character\",\"location\":\"the Rusty Anchor tavern\",\"name\":\"Mira\",\"outfit\":\"father's grey cloak\",\"role\":\"estranged sister\",\"source\":\"narrator_tool\"}"
+    },
+    {
+      "kind": "entity_created",
+      "content": "Mira ↔ You: estranged sister (relationship recorded).",
+      "payload_json": "{\"entity_id\":\"relationship:0831ca57-a207-40a5-97e4-10495c08c996:6abab2f7-1876-4ade-9d65-6ca8d72f4751\",\"kind\":\"relationship\",\"link\":{\"description\":\"Siblings. She still resents you for leaving.\",\"direction\":\"both\",\"from_id\":\"0831ca57-a207-40a5-97e4-10495c08c996\",\"label\":\"estranged sister\",\"to_id\":\"6abab2f7-1876-4ade-9d65-6ca8d72f4751\"},\"name\":null,\"source\":\"narrator_tool\"}"
+    },
+    {
+      "kind": "entity_updated",
+      "content": "Mira ↔ You: estranged sister: label estranged sister → resents; direction both → one_way; description → \"She still resents you for leaving home.\".",
+      "payload_json": "{\"after\":{\"link\":{\"description\":\"She still resents you for leaving home.\",\"direction\":\"one_way\",\"from_id\":\"0831ca57-a207-40a5-97e4-10495c08c996\",\"label\":\"resents\",\"to_id\":\"6abab2f7-1876-4ade-9d65-6ca8d72f4751\"},\"name\":\"Mira → You: resents\"},\"before\":{\"link\":{\"description\":\"Siblings. She still resents you for leaving.\",\"direction\":\"both\",\"from_id\":\"0831ca57-a207-40a5-97e4-10495c08c996\",\"label\":\"estranged sister\",\"to_id\":\"6abab2f7-1876-4ade-9d65-6ca8d72f4751\"},\"name\":\"Mira ↔ You: estranged sister\"},\"entity_id\":\"relationship:0831ca57-a207-40a5-97e4-10495c08c996:6abab2f7-1876-4ade-9d65-6ca8d72f4751\",\"source\":\"narrator_tool\"}"
+    },
+    {
+      "kind": "tool_call",
+      "content": "Recording Mira…",
+      "payload_json": "{\"args\":{\"appearance_anchor\":\"wearing a worn grey cloak, face set with old resentment, watching the door\",\"gender\":\"female\",\"location\":\"the Rusty Anchor tavern\",\"name\":\"Mira\",\"outfit\":\"father's grey cloak\",\"role\":\"estranged sister\"},\"ok\":true,\"result\":{\"created\":true,\"kind\":\"character\",\"name\":\"Mira\"},\"tool\":\"save_character\"}"
+    },
+    {
+      "kind": "tool_call",
+      "content": "Recording a relationship…",
+      "payload_json": "{\"args\":{\"description\":\"Siblings. She still resents you for leaving.\",\"direction\":\"both\",\"from\":\"Mira\",\"label\":\"estranged sister\",\"to\":\"You\"},\"ok\":true,\"result\":{\"created\":true,\"kind\":\"relationship\",\"name\":\"Mira ↔ You: estranged sister\"},\"tool\":\"save_relationship\"}"
+    },
+    {
+      "kind": "tool_call",
+      "content": "Recording a relationship…",
+      "payload_json": "{\"args\":{\"description\":\"She still resents you for leaving home.\",\"direction\":\"one_way\",\"from\":\"Mira\",\"label\":\"resents\",\"to\":\"You\"},\"ok\":true,\"result\":{\"created\":false,\"kind\":\"relationship\",\"name\":\"Mira → You: resents\"},\"tool\":\"save_relationship\"}"
+    }
+  ]
+}

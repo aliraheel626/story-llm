@@ -1,0 +1,28 @@
+{
+  "story_ids": [
+    "00b753f0-e27f-4b69-9b49-5cd6526d1f72",
+    "565120b9-4af1-4b4c-a81b-fd74a02e0f1e",
+    "a42c228e-870a-4fc7-a02f-7c66535e9d66",
+    "db8ee3b1-e8e0-4bec-b276-15ff3f52e10a",
+    "e4c1027f-26b2-44c9-9205-5fe9648b1c9e"
+  ],
+  "usage": [
+    {
+      "kind": "image",
+      "calls": 12
+    },
+    {
+      "kind": "narration",
+      "calls": 29
+    },
+    {
+      "kind": "title",
+      "calls": 4
+    }
+  ],
+  "settings": [
+    {
+      "value": "{\"enabled\":true,\"model\":\"google/gemini-3.1-flash-image-preview\",\"style\":\"Digital painting, atmospheric scene illustration. anime\"}"
+    }
+  ]
+}

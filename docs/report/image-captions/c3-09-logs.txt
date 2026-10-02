@@ -1,0 +1,32 @@
+[
+  {
+    "args": [
+      "%cDownload the React DevTools for a better development experience: https://reactjs.org/link/react-devtools",
+      "font-weight:bold"
+    ],
+    "id": 1,
+    "level": "info",
+    "source": "at http://localhost:1420/node_modules/.vite/deps/react-dom-Cn6-HCcb.js?v=568018e4:17222:52",
+    "timestamp": 1790797058187
+  },
+  {
+    "args": [
+      "invalid input: mistralai/mistral-nemo can't read images; pick a vision model for captions"
+    ],
+    "id": 2,
+    "level": "error",
+    "source": "at save (http://localhost:1420/src/features/settings/useSettingsForm.ts:34:12)",
+    "timestamp": 1790797399143
+  },
+  {
+    "args": [
+      "%cDownload the React DevTools for a better development experience: https://reactjs.org/link/react-devtools",
+      "font-weight:bold"
+    ],
+    "id": 1,
+    "level": "info",
+    "source": "at http://localhost:1420/node_modules/.vite/deps/react-dom-Cn6-HCcb.js?v=d202a15e:17222:52",
+    "timestamp": 1790799063394
+  }
+]
+Backend: see c3-06-backend-log.txt. The frontend validation error naming mistralai/mistral-nemo is expected from check 1.

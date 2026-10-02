@@ -1,0 +1,26 @@
+[
+  {
+    "check": "cargo-test",
+    "exit": 0,
+    "status": "PASS",
+    "evidence": "C:\\Users\\User\\Documents\\GitHub\\story-llm\\docs\\report\\entities\\c6-development-cargo-test.txt"
+  },
+  {
+    "check": "cargo-clippy",
+    "exit": 0,
+    "status": "PASS",
+    "evidence": "C:\\Users\\User\\Documents\\GitHub\\story-llm\\docs\\report\\entities\\c6-development-cargo-clippy.txt"
+  },
+  {
+    "check": "node-test",
+    "exit": 0,
+    "status": "PASS",
+    "evidence": "C:\\Users\\User\\Documents\\GitHub\\story-llm\\docs\\report\\entities\\c6-development-node-test.txt"
+  },
+  {
+    "check": "tsc",
+    "exit": 0,
+    "status": "PASS",
+    "evidence": "C:\\Users\\User\\Documents\\GitHub\\story-llm\\docs\\report\\entities\\c6-development-tsc.txt"
+  }
+]

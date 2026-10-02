@@ -1,0 +1,11 @@
+Read-only independent C3 correctness review: no actionable findings.
+Reviewed live tools/shared.rs and save_relationship.rs; entities/model.rs,
+repository.rs, events.rs, projection.rs, attributes.rs, registry.rs;
+shared/db.rs schema; TurnTx savepoint and relevant callers.
+Confirmed fixed-ID/reversed-mutual revival, stored orientation and stat retention,
+dynamic endpoint-filtered shown reads vs story-scoped raw writes, NULL relationship
+names, change-only link projection, endpoint replay without link cascades,
+strict field/stat parsing, no-write stat preparation, one-savepoint writes,
+reversed-mutual one-way rejection, and removal of the permanent player stat lock.
+No tests rerun, changes, app/model calls, or secret access during this review.
+Source: task ses_f0577f823ffeJOz1MsVI7siy6s, board result board_1c115ae4-8d3e-498c-b598-d84ec2238576.

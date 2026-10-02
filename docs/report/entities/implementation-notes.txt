@@ -1,0 +1,24 @@
+Coordinator integration notes (not application code):
+
+C3:
+- Relationship Updated snapshots may contain the computed display name, but projection must never write that name into entities.name for a relationship (the schema requires NULL). Only character names are written; link label/direction/description changes project separately.
+- A direct repository request for an already-present reversed mutual link must not create a second mutual row. Prefer reusing the existing mutual stored orientation, as the save tool already does.
+- Character/relationship field snapshots must use raw stored state, not endpoint-filtered lists.
+- Check registry aliases/mints inside the savepoint after all async resolutions complete.
+
+C4:
+- Option<Option<String>> requires a serde field deserializer to preserve explicit JSON null as Some(None); ordinary Option deserialization collapses null and missing. Add a deserialize/command-path test, not only a Rust-constructed patch test.
+- Use character counts rather than byte lengths for the 200-character limit.
+
+C6:
+- UI relationship endpoint titles should use a character's known_as when set, just as character rows do, so the relationship tab does not leak a hidden true name. Backend/entity context display names stay true names as specified. Keep true names out of collapsed character row aria-labels too.
+- Put the per-entity operation queue in the store so set/remove/add, Save, and Delete use the same real code path exercised by mock-delay tests.
+- Save should compare captured stat drafts against values after preceding queued sets finish, not a closure's stale attribute snapshot.
+- Do not recursively enqueue another operation for the same entity from within its queued Save (it deadlocks). Internal Save stat writes use raw API calls while already owning the queue.
+- Reload entity lists and all story stats after every mutation; deletion must reload so endpoint-hidden relationships disappear.
+- Prefer a request token for loadEntities so older overlapping reloads cannot overwrite newer state.
+
+C7:
+- Rename the fresh QA story through the UI before any Send to avoid an auto-title call.
+- Every text completion in a tool loop is separately counted; count usage_records kinds narration/title/summary after each turn and retain headroom for moving and Retry.
+- Only DOM reads in eval; actual edits are real pilot clicks/fills/selects. SQLite always mode=ro.

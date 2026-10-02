@@ -1,0 +1,569 @@
+diff --git a/src-tauri/src/features/entities/attributes.rs b/src-tauri/src/features/entities/attributes.rs
+index 2fa27df..798aa4f 100644
+--- a/src-tauri/src/features/entities/attributes.rs
++++ b/src-tauri/src/features/entities/attributes.rs
+@@ -29 +29,3 @@ pub fn peek_entity_attribute(
+-            "SELECT value, source FROM entity_attributes WHERE story_id = ?1 AND entity_id = ?2 AND attribute_id = ?3",
++            "SELECT value, source FROM entity_attributes
++             JOIN entities ON entities.id = entity_attributes.entity_id
++             WHERE entities.story_id = ?1 AND entity_id = ?2 AND attribute_id = ?3",
+@@ -130 +132 @@ pub(crate) fn list_entity_attributes_sync(
+-        "SELECT entity_attributes.story_id, entity_attributes.entity_id, entity_attributes.attribute_id, attribute_registry.canonical_name,
++        "SELECT entities.story_id, entity_attributes.entity_id, entity_attributes.attribute_id, attribute_registry.canonical_name,
+@@ -133 +135,2 @@ pub(crate) fn list_entity_attributes_sync(
+-         WHERE entity_attributes.story_id = ?1 AND entity_attributes.entity_id = ?2 ORDER BY attribute_registry.canonical_name ASC")?;
++         JOIN entities ON entities.id = entity_attributes.entity_id
++         WHERE entities.story_id = ?1 AND entity_attributes.entity_id = ?2 ORDER BY attribute_registry.canonical_name ASC")?;
+@@ -160 +163 @@ pub(crate) fn list_entity_attributes_for_entities_sync(
+-        "SELECT entity_attributes.story_id, entity_attributes.entity_id, entity_attributes.attribute_id, attribute_registry.canonical_name,
++        "SELECT entities.story_id, entity_attributes.entity_id, entity_attributes.attribute_id, attribute_registry.canonical_name,
+@@ -163 +166,2 @@ pub(crate) fn list_entity_attributes_for_entities_sync(
+-         WHERE entity_attributes.story_id = ? AND entity_attributes.entity_id IN ({placeholders})
++         JOIN entities ON entities.id = entity_attributes.entity_id
++         WHERE entities.story_id = ? AND entity_attributes.entity_id IN ({placeholders})
+@@ -196 +200 @@ pub(crate) fn set_entity_attribute_sync(
+-    conn.query_row("SELECT 1 FROM story_entity_state WHERE story_id = ?1 AND entity_id = ?2 AND is_present = 1", rusqlite::params![story_id, entity_id], |_| Ok(()))
++    conn.query_row("SELECT 1 FROM entities WHERE story_id = ?1 AND id = ?2 AND is_present = 1", rusqlite::params![story_id, entity_id], |_| Ok(()))
+@@ -198 +202 @@ pub(crate) fn set_entity_attribute_sync(
+-    let before: Option<f64> = conn.query_row("SELECT value FROM entity_attributes WHERE story_id = ?1 AND entity_id = ?2 AND attribute_id = ?3", rusqlite::params![story_id, entity_id, attribute_id], |r| r.get(0)).optional()?;
++    let before: Option<f64> = conn.query_row("SELECT value FROM entity_attributes JOIN entities ON entities.id = entity_attributes.entity_id WHERE entities.story_id = ?1 AND entity_id = ?2 AND attribute_id = ?3", rusqlite::params![story_id, entity_id, attribute_id], |r| r.get(0)).optional()?;
+@@ -223,2 +227,3 @@ pub(crate) fn set_entity_attribute_sync(
+-        "SELECT updated_at FROM entity_attributes
+-         WHERE story_id = ?1 AND entity_id = ?2 AND attribute_id = ?3",
++        "SELECT entity_attributes.updated_at FROM entity_attributes
++         JOIN entities ON entities.id = entity_attributes.entity_id
++         WHERE entities.story_id = ?1 AND entity_id = ?2 AND attribute_id = ?3",
+@@ -248 +253 @@ pub(crate) fn remove_entity_attribute_sync(
+-        "SELECT entity_attributes.value, attribute_registry.canonical_name FROM entity_attributes JOIN attribute_registry ON attribute_registry.id = entity_attributes.attribute_id WHERE entity_attributes.story_id = ?1 AND entity_attributes.entity_id = ?2 AND entity_attributes.attribute_id = ?3",
++        "SELECT entity_attributes.value, attribute_registry.canonical_name FROM entity_attributes JOIN attribute_registry ON attribute_registry.id = entity_attributes.attribute_id JOIN entities ON entities.id = entity_attributes.entity_id WHERE entities.story_id = ?1 AND entity_attributes.entity_id = ?2 AND entity_attributes.attribute_id = ?3",
+@@ -284,5 +289,2 @@ mod tests {
+-             INSERT INTO entities (id, story_id, kind, created_at)
+-                 VALUES ('entity', 'story', 'character', 'now');
+-             INSERT INTO story_entity_state
+-                 (story_id, entity_id, name, appearance_anchor, is_present, updated_at, last_event_id)
+-                 VALUES ('story', 'entity', 'Mira', NULL, 1, 'now', NULL);",
++             INSERT INTO entities (id, story_id, kind, name, created_at, updated_at)
++                 VALUES ('entity', 'story', 'character', 'Mira', 'now', 'now');",
+@@ -349 +351,2 @@ mod tests {
+-                 WHERE story_id = 'story' AND entity_id = 'entity' AND attribute_id = ?1",
++                 JOIN entities ON entities.id = entity_attributes.entity_id
++                 WHERE entities.story_id = 'story' AND entity_id = 'entity' AND attribute_id = ?1",
+@@ -356,0 +360,14 @@ mod tests {
++    #[test]
++    fn wrong_story_attribute_reads_are_empty() {
++        let (pool, attribute_id) = attribute_helper_fixture();
++        let conn = pool.get().unwrap();
++        crate::shared::test_support::story(&conn, "other");
++        set_entity_attribute_sync(&conn, "story", "entity", &attribute_id, 7.0).unwrap();
++        assert_eq!(list_entity_attributes_sync(&conn, "story", "entity").unwrap().len(), 1);
++        assert!(list_entity_attributes_sync(&conn, "other", "entity").unwrap().is_empty());
++        let values = list_entity_attributes_for_entities_sync(&conn, "other", &["entity"]).unwrap();
++        assert!(values["entity"].is_empty());
++        let attribute = find_attribute_by_id(&conn, &attribute_id).unwrap();
++        assert_eq!(peek_entity_attribute(&conn, "other", "entity", &attribute).unwrap(), (5.0, None));
++    }
++
+diff --git a/src-tauri/src/features/entities/projection.rs b/src-tauri/src/features/entities/projection.rs
+index 2614d62..ce3d478 100644
+--- a/src-tauri/src/features/entities/projection.rs
++++ b/src-tauri/src/features/entities/projection.rs
+@@ -9,0 +10,5 @@ use super::events::EntityEvent;
++pub enum ApplyMode {
++    Live,
++    Replay,
++}
++
+@@ -13 +17,0 @@ pub fn apply(
+-    event_id: &str,
+@@ -14,0 +19 @@ pub fn apply(
++    mode: ApplyMode,
+@@ -16,0 +22 @@ pub fn apply(
++    let is_present = matches!(mode, ApplyMode::Live);
+@@ -27,9 +33,4 @@ pub fn apply(
+-                "INSERT OR IGNORE INTO entities (id, story_id, kind, created_at)
+-                 VALUES (?1, ?2, ?3, ?4)",
+-                rusqlite::params![entity_id, story_id, kind, created_at],
+-            )?;
+-            conn.execute(
+-                "INSERT INTO story_entity_state
+-                 (story_id, entity_id, name, appearance_anchor, is_present, updated_at, last_event_id)
+-                 VALUES (?1, ?2, ?3, ?4, 1, ?5, ?6)
+-                 ON CONFLICT(story_id, entity_id) DO UPDATE SET
++                "INSERT INTO entities
++                 (id, story_id, kind, name, appearance_anchor, is_present, created_at, updated_at)
++                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
++                 ON CONFLICT(id) DO UPDATE SET
+@@ -37,2 +38,2 @@ pub fn apply(
+-                     is_present=1, updated_at=excluded.updated_at,
+-                     last_event_id=excluded.last_event_id",
++                     is_present=excluded.is_present, updated_at=excluded.updated_at
++                 WHERE entities.story_id=excluded.story_id",
+@@ -40 +40,0 @@ pub fn apply(
+-                    story_id,
+@@ -41,0 +42,2 @@ pub fn apply(
++                    story_id,
++                    kind,
+@@ -44,2 +46,3 @@ pub fn apply(
+-                    now,
+-                    event_id
++                    is_present,
++                    created_at,
++                    now
+@@ -50 +53 @@ pub fn apply(
+-            entity_id, after, ..
++            entity_id, before, after, ..
+@@ -53,3 +56,5 @@ pub fn apply(
+-                "UPDATE story_entity_state
+-                 SET name=?1, appearance_anchor=?2, is_present=1, updated_at=?3, last_event_id=?4
+-                 WHERE story_id=?5 AND entity_id=?6",
++                "UPDATE entities
++                 SET name=CASE WHEN ?1 THEN ?2 ELSE name END,
++                     appearance_anchor=CASE WHEN ?3 THEN ?4 ELSE appearance_anchor END,
++                     is_present=?5, updated_at=?6
++                 WHERE story_id=?7 AND id=?8",
+@@ -56,0 +62 @@ pub fn apply(
++                    before.name != after.name,
+@@ -57,0 +64 @@ pub fn apply(
++                    before.appearance_anchor != after.appearance_anchor,
+@@ -58,0 +66 @@ pub fn apply(
++                    is_present,
+@@ -60 +67,0 @@ pub fn apply(
+-                    event_id,
+@@ -68,4 +75,4 @@ pub fn apply(
+-                "UPDATE story_entity_state
+-                 SET is_present=0, updated_at=?1, last_event_id=?2
+-                 WHERE story_id=?3 AND entity_id=?4",
+-                rusqlite::params![now, event_id, story_id, entity_id],
++                "UPDATE entities
++                 SET is_present=CASE WHEN ?1 THEN 0 ELSE is_present END, updated_at=?2
++                 WHERE story_id=?3 AND id=?4",
++                rusqlite::params![is_present, now, story_id, entity_id],
+@@ -83,3 +90,3 @@ pub fn apply(
+-                 (story_id, entity_id, attribute_id, value, source, updated_at, last_event_id)
+-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+-                 ON CONFLICT(story_id, entity_id, attribute_id) DO UPDATE SET
++                 (entity_id, attribute_id, value, source, updated_at)
++                 SELECT id, ?3, ?4, ?5, ?6 FROM entities WHERE story_id=?1 AND id=?2
++                 ON CONFLICT(entity_id, attribute_id) DO UPDATE SET
+@@ -87 +94 @@ pub fn apply(
+-                     updated_at=excluded.updated_at, last_event_id=excluded.last_event_id",
++                     updated_at=excluded.updated_at",
+@@ -94,2 +101 @@ pub fn apply(
+-                    now,
+-                    event_id
++                    now
+@@ -106 +112,2 @@ pub fn apply(
+-                 WHERE story_id=?1 AND entity_id=?2 AND attribute_id=?3",
++                 WHERE entity_id IN (SELECT id FROM entities WHERE story_id=?1 AND id=?2)
++                   AND attribute_id=?3",
+@@ -134 +141 @@ pub fn record(
+-    apply(conn, story_id, &entry.id, &recorded_event)?;
++    apply(conn, story_id, &recorded_event, ApplyMode::Live)?;
+@@ -148,8 +154,0 @@ pub fn replay(
+-        conn.execute(
+-            "DELETE FROM entity_attributes WHERE story_id = ?1 AND entity_id = ?2",
+-            rusqlite::params![story_id, entity_id],
+-        )?;
+-        conn.execute(
+-            "DELETE FROM story_entity_state WHERE story_id = ?1 AND entity_id = ?2",
+-            rusqlite::params![story_id, entity_id],
+-        )?;
+@@ -161,0 +161 @@ pub fn replay(
++    let mut present = HashSet::new();
+@@ -172,4 +172,9 @@ pub fn replay(
+-        match &event {
+-            EntityEvent::Created { entity_id, .. } => {
+-                apply(conn, story_id, &entry.id, &event)?;
+-                created.insert(entity_id.clone());
++        if matches!(&event, EntityEvent::Created { .. }) {
++            created.insert(event.entity_id().to_string());
++        } else if !created.contains(event.entity_id()) {
++            continue;
++        }
++        apply(conn, story_id, &event, ApplyMode::Replay)?;
++        match event {
++            EntityEvent::Created { entity_id, .. } | EntityEvent::Updated { entity_id, .. } => {
++                present.insert(entity_id);
+@@ -177,2 +182,2 @@ pub fn replay(
+-            _ if created.contains(event.entity_id()) => {
+-                apply(conn, story_id, &entry.id, &event)?;
++            EntityEvent::Deleted { entity_id, .. } => {
++                present.remove(&entity_id);
+@@ -182,0 +188,12 @@ pub fn replay(
++    // Historical names may overlap; enforce uniqueness only on the final present set.
++    if !present.is_empty() {
++        let placeholders = std::iter::repeat_n("?", present.len())
++            .collect::<Vec<_>>()
++            .join(", ");
++        conn.execute(
++            &format!("UPDATE entities SET is_present = 1 WHERE story_id = ? AND id IN ({placeholders})"),
++            rusqlite::params_from_iter(
++                std::iter::once(story_id).chain(present.iter().map(String::as_str)),
++            ),
++        )?;
++    }
+@@ -207,2 +224,2 @@ mod tests {
+-    type StateSnapshot = Vec<(String, String, Option<String>, i64, String)>;
+-    type AttributeSnapshot = Vec<(String, String, f64, String, String)>;
++    type StateSnapshot = Vec<(String, String, Option<String>, i64)>;
++    type AttributeSnapshot = Vec<(String, String, f64, String)>;
+@@ -214,2 +231,2 @@ mod tests {
+-                    "SELECT entity_id, name, appearance_anchor, is_present, last_event_id
+-                     FROM story_entity_state WHERE story_id = 'story' ORDER BY entity_id",
++                    "SELECT id, name, appearance_anchor, is_present
++                     FROM entities WHERE story_id = 'story' ORDER BY id",
+@@ -224 +240,0 @@ mod tests {
+-                    row.get(4)?,
+@@ -234,3 +250,3 @@ mod tests {
+-                    "SELECT entity_id, attribute_id, value, source, last_event_id
+-                     FROM entity_attributes WHERE story_id = 'story'
+-                     ORDER BY entity_id, attribute_id",
++                    "SELECT entity_id, attribute_id, value, source
++                     FROM entity_attributes JOIN entities ON entities.id = entity_attributes.entity_id
++                     WHERE entities.story_id = 'story' ORDER BY entity_id, attribute_id",
+@@ -245 +260,0 @@ mod tests {
+-                    row.get(4)?,
+diff --git a/src-tauri/src/features/entities/repository.rs b/src-tauri/src/features/entities/repository.rs
+index 5d52fad..da3ab4b 100644
+--- a/src-tauri/src/features/entities/repository.rs
++++ b/src-tauri/src/features/entities/repository.rs
+@@ -30,3 +30,3 @@ pub fn list_entities_sync(
+-                          story_entity_state.name, story_entity_state.appearance_anchor, entities.created_at
+-                   FROM entities JOIN story_entity_state ON story_entity_state.entity_id = entities.id
+-                   WHERE entities.story_id = ?1 AND story_entity_state.story_id = ?1 AND story_entity_state.is_present = 1".to_string();
++                          entities.name, entities.appearance_anchor, entities.created_at
++                   FROM entities
++                   WHERE entities.story_id = ?1 AND entities.is_present = 1".to_string();
+@@ -143,4 +143,4 @@ pub fn update_entity_sync(
+-        "SELECT entities.id, entities.story_id, entities.kind, story_entity_state.name,
+-                story_entity_state.appearance_anchor, entities.created_at
+-         FROM entities JOIN story_entity_state ON story_entity_state.entity_id = entities.id
+-         WHERE entities.id = ?1 AND story_entity_state.story_id = ?2 AND story_entity_state.is_present = 1",
++        "SELECT entities.id, entities.story_id, entities.kind, entities.name,
++                entities.appearance_anchor, entities.created_at
++         FROM entities
++         WHERE entities.id = ?1 AND entities.story_id = ?2 AND entities.is_present = 1",
+@@ -179 +179 @@ pub(crate) fn delete_entity_sync(
+-    let name: String = conn.query_row("SELECT name FROM story_entity_state WHERE story_id = ?1 AND entity_id = ?2 AND is_present = 1", rusqlite::params![story_id, entity_id], |r| r.get(0))
++    let name: String = conn.query_row("SELECT name FROM entities WHERE story_id = ?1 AND id = ?2 AND is_present = 1", rusqlite::params![story_id, entity_id], |r| r.get(0))
+diff --git a/src-tauri/src/features/images/generation.rs b/src-tauri/src/features/images/generation.rs
+index e10a85d..867c160 100644
+--- a/src-tauri/src/features/images/generation.rs
++++ b/src-tauri/src/features/images/generation.rs
+@@ -58,5 +58,5 @@ fn characters_by_ids(
+-        "SELECT story_entity_state.name, story_entity_state.appearance_anchor
+-         FROM entities JOIN story_entity_state ON story_entity_state.entity_id = entities.id
+-         WHERE entities.story_id = ? AND story_entity_state.story_id = ?
+-           AND entities.kind = 'character' AND story_entity_state.is_present = 1
+-           AND story_entity_state.appearance_anchor IS NOT NULL
++        "SELECT entities.name, entities.appearance_anchor
++         FROM entities
++         WHERE entities.story_id = ?
++           AND entities.kind = 'character' AND entities.is_present = 1
++           AND entities.appearance_anchor IS NOT NULL
+@@ -66 +65,0 @@ fn characters_by_ids(
+-        .chain(std::iter::once(story_id))
+diff --git a/src-tauri/src/features/stories/repository.rs b/src-tauri/src/features/stories/repository.rs
+index b3bf3c7..b8146f7 100644
+--- a/src-tauri/src/features/stories/repository.rs
++++ b/src-tauri/src/features/stories/repository.rs
+@@ -195,3 +195 @@ mod tests {
+-                "SELECT story_entity_state.name, entities.kind FROM story_entity_state
+-             JOIN entities ON entities.id = story_entity_state.entity_id
+-             WHERE story_entity_state.story_id = ?1",
++                "SELECT name, kind FROM entities WHERE story_id = ?1 AND is_present = 1",
+diff --git a/src-tauri/src/features/transcript/commands.rs b/src-tauri/src/features/transcript/commands.rs
+index eeab8b7..bada559 100644
+--- a/src-tauri/src/features/transcript/commands.rs
++++ b/src-tauri/src/features/transcript/commands.rs
+@@ -96,0 +97 @@ mod tests {
++    use crate::features::entities::events::EntityEvent;
+@@ -99,0 +101,118 @@ mod tests {
++    #[test]
++    fn erasing_a_deletion_cannot_restore_a_reused_present_name() {
++        let pool = crate::shared::db::test_pool();
++        let conn = pool.get().unwrap();
++        test_support::story(&conn, "s");
++        entities::create_entity_with_id_sync(
++            &conn, "a", "s", "character", "Mira", Some("silver hair"), "user", None, None,
++        ).unwrap();
++        let (turn_id, _, narration_id) = test_support::exchange(&conn, "s", "do", "act", Some("Mira leaves."));
++        entities::projection::record(
++            &conn, "s", narration_id.as_deref(), "Mira was removed.",
++            &EntityEvent::Deleted { entity_id: "a".into(), name: "Mira".into(), source: "narrator_tool".into() },
++            Some(&turn_id),
++        ).unwrap();
++        entities::create_entity_with_id_sync(
++            &conn, "b", "s", "character", "mira", Some("black armor"), "user", None, None,
++        ).unwrap();
++        let snapshot = |conn: &rusqlite::Connection| {
++            conn.prepare(
++                "SELECT id, kind, name, appearance_anchor, is_present, created_at, updated_at
++                 FROM entities WHERE story_id = 's' ORDER BY id",
++            ).unwrap().query_map([], |row| Ok((
++                row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?,
++                row.get::<_, Option<String>>(3)?, row.get::<_, i64>(4)?,
++                row.get::<_, String>(5)?, row.get::<_, String>(6)?,
++            ))).unwrap().collect::<Result<Vec<_>, _>>().unwrap()
++        };
++        let before = snapshot(&conn);
++        let entries = repository::list_logical_entries(&conn, "s").unwrap();
++        let updated_at: String = conn.query_row("SELECT updated_at FROM stories WHERE id = 's'", [], |row| row.get(0)).unwrap();
++        drop(conn);
++
++        let gate = TurnGate::default();
++        assert!(matches!(
++            erase_with_ticket(&pool, &gate, gate.check_idle("s").unwrap(), "s"),
++            Err(AppError::Db(rusqlite::Error::SqliteFailure(error, _)))
++                if error.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE
++        ));
++        let conn = pool.get().unwrap();
++        assert_eq!(snapshot(&conn), before);
++        assert_eq!(repository::list_logical_entries(&conn, "s").unwrap(), entries);
++        assert_eq!(turns::last_turn(&conn, "s").unwrap().unwrap().id, turn_id);
++        assert_eq!(conn.query_row("SELECT updated_at FROM stories WHERE id = 's'", [], |row| row.get::<_, String>(0)).unwrap(), updated_at);
++    }
++
++    #[test]
++    fn erasing_earlier_narration_allows_reused_historical_names() {
++        let pool = crate::shared::db::test_pool();
++        let conn = pool.get().unwrap();
++        test_support::story(&conn, "s");
++        entities::create_entity_with_id_sync(
++            &conn, "a", "s", "character", "Mira", Some("silver hair"), "user", None, None,
++        ).unwrap();
++        let (turn_id, action_id, narration_id) = test_support::exchange(&conn, "s", "do", "act", Some("A new cloak."));
++        entities::update_entity_sync(
++            &conn, "s", "a", "Mira", Some("red cloak"), "narrator_tool", narration_id.as_deref(), Some(&turn_id),
++        ).unwrap();
++        entities::repository::delete_entity_sync(&conn, "s", "a").unwrap();
++        entities::create_entity_with_id_sync(
++            &conn, "b", "s", "character", "mira", Some("black armor"), "user", None, None,
++        ).unwrap();
++        let b_before: (String, Option<String>, i64, String) = conn.query_row(
++            "SELECT name, appearance_anchor, is_present, updated_at FROM entities WHERE story_id = 's' AND id = 'b'",
++            [], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
++        ).unwrap();
++        drop(conn);
++
++        let gate = TurnGate::default();
++        assert_eq!(
++            erase_with_ticket(&pool, &gate, gate.check_idle("s").unwrap(), "s").unwrap(),
++            vec![action_id, narration_id.unwrap()]
++        );
++        let conn = pool.get().unwrap();
++        assert_eq!(conn.query_row(
++            "SELECT name, appearance_anchor, is_present FROM entities WHERE story_id = 's' AND id = 'a'",
++            [], |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?, row.get::<_, i64>(2)?)),
++        ).unwrap(), ("Mira".into(), Some("silver hair".into()), 0));
++        assert_eq!(conn.query_row(
++            "SELECT name, appearance_anchor, is_present, updated_at FROM entities WHERE story_id = 's' AND id = 'b'",
++            [], |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?, row.get::<_, i64>(2)?, row.get::<_, String>(3)?)),
++        ).unwrap(), b_before);
++        let present = entities::list_entities_sync(&conn, "s", None).unwrap();
++        assert_eq!(present.len(), 1);
++        assert_eq!(present[0].id, "b");
++    }
++
++    #[test]
++    fn erasing_narrator_rename_preserves_later_player_anchor_edit() {
++        let pool = crate::shared::db::test_pool();
++        let conn = pool.get().unwrap();
++        test_support::story(&conn, "s");
++        entities::create_entity_with_id_sync(
++            &conn, "a", "s", "character", "Mira", Some("silver hair"), "user", None, None,
++        ).unwrap();
++        let created_at: String = conn.query_row(
++            "SELECT created_at FROM entities WHERE id = 'a'", [], |row| row.get(0),
++        ).unwrap();
++        let (turn_id, action_id, narration_id) = test_support::exchange(&conn, "s", "do", "act", Some("Mira Vale arrives."));
++        entities::update_entity_sync(
++            &conn, "s", "a", "Mira Vale", Some("silver hair"), "narrator_tool", narration_id.as_deref(), Some(&turn_id),
++        ).unwrap();
++        entities::update_entity_sync(
++            &conn, "s", "a", "Mira Vale", Some("black armor"), "user", None, None,
++        ).unwrap();
++        drop(conn);
++
++        let gate = TurnGate::default();
++        assert_eq!(
++            erase_with_ticket(&pool, &gate, gate.check_idle("s").unwrap(), "s").unwrap(),
++            vec![action_id, narration_id.unwrap()]
++        );
++        let present = entities::list_entities_sync(&pool.get().unwrap(), "s", None).unwrap();
++        assert_eq!(present.len(), 1);
++        assert_eq!((present[0].id.as_str(), present[0].name.as_str(), present[0].appearance_anchor.as_deref()),
++            ("a", "Mira", Some("black armor")));
++        assert_eq!(present[0].created_at, created_at);
++    }
++
+diff --git a/src-tauri/src/features/transcript/erase.rs b/src-tauri/src/features/transcript/erase.rs
+index 8d1d1b4..1608aa1 100644
+--- a/src-tauri/src/features/transcript/erase.rs
++++ b/src-tauri/src/features/transcript/erase.rs
+@@ -333 +333 @@ mod tests {
+-        let mira_last_event_id: String = conn
++        let unrelated_projection: (String, Option<String>, i64, String) = conn
+@@ -335,16 +335,2 @@ mod tests {
+-                "SELECT last_event_id FROM story_entity_state WHERE story_id = 's' AND entity_id = 'mira'",
+-                [],
+-                |row| row.get(0),
+-            )
+-            .unwrap();
+-        let attribute_last_event_id: String = conn
+-            .query_row(
+-                "SELECT last_event_id FROM entity_attributes WHERE story_id = 's' AND entity_id = 'mira' AND attribute_id = ?1",
+-                [&trust_id],
+-                |row| row.get(0),
+-            )
+-            .unwrap();
+-        let unrelated_projection: (String, Option<String>, i64, String, String) = conn
+-            .query_row(
+-                "SELECT name, appearance_anchor, is_present, updated_at, last_event_id
+-                 FROM story_entity_state WHERE story_id = 's' AND entity_id = 'unrelated'",
++                "SELECT name, appearance_anchor, is_present, updated_at
++                 FROM entities WHERE story_id = 's' AND id = 'unrelated'",
+@@ -358 +343,0 @@ mod tests {
+-                        row.get(4)?,
+@@ -487 +472 @@ mod tests {
+-        let mira: (String, Option<String>, String) = conn
++        let mira: (String, Option<String>) = conn
+@@ -489 +474 @@ mod tests {
+-                "SELECT name, appearance_anchor, last_event_id FROM story_entity_state WHERE story_id = 's' AND entity_id = 'mira'",
++                "SELECT name, appearance_anchor FROM entities WHERE story_id = 's' AND id = 'mira'",
+@@ -491 +476 @@ mod tests {
+-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
++                |row| Ok((row.get(0)?, row.get(1)?)),
+@@ -499 +483,0 @@ mod tests {
+-                mira_last_event_id
+@@ -502 +486 @@ mod tests {
+-        let restored_attribute: (f64, String, String) = conn
++        let restored_attribute: (f64, String) = conn
+@@ -504 +488 @@ mod tests {
+-                "SELECT value, source, last_event_id FROM entity_attributes WHERE story_id = 's' AND entity_id = 'mira' AND attribute_id = ?1",
++                "SELECT value, source FROM entity_attributes JOIN entities ON entities.id = entity_attributes.entity_id WHERE entities.story_id = 's' AND entity_id = 'mira' AND attribute_id = ?1",
+@@ -506 +490 @@ mod tests {
+-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
++                |row| Ok((row.get(0)?, row.get(1)?)),
+@@ -511 +495 @@ mod tests {
+-            (2.0, "inferred".into(), attribute_last_event_id)
++            (2.0, "inferred".into())
+@@ -515 +499 @@ mod tests {
+-                "SELECT COUNT(*) FROM story_entity_state WHERE story_id = 's' AND entity_id = 'temporary'",
++                "SELECT COUNT(*) FROM entities WHERE story_id = 's' AND id = 'temporary'",
+@@ -524,2 +508,2 @@ mod tests {
+-                "SELECT name, appearance_anchor, is_present, updated_at, last_event_id
+-                 FROM story_entity_state WHERE story_id = 's' AND entity_id = 'unrelated'",
++                "SELECT name, appearance_anchor, is_present, updated_at
++                 FROM entities WHERE story_id = 's' AND id = 'unrelated'",
+@@ -531,2 +515 @@ mod tests {
+-                    row.get::<_, String>(3)?,
+-                    row.get::<_, String>(4)?
++                    row.get::<_, String>(3)?
+@@ -600 +583 @@ mod tests {
+-                    (SELECT COUNT(*) FROM story_entity_state WHERE entity_id = 'temporary'),
++                    (SELECT COUNT(*) FROM entities WHERE story_id = 's' AND id = 'temporary'),
+diff --git a/src-tauri/src/shared/db.rs b/src-tauri/src/shared/db.rs
+index 970a5d1..d22785a 100644
+--- a/src-tauri/src/shared/db.rs
++++ b/src-tauri/src/shared/db.rs
+@@ -114,6 +113,0 @@ fn create_schema(conn: &mut PooledConn) -> AppResult<()> {
+-            created_at TEXT NOT NULL
+-        );
+-
+-        CREATE TABLE IF NOT EXISTS story_entity_state (
+-            story_id TEXT NOT NULL REFERENCES stories(id) ON DELETE CASCADE,
+-            entity_id TEXT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+@@ -123,3 +117,2 @@ fn create_schema(conn: &mut PooledConn) -> AppResult<()> {
+-            updated_at TEXT NOT NULL,
+-            last_event_id TEXT REFERENCES transcript_entries(id) ON DELETE SET NULL,
+-            PRIMARY KEY (story_id, entity_id)
++            created_at TEXT NOT NULL,
++            updated_at TEXT NOT NULL
+@@ -127,3 +120,3 @@ fn create_schema(conn: &mut PooledConn) -> AppResult<()> {
+-        CREATE INDEX IF NOT EXISTS idx_story_entities_name ON story_entity_state(story_id, name);
+-        CREATE UNIQUE INDEX IF NOT EXISTS idx_story_entities_name_ci
+-            ON story_entity_state(story_id, name COLLATE NOCASE);
++        CREATE INDEX IF NOT EXISTS idx_entities_story_name ON entities(story_id, name);
++        CREATE UNIQUE INDEX IF NOT EXISTS idx_entities_name_ci
++            ON entities(story_id, name COLLATE NOCASE) WHERE is_present = 1;
+@@ -147 +139,0 @@ fn create_schema(conn: &mut PooledConn) -> AppResult<()> {
+-            story_id TEXT NOT NULL REFERENCES stories(id) ON DELETE CASCADE,
+@@ -153,2 +145 @@ fn create_schema(conn: &mut PooledConn) -> AppResult<()> {
+-            last_event_id TEXT REFERENCES transcript_entries(id) ON DELETE SET NULL,
+-            PRIMARY KEY (story_id, entity_id, attribute_id)
++            PRIMARY KEY (entity_id, attribute_id)
+@@ -210,2 +201,2 @@ pub(crate) fn seed_player_entity(conn: &rusqlite::Connection, story_id: &str) ->
+-        "SELECT EXISTS(SELECT 1 FROM story_entity_state
+-         WHERE story_id = ?1 AND name = 'You' COLLATE NOCASE)",
++        "SELECT EXISTS(SELECT 1 FROM entities
++         WHERE story_id = ?1 AND name = 'You' COLLATE NOCASE AND is_present = 1)",
+@@ -406,3 +397,2 @@ mod tests {
+-             INSERT INTO entities (id,story_id,kind,created_at) VALUES ('original','existing','character','now');
+-             INSERT INTO story_entity_state (story_id,entity_id,name,is_present,updated_at)
+-             VALUES ('existing','original','yOu',1,'now');",
++             INSERT INTO entities (id,story_id,kind,name,is_present,created_at,updated_at)
++             VALUES ('original','existing','character','yOu',1,'now','now');",
+@@ -415,2 +405,3 @@ mod tests {
+-                    "SELECT COUNT(*), (SELECT COUNT(*) FROM entity_attributes WHERE story_id=?1)
+-                 FROM story_entity_state WHERE story_id=?1 AND name='You' COLLATE NOCASE",
++                    "SELECT COUNT(*), (SELECT COUNT(*) FROM entity_attributes
++                     JOIN entities ON entities.id = entity_attributes.entity_id WHERE entities.story_id=?1)
++                 FROM entities WHERE story_id=?1 AND name='You' COLLATE NOCASE AND is_present=1",
+@@ -424 +415 @@ mod tests {
+-            "SELECT entity_id FROM story_entity_state WHERE story_id='existing' AND name='You' COLLATE NOCASE",
++            "SELECT id FROM entities WHERE story_id='existing' AND name='You' COLLATE NOCASE",
+@@ -447 +438,30 @@ mod tests {
+-        assert!(exists("story_entity_state"));
++        assert!(!exists("story_entity_state"));
++        assert!(exists("entities"));
++        let entity_columns = conn
++            .prepare("PRAGMA table_info(entities)")
++            .unwrap()
++            .query_map([], |row| row.get::<_, String>(1))
++            .unwrap()
++            .collect::<Result<Vec<_>, _>>()
++            .unwrap();
++        assert_eq!(
++            entity_columns,
++            ["id", "story_id", "kind", "name", "appearance_anchor", "is_present", "created_at", "updated_at"]
++        );
++        let attribute_columns = conn
++            .prepare("PRAGMA table_info(entity_attributes)")
++            .unwrap()
++            .query_map([], |row| Ok((row.get::<_, String>(1)?, row.get::<_, i64>(5)?)))
++            .unwrap()
++            .collect::<Result<Vec<_>, _>>()
++            .unwrap();
++        assert_eq!(
++            attribute_columns,
++            [
++                ("entity_id".to_string(), 1),
++                ("attribute_id".to_string(), 2),
++                ("value".to_string(), 0),
++                ("source".to_string(), 0),
++                ("updated_at".to_string(), 0),
++            ]
++        );
+@@ -556,7 +576,2 @@ mod tests {
+-             INSERT INTO entities (id, story_id, kind, created_at)
+-                 VALUES ('one', 'first', 'character', 'now'),
+-                        ('two', 'first', 'character', 'now'),
+-                        ('three', 'second', 'character', 'now');
+-             INSERT INTO story_entity_state
+-                 (story_id, entity_id, name, appearance_anchor, is_present, updated_at, last_event_id)
+-                 VALUES ('first', 'one', 'Mira', NULL, 1, 'now', NULL);",
++             INSERT INTO entities (id, story_id, kind, name, created_at, updated_at)
++                 VALUES ('one', 'first', 'character', 'Mira', 'now', 'now');",
+@@ -568,3 +583,2 @@ mod tests {
+-                "INSERT INTO story_entity_state
+-                 (story_id, entity_id, name, appearance_anchor, is_present, updated_at, last_event_id)
+-                 VALUES ('first', 'two', 'mira', NULL, 1, 'now', NULL)",
++                "INSERT INTO entities (id, story_id, kind, name, created_at, updated_at)
++                 VALUES ('two', 'first', 'character', 'mira', 'now', 'now')",
+@@ -585,3 +599,2 @@ mod tests {
+-            "INSERT INTO story_entity_state
+-             (story_id, entity_id, name, appearance_anchor, is_present, updated_at, last_event_id)
+-             VALUES ('second', 'three', 'mira', NULL, 1, 'now', NULL)",
++            "INSERT INTO entities (id, story_id, kind, name, created_at, updated_at)
++             VALUES ('three', 'second', 'character', 'mira', 'now', 'now')",

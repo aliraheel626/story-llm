@@ -1,0 +1,598 @@
+*** Begin Patch
+*** Update File: src-tauri/src/shared/db.rs
+@@
+         CREATE TABLE IF NOT EXISTS entities (
+             id TEXT PRIMARY KEY,
+             story_id TEXT NOT NULL REFERENCES stories(id) ON DELETE CASCADE,
+-            kind TEXT NOT NULL,
+-            name TEXT NOT NULL,
++            kind TEXT NOT NULL CHECK (kind IN ('character', 'relationship')),
++            name TEXT,
+             appearance_anchor TEXT,
+             is_present INTEGER NOT NULL DEFAULT 1,
+             created_at TEXT NOT NULL,
+-            updated_at TEXT NOT NULL
++            updated_at TEXT NOT NULL,
++            CHECK ((kind = 'character') = (name IS NOT NULL))
+         );
+@@
+         CREATE UNIQUE INDEX IF NOT EXISTS idx_entities_name_ci
+             ON entities(story_id, name COLLATE NOCASE) WHERE is_present = 1;
+ 
++        -- Endpoint ids deliberately have no foreign keys: endpoint replay
++        -- deletes and recreates rows without replaying their relationships.
++        CREATE TABLE IF NOT EXISTS relationships (
++            entity_id TEXT PRIMARY KEY REFERENCES entities(id) ON DELETE CASCADE,
++            from_id TEXT NOT NULL,
++            to_id TEXT NOT NULL,
++            label TEXT NOT NULL,
++            direction TEXT NOT NULL CHECK (direction IN ('one_way', 'both')),
++            description TEXT
++        );
++        CREATE INDEX IF NOT EXISTS idx_relationships_to ON relationships(to_id);
++        -- Counts soft-deleted rows; revival must reuse relationship_id.
++        CREATE UNIQUE INDEX IF NOT EXISTS idx_relationships_pair ON relationships(from_id, to_id);
++
+         CREATE TABLE IF NOT EXISTS attribute_registry (
+@@
+         ("Luck", &["character"], 0.0, 10.0, "misc"),
+-        ("Lock Difficulty", &["object"], 0.0, 10.0, "object"),
+-        ("Fragility", &["object"], 0.0, 10.0, "object"),
+-        ("Weight", &["object"], 0.0, 10.0, "object"),
+-        ("Trap Sensitivity", &["object"], 0.0, 10.0, "object"),
+-        ("Value", &["object"], 0.0, 10.0, "object"),
+-        ("Durability", &["object"], 0.0, 10.0, "object"),
+-        ("Visibility", &["location"], 0.0, 10.0, "location"),
+-        ("Terrain Difficulty", &["location"], 0.0, 10.0, "location"),
+-        ("Ambient Danger", &["location"], 0.0, 10.0, "location"),
+-        ("Shelter", &["location"], 0.0, 10.0, "location"),
+         ("Trust", &["relationship"], -10.0, 10.0, "relationship"),
+         ("Fear", &["relationship"], -10.0, 10.0, "relationship"),
+         ("Affection", &["relationship"], -10.0, 10.0, "relationship"),
+         ("Respect", &["relationship"], -10.0, 10.0, "relationship"),
+-        ("Difficulty", &["campaign"], 0.0, 10.0, "campaign"),
+@@
+         assert!(!exists("story_entity_state"));
+         assert!(exists("entities"));
++        assert!(exists("relationships"));
+*** Update File: src-tauri/src/features/entities/model.rs
+@@
+ use serde::{Deserialize, Serialize};
+ 
++pub const CHARACTER: &str = "character";
++pub const RELATIONSHIP: &str = "relationship";
++
++pub fn relationship_id(from_id: &str, to_id: &str) -> String {
++    format!("relationship:{from_id}:{to_id}")
++}
++
++#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
++pub struct EntityLink {
++    pub from_id: String,
++    pub to_id: String,
++    pub label: String,
++    pub direction: String,
++    pub description: Option<String>,
++}
++
+ #[derive(Debug, Clone, Serialize, Deserialize)]
+ pub struct Entity {
+@@
+     pub name: String,
+     pub appearance_anchor: Option<String>,
++    #[serde(default)]
++    pub link: Option<EntityLink>,
+     pub created_at: String,
+*** Update File: src-tauri/src/features/entities/events.rs
+@@
+ use crate::features::transcript::model::{kind, TranscriptEntry};
+ 
++use super::model::EntityLink;
++
+ #[derive(Debug, Clone, PartialEq)]
+ pub struct NameAnchor {
+     pub name: String,
+     pub appearance_anchor: Option<String>,
++    pub link: Option<EntityLink>,
+@@
+     Created {
+         entity_id: String,
+         kind: String,
+-        name: String,
++        name: Option<String>,
+         appearance_anchor: Option<String>,
++        link: Option<EntityLink>,
+         source: String,
+@@
+                 kind,
+                 name,
+                 appearance_anchor,
++                link,
+                 source,
+                 ..
+-            } => json!({
+-                "entity_id": entity_id,
+-                "kind": kind,
+-                "name": name,
+-                "appearance_anchor": appearance_anchor,
+-                "source": source
+-            }),
++            } => {
++                let mut payload = json!({
++                    "entity_id": entity_id,
++                    "kind": kind,
++                    "name": name,
++                    "appearance_anchor": appearance_anchor,
++                    "source": source
++                });
++                if let Some(link) = link {
++                    payload["link"] = json!(link);
++                }
++                payload
++            }
+             Self::Updated {
+                 entity_id,
+                 before,
+                 after,
+                 source,
+-            } => json!({
+-                "entity_id": entity_id,
+-                "before": {
+-                    "name": before.name,
+-                    "appearance_anchor": before.appearance_anchor
+-                },
+-                "after": {
+-                    "name": after.name,
+-                    "appearance_anchor": after.appearance_anchor
+-                },
+-                "source": source
+-            }),
++            } => {
++                let mut payload = json!({
++                    "entity_id": entity_id,
++                    "before": {
++                        "name": before.name,
++                        "appearance_anchor": before.appearance_anchor
++                    },
++                    "after": {
++                        "name": after.name,
++                        "appearance_anchor": after.appearance_anchor
++                    },
++                    "source": source
++                });
++                if let Some(link) = &before.link {
++                    payload["before"]["link"] = json!(link);
++                }
++                if let Some(link) = &after.link {
++                    payload["after"]["link"] = json!(link);
++                }
++                payload
++            }
+@@
+     pub fn from_entry(entry: &TranscriptEntry) -> Option<Self> {
+         let string = |value: Option<&Value>| value.and_then(Value::as_str).map(str::to_string);
++        let link = |value: Option<&Value>| match value {
++            Some(value) => serde_json::from_value::<Option<EntityLink>>(value.clone()).ok(),
++            None => Some(None),
++        };
+         let entity_id = string(entry.payload.get("entity_id"))?;
+@@
+                 kind: string(entry.payload.get("kind"))?,
+-                name: string(entry.payload.get("name"))?,
++                name: string(entry.payload.get("name")),
+                 appearance_anchor: string(entry.payload.get("appearance_anchor")),
++                link: link(entry.payload.get("link"))?,
+                 source: string(entry.payload.get("source")).unwrap_or_default(),
+@@
+                         appearance_anchor: string(
+                             before.and_then(|value| value.get("appearance_anchor")),
+                         ),
++                        link: link(before.and_then(|value| value.get("link")))?,
+                     },
+                     after: NameAnchor {
+                         name: after_name,
+                         appearance_anchor: string(after.get("appearance_anchor")),
++                        link: link(after.get("link"))?,
+@@
+-    fn parser_uses_transcript_creation_time_and_legacy_attribute_source() {
++    fn parser_uses_transcript_creation_time_and_recorded_attribute_source() {
+@@
+-            EntityEvent::Created { created_at, .. } if created_at == "transcript-created-at"
++            EntityEvent::Created { name: Some(name), link: None, created_at, .. }
++                if name == "Mira" && created_at == "transcript-created-at"
+@@
+-            json!({"entity_id":"entity", "attribute_id":"attribute", "after":4.0}),
++            json!({"entity_id":"entity", "attribute_id":"attribute", "after":4.0, "source":"inferred"}),
+@@
+     #[test]
++    fn links_round_trip_and_character_payloads_omit_them() {
++        let link = EntityLink {
++            from_id: "mira".into(),
++            to_id: "varro".into(),
++            label: "rivals".into(),
++            direction: "one_way".into(),
++            description: Some("An old competition.".into()),
++        };
++        let created = EntityEvent::Created {
++            entity_id: "relationship:mira:varro".into(),
++            kind: "relationship".into(),
++            name: None,
++            appearance_anchor: None,
++            link: Some(link.clone()),
++            source: "narrator_tool".into(),
++            created_at: "transcript-created-at".into(),
++        };
++        assert!(created.payload()["name"].is_null());
++        assert_eq!(
++            EntityEvent::from_entry(&entry(created.kind(), created.payload())),
++            Some(created)
++        );
++        let updated = EntityEvent::Updated {
++            entity_id: "relationship:mira:varro".into(),
++            before: NameAnchor {
++                name: "rivals".into(),
++                appearance_anchor: None,
++                link: Some(link.clone()),
++            },
++            after: NameAnchor {
++                name: "former rivals".into(),
++                appearance_anchor: None,
++                link: Some(EntityLink { label: "former rivals".into(), ..link }),
++            },
++            source: "user".into(),
++        };
++        assert_eq!(
++            EntityEvent::from_entry(&entry(updated.kind(), updated.payload())),
++            Some(updated)
++        );
++        let character = EntityEvent::Created {
++            entity_id: "mira".into(),
++            kind: "character".into(),
++            name: Some("Mira".into()),
++            appearance_anchor: Some("silver hair".into()),
++            link: None,
++            source: "user".into(),
++            created_at: "transcript-created-at".into(),
++        };
++        assert!(character.payload().get("link").is_none());
++        assert_eq!(
++            EntityEvent::from_entry(&entry(character.kind(), character.payload())),
++            Some(character)
++        );
++        let character_update = EntityEvent::Updated {
++            entity_id: "mira".into(),
++            before: NameAnchor { name: "Mira".into(), appearance_anchor: None, link: None },
++            after: NameAnchor { name: "Mira".into(), appearance_anchor: Some("silver hair".into()), link: None },
++            source: "user".into(),
++        };
++        let payload = character_update.payload();
++        assert!(payload["before"].get("link").is_none());
++        assert!(payload["after"].get("link").is_none());
++        assert_eq!(
++            EntityEvent::from_entry(&entry(character_update.kind(), payload)),
++            Some(character_update)
++        );
++    }
++
++    #[test]
+     fn parser_skips_entries_missing_required_fields() {
+*** Update File: src-tauri/src/features/entities/projection.rs
+@@
+             name,
+             appearance_anchor,
++            link,
+             created_at,
+@@
+                     now
+                 ],
+             )?;
++            if let Some(link) = link {
++                conn.execute(
++                    "INSERT INTO relationships (entity_id, from_id, to_id, label, direction, description)
++                     SELECT id, ?3, ?4, ?5, ?6, ?7 FROM entities WHERE story_id=?1 AND id=?2
++                     ON CONFLICT(entity_id) DO UPDATE SET
++                         from_id=excluded.from_id, to_id=excluded.to_id, label=excluded.label,
++                         direction=excluded.direction, description=excluded.description",
++                    rusqlite::params![
++                        story_id, entity_id, link.from_id, link.to_id, link.label,
++                        link.direction, link.description
++                    ],
++                )?;
++            }
+         }
+         EntityEvent::Updated {
+             entity_id, before, after, ..
+         } => {
++            // Relationship names are computed display text; their stored name stays NULL.
++            let character = before.link.is_none() && after.link.is_none();
+             conn.execute(
+@@
+-                    before.name != after.name,
++                    character && before.name != after.name,
+                     after.name,
+-                    before.appearance_anchor != after.appearance_anchor,
++                    character && before.appearance_anchor != after.appearance_anchor,
+@@
+                     entity_id
+                 ],
+             )?;
++            if let (Some(before), Some(after)) = (&before.link, &after.link) {
++                conn.execute(
++                    "UPDATE relationships
++                     SET label=CASE WHEN ?1 THEN ?2 ELSE label END,
++                         direction=CASE WHEN ?3 THEN ?4 ELSE direction END,
++                         description=CASE WHEN ?5 THEN ?6 ELSE description END
++                     WHERE entity_id IN (SELECT id FROM entities WHERE story_id=?7 AND id=?8)",
++                    rusqlite::params![
++                        before.label != after.label, after.label,
++                        before.direction != after.direction, after.direction,
++                        before.description != after.description, after.description,
++                        story_id, entity_id
++                    ],
++                )?;
++            }
+         }
+         EntityEvent::Deleted { entity_id, .. } => {
+@@
+-        entities::{attributes, repository as entity_repository},
++        entities::{attributes, model::{EntityLink, CHARACTER}, repository as entity_repository},
+         transcript::repository as transcript_repository,
+     };
++    use crate::shared::{db::with_transaction, test_support};
+ 
+-    type StateSnapshot = Vec<(String, String, Option<String>, i64)>;
++    type StateSnapshot = Vec<(String, Option<String>, Option<String>, i64)>;
+@@
+-                "locked inference",
++                "later inference",
+@@
+-            (7.0, 7.0)
++            (7.0, 3.0)
+@@
+             "temporary",
+             "story",
+-            "location",
++            "character",
+@@
+         assert_eq!(snapshots(&conn), before);
+     }
++
++    #[test]
++    fn replaying_an_endpoint_preserves_relationships_and_their_stats() {
++        let pool = crate::shared::db::test_pool();
++        let conn = pool.get().unwrap();
++        test_support::story(&conn, "story");
++        for (id, name) in [("mira", "Mira"), ("varro", "Varro")] {
++            entity_repository::create_entity_with_id_sync(
++                &conn, id, "story", CHARACTER, name, None, "user", None, None,
++            ).unwrap();
++        }
++        let relationship = entity_repository::create_link_sync(
++            &conn, "story", EntityLink {
++                from_id: "mira".into(), to_id: "varro".into(), label: "friendly rivals".into(),
++                direction: "one_way".into(), description: None,
++            }, "user", None, None,
++        ).unwrap();
++        entity_repository::update_link_sync(
++            &conn, "story", &relationship.id, Some("rivals"), None,
++            Some(Some("An old competition.".into())), "user", None, None,
++        ).unwrap();
++        let affection = attributes::find_exact_match(&conn, "Affection").unwrap().unwrap();
++        attributes::set_entity_attribute_sync(
++            &conn, "story", &relationship.id, &affection.id, -3.0,
++        ).unwrap();
++        let snapshot = |conn: &rusqlite::Connection| {
++            let relation = conn.query_row(
++                "SELECT entity_id, from_id, to_id, label, direction, description
++                 FROM relationships WHERE entity_id=?1",
++                [&relationship.id], |row| Ok((
++                    row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?,
++                    row.get::<_, String>(3)?, row.get::<_, String>(4)?, row.get::<_, Option<String>>(5)?,
++                )),
++            ).unwrap();
++            let identity = conn.query_row(
++                "SELECT name, is_present, created_at FROM entities WHERE id=?1",
++                [&relationship.id], |row| Ok((
++                    row.get::<_, Option<String>>(0)?, row.get::<_, i64>(1)?, row.get::<_, String>(2)?,
++                )),
++            ).unwrap();
++            let stats = attributes::list_entity_attributes_sync(&conn, "story", &relationship.id)
++                .unwrap().into_iter().map(|stat| (stat.attribute_id, stat.value, stat.source))
++                .collect::<Vec<_>>();
++            (relation, identity, stats)
++        };
++        let before = snapshot(&conn);
++        assert_eq!(before.1.0, None);
++        assert_eq!(before.2[0].1, -3.0);
++        let timestamps = conn.query_row(
++            "SELECT e.updated_at, a.updated_at FROM entities e
++             JOIN entity_attributes a ON a.entity_id=e.id WHERE e.id=?1",
++            [&relationship.id], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
++        ).unwrap();
++        replay(&conn, "story", &HashSet::from(["mira".into()]), None).unwrap();
++        assert_eq!(snapshot(&conn), before);
++        assert_eq!(conn.query_row(
++            "SELECT e.updated_at, a.updated_at FROM entities e
++             JOIN entity_attributes a ON a.entity_id=e.id WHERE e.id=?1",
++            [&relationship.id], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
++        ).unwrap(), timestamps);
++        replay(&conn, "story", &HashSet::from([relationship.id.clone()]), None).unwrap();
++        assert_eq!(snapshot(&conn), before);
++
++        let (turn_id, _, narration_id) =
++            test_support::exchange(&conn, "story", "do", "make peace", Some("An uneasy truce."));
++        entity_repository::update_link_sync(
++            &conn, "story", &relationship.id, None, Some("both"),
++            Some(Some("An uneasy truce.".into())), "narrator_tool", narration_id.as_deref(), Some(&turn_id),
++        ).unwrap();
++        entity_repository::update_link_sync(
++            &conn, "story", &relationship.id, Some("former rivals"), None, None,
++            "user", None, None,
++        ).unwrap();
++        replay(
++            &conn, "story", &HashSet::from([relationship.id.clone()]), Some(&turn_id),
++        ).unwrap();
++        let mut expected = before;
++        expected.0.3 = "former rivals".into();
++        assert_eq!(snapshot(&conn), expected);
++    }
++
++    #[test]
++    fn erasing_relationship_creation_removes_its_subtype_and_stats() {
++        let pool = crate::shared::db::test_pool();
++        let conn = pool.get().unwrap();
++        test_support::story(&conn, "story");
++        for (id, name) in [("mira", "Mira"), ("varro", "Varro")] {
++            entity_repository::create_entity_with_id_sync(
++                &conn, id, "story", CHARACTER, name, None, "user", None, None,
++            ).unwrap();
++        }
++        let (turn_id, action_id, narration_id) =
++            test_support::exchange(&conn, "story", "do", "meet Varro", Some("They become rivals."));
++        let relationship = entity_repository::create_link_sync(
++            &conn, "story", EntityLink {
++                from_id: "mira".into(), to_id: "varro".into(), label: "rivals".into(),
++                direction: "one_way".into(), description: None,
++            }, "narrator_tool", narration_id.as_deref(), Some(&turn_id),
++        ).unwrap();
++        let affection = attributes::find_exact_match(&conn, "Affection").unwrap().unwrap();
++        attributes::apply_attribute_delta(
++            &conn, "story", &relationship.id, &affection, -3.0, "a rivalry",
++            narration_id.as_deref().unwrap(), false, Some(&turn_id),
++        ).unwrap();
++        entity_repository::update_link_sync(
++            &conn, "story", &relationship.id, Some("former rivals"), None, None,
++            "user", None, None,
++        ).unwrap();
++        attributes::set_entity_attribute_sync(
++            &conn, "story", &relationship.id, &affection.id, -2.0,
++        ).unwrap();
++        assert_eq!(conn.query_row(
++            "SELECT name FROM entities WHERE id=?1", [&relationship.id],
++            |row| row.get::<_, Option<String>>(0),
++        ).unwrap(), None);
++        let relationship_id = relationship.id;
++        drop(conn);
++
++        let removed_ids = with_transaction(&pool, |tx| {
++            let removed = crate::features::transcript::erase::erase_last_exchange_in_tx(tx, "story")?
++                .unwrap();
++            replay_after_erase(tx, "story", &removed.entries)?;
++            Ok(removed.visible_ids)
++        }).unwrap();
++        assert_eq!(removed_ids, vec![action_id, narration_id.unwrap()]);
++        let conn = pool.get().unwrap();
++        let counts = conn.query_row(
++            "SELECT (SELECT COUNT(*) FROM entities WHERE id=?1),
++                    (SELECT COUNT(*) FROM relationships WHERE entity_id=?1),
++                    (SELECT COUNT(*) FROM entity_attributes WHERE entity_id=?1)",
++            [&relationship_id], |row| Ok((
++                row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?,
++            )),
++        ).unwrap();
++        assert_eq!(counts, (0, 0, 0));
++        assert_eq!(entity_repository::list_entities_sync(&conn, "story", Some(CHARACTER)).unwrap().len(), 2);
++        assert_eq!(conn.query_row(
++            "SELECT COUNT(*) FROM transcript_entries WHERE kind='entity_attribute_changed'",
++            [], |row| row.get::<_, i64>(0),
++        ).unwrap(), 1);
++    }
+ }
+*** Update File: src-tauri/src/features/entities/attributes.rs
+@@
+ /// Reads an entity's current value for an attribute without writing anything.
+-/// The optional source is `None` for the implicit midpoint and identifies
+-/// player-locked rows without a second lookup.
++/// The optional source is `None` for the implicit midpoint; otherwise it
++/// identifies the most recent value's source.
+@@
+-    let (before, current_source) = peek_entity_attribute(conn, story_id, entity_id, attribute)?;
+-    if current_source.as_deref() == Some("user") {
+-        // The narrator context tells the model user overrides take
+-        // precedence over inferred updates; honor that here rather than
+-        // silently overwriting a value the player explicitly set.
+-        return Ok((before, before));
+-    }
++    let (before, _) = peek_entity_attribute(conn, story_id, entity_id, attribute)?;
+@@
+-    let before: Option<f64> = conn.query_row("SELECT value FROM entity_attributes JOIN entities ON entities.id = entity_attributes.entity_id WHERE entities.story_id = ?1 AND entity_id = ?2 AND attribute_id = ?3", rusqlite::params![story_id, entity_id, attribute_id], |r| r.get(0)).optional()?;
++    let existing = conn.query_row(
++        "SELECT entities.story_id, entity_attributes.entity_id, entity_attributes.attribute_id,
++                attribute_registry.canonical_name, entity_attributes.value,
++                attribute_registry.min, attribute_registry.max, entity_attributes.updated_at,
++                entity_attributes.source
++         FROM entity_attributes JOIN attribute_registry ON attribute_registry.id=entity_attributes.attribute_id
++         JOIN entities ON entities.id=entity_attributes.entity_id
++         WHERE entities.story_id=?1 AND entity_attributes.entity_id=?2 AND entity_attributes.attribute_id=?3",
++        rusqlite::params![story_id, entity_id, attribute_id], row_to_entity_attribute,
++    ).optional()?;
++    if let Some(existing) = existing.as_ref().filter(|existing| existing.value == value) {
++        return Ok(existing.clone());
++    }
++    let before = existing.map(|existing| existing.value);
+@@
+     #[test]
++    fn setting_the_current_value_preserves_the_record_without_an_event() {
++        let (pool, attribute_id) = attribute_helper_fixture();
++        let conn = pool.get().unwrap();
++        let passage = crate::features::transcript::repository::append_story_message(
++            &conn, "story", "narrator", "generated", "Scene", None, None,
++        ).unwrap();
++        let attribute = find_attribute_by_id(&conn, &attribute_id).unwrap();
++        apply_attribute_delta(
++            &conn, "story", "entity", &attribute, 2.0, "a later story event",
++            &passage.id, false, None,
++        ).unwrap();
++        let current = list_entity_attributes_sync(&conn, "story", "entity").unwrap().pop().unwrap();
++        assert_eq!(current.source, "inferred");
++        let entries = crate::features::transcript::repository::list_logical_entries(&conn, "story").unwrap();
++        let unchanged = set_entity_attribute_sync(
++            &conn, "story", "entity", &attribute_id, current.value,
++        ).unwrap();
++        assert_eq!(serde_json::to_value(unchanged).unwrap(), serde_json::to_value(current).unwrap());
++        assert_eq!(
++            crate::features::transcript::repository::list_logical_entries(&conn, "story").unwrap(),
++            entries
++        );
++    }
++
++    #[test]
+     fn remove_attribute_helper_is_idempotent() {
+*** Update File: src-tauri/src/features/images/generation.rs
+@@
+            AND entities.kind = 'character' AND entities.is_present = 1
+            AND entities.appearance_anchor IS NOT NULL
+-           AND entities.id IN ({placeholders})"
++           AND (entities.id IN ({placeholders})
++                OR entities.name COLLATE NOCASE IN ({placeholders}))"
+@@
+     let params = std::iter::once(story_id)
++        .chain(ids.iter().map(String::as_str))
+         .chain(ids.iter().map(String::as_str));
+@@
+     use crate::features::turn::TurnGate;
+ 
++    #[test]
++    fn character_name_resolution_adds_appearance_without_an_image_call() {
++        let pool = crate::shared::db::test_pool();
++        let conn = pool.get().unwrap();
++        crate::shared::test_support::story(&conn, "s");
++        crate::features::entities::create_entity_with_id_sync(
++            &conn, "mira-id", "s", "character", "Mira", Some("silver hair"), "user", None, None,
++        ).unwrap();
++        let characters = characters_by_ids(&conn, "s", &["mIra".into()]).unwrap();
++        assert_eq!(characters, vec![("Mira".to_string(), "silver hair".to_string())]);
++        let matched = characters.iter().collect::<Vec<_>>();
++        let prompt = compose_image_prompt("Painted scene.", "A harbor.", &matched);
++        assert!(prompt.contains("- Mira: silver hair"));
++        assert_eq!(characters_by_ids(&conn, "s", &["mira-id".into()]).unwrap(), characters);
++        let unknown = characters_by_ids(&conn, "s", &["unknown".into()]).unwrap();
++        assert!(unknown.is_empty());
++        assert_eq!(
++            compose_image_prompt("Painted scene.", "A harbor.", &unknown.iter().collect::<Vec<_>>()),
++            "Painted scene. A harbor."
++        );
++    }
++
+     async fn turn_fixture() -> (Pool, std::sync::Arc<TurnTx>, String, String) {
+*** End Patch

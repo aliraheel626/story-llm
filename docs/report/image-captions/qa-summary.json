@@ -1,0 +1,13 @@
+{
+  "production_qa_assertions": "passed except capped live Retry",
+  "text_calls": 9,
+  "image_calls": 4,
+  "caption_calls": 3,
+  "successful_captions": 2,
+  "total_reported_cost_usd": 0.3261948,
+  "caption_costs_usd": [
+    0.0006279,
+    0.0004779
+  ],
+  "live_retry": "not run: fifth image would exceed cap"
+}

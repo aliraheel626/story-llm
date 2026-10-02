@@ -1,0 +1,9 @@
+{
+  "production_added": 99,
+  "production_removed": 87,
+  "test_added": 202,
+  "test_removed": 70,
+  "production_net": 12,
+  "test_net": 132,
+  "numstat": "33\t16\tsrc-tauri/src/features/entities/attributes.rs\n70\t55\tsrc-tauri/src/features/entities/projection.rs\n8\t8\tsrc-tauri/src/features/entities/repository.rs\n5\t6\tsrc-tauri/src/features/images/generation.rs\n1\t3\tsrc-tauri/src/features/stories/repository.rs\n119\t0\tsrc-tauri/src/features/transcript/commands.rs\n15\t32\tsrc-tauri/src/features/transcript/erase.rs\n50\t37\tsrc-tauri/src/shared/db.rs\n"
+}

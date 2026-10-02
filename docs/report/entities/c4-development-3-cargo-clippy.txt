@@ -1,0 +1,39 @@
+Command: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets
+Exit: 0
+
+    Checking story-llm v0.1.0 (C:\Users\User\Documents\GitHub\story-llm\src-tauri)
+warning: large size difference between variants
+  --> src\features\entities\events.rs:15:1
+   |
+15 | /   pub enum EntityEvent {
+16 | | /     Created {
+17 | | |         entity_id: String,
+18 | | |         kind: String,
+19 | | |         name: Option<String>,
+...  | |
+23 | | |         created_at: String,
+24 | | |     },
+   | | |_____- the second-largest variant contains at least 408 bytes
+25 | | /     Updated {
+26 | | |         entity_id: String,
+27 | | |         before: NameAnchor,
+28 | | |         after: NameAnchor,
+29 | | |         source: String,
+30 | | |     },
+   | | |_____- the largest variant contains at least 672 bytes
+...  |
+52 | |       },
+53 | |   }
+   | |___^ the entire enum is at least 672 bytes
+   |
+   = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#large_enum_variant
+   = note: `#[warn(clippy::large_enum_variant)]` on by default
+help: consider boxing the large fields or introducing indirection in some other way to reduce the total size of the enum
+   |
+28 -         after: NameAnchor,
+28 +         after: Box<NameAnchor>,
+   |
+
+warning: `story-llm` (lib) generated 1 warning
+warning: `story-llm` (lib test) generated 1 warning (1 duplicate)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 11.01s

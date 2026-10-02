@@ -1,0 +1,12 @@
+{
+  "database": "C:\\Users\\User\\AppData\\Roaming\\com.story-llm.app\\story-llm.sqlite3",
+  "mode": "ro",
+  "query": "SELECT id, title, settings_json FROM stories ORDER BY created_at",
+  "rows": [
+    {
+      "id": "7b6992ba-996a-4b13-9750-bef67d3eb4c0",
+      "title": "Entities QA",
+      "settings_json": "{\"narrator_tools\":{\"illustrate_scene\":false,\"roll_check\":true,\"save_character\":true,\"save_relationship\":true}}"
+    }
+  ]
+}

@@ -1,0 +1,761 @@
+[
+  {
+    "time": 1790930088.0819044,
+    "condition": true,
+    "snapshot": {
+      "elements": [
+        {
+          "depth": 1,
+          "name": "story-llmStories+ New storyEntities QA✕CharactersC",
+          "ref": "e1",
+          "role": "generic"
+        },
+        {
+          "depth": 3,
+          "name": "Sidebar",
+          "ref": "e2",
+          "role": "complementary"
+        },
+        {
+          "depth": 5,
+          "name": "Close sidebar (Ctrl+B)",
+          "ref": "e3",
+          "role": "button"
+        },
+        {
+          "depth": 7,
+          "name": "Stories",
+          "ref": "e4",
+          "role": "button"
+        },
+        {
+          "depth": 8,
+          "name": "+ New story",
+          "ref": "e5",
+          "role": "button"
+        },
+        {
+          "depth": 10,
+          "name": "Entities QA",
+          "ref": "e6",
+          "role": "button"
+        },
+        {
+          "depth": 10,
+          "name": "✕",
+          "ref": "e7",
+          "role": "button"
+        },
+        {
+          "depth": 7,
+          "name": "Characters",
+          "ref": "e8",
+          "role": "button"
+        },
+        {
+          "depth": 8,
+          "name": "Entity tabs",
+          "ref": "e9",
+          "role": "group"
+        },
+        {
+          "depth": 9,
+          "name": "Characters",
+          "ref": "e10",
+          "role": "button"
+        },
+        {
+          "depth": 9,
+          "name": "Relationships",
+          "ref": "e11",
+          "role": "button"
+        },
+        {
+          "depth": 10,
+          "name": "Edit relationship",
+          "ref": "e12",
+          "role": "button"
+        },
+        {
+          "depth": 7,
+          "name": "Narrator Tools",
+          "ref": "e13",
+          "role": "button"
+        },
+        {
+          "depth": 8,
+          "name": "All tools start on for every story. Entity tools c",
+          "ref": "e14",
+          "role": "paragraph"
+        },
+        {
+          "checked": true,
+          "depth": 10,
+          "ref": "e15",
+          "role": "checkbox",
+          "value": "on"
+        },
+        {
+          "checked": true,
+          "depth": 10,
+          "ref": "e16",
+          "role": "checkbox",
+          "value": "on"
+        },
+        {
+          "checked": true,
+          "depth": 10,
+          "ref": "e17",
+          "role": "checkbox",
+          "value": "on"
+        },
+        {
+          "checked": false,
+          "depth": 10,
+          "ref": "e18",
+          "role": "checkbox",
+          "value": "on"
+        },
+        {
+          "depth": 7,
+          "name": "Transcript",
+          "ref": "e19",
+          "role": "button"
+        },
+        {
+          "checked": true,
+          "depth": 10,
+          "ref": "e20",
+          "role": "checkbox",
+          "value": "on"
+        },
+        {
+          "checked": true,
+          "depth": 10,
+          "ref": "e21",
+          "role": "checkbox",
+          "value": "on"
+        },
+        {
+          "checked": true,
+          "depth": 10,
+          "ref": "e22",
+          "role": "checkbox",
+          "value": "on"
+        },
+        {
+          "checked": true,
+          "depth": 10,
+          "ref": "e23",
+          "role": "checkbox",
+          "value": "on"
+        },
+        {
+          "checked": true,
+          "depth": 10,
+          "ref": "e24",
+          "role": "checkbox",
+          "value": "on"
+        },
+        {
+          "checked": false,
+          "depth": 10,
+          "ref": "e25",
+          "role": "checkbox",
+          "value": "on"
+        },
+        {
+          "checked": true,
+          "depth": 10,
+          "ref": "e26",
+          "role": "checkbox",
+          "value": "on"
+        },
+        {
+          "checked": false,
+          "depth": 10,
+          "ref": "e27",
+          "role": "checkbox",
+          "value": "on"
+        },
+        {
+          "checked": true,
+          "depth": 10,
+          "ref": "e28",
+          "role": "checkbox",
+          "value": "on"
+        },
+        {
+          "checked": false,
+          "depth": 10,
+          "ref": "e29",
+          "role": "checkbox",
+          "value": "on"
+        },
+        {
+          "checked": true,
+          "depth": 10,
+          "ref": "e30",
+          "role": "checkbox",
+          "value": "on"
+        },
+        {
+          "checked": false,
+          "depth": 10,
+          "ref": "e31",
+          "role": "checkbox",
+          "value": "on"
+        },
+        {
+          "checked": true,
+          "depth": 10,
+          "ref": "e32",
+          "role": "checkbox",
+          "value": "on"
+        },
+        {
+          "checked": true,
+          "depth": 10,
+          "ref": "e33",
+          "role": "checkbox",
+          "value": "on"
+        },
+        {
+          "checked": true,
+          "depth": 10,
+          "ref": "e34",
+          "role": "checkbox",
+          "value": "on"
+        },
+        {
+          "checked": true,
+          "depth": 10,
+          "ref": "e35",
+          "role": "checkbox",
+          "value": "on"
+        },
+        {
+          "checked": true,
+          "depth": 10,
+          "ref": "e36",
+          "role": "checkbox",
+          "value": "on"
+        },
+        {
+          "checked": false,
+          "depth": 10,
+          "ref": "e37",
+          "role": "checkbox",
+          "value": "on"
+        },
+        {
+          "checked": false,
+          "depth": 10,
+          "ref": "e38",
+          "role": "checkbox",
+          "value": "on"
+        },
+        {
+          "depth": 8,
+          "name": "Preview next request",
+          "ref": "e39",
+          "role": "button"
+        },
+        {
+          "depth": 9,
+          "name": "System: # Role You are the narrator of an interact",
+          "ref": "e40",
+          "role": "paragraph"
+        },
+        {
+          "depth": 9,
+          "name": "record: [Authoritative story event: entity_created",
+          "ref": "e41",
+          "role": "paragraph"
+        },
+        {
+          "depth": 9,
+          "name": "record: [Authoritative story event: entity_updated",
+          "ref": "e42",
+          "role": "paragraph"
+        },
+        {
+          "depth": 9,
+          "name": "record: [Authoritative story event: entity_updated",
+          "ref": "e43",
+          "role": "paragraph"
+        },
+        {
+          "depth": 9,
+          "name": "record: [Authoritative story event: entity_updated",
+          "ref": "e44",
+          "role": "paragraph"
+        },
+        {
+          "depth": 9,
+          "name": "player: <story>My estranged sister Mira waits for ",
+          "ref": "e45",
+          "role": "paragraph"
+        },
+        {
+          "depth": 9,
+          "name": "narrator: The tavern's low light catches the grey ",
+          "ref": "e46",
+          "role": "paragraph"
+        },
+        {
+          "depth": 9,
+          "name": "player: <guide>Record Mira, where she is, what she",
+          "ref": "e47",
+          "role": "paragraph"
+        },
+        {
+          "depth": 9,
+          "name": "narrator: Mira does not rise when she sees you. Sh",
+          "ref": "e48",
+          "role": "paragraph"
+        },
+        {
+          "depth": 9,
+          "name": "record: [Authoritative story event: entity_created",
+          "ref": "e49",
+          "role": "paragraph"
+        },
+        {
+          "depth": 9,
+          "name": "record: [Authoritative story event: entity_created",
+          "ref": "e50",
+          "role": "paragraph"
+        },
+        {
+          "depth": 9,
+          "name": "record: [Authoritative story event: entity_updated",
+          "ref": "e51",
+          "role": "paragraph"
+        },
+        {
+          "depth": 9,
+          "name": "player: <story>A hooded stranger in the corner has",
+          "ref": "e52",
+          "role": "paragraph"
+        },
+        {
+          "depth": 9,
+          "name": "narrator: I'll set the watcher in the corner down ",
+          "ref": "e53",
+          "role": "paragraph"
+        },
+        {
+          "depth": 9,
+          "name": "record: [Authoritative story event: entity_created",
+          "ref": "e54",
+          "role": "paragraph"
+        },
+        {
+          "depth": 9,
+          "name": "player: <do>I apologize to Mira and mean it.</do>I",
+          "ref": "e55",
+          "role": "paragraph"
+        },
+        {
+          "depth": 9,
+          "name": "narrator: Whether she believes you is not certain.",
+          "ref": "e56",
+          "role": "paragraph"
+        },
+        {
+          "depth": 9,
+          "name": "record: [Authoritative story event: diceroll] Dice",
+          "ref": "e57",
+          "role": "paragraph"
+        },
+        {
+          "depth": 9,
+          "name": "record: [Authoritative story event: entity_attribu",
+          "ref": "e58",
+          "role": "paragraph"
+        },
+        {
+          "depth": 9,
+          "name": "record: [Authoritative story event: entity_attribu",
+          "ref": "e59",
+          "role": "paragraph"
+        },
+        {
+          "depth": 9,
+          "name": "player: <entities> Current record. When the story ",
+          "ref": "e60",
+          "role": "paragraph"
+        },
+        {
+          "depth": 9,
+          "name": "Injected: <entities> Current record. When the stor",
+          "ref": "e61",
+          "role": "paragraph"
+        },
+        {
+          "depth": 7,
+          "name": "Context",
+          "ref": "e62",
+          "role": "button"
+        },
+        {
+          "checked": true,
+          "depth": 12,
+          "name": "Characters shown",
+          "ref": "e63",
+          "role": "radio",
+          "value": "on"
+        },
+        {
+          "checked": false,
+          "depth": 12,
+          "name": "Characters hidden",
+          "ref": "e64",
+          "role": "radio",
+          "value": "on"
+        },
+        {
+          "checked": true,
+          "depth": 12,
+          "name": "Relationships shown",
+          "ref": "e65",
+          "role": "radio",
+          "value": "on"
+        },
+        {
+          "checked": false,
+          "depth": 12,
+          "name": "Relationships hidden",
+          "ref": "e66",
+          "role": "radio",
+          "value": "on"
+        },
+        {
+          "depth": 8,
+          "name": "Hidden kinds are left out of the entities block. T",
+          "ref": "e67",
+          "role": "paragraph"
+        },
+        {
+          "checked": true,
+          "depth": 9,
+          "ref": "e68",
+          "role": "checkbox",
+          "value": "on"
+        },
+        {
+          "depth": 9,
+          "name": "Tone, ongoing constraints, things to keep in mind.",
+          "ref": "e69",
+          "role": "textbox"
+        },
+        {
+          "depth": 8,
+          "disabled": true,
+          "name": "Save",
+          "ref": "e70",
+          "role": "button"
+        },
+        {
+          "checked": true,
+          "depth": 9,
+          "ref": "e71",
+          "role": "checkbox",
+          "value": "on"
+        },
+        {
+          "depth": 7,
+          "name": "Text Model",
+          "ref": "e72",
+          "role": "button"
+        },
+        {
+          "depth": 9,
+          "name": "OpenRouterNous PortalOllama (ollama-dev.greatworkf",
+          "ref": "e73",
+          "role": "combobox",
+          "value": "openrouter"
+        },
+        {
+          "depth": 9,
+          "name": "Grok 4.7Grok 4.3Claude Sonnet 4.5Hermes 4 70BHerme",
+          "ref": "e74",
+          "role": "combobox",
+          "value": "x-ai/grok-4.7"
+        },
+        {
+          "depth": 9,
+          "name": "•••••••• (leave blank to keep)",
+          "ref": "e75",
+          "role": "textbox"
+        },
+        {
+          "depth": 8,
+          "name": "Save",
+          "ref": "e76",
+          "role": "button"
+        },
+        {
+          "depth": 7,
+          "name": "Image Model",
+          "ref": "e77",
+          "role": "button"
+        },
+        {
+          "depth": 7,
+          "name": "Features",
+          "ref": "e78",
+          "role": "button"
+        },
+        {
+          "depth": 3,
+          "name": "Text $0.0764Images $0.00 (0)Cached input 19.5KTota",
+          "ref": "e79",
+          "role": "main"
+        },
+        {
+          "depth": 7,
+          "name": "Entities QA",
+          "ref": "e80",
+          "role": "heading"
+        },
+        {
+          "depth": 9,
+          "name": "StoryMy estranged sister Mira waits for me in the ",
+          "ref": "e81",
+          "role": "paragraph"
+        },
+        {
+          "depth": 10,
+          "name": "Edit",
+          "ref": "e82",
+          "role": "button"
+        },
+        {
+          "depth": 9,
+          "name": "▸ThinkingThe user has submitted a story passage to",
+          "ref": "e83",
+          "role": "button"
+        },
+        {
+          "depth": 9,
+          "name": "The tavern's low light catches the grey of that cl",
+          "ref": "e84",
+          "role": "paragraph"
+        },
+        {
+          "depth": 11,
+          "name": "Edit",
+          "ref": "e85",
+          "role": "button"
+        },
+        {
+          "depth": 10,
+          "name": "Edit",
+          "ref": "e86",
+          "role": "button"
+        },
+        {
+          "depth": 9,
+          "name": "▸Thinking & 3 tool callsThe user wants me to recor",
+          "ref": "e87",
+          "role": "button"
+        },
+        {
+          "depth": 9,
+          "name": "Mira does not rise when she sees you. She sits wit",
+          "ref": "e88",
+          "role": "paragraph"
+        },
+        {
+          "depth": 11,
+          "name": "Edit",
+          "ref": "e89",
+          "role": "button"
+        },
+        {
+          "depth": 9,
+          "name": "StoryA hooded stranger in the corner hasn't taken ",
+          "ref": "e90",
+          "role": "paragraph"
+        },
+        {
+          "depth": 10,
+          "name": "Edit",
+          "ref": "e91",
+          "role": "button"
+        },
+        {
+          "depth": 9,
+          "name": "▸Thinking & 1 tool callThe user wants me to contin",
+          "ref": "e92",
+          "role": "button"
+        },
+        {
+          "depth": 9,
+          "name": "I'll set the watcher in the corner down in the rec",
+          "ref": "e93",
+          "role": "paragraph"
+        },
+        {
+          "depth": 11,
+          "name": "Edit",
+          "ref": "e94",
+          "role": "button"
+        },
+        {
+          "depth": 9,
+          "name": "I apologize to Mira and mean it.",
+          "ref": "e95",
+          "role": "paragraph"
+        },
+        {
+          "depth": 10,
+          "name": "Edit",
+          "ref": "e96",
+          "role": "button"
+        },
+        {
+          "depth": 9,
+          "name": "▸Thinking & 1 tool callThe user wants me to narrat",
+          "ref": "e97",
+          "role": "button"
+        },
+        {
+          "depth": 9,
+          "name": "Whether she believes you is not certain. I'll see ",
+          "ref": "e98",
+          "role": "paragraph"
+        },
+        {
+          "depth": 9,
+          "name": "Roll: Mira still resents the player for leaving; w",
+          "ref": "e99",
+          "role": "group"
+        },
+        {
+          "depth": 11,
+          "name": "Reason: Mira still resents the player for leaving;",
+          "ref": "e100",
+          "role": "paragraph"
+        },
+        {
+          "depth": 11,
+          "name": "Chance source: Narrator. Chance: 35%. Needed: 65 o",
+          "ref": "e101",
+          "role": "paragraph"
+        },
+        {
+          "depth": 11,
+          "name": "No attribute factors.",
+          "ref": "e102",
+          "role": "paragraph"
+        },
+        {
+          "depth": 11,
+          "name": "Edit",
+          "ref": "e103",
+          "role": "button"
+        },
+        {
+          "depth": 9,
+          "name": "Mira and I step outside onto the docks.",
+          "ref": "e104",
+          "role": "paragraph"
+        },
+        {
+          "depth": 10,
+          "name": "Edit",
+          "ref": "e105",
+          "role": "button"
+        },
+        {
+          "depth": 9,
+          "name": "▸Thinking & 2 tool callsThe user wants Mira and me",
+          "ref": "e106",
+          "role": "button"
+        },
+        {
+          "depth": 9,
+          "name": "You rise, and after a moment Mira does too. She dr",
+          "ref": "e107",
+          "role": "paragraph"
+        },
+        {
+          "depth": 11,
+          "name": "Edit",
+          "ref": "e108",
+          "role": "button"
+        },
+        {
+          "depth": 11,
+          "name": "Retry",
+          "ref": "e109",
+          "role": "button"
+        },
+        {
+          "depth": 11,
+          "name": "Erase",
+          "ref": "e110",
+          "role": "button"
+        },
+        {
+          "depth": 9,
+          "name": "Do",
+          "ref": "e111",
+          "role": "button"
+        },
+        {
+          "depth": 9,
+          "name": "Say",
+          "ref": "e112",
+          "role": "button"
+        },
+        {
+          "depth": 9,
+          "name": "Story",
+          "ref": "e113",
+          "role": "button"
+        },
+        {
+          "depth": 9,
+          "name": "Guide",
+          "ref": "e114",
+          "role": "button"
+        },
+        {
+          "depth": 9,
+          "name": "See",
+          "ref": "e115",
+          "role": "button"
+        },
+        {
+          "depth": 8,
+          "name": "Continue ⏵",
+          "ref": "e116",
+          "role": "button"
+        },
+        {
+          "depth": 7,
+          "name": "What do you do?",
+          "ref": "e117",
+          "role": "textbox"
+        },
+        {
+          "depth": 10,
+          "name": "DefaultNoneMinimalLowMediumHighExtra highMax",
+          "ref": "e118",
+          "role": "combobox"
+        },
+        {
+          "depth": 9,
+          "disabled": true,
+          "name": "Send",
+          "ref": "e119",
+          "role": "button"
+        }
+      ]
+    }
+  }
+]

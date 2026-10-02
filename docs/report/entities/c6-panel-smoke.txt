@@ -1,0 +1,50 @@
+C6 Panel Applied Verification
+Date: 2026-10-02
+
+Applied-ready: exact prepared C6 panel applied LIVE with apply_patch only.
+Only production file written by this worker:
+C:\Users\User\Documents\GitHub\story-llm\src\features\characters\CharactersPanel.tsx
+
+Prepared patch:
+C:\Users\User\Documents\GitHub\story-llm\docs\report\entities\c6-panel-prepared.patch
+Reproducible ignored source probe:
+C:\Users\User\Documents\GitHub\story-llm\docs\report\entities\c6-panel-smoke.mjs
+Command: node "docs/report/entities/c6-panel-smoke.mjs"
+Exit code: 0
+
+Final probe stdout:
+PASS: single owned patch, 244-line baseline, exact live/prepared parity, whitespace, registry-only direct API
+Panel source: 311 lines; SHA256 fc793a0c7046717a1c375a847c804f27a0d57ca7207b71f79f855dd9de41d35d
+PASS: strict in-memory TypeScript check against agreed C6 interfaces and actual React typings
+PASS: actual React static render hides unrevealed true names; aliases, both arrows, relationship stats, label editor, readonly direction/description
+PASS: eight form labels, own-kind registry, create fields, original-baseline changed-only Save, literal null clear and changed-only name
+PASS: pending Save/Delete cannot close a new edit session, including same-entity reopen
+PASS: pending stat result preserves later same-value retyping; immediate removal excludes dirty draft from Save
+PASS: Add uses queued-store setter midpoint; blank stats never write zero; failed Add selection remains retryable
+PASS: per-story tab persistence writes only on click; story reopen collapses Reveal; unavailable storage defaults safely
+No app, backend, model, secrets, Vite server, ports, live writes, or full suites used by this probe.
+Limit: mocked hooks/actions plus real React static render, not browser interaction or integrated queue tests.
+
+Scope evidence:
+git diff --name-only -- "src/features/characters/CharactersPanel.tsx"
+src/features/characters/CharactersPanel.tsx
+
+git diff --numstat -- "src/features/characters/CharactersPanel.tsx"
+254 187 src/features/characters/CharactersPanel.tsx
+Net source delta: +67 lines (311 after, 244 before).
+
+git diff --check -- "src/features/characters/CharactersPanel.tsx"
+Exit code: 0; no whitespace errors. Git emitted its LF-to-CRLF notice only.
+
+git diff --cached --name-only -- "src/features/characters/CharactersPanel.tsx"
+Empty at verification time. This worker did not stage or commit anything.
+
+Direct API/queue source scan:
+Only charactersApi call is listRegistry at panel line 65.
+No panel enqueue/queue or direct entity/stat API writes.
+Every mutation calls the announced store action; Save's latest-cache comparison remains store-owned.
+
+git check-ignore -v confirms .gitignore:28:docs/ for the prepared patch, source probe, and this result path.
+No files owned by main or the store worker were edited. No new committed tests, app/model calls,
+secret reads, Vite/server processes, or ports used. No full/integrated suites run by this worker;
+main owns the integrated gate after all C6 owners are ready. Probe/output are ignored evidence only.

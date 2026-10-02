@@ -1,0 +1,5 @@
+cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets
+cwd=C:\Users\User\AppData\Local\Temp\kilo\story-llm-c1
+exit=0
+   Compiling story-llm v0.1.0 (C:\Users\User\AppData\Local\Temp\kilo\story-llm-c1\src-tauri)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 13.56s

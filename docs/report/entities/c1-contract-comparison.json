@@ -1,0 +1,9 @@
+{
+  "left": "C:\\Users\\User\\Documents\\GitHub\\story-llm\\docs\\report\\entities\\c1-tool-contract-before.json",
+  "right": "C:\\Users\\User\\Documents\\GitHub\\story-llm\\docs\\report\\entities\\c1-tool-contract-after.json",
+  "byte_identical": true,
+  "before_sha256": "e274b88ddccc0c22914e40f335e1ab7dc813d1235f5bccda8df2b1d5e03085fe",
+  "after_sha256": "e274b88ddccc0c22914e40f335e1ab7dc813d1235f5bccda8df2b1d5e03085fe",
+  "before_bytes": 9802,
+  "after_bytes": 9802
+}

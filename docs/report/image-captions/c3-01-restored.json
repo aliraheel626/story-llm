@@ -1,0 +1,278 @@
+{
+  "captured_at": 1790797400.026301,
+  "snapshot": {
+    "elements": [
+      {
+        "depth": 1,
+        "name": "story-llmStories+ New storyNew story✕Underside of ",
+        "ref": "e1",
+        "role": "generic"
+      },
+      {
+        "depth": 3,
+        "name": "Sidebar",
+        "ref": "e2",
+        "role": "complementary"
+      },
+      {
+        "depth": 5,
+        "name": "Close sidebar (Ctrl+B)",
+        "ref": "e3",
+        "role": "button"
+      },
+      {
+        "depth": 7,
+        "name": "Stories",
+        "ref": "e4",
+        "role": "button"
+      },
+      {
+        "depth": 8,
+        "name": "+ New story",
+        "ref": "e5",
+        "role": "button"
+      },
+      {
+        "depth": 10,
+        "name": "New story",
+        "ref": "e6",
+        "role": "button"
+      },
+      {
+        "depth": 10,
+        "name": "✕",
+        "ref": "e7",
+        "role": "button"
+      },
+      {
+        "depth": 10,
+        "name": "Underside of Ice",
+        "ref": "e8",
+        "role": "button"
+      },
+      {
+        "depth": 10,
+        "name": "✕",
+        "ref": "e9",
+        "role": "button"
+      },
+      {
+        "depth": 10,
+        "name": "Except That It Has",
+        "ref": "e10",
+        "role": "button"
+      },
+      {
+        "depth": 10,
+        "name": "✕",
+        "ref": "e11",
+        "role": "button"
+      },
+      {
+        "depth": 10,
+        "name": "The Room Holds Its Breath",
+        "ref": "e12",
+        "role": "button"
+      },
+      {
+        "depth": 10,
+        "name": "✕",
+        "ref": "e13",
+        "role": "button"
+      },
+      {
+        "depth": 10,
+        "name": "The Unbroken Seal",
+        "ref": "e14",
+        "role": "button"
+      },
+      {
+        "depth": 10,
+        "name": "✕",
+        "ref": "e15",
+        "role": "button"
+      },
+      {
+        "depth": 7,
+        "name": "Characters",
+        "ref": "e16",
+        "role": "button"
+      },
+      {
+        "depth": 7,
+        "name": "Narrator Tools",
+        "ref": "e17",
+        "role": "button"
+      },
+      {
+        "depth": 7,
+        "name": "Transcript",
+        "ref": "e18",
+        "role": "button"
+      },
+      {
+        "depth": 7,
+        "name": "Context",
+        "ref": "e19",
+        "role": "button"
+      },
+      {
+        "depth": 7,
+        "name": "Text Model",
+        "ref": "e20",
+        "role": "button"
+      },
+      {
+        "depth": 7,
+        "name": "Image Model",
+        "ref": "e21",
+        "role": "button"
+      },
+      {
+        "checked": true,
+        "depth": 9,
+        "ref": "e22",
+        "role": "checkbox",
+        "value": "on"
+      },
+      {
+        "depth": 9,
+        "name": "Nano Banana 2 Lite (fastest)FLUX.2 Pro (anime-frie",
+        "ref": "e23",
+        "role": "combobox",
+        "value": "__custom__"
+      },
+      {
+        "depth": 9,
+        "name": "provider/model",
+        "ref": "e24",
+        "role": "textbox",
+        "value": "google/gemini-3.1-flash-image-preview"
+      },
+      {
+        "depth": 10,
+        "name": "Painterly",
+        "ref": "e25",
+        "role": "button"
+      },
+      {
+        "depth": 10,
+        "name": "Anime",
+        "ref": "e26",
+        "role": "button"
+      },
+      {
+        "depth": 10,
+        "name": "Realistic",
+        "ref": "e27",
+        "role": "button"
+      },
+      {
+        "depth": 10,
+        "name": "Comic",
+        "ref": "e28",
+        "role": "button"
+      },
+      {
+        "depth": 9,
+        "name": "Style prefix applied to every generated image...",
+        "ref": "e29",
+        "role": "textbox",
+        "value": "Digital painting, atmospheric scene illustration. anime"
+      },
+      {
+        "depth": 9,
+        "name": "Captions",
+        "ref": "e30",
+        "role": "heading"
+      },
+      {
+        "checked": true,
+        "depth": 10,
+        "ref": "e31",
+        "role": "checkbox",
+        "value": "on"
+      },
+      {
+        "depth": 10,
+        "name": "Gemini 3.5 Flash Lite (default)Gemini 3.8 Flash (s",
+        "ref": "e32",
+        "role": "combobox",
+        "value": "google/gemini-3.5-flash-lite"
+      },
+      {
+        "depth": 9,
+        "name": "Describes each image in words, shown under the ima",
+        "ref": "e33",
+        "role": "paragraph"
+      },
+      {
+        "depth": 8,
+        "name": "Uses OpenRouter, key set.",
+        "ref": "e34",
+        "role": "paragraph"
+      },
+      {
+        "depth": 8,
+        "name": "Saved",
+        "ref": "e35",
+        "role": "button"
+      },
+      {
+        "depth": 7,
+        "name": "Features",
+        "ref": "e36",
+        "role": "button"
+      },
+      {
+        "depth": 3,
+        "name": "No story openCreate or select a story from the sid",
+        "ref": "e37",
+        "role": "main"
+      },
+      {
+        "depth": 6,
+        "name": "No story open",
+        "ref": "e38",
+        "role": "paragraph"
+      },
+      {
+        "depth": 6,
+        "name": "Create or select a story from the sidebar.",
+        "ref": "e39",
+        "role": "paragraph"
+      }
+    ]
+  },
+  "dom": "{\"text\":\"story-llm\\nSTORIES\\n+ New story\\nNew story\\n✕\\nUnderside of Ice\\n✕\\nExcept That It Has\\n✕\\nThe Room Holds Its Breath\\n✕\\nThe Unbroken Seal\\n✕\\nCHARACTERS\\nNARRATOR TOOLS\\nTRANSCRIPT\\nCONTEXT\\nTEXT MODEL\\nIMAGE MODEL\\nEnable image generation\\nModel\\nNano Banana 2 Lite (fastest)\\nFLUX.2 Pro (anime-friendly)\\nGrok Imagine 2.0\\nCustom…\\nStyle\\nPainterly\\nAnime\\nRealistic\\nComic\\nCaptions\\nCaption images\\nCaption model\\nGemini 3.5 Flash Lite (default)\\nGemini 3.8 Flash (sharper)\\nGemini 2.5 Flash Lite (cheapest)\\nGPT-5 nano\\nCustom…\\n\\nDescribes each image in words, shown under the image. About $0.0006 per image. Whether the narrator sees captions is set per story under Context → Transcript.\\n\\nUses OpenRouter, key set.\\n\\nSaved\\nFEATURES\\n\\nNo story open\\n\\nCreate or select a story from the sidebar.\",\"controls\":[{\"tag\":\"BUTTON\",\"text\":\"\",\"type\":\"button\",\"value\":\"\",\"disabled\":false,\"label\":\"Close sidebar (Ctrl+B)\"},{\"tag\":\"BUTTON\",\"text\":\"Stories\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"+ New story\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"New story\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"✕\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"Underside of Ice\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"✕\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"Except That It Has\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"✕\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"The Room Holds Its Breath\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"✕\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"The Unbroken Seal\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"✕\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"Characters\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"Narrator Tools\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"Transcript\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"Context\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"Text Model\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"Image Model\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"INPUT\",\"text\":\"\",\"type\":\"checkbox\",\"value\":\"on\",\"checked\":true,\"disabled\":false,\"label\":null},{\"tag\":\"SELECT\",\"text\":\"Nano Banana 2 Lite (fastest)FLUX.2 Pro (anime-friendly)Grok Imagine 2.0Custom…\",\"type\":\"select-one\",\"value\":\"__custom__\",\"disabled\":false,\"label\":null},{\"tag\":\"INPUT\",\"text\":\"\",\"type\":\"text\",\"value\":\"google/gemini-3.1-flash-image-preview\",\"checked\":false,\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"Painterly\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"Anime\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"Realistic\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"Comic\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"INPUT\",\"text\":\"\",\"type\":\"checkbox\",\"value\":\"on\",\"checked\":true,\"disabled\":false,\"label\":null},{\"tag\":\"SELECT\",\"text\":\"Gemini 3.5 Flash Lite (default)Gemini 3.8 Flash (sharper)Gemini 2.5 Flash Lite (cheapest)GPT-5 nanoCustom…\",\"type\":\"select-one\",\"value\":\"google/gemini-3.5-flash-lite\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"Saved\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"Features\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null}],\"images\":[]}",
+  "image_settings": [
+    {
+      "value": "{\"caption_model\":\"google/gemini-3.5-flash-lite\",\"captions_enabled\":true,\"enabled\":true,\"model\":\"google/gemini-3.1-flash-image-preview\",\"style\":\"Digital painting, atmospheric scene illustration. anime\"}"
+    }
+  ],
+  "stories": [],
+  "records": [],
+  "images": [],
+  "usage": [],
+  "logs": [
+    {
+      "args": [
+        "%cDownload the React DevTools for a better development experience: https://reactjs.org/link/react-devtools",
+        "font-weight:bold"
+      ],
+      "id": 1,
+      "level": "info",
+      "source": "at http://localhost:1420/node_modules/.vite/deps/react-dom-Cn6-HCcb.js?v=568018e4:17222:52",
+      "timestamp": 1790797058187
+    },
+    {
+      "args": [
+        "invalid input: mistralai/mistral-nemo can't read images; pick a vision model for captions"
+      ],
+      "id": 2,
+      "level": "error",
+      "source": "at save (http://localhost:1420/src/features/settings/useSettingsForm.ts:34:12)",
+      "timestamp": 1790797399143
+    }
+  ]
+}

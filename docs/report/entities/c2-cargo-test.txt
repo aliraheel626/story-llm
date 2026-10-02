@@ -1,0 +1,213 @@
+Command: cargo test --manifest-path src-tauri/Cargo.toml
+Exit: 0
+
+   Compiling story-llm v0.1.0 (C:\Users\User\Documents\GitHub\story-llm\src-tauri)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 20.21s
+     Running unittests src\lib.rs (src-tauri\target\debug\deps\story_llm_lib-977447224de6ecb0.exe)
+
+running 190 tests
+test ai::reasoning_strip::tests::handles_tag_split_across_chunks ... ok
+test ai::reasoning_strip::tests::strips_complete_think_block ... ok
+test ai::reasoning_strip::tests::passes_through_plain_text ... ok
+test ai::tests::completed_calls_preserve_canonical_results_and_rig_success_semantics ... ok
+test ai::tests::completed_calls_follow_call_start_order ... ok
+test ai::tests::eligible_history_image_mimes_are_supported ... ok
+test ai::tests::openai_compatible_call_has_no_cost ... ok
+test ai::tests::unsupported_record_image_mime_is_rejected ... ok
+test ai::tests::failed_call_before_output_records_nothing ... ok
+test ai::tests::failure_after_a_finished_call_records_nothing_extra ... ok
+test ai::tests::failed_call_after_output_is_counted_without_cost ... ok
+test ai::tests::record_images_are_base64_data_uris_after_text ... ok
+test ai::tests::each_call_gets_a_fresh_reasoning_filter ... ok
+test ai::tests::usage_hook_records_each_completion_response ... ok
+test ai::tests::decision_tool_result_stops_and_ends_the_stream_cleanly ... ok
+test ai::tests::openrouter_cost_survives_rigs_wire_type ... ok
+test ai::tests::completion_calls_reach_on_chunk ... ok
+test ai::tests::narrator_reasoning_and_text_reach_provider_wires ... ok
+test ai::tests::usage_before_a_stream_error_is_still_reported ... ok
+test features::context::blocks::tests::tool_instructions_name_only_available_tools ... ok
+test features::context::compaction::budget::tests::compactor_messages_are_text_only_and_images_cost_budget ... ok
+test features::context::compaction::budget::tests::oversized_reasoning_can_reduce_the_raw_tail_below_twelve_messages ... ok
+test features::context::compaction::budget::tests::reasoning_is_budgeted_but_absent_from_compactor_messages ... ok
+test features::context::compaction::prepare::tests::compaction_removes_image_bytes_from_the_compacted_prefix ... ok
+test features::context::compaction::prepare::tests::raw_tail_boundary_matches_the_prepare_history_split ... ok
+test features::entities::attributes::tests::dramatic_deltas_may_span_the_full_range_but_not_exceed_it ... ok
+test features::entities::attributes::tests::negative_ranges_scale_by_width_not_absolute_value ... ok
+test features::entities::attributes::tests::non_dramatic_deltas_are_capped_at_30_percent_of_range ... ok
+test features::entities::attributes::tests::results_never_leave_the_attribute_bounds ... ok
+test features::context::compaction::summary::tests::structured_summary_renders_all_sections ... ok
+test features::entities::attributes::tests::plain_deltas_pass_through_unchanged ... ok
+test features::entities::events::tests::parser_skips_entries_missing_required_fields ... ok
+test features::entities::events::tests::parser_uses_transcript_creation_time_and_legacy_attribute_source ... ok
+test features::entities::events::tests::payload_omits_absent_delta_and_cause ... ok
+test features::entities::attributes::tests::set_attribute_helper_rejects_invalid_or_absent_inputs ... ok
+test features::entities::attributes::tests::first_inferred_delta_records_one_event_from_the_midpoint ... ok
+test features::context::blocks::tests::muted_note_and_tool_instructions_leave_offered_tools_unchanged ... ok
+test features::entities::attributes::tests::wrong_story_attribute_reads_are_empty ... ok
+test features::images::openrouter::tests::image_response_cost_is_optional ... ok
+test features::narrator::dice::turn_tests::chance_roll_seed_replays_the_draw ... ok
+test features::entities::registry::tests::minted_attribute_remaps_when_name_becomes_an_alias_before_commit ... ok
+test features::narrator::dice::turn_tests::payload_serializes_with_exact_current_shape ... ok
+test features::narrator::generation::tests::see_ignores_the_illustrate_toggle_but_needs_the_image_service ... ok
+test features::narrator::dice::turn_tests::export_bindings ... ok
+test features::context::blocks::tests::pipeline_builds_all_blocks_in_fixed_order ... ok
+test features::entities::attributes::tests::remove_attribute_helper_is_idempotent ... ok
+test features::context::blocks::tests::context_sees_uncommitted_story_and_entity_changes ... ok
+test features::narrator::tools::illustrate_scene::turn_tests::illustrate_scene_queues_one_image_per_turn ... ok
+test features::narrator::tools::roll_check::turn_tests::roll_check_schema_accepts_optional_chance_or_two_attribute_references ... ok
+test features::context::compaction::prepare::tests::compacted_summary_is_part_of_the_turn_transaction ... ok
+test features::context::blocks::tests::retry_adds_rejected_text_only_to_live_context_after_tools ... ok
+test features::settings::repository::tests::capability_refresh_only_applies_to_legacy_rows ... ok
+test features::entities::attributes::tests::set_attribute_helper_inserts_and_updates_with_before_payload ... ok
+test features::settings::repository::tests::legacy_and_invalid_image_support_default_to_false ... ok
+test features::entities::projection::tests::writes_and_rebuild_produce_identical_state ... ok
+test features::images::generation::tests::event_failure_rolls_back_image_savepoint_but_preserves_turn ... ok
+test features::entities::registry::tests::resolution_reads_uncommitted_registry_through_turn ... ok
+test features::settings::text_model::tests::image_metadata_parses_independently_of_context_length ... ok
+test features::settings::text_model::tests::unavailable_metadata_does_not_become_text_only ... ok
+test features::context::blocks::tests::entity_snapshot_reads_uncommitted_attributes_on_turn_connection ... ok
+test features::context::preview::tests::preview_matches_transcript_and_live_context_without_writes ... ok
+test features::images::generation::tests::caption_commit_and_failed_savepoint_preserve_image ... ok
+test features::stories::auto_title::tests::sanitize_title_caps_length ... ok
+test features::stories::auto_title::tests::sanitize_title_rejects_empty_and_placeholder ... ok
+test features::stories::auto_title::tests::sanitize_title_strips_quotes_punctuation_and_whitespace ... ok
+test features::images::generation::tests::persisted_image_is_private_until_turn_commit ... ok
+test features::narrator::tools::adjust_entity_attribute::turn_tests::attribute_tool_applies_delta_and_honors_player_lock ... ok
+test features::narrator::tools::roll_check::turn_tests::roll_is_written_in_turn_with_exact_payload_and_target ... ok
+test features::settings::repository::tests::missing_image_support_update_is_atomic_and_preserves_other_settings ... ok
+test features::narrator::tools::roll_check::turn_tests::factor_reads_current_turn_attribute_and_alias ... ok
+test features::settings::repository::tests::caption_settings_default_and_round_trip ... ok
+test features::narrator::tools::adjust_entity_attribute::turn_tests::minted_attribute_is_immediately_available_to_later_tools ... ok
+test features::narrator::tools::create_entity::turn_tests::entity_tools_write_and_read_on_the_turn_connection ... ok
+test features::narrator::tools::turn_tests::labels_and_catalog_keep_existing_contract ... ok
+test features::stories::auto_title::tests::title_rollback_leaves_placeholder_in_pool ... ok
+test features::settings::repository::tests::new_install_uses_grok_4_7_without_a_settings_row ... ok
+test features::settings::repository::tests::saved_text_model_keeps_its_own_settings ... ok
+test features::stories::auto_title::tests::opening_exchange_sees_uncommitted_narration ... ok
+test features::stories::settings::tests::tool_shape_rejects_partial_and_unknown_fields ... ok
+test features::stories::auto_title::tests::rename_wins_when_title_is_not_placeholder ... ok
+test features::stories::auto_title::tests::renamed_story_needs_no_title ... ok
+test features::stories::auto_title::tests::title_is_tried_only_on_the_first_three_turns ... ok
+test features::transcript::attachments::tests::story_images_read_latest_caption_by_asset_and_leave_uncaptioned_images_none ... ok
+test features::stories::repository::tests::new_story_picks_the_newest_blank ... ok
+test features::stories::repository::tests::new_story_reuses_the_newest_blank_story ... ok
+test features::stories::repository::tests::new_story_skips_renamed_stories ... ok
+test features::stories::repository::tests::new_story_skips_stories_with_turns ... ok
+test features::stories::repository::tests::story_creation_validates_draft_and_seeds_canonical_player ... ok
+test features::stories::settings::tests::catalog_resolves_defaults_and_rejects_unknown_saves ... ok
+test features::stories::settings::tests::connection_readers_see_uncommitted_story_settings ... ok
+test features::stories::settings::tests::context_changes_only_log_text_edits_and_preserve_other_story_settings ... ok
+test features::stories::settings::tests::partial_context_uses_serde_defaults ... ok
+test features::stories::settings::tests::story_defaults_and_isolated_saves_preserve_unrelated_fields ... ok
+test features::stories::settings::tests::stored_transcript_and_context_keys_are_read_after_reopen ... ok
+test features::stories::settings::tests::unknown_legacy_reasoning_effort_uses_model_default ... ok
+test features::transcript::history::tests::dice_rolls_are_always_contextual ... ok
+test features::transcript::attachments::tests::deleting_entry_cascades_to_blob ... ok
+test features::transcript::history::tests::edited_narration_appears_only_once ... ok
+test features::transcript::attachments::tests::detaching_an_entry_removes_only_its_images_and_events ... ok
+test features::transcript::history::tests::history_uses_the_canonical_renderer_for_every_action_mode ... ok
+test features::transcript::history::tests::image_captions_are_included_only_when_the_record_toggle_is_on ... ok
+test features::transcript::commands::tests::editing_the_generating_story_is_refused_before_writing ... ok
+test features::transcript::history::tests::invalid_summary_boundary_is_ignored ... ok
+test features::transcript::history::tests::legacy_author_note_events_are_inert ... ok
+test features::transcript::history::tests::legacy_entity_queries_remain_contextual_but_tool_calls_do_not ... ok
+test features::transcript::history::tests::migrated_player_bootstrap_does_not_trail_narration_history ... ok
+test features::transcript::history::tests::newest_summary_replaces_covered_prefix_and_keeps_later_events ... ok
+test features::transcript::history::tests::player_narration_and_dice_roll_have_distinct_history_roles ... ok
+test features::transcript::commands::tests::edit_rejects_a_turn_started_since_the_idle_check ... ok
+test features::transcript::commands::tests::erasing_a_deletion_cannot_restore_a_reused_present_name ... ok
+test features::transcript::erase::tests::erase_removes_legacy_failed_turn_and_entries ... ok
+test features::transcript::commands::tests::erase_rejects_a_turn_started_since_the_idle_check ... ok
+test features::transcript::model::tests::role_and_input_mode_follow_story_entry_defaults ... ok
+test features::transcript::history::tests::tool_arguments_and_results_are_capped_by_unicode_characters ... ok
+test features::transcript::model::tests::story_image_caption_defaults_to_none_and_round_trips ... ok
+test features::transcript::commands::tests::erasing_narrator_rename_preserves_later_player_anchor_edit ... ok
+test features::transcript::erase::tests::erase_trailing_see_removes_its_image_from_the_prior_narration ... ok
+test features::transcript::commands::tests::erasing_earlier_narration_allows_reused_historical_names ... ok
+test features::transcript::erase::tests::erasing_entity_creation_skips_a_later_player_attribute_event ... ok
+test features::transcript::erase::tests::replay_failure_rolls_back_turn_assets_summaries_and_timestamp ... ok
+test features::transcript::reducer::tests::edits_fold_without_mutating_original ... ok
+test features::transcript::reducer::tests::latest_edit_wins_for_player_and_narration ... ok
+test features::transcript::repository::tests::append_assigns_monotonic_sequence_and_decodes_payloads ... ok
+test features::transcript::repository::tests::append_rejects_a_target_owned_by_another_story ... ok
+test features::transcript::erase::tests::hard_erase_removes_exchange_derivatives_summaries_and_projections ... ok
+test features::transcript::repository::tests::since_seq_includes_boundary_and_excludes_earlier_entries ... ok
+test features::transcript::query::tests::kinds_filter_keeps_only_requested_records ... ok
+test features::transcript::summaries::tests::prune_only_summaries_covering_doomed_entries_in_story ... ok
+test features::transcript::history::tests::for_model_ignores_legacy_dice_roll_preference ... ok
+test features::transcript::history::tests::for_model_reads_uncommitted_player_entry ... ok
+test features::transcript::history::tests::images_are_latest_four_after_the_summary_and_ignore_unsupported_mime ... ok
+test features::transcript::history::tests::summary_survives_when_its_covered_action_is_filtered_out ... ok
+test features::transcript::history::tests::settings_select_actions_narration_thoughts_and_records_independently ... ok
+test features::turn::retry::tests::replacement_can_commit_a_new_turn_atomically ... ok
+test features::transcript::history::tests::summary_with_a_cascade_deleted_boundary_does_not_hide_older_history ... ok
+test features::transcript::query::tests::entry_ids_filter_keeps_requested_entries_in_sequence_order ... ok
+test features::transcript::query::tests::edits_fold_into_actions_and_narration_without_returning_edit_rows ... ok
+test features::transcript::query::tests::input_modes_filter_applies_only_to_player_messages ... ok
+test features::transcript::query::tests::since_seq_includes_the_boundary ... ok
+test features::transcript::query::tests::touched_entities_reads_single_and_multiple_ids_from_the_raw_tail ... ok
+test features::turn::retry::tests::see_retry_preserves_prior_scene_and_restores_old_turn_on_rollback ... ok
+test features::transcript::repository::tests::append_rejects_a_turn_owned_by_another_story ... ok
+test features::transcript::repository::tests::story_messages_preserve_kind_mode_content_and_trimmed_thoughts ... ok
+test features::transcript::turns::tests::create_turn_writes_complete_turns_and_preserves_sequence ... ok
+test features::turn::tx::tests::drop_rolls_back_and_releases_gate ... ok
+test features::context::blocks::tests::built_tool_names_match_injected_names_across_availability_combinations ... ok
+test features::turn::retry::tests::erasure_is_invisible_until_commit_and_rollback_restores_everything ... ok
+test features::turn::retry::tests::edited_player_mode_and_content_are_used_before_erasing ... ok
+test features::turn::retry::tests::failed_unanswered_turn_can_be_replaced ... ok
+test features::turn::retry::tests::invalid_entry_and_non_latest_turn_do_not_erase ... ok
+test features::turn::retry::tests::replay_failure_in_retry_restores_the_old_turn ... ok
+test features::turn::tx::tests::writes_are_private_until_commit ... ok
+test features::usage::model::tests::caption_preserves_call_usage_without_turn_or_asset_binding ... ok
+test features::turn::tx::tests::commit_releases_gate_while_a_clone_is_alive ... ok
+test features::turn::tx::tests::drop_after_retry_behaves_like_rollback ... ok
+test features::turn::tx::tests::failed_retry_rows_go_to_the_old_turn ... ok
+test features::turn::tx::tests::other_story_turn_does_not_invalidate_idle_ticket ... ok
+test features::turn::tx::tests::gate_opens_after_usage_is_flushed ... ok
+test features::turn::tx::tests::retry_commit_moves_old_rows_to_the_new_turn ... ok
+test features::turn::tx::tests::same_story_turn_invalidates_idle_ticket_after_commit ... ok
+test features::turn::tx::tests::rollback_releases_gate_while_a_clone_is_alive ... ok
+test features::turn::tx::tests::savepoint_failure_preserves_other_turn_writes ... ok
+test features::turn::tx::tests::usage_is_written_with_the_commit ... ok
+test prompts::caption_names_are_optional ... ok
+test prompts::tests::narrator_prompt_follows_current_author_note_without_exposing_it ... ok
+test prompts::tests::turn_renderer_uses_one_canonical_tagged_form ... ok
+test shared::db::tests::blocking_preserves_work_error ... ok
+test shared::db::tests::blocking_returns_work_value ... ok
+test features::turn::tx::tests::other_story_writes_wait_while_readers_see_committed_state ... ok
+test features::turn::tx::tests::usage_gets_the_turn_id_on_commit ... ok
+test features::turn::tx::tests::usage_survives_drop ... ok
+test features::turn::tx::tests::usage_survives_rollback ... ok
+test features::usage::repository::tests::totals_and_first_record_time ... ok
+test features::usage::repository::tests::breakdown_separates_turns_images_and_earlier_attempts ... ok
+test features::usage::repository::tests::captions_add_image_cost_but_not_image_count_or_per_asset_cost ... ok
+test features::usage::repository::tests::deleting_story_cascades_to_usage ... ok
+test shared::db::tests::with_transaction_commits_success_and_rolls_back_errors ... ok
+test features::usage::repository::tests::empty_story_has_default_usage ... ok
+test features::usage::repository::tests::insert_round_trips_turn_image_and_duration ... ok
+test features::usage::repository::tests::move_to_turn_touches_only_that_story_and_turn ... ok
+test features::usage::repository::tests::stories_are_isolated ... ok
+test features::usage::repository::tests::record_late_writes_through_the_pool ... ok
+test shared::db::tests::canonical_name_uniqueness_is_enforced_case_insensitively_across_connections ... ok
+test shared::db::tests::entity_names_are_unique_case_insensitively_per_story ... ok
+test features::usage::repository::tests::record_late_waits_for_an_open_turn_without_failing ... ok
+test shared::db::tests::fresh_database_has_transcript_table ... ok
+test shared::db::tests::seed_player_entity_respects_existing_case_insensitive_name_and_no_attributes ... ok
+test shared::db::tests::blocking_write_finishes_after_turn_commit ... ok
+test shared::db::tests::neighbouring_dungeon_app_data_is_never_imported ... ok
+test features::transcript::erase::tests::erase_removes_the_action_and_generated_response_for_every_mode ... ok
+
+test result: ok. 190 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.31s
+
+     Running unittests src\main.rs (src-tauri\target\debug\deps\story_llm-ece215f3bc02b325.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests story_llm_lib
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

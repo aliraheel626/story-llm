@@ -1,0 +1,296 @@
+Command: node --test src/features/story/store.test.mjs src/features/transcript/replacement.test.mjs src/features/usage/store.test.mjs
+Exit: 0
+
+TAP version 13
+# [31mWebSocket server error: Port 24678 is already in use[39m
+# Subtest: sidebar toggle persists without losing expanded panels or failing on blocked storage
+ok 1 - sidebar toggle persists without losing expanded panels or failing on blocked storage
+  ---
+  duration_ms: 32368.4142
+  type: 'test'
+  ...
+# Subtest: settings store ignores an older load after capability refresh
+ok 2 - settings store ignores an older load after capability refresh
+  ---
+  duration_ms: 0.6011
+  type: 'test'
+  ...
+# Subtest: settings store ignores a load started before a foreground save
+ok 3 - settings store ignores a load started before a foreground save
+  ---
+  duration_ms: 0.6199
+  type: 'test'
+  ...
+# Subtest: settings save clears a load started while the save was pending
+ok 4 - settings save clears a load started while the save was pending
+  ---
+  duration_ms: 0.5954
+  type: 'test'
+  ...
+# Subtest: failed settings save clears a superseded initial load
+ok 5 - failed settings save clears a superseded initial load
+  ---
+  duration_ms: 0.9877
+  type: 'test'
+  ...
+# Subtest: failed post-save settings read does not strand loading
+ok 6 - failed post-save settings read does not strand loading
+  ---
+  duration_ms: 0.8426
+  type: 'test'
+  ...
+# Subtest: new story is created and active at once
+ok 7 - new story is created and active at once
+  ---
+  duration_ms: 2.5574
+  type: 'test'
+  ...
+# Subtest: new story twice reuses the blank story
+ok 8 - new story twice reuses the blank story
+  ---
+  duration_ms: 0.7263
+  type: 'test'
+  ...
+# Subtest: rapid independent toggles remain isolated by story and failed saves roll back
+ok 9 - rapid independent toggles remain isolated by story and failed saves roll back
+  ---
+  duration_ms: 1.3598
+  type: 'test'
+  ...
+# Subtest: replacement keeps original through streaming and failure, then clears old caches on success
+ok 10 - replacement keeps original through streaming and failure, then clears old caches on success
+  ---
+  duration_ms: 10.692
+  type: 'test'
+  ...
+# Subtest: delayed transcript and context loads for A cannot show A data in B
+ok 11 - delayed transcript and context loads for A cannot show A data in B
+  ---
+  duration_ms: 1.9053
+  type: 'test'
+  ...
+# Subtest: a second toggle while a save is in flight is ignored
+ok 12 - a second toggle while a save is in flight is ignored
+  ---
+  duration_ms: 0.9573
+  type: 'test'
+  ...
+# Subtest: a failed save restores previous items and shows the error
+ok 13 - a failed save restores previous items and shows the error
+  ---
+  duration_ms: 0.5544
+  type: 'test'
+  ...
+# Subtest: preview is not loaded while a context save is in flight
+ok 14 - preview is not loaded while a context save is in flight
+  ---
+  duration_ms: 0.4415
+  type: 'test'
+  ...
+# Subtest: preview is not loaded while a transcript save is in flight
+ok 15 - preview is not loaded while a transcript save is in flight
+  ---
+  duration_ms: 0.3177
+  type: 'test'
+  ...
+# Subtest: failed last turns render a status beside Retry
+ok 16 - failed last turns render a status beside Retry
+  ---
+  duration_ms: 0.6777
+  type: 'test'
+  ...
+# Subtest: an uncommitted player entry survives refresh during streaming without inventing a turn
+ok 17 - an uncommitted player entry survives refresh during streaming without inventing a turn
+  ---
+  duration_ms: 1.1818
+  type: 'test'
+  ...
+# Subtest: a refresh in flight cannot reintroduce a player entry after narration fails
+ok 18 - a refresh in flight cannot reintroduce a player entry after narration fails
+  ---
+  duration_ms: 0.3909
+  type: 'test'
+  ...
+# Subtest: image failure surfaces an error and a new request clears it
+ok 19 - image failure surfaces an error and a new request clears it
+  ---
+  duration_ms: 0.7359
+  type: 'test'
+  ...
+# Subtest: image pending before narration finalize remains through finalize and clears when generated
+ok 20 - image pending before narration finalize remains through finalize and clears when generated
+  ---
+  duration_ms: 1.346
+  type: 'test'
+  ...
+# Subtest: early See completion does not leave the composer streaming
+ok 21 - early See completion does not leave the composer streaming
+  ---
+  duration_ms: 0.6087
+  type: 'test'
+  ...
+# Subtest: early Retry completion does not leave the replacement streaming
+ok 22 - early Retry completion does not leave the replacement streaming
+  ---
+  duration_ms: 0.6917
+  type: 'test'
+  ...
+# Subtest: early See failure does not leave the composer streaming
+ok 23 - early See failure does not leave the composer streaming
+  ---
+  duration_ms: 0.468
+  type: 'test'
+  ...
+# Subtest: early Retry failure restores the original reply
+ok 24 - early Retry failure restores the original reply
+  ---
+  duration_ms: 0.544
+  type: 'test'
+  ...
+# Subtest: text completion stops the cursor without changing streamed narration
+ok 25 - text completion stops the cursor without changing streamed narration
+  ---
+  duration_ms: 0.5651
+  type: 'test'
+  ...
+# Subtest: image pending during replacement marks the stream without replacing the original reply
+ok 26 - image pending during replacement marks the stream without replacing the original reply
+  ---
+  duration_ms: 0.5918
+  type: 'test'
+  ...
+# Subtest: a failed legacy action remains visible when the backend snapshot persists it
+ok 27 - a failed legacy action remains visible when the backend snapshot persists it
+  ---
+  duration_ms: 6.494
+  type: 'test'
+  ...
+# Subtest: retry failure leaves snapshot-provided legacy failed status and does not restore a draft
+ok 28 - retry failure leaves snapshot-provided legacy failed status and does not restore a draft
+  ---
+  duration_ms: 0.7417
+  type: 'test'
+  ...
+# Subtest: image events arriving during refresh survive an older list response
+ok 29 - image events arriving during refresh survive an older list response
+  ---
+  duration_ms: 0.3121
+  type: 'test'
+  ...
+# Subtest: a new turn waits for in-flight tool saves
+ok 30 - a new turn waits for in-flight tool saves
+  ---
+  duration_ms: 0.6326
+  type: 'test'
+  ...
+# Subtest: retry preparation blocks another action before streaming begins
+ok 31 - retry preparation blocks another action before streaming begins
+  ---
+  duration_ms: 0.4935
+  type: 'test'
+  ...
+# Subtest: erasing a trailing See refreshes images attached to prior narration
+ok 32 - erasing a trailing See refreshes images attached to prior narration
+  ---
+  duration_ms: 0.5836
+  type: 'test'
+  ...
+# Subtest: snapshot roll selector preserves both factor snapshots and optional fields
+ok 33 - snapshot roll selector preserves both factor snapshots and optional fields
+  ---
+  duration_ms: 0.2962
+  type: 'test'
+  ...
+# Subtest: snapshot selector validates roll shapes without interpreting outcomes
+ok 34 - snapshot selector validates roll shapes without interpreting outcomes
+  ---
+  duration_ms: 0.432
+  type: 'test'
+  ...
+# Subtest: snapshot roll grouping safely handles inherited-property target IDs
+ok 35 - snapshot roll grouping safely handles inherited-property target IDs
+  ---
+  duration_ms: 0.1865
+  type: 'test'
+  ...
+# Subtest: turn activity prefers captured tool calls and preserves false outcomes
+ok 36 - turn activity prefers captured tool calls and preserves false outcomes
+  ---
+  duration_ms: 0.8049
+  type: 'test'
+  ...
+# Subtest: default chance rolls show their source and no factors alongside threshold, draw, and seed
+ok 37 - default chance rolls show their source and no factors alongside threshold, draw, and seed
+  ---
+  duration_ms: 0.511
+  type: 'test'
+  ...
+# Subtest: attribute chance rolls show both factor snapshot names, values, and ranges
+ok 38 - attribute chance rolls show both factor snapshot names, values, and ranges
+  ---
+  duration_ms: 0.8655
+  type: 'test'
+  ...
+# Subtest: chance-only legacy rolls do not claim a default or attribute source
+ok 39 - chance-only legacy rolls do not claim a default or attribute source
+  ---
+  duration_ms: 0.4848
+  type: 'test'
+  ...
+# Subtest: no stream shows the original reply and extras
+ok 40 - no stream shows the original reply and extras
+  ---
+  duration_ms: 1191.3269
+  type: 'test'
+  ...
+# Subtest: targeted replacement shows partial text and hides old extras
+ok 41 - targeted replacement shows partial text and hides old extras
+  ---
+  duration_ms: 0.4596
+  type: 'test'
+  ...
+# Subtest: completed replacement text no longer shows a cursor
+ok 42 - completed replacement text no longer shows a cursor
+  ---
+  duration_ms: 0.2775
+  type: 'test'
+  ...
+# Subtest: replacement targeting another entry leaves this one unchanged
+ok 43 - replacement targeting another entry leaves this one unchanged
+  ---
+  duration_ms: 0.371
+  type: 'test'
+  ...
+# Subtest: clearing a failed replacement restores original text and extras
+ok 44 - clearing a failed replacement restores original text and extras
+  ---
+  duration_ms: 0.3791
+  type: 'test'
+  ...
+# Subtest: load stores a story's usage and breakdown by turn and asset
+ok 45 - load stores a story's usage and breakdown by turn and asset
+  ---
+  duration_ms: 1241.0469
+  type: 'test'
+  ...
+# Subtest: a stale usage and breakdown response cannot overwrite a newer load
+ok 46 - a stale usage and breakdown response cannot overwrite a newer load
+  ---
+  duration_ms: 0.5283
+  type: 'test'
+  ...
+# Subtest: formatters display cost precision and compact cache tokens
+ok 47 - formatters display cost precision and compact cache tokens
+  ---
+  duration_ms: 7.0606
+  type: 'test'
+  ...
+1..47
+# tests 47
+# suites 0
+# pass 47
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 33376.7665

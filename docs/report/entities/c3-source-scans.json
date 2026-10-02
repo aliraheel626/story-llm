@@ -1,0 +1,62 @@
+[
+  {
+    "command": [
+      "rg",
+      "-n",
+      "story_entity_state|last_event_id",
+      "src-tauri/src"
+    ],
+    "exit": 0,
+    "stdout": "src-tauri/src\\shared\\db.rs:442:        assert!(!exists(\"story_entity_state\"));\n",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "rg",
+      "-n",
+      "get_entities|GET_ENTITIES",
+      "src-tauri/src",
+      "src"
+    ],
+    "exit": 0,
+    "stdout": "src\\features\\story\\store.test.mjs:870:    { ...base, id: \"failed\", seq: 3, kind: \"tool_call\", content: \"Checking who's here\u2026\", payload: { tool: \"get_entities\", args: {}, result: \"failed\", ok: false } },\nsrc-tauri/src\\features\\transcript\\history.rs:595:                json!({\"tool\":\"get_entities\",\"args\":{},\"result\":{\"entities\":[]},\"ok\":true}),\n",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "rg",
+      "-n",
+      "entity_queried|ENTITY_QUERIED",
+      "src-tauri/src",
+      "src"
+    ],
+    "exit": 0,
+    "stdout": "src-tauri/src\\features\\transcript\\model.rs:101:        assert!(!items.iter().any(|item| item.key == \"record.entity_queried\" || item.label == \"Entity lookups\"));\n",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "rg",
+      "-n",
+      "-i",
+      "campaign|dice_mode|attributes_enabled",
+      "src-tauri/src",
+      "src"
+    ],
+    "exit": 1,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "rg",
+      "-n",
+      "\"(object|location|campaign)\"",
+      "src-tauri/src",
+      "src"
+    ],
+    "exit": 0,
+    "stdout": "src\\shared\\types.ts:157:  if (entry.payload === null || typeof entry.payload !== \"object\" || Array.isArray(entry.payload)) return null;\nsrc\\shared\\types.ts:171:    if (factor === null || typeof factor !== \"object\") return false;\nsrc-tauri/src\\features\\narrator\\tools\\illustrate_scene.rs:27:        \"type\": \"object\",\nsrc-tauri/src\\features\\narrator\\tools\\create_entity.rs:20:        \"type\": \"object\",\nsrc-tauri/src\\features\\narrator\\tools\\update_entity.rs:20:        \"type\": \"object\",\nsrc-tauri/src\\features\\narrator\\tools\\save_relationship.rs:33:        \"type\": \"object\",\nsrc-tauri/src\\features\\narrator\\tools\\shared.rs:123:            \"type\": \"object\",\nsrc-tauri/src\\features\\narrator\\tools\\adjust_entity_attribute.rs:21:        \"type\": \"object\",\nsrc-tauri/src\\features\\narrator\\tools\\roll_check.rs:30:        \"type\": \"object\",\nsrc-tauri/src\\features\\narrator\\tools\\roll_check.rs:38:                    \"type\": \"object\",\n",
+    "stderr": ""
+  }
+]

@@ -1,0 +1,9 @@
+{
+  "production_added": 1042,
+  "production_removed": 466,
+  "test_added": 1140,
+  "test_removed": 75,
+  "production_net": 576,
+  "test_net": 1065,
+  "numstat": "1\t1\tsrc-tauri/src/ai/mod.rs\n50\t13\tsrc-tauri/src/features/context/blocks.rs\n3\t3\tsrc-tauri/src/features/context/preview.rs\n42\t10\tsrc-tauri/src/features/entities/attributes.rs\n157\t53\tsrc-tauri/src/features/entities/events.rs\n18\t0\tsrc-tauri/src/features/entities/model.rs\n181\t7\tsrc-tauri/src/features/entities/projection.rs\n6\t0\tsrc-tauri/src/features/entities/registry.rs\n787\t65\tsrc-tauri/src/features/entities/repository.rs\n25\t1\tsrc-tauri/src/features/images/generation.rs\n1\t1\tsrc-tauri/src/features/narrator/catalog.rs\n44\t112\tsrc-tauri/src/features/narrator/tools/adjust_entity_attribute.rs\n46\t27\tsrc-tauri/src/features/narrator/tools/create_entity.rs\n0\t103\tsrc-tauri/src/features/narrator/tools/get_entities.rs\n33\t13\tsrc-tauri/src/features/narrator/tools/illustrate_scene.rs\n10\t2\tsrc-tauri/src/features/narrator/tools/mod.rs\n55\t32\tsrc-tauri/src/features/narrator/tools/roll_check.rs\n302\t0\tsrc-tauri/src/features/narrator/tools/save_relationship.rs\n293\t0\tsrc-tauri/src/features/narrator/tools/shared.rs\n51\t37\tsrc-tauri/src/features/narrator/tools/update_entity.rs\n2\t8\tsrc-tauri/src/features/stories/repository.rs\n7\t7\tsrc-tauri/src/features/stories/settings.rs\n1\t1\tsrc-tauri/src/features/transcript/erase.rs\n0\t1\tsrc-tauri/src/features/transcript/filter.rs\n26\t11\tsrc-tauri/src/features/transcript/history.rs\n7\t2\tsrc-tauri/src/features/transcript/model.rs\n2\t3\tsrc-tauri/src/features/transcript/query.rs\n2\t2\tsrc-tauri/src/prompts.rs\n19\t14\tsrc-tauri/src/shared/db.rs\n2\t2\tsrc/features/narratorTools/NarratorToolsPanel.tsx\n4\t4\tsrc/features/story/store.test.mjs\n0\t1\tsrc/features/transcript/TurnActivity.tsx\n5\t5\tsrc/shared/types.ts\n"
+}

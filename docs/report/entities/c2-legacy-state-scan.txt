@@ -1,0 +1,4 @@
+Command: rg --line-number story_entity_state|last_event_id src src-tauri/src
+Exit: 0
+
+src-tauri/src\shared\db.rs:438:        assert!(!exists("story_entity_state"));

@@ -1,0 +1,3080 @@
+diff --git a/src-tauri/src/ai/mod.rs b/src-tauri/src/ai/mod.rs
+index d476bcd..546e859 100644
+--- a/src-tauri/src/ai/mod.rs
++++ b/src-tauri/src/ai/mod.rs
+@@ -990 +990 @@ mod tests {
+-            hook.tool_result_action("get_entities"),
++            hook.tool_result_action("roll_check"),
+diff --git a/src-tauri/src/features/context/blocks.rs b/src-tauri/src/features/context/blocks.rs
+index df44cc2..5a24418 100644
+--- a/src-tauri/src/features/context/blocks.rs
++++ b/src-tauri/src/features/context/blocks.rs
+@@ -45 +45,5 @@ fn format_entity_context(
+-            lines.push(format!("- {} ({})", entity.name, entity.kind));
++            lines.push(if entity.link.is_some() {
++                format!("- {}", entity.name)
++            } else {
++                format!("- {} ({})", entity.name, entity.kind)
++            });
+@@ -48,5 +52,5 @@ fn format_entity_context(
+-        let appearance = entity
+-            .appearance_anchor
+-            .as_deref()
+-            .map(|a| format!("; appearance: {a}"))
+-            .unwrap_or_default();
++        let details = if let Some(link) = &entity.link {
++            link.description.as_deref().map(|text| format!("; description: {text}"))
++        } else {
++            entity.appearance_anchor.as_deref().map(|text| format!("; appearance: {text}"))
++        }.unwrap_or_default();
+@@ -65 +69 @@ fn format_entity_context(
+-            "- {} ({}){appearance}{attributes}",
++            "- {} ({}){details}{attributes}",
+@@ -232 +236 @@ mod tests {
+-            &conn, "s", transcript_kind::ENTITY_QUERIED, Some("Looked up: Bob"),
++            &conn, "s", transcript_kind::ENTITY_UPDATED, Some("Bob's appearance changed."),
+@@ -247 +251 @@ mod tests {
+-                content: "[Authoritative story event: entity_queried]\nLooked up: Bob".into(),
++                content: "[Authoritative story event: entity_updated]\nBob's appearance changed.".into(),
+@@ -456,2 +460,2 @@ mod tests {
+-                name: "get_entities",
+-                instruction: Some("Look up characters."),
++                name: "roll_check",
++                instruction: Some(roll_check::INSTRUCTION),
+@@ -490,0 +495,33 @@ mod tests {
++    #[test]
++    fn relationship_context_has_current_names_directions_description_and_stats() {
++        use crate::features::entities::model::EntityLink;
++        let pool = crate::shared::db::test_pool();
++        let conn = pool.get().unwrap();
++        crate::shared::test_support::story(&conn, "s");
++        for name in ["Mira", "You", "Varro"] {
++            entities::create_entity_with_id_sync(&conn, name, "s", "character", name, None, "test", None, None).unwrap();
++        }
++        let directed = entities::repository::create_link_sync(&conn, "s", EntityLink {
++            from_id: "Mira".into(), to_id: "You".into(), label: "estranged sister".into(),
++            direction: "one_way".into(), description: Some("Still resents your departure".into()),
++        }, "test", None, None).unwrap();
++        entities::repository::create_link_sync(&conn, "s", EntityLink {
++            from_id: "Mira".into(), to_id: "Varro".into(), label: "siblings".into(),
++            direction: "both".into(), description: None,
++        }, "test", None, None).unwrap();
++        for (name, value) in [("Affection", 8.0), ("Trust", -2.0)] {
++            let definition = entities::registry::find_exact_match(&conn, name).unwrap().unwrap();
++            entities::attributes::set_entity_attribute_sync(&conn, "s", &directed.id, &definition.id, value).unwrap();
++        }
++        let data = entities::list_entities_sync(&conn, "s", None).unwrap();
++        let ids = data.iter().map(|entity| entity.id.as_str()).collect::<Vec<_>>();
++        let attrs = entities::attributes::list_entity_attributes_for_entities_sync(&conn, "s", &ids).unwrap();
++        let text = format_entity_context(&data, &attrs, None);
++        assert!(text.starts_with(&format!("<entities>\n{}", prompts::ENTITY_CONTEXT_HEADER)));
++        assert!(text.contains("- Mira → You: estranged sister (relationship); description: Still resents your departure; attributes: Affection=8, Trust=-2"));
++        assert!(text.contains("- Mira ↔ Varro: siblings (relationship)"));
++        let summary = format_entity_context(&data, &attrs, Some(&HashSet::new()));
++        assert!(summary.contains("\n- Mira → You: estranged sister\n"));
++        assert!(!summary.contains("Still resents"));
++    }
++
+@@ -494 +531 @@ mod tests {
+-            get_entities: false,
++            save_relationship: false,
+@@ -558 +595 @@ mod tests {
+-            get_entities: false,
++            save_relationship: false,
+diff --git a/src-tauri/src/features/context/preview.rs b/src-tauri/src/features/context/preview.rs
+index fc7fb8f..16c3f0b 100644
+--- a/src-tauri/src/features/context/preview.rs
++++ b/src-tauri/src/features/context/preview.rs
+@@ -107,2 +107,2 @@ mod tests {
+-            name: "get_entities",
+-            instruction: Some("Look up characters."),
++            name: "roll_check",
++            instruction: Some(crate::features::narrator::tools::roll_check::INSTRUCTION),
+@@ -189 +189 @@ mod tests {
+-            kind::ENTITY_QUERIED,
++            kind::ENTITY_UPDATED,
+diff --git a/src-tauri/src/features/entities/attributes.rs b/src-tauri/src/features/entities/attributes.rs
+index 798aa4f..27c39de 100644
+--- a/src-tauri/src/features/entities/attributes.rs
++++ b/src-tauri/src/features/entities/attributes.rs
+@@ -19,2 +19,2 @@ use super::{
+-/// The optional source is `None` for the implicit midpoint and identifies
+-/// player-locked rows without a second lookup.
++/// The optional source is `None` for the implicit midpoint; otherwise it
++/// identifies the most recent value's source.
+@@ -79,7 +79 @@ pub fn apply_attribute_delta(
+-    let (before, current_source) = peek_entity_attribute(conn, story_id, entity_id, attribute)?;
+-    if current_source.as_deref() == Some("user") {
+-        // The narrator context tells the model user overrides take
+-        // precedence over inferred updates; honor that here rather than
+-        // silently overwriting a value the player explicitly set.
+-        return Ok((before, before));
+-    }
++    let (before, _) = peek_entity_attribute(conn, story_id, entity_id, attribute)?;
+@@ -202 +196,14 @@ pub(crate) fn set_entity_attribute_sync(
+-    let before: Option<f64> = conn.query_row("SELECT value FROM entity_attributes JOIN entities ON entities.id = entity_attributes.entity_id WHERE entities.story_id = ?1 AND entity_id = ?2 AND attribute_id = ?3", rusqlite::params![story_id, entity_id, attribute_id], |r| r.get(0)).optional()?;
++    let existing = conn.query_row(
++        "SELECT entities.story_id, entity_attributes.entity_id, entity_attributes.attribute_id,
++                attribute_registry.canonical_name, entity_attributes.value,
++                attribute_registry.min, attribute_registry.max, entity_attributes.updated_at,
++                entity_attributes.source
++         FROM entity_attributes JOIN attribute_registry ON attribute_registry.id=entity_attributes.attribute_id
++         JOIN entities ON entities.id=entity_attributes.entity_id
++         WHERE entities.story_id=?1 AND entity_attributes.entity_id=?2 AND entity_attributes.attribute_id=?3",
++        rusqlite::params![story_id, entity_id, attribute_id], row_to_entity_attribute,
++    ).optional()?;
++    if let Some(existing) = existing.as_ref().filter(|existing| existing.value == value) {
++        return Ok(existing.clone());
++    }
++    let before = existing.map(|existing| existing.value);
+@@ -373,0 +381,25 @@ mod tests {
++    #[test]
++    fn setting_the_current_value_preserves_the_record_without_an_event() {
++        let (pool, attribute_id) = attribute_helper_fixture();
++        let conn = pool.get().unwrap();
++        let passage = crate::features::transcript::repository::append_story_message(
++            &conn, "story", "narrator", "generated", "Scene", None, None,
++        ).unwrap();
++        let attribute = find_attribute_by_id(&conn, &attribute_id).unwrap();
++        apply_attribute_delta(
++            &conn, "story", "entity", &attribute, 2.0, "a later story event",
++            &passage.id, false, None,
++        ).unwrap();
++        let current = list_entity_attributes_sync(&conn, "story", "entity").unwrap().pop().unwrap();
++        assert_eq!(current.source, "inferred");
++        let entries = crate::features::transcript::repository::list_logical_entries(&conn, "story").unwrap();
++        let unchanged = set_entity_attribute_sync(
++            &conn, "story", "entity", &attribute_id, current.value,
++        ).unwrap();
++        assert_eq!(serde_json::to_value(unchanged).unwrap(), serde_json::to_value(current).unwrap());
++        assert_eq!(
++            crate::features::transcript::repository::list_logical_entries(&conn, "story").unwrap(),
++            entries
++        );
++    }
++
+diff --git a/src-tauri/src/features/entities/events.rs b/src-tauri/src/features/entities/events.rs
+index 7f79514..3f91637 100644
+--- a/src-tauri/src/features/entities/events.rs
++++ b/src-tauri/src/features/entities/events.rs
+@@ -4,0 +5,2 @@ use crate::features::transcript::model::{kind, TranscriptEntry};
++use super::model::EntityLink;
++
+@@ -8,0 +11 @@ pub struct NameAnchor {
++    pub link: Option<EntityLink>,
+@@ -16 +19 @@ pub enum EntityEvent {
+-        name: String,
++        name: Option<String>,
+@@ -17,0 +21 @@ pub enum EntityEvent {
++        link: Option<EntityLink>,
+@@ -68,0 +73 @@ impl EntityEvent {
++                link,
+@@ -71,7 +76,13 @@ impl EntityEvent {
+-            } => json!({
+-                "entity_id": entity_id,
+-                "kind": kind,
+-                "name": name,
+-                "appearance_anchor": appearance_anchor,
+-                "source": source
+-            }),
++            } => {
++                let mut payload = json!({
++                    "entity_id": entity_id,
++                    "kind": kind,
++                    "name": name,
++                    "appearance_anchor": appearance_anchor,
++                    "source": source
++                });
++                if let Some(link) = link {
++                    payload["link"] = json!(link);
++                }
++                payload
++            }
+@@ -83,12 +94,21 @@ impl EntityEvent {
+-            } => json!({
+-                "entity_id": entity_id,
+-                "before": {
+-                    "name": before.name,
+-                    "appearance_anchor": before.appearance_anchor
+-                },
+-                "after": {
+-                    "name": after.name,
+-                    "appearance_anchor": after.appearance_anchor
+-                },
+-                "source": source
+-            }),
++            } => {
++                let mut payload = json!({
++                    "entity_id": entity_id,
++                    "before": {
++                        "name": before.name,
++                        "appearance_anchor": before.appearance_anchor
++                    },
++                    "after": {
++                        "name": after.name,
++                        "appearance_anchor": after.appearance_anchor
++                    },
++                    "source": source
++                });
++                if let Some(link) = &before.link {
++                    payload["before"]["link"] = json!(link);
++                }
++                if let Some(link) = &after.link {
++                    payload["after"]["link"] = json!(link);
++                }
++                payload
++            }
+@@ -143,0 +164,4 @@ impl EntityEvent {
++        let link = |value: Option<&Value>| match value {
++            Some(value) => serde_json::from_value::<Option<EntityLink>>(value.clone()).ok(),
++            None => Some(None),
++        };
+@@ -144,0 +169 @@ impl EntityEvent {
++        let source = string(entry.payload.get("source"))?;
+@@ -149 +174 @@ impl EntityEvent {
+-                name: string(entry.payload.get("name"))?,
++                name: string(entry.payload.get("name")),
+@@ -151 +176,2 @@ impl EntityEvent {
+-                source: string(entry.payload.get("source")).unwrap_or_default(),
++                link: link(entry.payload.get("link"))?,
++                source,
+@@ -154,0 +181 @@ impl EntityEvent {
++                let before = entry.payload.get("before")?;
+@@ -156,2 +182,0 @@ impl EntityEvent {
+-                let after_name = string(after.get("name"))?;
+-                let before = entry.payload.get("before");
+@@ -161,5 +186,3 @@ impl EntityEvent {
+-                        name: string(before.and_then(|value| value.get("name")))
+-                            .unwrap_or_else(|| after_name.clone()),
+-                        appearance_anchor: string(
+-                            before.and_then(|value| value.get("appearance_anchor")),
+-                        ),
++                        name: string(before.get("name"))?,
++                        appearance_anchor: string(before.get("appearance_anchor")),
++                        link: link(before.get("link"))?,
+@@ -168 +191 @@ impl EntityEvent {
+-                        name: after_name,
++                        name: string(after.get("name"))?,
+@@ -169,0 +193 @@ impl EntityEvent {
++                        link: link(after.get("link"))?,
+@@ -171 +195 @@ impl EntityEvent {
+-                    source: string(entry.payload.get("source")).unwrap_or_default(),
++                    source,
+@@ -176,2 +200,2 @@ impl EntityEvent {
+-                name: string(entry.payload.get("name")).unwrap_or_default(),
+-                source: string(entry.payload.get("source")).unwrap_or_default(),
++                name: string(entry.payload.get("name"))?,
++                source,
+@@ -182,2 +206,5 @@ impl EntityEvent {
+-                attribute_name: string(entry.payload.get("attribute_name")).unwrap_or_default(),
+-                before: entry.payload.get("before").and_then(Value::as_f64),
++                attribute_name: string(entry.payload.get("attribute_name"))?,
++                before: match entry.payload.get("before")? {
++                    Value::Null => None,
++                    value => Some(value.as_f64()?),
++                },
+@@ -185 +212 @@ impl EntityEvent {
+-                source: string(entry.payload.get("source")).unwrap_or_else(|| "inferred".into()),
++                source,
+@@ -192,7 +219,3 @@ impl EntityEvent {
+-                attribute_name: string(entry.payload.get("attribute_name")).unwrap_or_default(),
+-                before: entry
+-                    .payload
+-                    .get("before")
+-                    .and_then(Value::as_f64)
+-                    .unwrap_or_default(),
+-                source: string(entry.payload.get("source")).unwrap_or_default(),
++                attribute_name: string(entry.payload.get("attribute_name"))?,
++                before: entry.payload.get("before").and_then(Value::as_f64)?,
++                source,
+@@ -261 +284 @@ mod tests {
+-    fn parser_uses_transcript_creation_time_and_legacy_attribute_source() {
++    fn parser_uses_transcript_creation_time_and_recorded_attribute_source() {
+@@ -275 +298,2 @@ mod tests {
+-            EntityEvent::Created { created_at, .. } if created_at == "transcript-created-at"
++            EntityEvent::Created { name: Some(name), link: None, created_at, .. }
++                if name == "Mira" && created_at == "transcript-created-at"
+@@ -280 +304,4 @@ mod tests {
+-            json!({"entity_id":"entity", "attribute_id":"attribute", "after":4.0}),
++            json!({
++                "entity_id":"entity", "attribute_id":"attribute", "attribute_name":"Accuracy",
++                "before":3.0, "after":4.0, "source":"inferred"
++            }),
+@@ -285 +312,2 @@ mod tests {
+-            EntityEvent::AttributeChanged { source, .. } if source == "inferred"
++            EntityEvent::AttributeChanged { before: Some(before), after, source, .. }
++                if before == 3.0 && after == 4.0 && source == "inferred"
+@@ -288,0 +317,70 @@ mod tests {
++    #[test]
++    fn links_round_trip_and_character_payloads_omit_them() {
++        let link = EntityLink {
++            from_id: "mira".into(),
++            to_id: "varro".into(),
++            label: "rivals".into(),
++            direction: "one_way".into(),
++            description: Some("An old competition.".into()),
++        };
++        let created = EntityEvent::Created {
++            entity_id: "relationship:mira:varro".into(),
++            kind: "relationship".into(),
++            name: None,
++            appearance_anchor: None,
++            link: Some(link.clone()),
++            source: "narrator_tool".into(),
++            created_at: "transcript-created-at".into(),
++        };
++        assert!(created.payload()["name"].is_null());
++        assert_eq!(
++            EntityEvent::from_entry(&entry(created.kind(), created.payload())),
++            Some(created)
++        );
++        let updated = EntityEvent::Updated {
++            entity_id: "relationship:mira:varro".into(),
++            before: NameAnchor {
++                name: "rivals".into(),
++                appearance_anchor: None,
++                link: Some(link.clone()),
++            },
++            after: NameAnchor {
++                name: "former rivals".into(),
++                appearance_anchor: None,
++                link: Some(EntityLink { label: "former rivals".into(), ..link }),
++            },
++            source: "user".into(),
++        };
++        assert_eq!(
++            EntityEvent::from_entry(&entry(updated.kind(), updated.payload())),
++            Some(updated)
++        );
++        let character = EntityEvent::Created {
++            entity_id: "mira".into(),
++            kind: "character".into(),
++            name: Some("Mira".into()),
++            appearance_anchor: Some("silver hair".into()),
++            link: None,
++            source: "user".into(),
++            created_at: "transcript-created-at".into(),
++        };
++        assert!(character.payload().get("link").is_none());
++        assert_eq!(
++            EntityEvent::from_entry(&entry(character.kind(), character.payload())),
++            Some(character)
++        );
++        let character_update = EntityEvent::Updated {
++            entity_id: "mira".into(),
++            before: NameAnchor { name: "Mira".into(), appearance_anchor: None, link: None },
++            after: NameAnchor { name: "Mira".into(), appearance_anchor: Some("silver hair".into()), link: None },
++            source: "user".into(),
++        };
++        let payload = character_update.payload();
++        assert!(payload["before"].get("link").is_none());
++        assert!(payload["after"].get("link").is_none());
++        assert_eq!(
++            EntityEvent::from_entry(&entry(character_update.kind(), payload)),
++            Some(character_update)
++        );
++    }
++
+@@ -293,6 +391 @@ mod tests {
+-            json!({"entity_id":"entity", "name":"Mira"}),
+-        ))
+-        .is_none());
+-        assert!(EntityEvent::from_entry(&entry(
+-            kind::ENTITY_UPDATED,
+-            json!({"entity_id":"entity", "after":{}}),
++            json!({"entity_id":"entity", "name":"Mira", "source":"user"}),
+@@ -300,0 +394,11 @@ mod tests {
++        let payload = json!({
++            "entity_id":"entity", "source":"user",
++            "before":{"name":"Mira", "appearance_anchor":null},
++            "after":{"name":"Mira Vale", "appearance_anchor":null}
++        });
++        assert!(EntityEvent::from_entry(&entry(kind::ENTITY_UPDATED, payload.clone())).is_some());
++        for field in ["before", "after", "source"] {
++            let mut incomplete = payload.clone();
++            incomplete.as_object_mut().unwrap().remove(field);
++            assert!(EntityEvent::from_entry(&entry(kind::ENTITY_UPDATED, incomplete)).is_none(), "{field}");
++        }
+diff --git a/src-tauri/src/features/entities/model.rs b/src-tauri/src/features/entities/model.rs
+index 94bc178..a557126 100644
+--- a/src-tauri/src/features/entities/model.rs
++++ b/src-tauri/src/features/entities/model.rs
+@@ -2,0 +3,16 @@ use serde::{Deserialize, Serialize};
++pub const CHARACTER: &str = "character";
++pub const RELATIONSHIP: &str = "relationship";
++
++pub fn relationship_id(from_id: &str, to_id: &str) -> String {
++    format!("relationship:{from_id}:{to_id}")
++}
++
++#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
++pub struct EntityLink {
++    pub from_id: String,
++    pub to_id: String,
++    pub label: String,
++    pub direction: String,
++    pub description: Option<String>,
++}
++
+@@ -9,0 +26,2 @@ pub struct Entity {
++    #[serde(default)]
++    pub link: Option<EntityLink>,
+diff --git a/src-tauri/src/features/entities/projection.rs b/src-tauri/src/features/entities/projection.rs
+index ce3d478..1ec8544 100644
+--- a/src-tauri/src/features/entities/projection.rs
++++ b/src-tauri/src/features/entities/projection.rs
+@@ -28,0 +29 @@ pub fn apply(
++            link,
+@@ -50,0 +52,13 @@ pub fn apply(
++            if let Some(link) = link {
++                conn.execute(
++                    "INSERT INTO relationships (entity_id, from_id, to_id, label, direction, description)
++                     SELECT id, ?3, ?4, ?5, ?6, ?7 FROM entities WHERE story_id=?1 AND id=?2
++                     ON CONFLICT(entity_id) DO UPDATE SET
++                         from_id=excluded.from_id, to_id=excluded.to_id, label=excluded.label,
++                         direction=excluded.direction, description=excluded.description",
++                    rusqlite::params![
++                        story_id, entity_id, link.from_id, link.to_id, link.label,
++                        link.direction, link.description
++                    ],
++                )?;
++            }
+@@ -54,0 +69,2 @@ pub fn apply(
++            // Relationship names are computed display text; their stored name stays NULL.
++            let character = before.link.is_none() && after.link.is_none();
+@@ -62 +78 @@ pub fn apply(
+-                    before.name != after.name,
++                    character && before.name != after.name,
+@@ -64 +80 @@ pub fn apply(
+-                    before.appearance_anchor != after.appearance_anchor,
++                    character && before.appearance_anchor != after.appearance_anchor,
+@@ -71,0 +88,15 @@ pub fn apply(
++            if let (Some(before), Some(after)) = (&before.link, &after.link) {
++                conn.execute(
++                    "UPDATE relationships
++                     SET label=CASE WHEN ?1 THEN ?2 ELSE label END,
++                         direction=CASE WHEN ?3 THEN ?4 ELSE direction END,
++                         description=CASE WHEN ?5 THEN ?6 ELSE description END
++                     WHERE entity_id IN (SELECT id FROM entities WHERE story_id=?7 AND id=?8)",
++                    rusqlite::params![
++                        before.label != after.label, after.label,
++                        before.direction != after.direction, after.direction,
++                        before.description != after.description, after.description,
++                        story_id, entity_id
++                    ],
++                )?;
++            }
+@@ -220 +251 @@ mod tests {
+-        entities::{attributes, repository as entity_repository},
++        entities::{attributes, model::{EntityLink, CHARACTER}, repository as entity_repository},
+@@ -222,0 +254 @@ mod tests {
++    use crate::shared::{db::with_transaction, test_support};
+@@ -224 +256 @@ mod tests {
+-    type StateSnapshot = Vec<(String, String, Option<String>, i64)>;
++    type StateSnapshot = Vec<(String, Option<String>, Option<String>, i64)>;
+@@ -379 +411 @@ mod tests {
+-                "locked inference",
++                "later inference",
+@@ -385 +417 @@ mod tests {
+-            (7.0, 7.0)
++            (7.0, 3.0)
+@@ -393 +425 @@ mod tests {
+-            "location",
++            "character",
+@@ -412,0 +445,142 @@ mod tests {
++
++    #[test]
++    fn replaying_an_endpoint_preserves_relationships_and_their_stats() {
++        let pool = crate::shared::db::test_pool();
++        let conn = pool.get().unwrap();
++        test_support::story(&conn, "story");
++        for (id, name) in [("mira", "Mira"), ("varro", "Varro")] {
++            entity_repository::create_entity_with_id_sync(
++                &conn, id, "story", CHARACTER, name, None, "user", None, None,
++            ).unwrap();
++        }
++        let relationship = entity_repository::create_link_sync(
++            &conn, "story", EntityLink {
++                from_id: "mira".into(), to_id: "varro".into(), label: "friendly rivals".into(),
++                direction: "one_way".into(), description: None,
++            }, "user", None, None,
++        ).unwrap();
++        entity_repository::update_link_sync(
++            &conn, "story", &relationship.id, Some("rivals"), None,
++            Some(Some("An old competition.".into())), "user", None, None,
++        ).unwrap();
++        let affection = attributes::find_exact_match(&conn, "Affection").unwrap().unwrap();
++        attributes::set_entity_attribute_sync(
++            &conn, "story", &relationship.id, &affection.id, -3.0,
++        ).unwrap();
++        // Relationship replay regenerates updated_at; compare semantic state here.
++        let snapshot = |conn: &rusqlite::Connection| {
++            let relation = conn.query_row(
++                "SELECT entity_id, from_id, to_id, label, direction, description
++                 FROM relationships WHERE entity_id=?1",
++                [&relationship.id], |row| Ok((
++                    row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?,
++                    row.get::<_, String>(3)?, row.get::<_, String>(4)?, row.get::<_, Option<String>>(5)?,
++                )),
++            ).unwrap();
++            let identity = conn.query_row(
++                "SELECT name, is_present, created_at FROM entities WHERE id=?1",
++                [&relationship.id], |row| Ok((
++                    row.get::<_, Option<String>>(0)?, row.get::<_, i64>(1)?, row.get::<_, String>(2)?,
++                )),
++            ).unwrap();
++            let stats = attributes::list_entity_attributes_sync(conn, "story", &relationship.id)
++                .unwrap().into_iter().map(|stat| (stat.attribute_id, stat.value, stat.source))
++                .collect::<Vec<_>>();
++            (relation, identity, stats)
++        };
++        let before = snapshot(&conn);
++        assert_eq!(before.1.0, None);
++        assert_eq!(before.2[0].1, -3.0);
++        let timestamps = conn.query_row(
++            "SELECT e.updated_at, a.updated_at FROM entities e
++             JOIN entity_attributes a ON a.entity_id=e.id WHERE e.id=?1",
++            [&relationship.id], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
++        ).unwrap();
++        replay(&conn, "story", &HashSet::from(["mira".into()]), None).unwrap();
++        assert_eq!(snapshot(&conn), before);
++        assert_eq!(conn.query_row(
++            "SELECT e.updated_at, a.updated_at FROM entities e
++             JOIN entity_attributes a ON a.entity_id=e.id WHERE e.id=?1",
++            [&relationship.id], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
++        ).unwrap(), timestamps);
++        replay(&conn, "story", &HashSet::from([relationship.id.clone()]), None).unwrap();
++        assert_eq!(snapshot(&conn), before);
++
++        let (turn_id, _, narration_id) =
++            test_support::exchange(&conn, "story", "do", "make peace", Some("An uneasy truce."));
++        entity_repository::update_link_sync(
++            &conn, "story", &relationship.id, None, Some("both"),
++            Some(Some("An uneasy truce.".into())), "narrator_tool", narration_id.as_deref(), Some(&turn_id),
++        ).unwrap();
++        entity_repository::update_link_sync(
++            &conn, "story", &relationship.id, Some("former rivals"), None, None,
++            "user", None, None,
++        ).unwrap();
++        replay(
++            &conn, "story", &HashSet::from([relationship.id.clone()]), Some(&turn_id),
++        ).unwrap();
++        let mut expected = before;
++        expected.0.3 = "former rivals".into();
++        assert_eq!(snapshot(&conn), expected);
++    }
++
++    #[test]
++    fn erasing_relationship_creation_removes_its_subtype_and_stats() {
++        let pool = crate::shared::db::test_pool();
++        let conn = pool.get().unwrap();
++        test_support::story(&conn, "story");
++        for (id, name) in [("mira", "Mira"), ("varro", "Varro")] {
++            entity_repository::create_entity_with_id_sync(
++                &conn, id, "story", CHARACTER, name, None, "user", None, None,
++            ).unwrap();
++        }
++        let (turn_id, action_id, narration_id) =
++            test_support::exchange(&conn, "story", "do", "meet Varro", Some("They become rivals."));
++        let relationship = entity_repository::create_link_sync(
++            &conn, "story", EntityLink {
++                from_id: "mira".into(), to_id: "varro".into(), label: "rivals".into(),
++                direction: "one_way".into(), description: None,
++            }, "narrator_tool", narration_id.as_deref(), Some(&turn_id),
++        ).unwrap();
++        let affection = attributes::find_exact_match(&conn, "Affection").unwrap().unwrap();
++        attributes::apply_attribute_delta(
++            &conn, "story", &relationship.id, &affection, -3.0, "a rivalry",
++            narration_id.as_deref().unwrap(), false, Some(&turn_id),
++        ).unwrap();
++        entity_repository::update_link_sync(
++            &conn, "story", &relationship.id, Some("former rivals"), None, None,
++            "user", None, None,
++        ).unwrap();
++        attributes::set_entity_attribute_sync(
++            &conn, "story", &relationship.id, &affection.id, -2.0,
++        ).unwrap();
++        assert_eq!(conn.query_row(
++            "SELECT name FROM entities WHERE id=?1", [&relationship.id],
++            |row| row.get::<_, Option<String>>(0),
++        ).unwrap(), None);
++        let relationship_id = relationship.id;
++        drop(conn);
++
++        let removed_ids = with_transaction(&pool, |tx| {
++            let removed = crate::features::transcript::erase::erase_last_exchange_in_tx(tx, "story")?
++                .unwrap();
++            replay_after_erase(tx, "story", &removed.entries)?;
++            Ok(removed.visible_ids)
++        }).unwrap();
++        assert_eq!(removed_ids, vec![action_id, narration_id.unwrap()]);
++        let conn = pool.get().unwrap();
++        let counts = conn.query_row(
++            "SELECT (SELECT COUNT(*) FROM entities WHERE id=?1),
++                    (SELECT COUNT(*) FROM relationships WHERE entity_id=?1),
++                    (SELECT COUNT(*) FROM entity_attributes WHERE entity_id=?1)",
++            [&relationship_id], |row| Ok((
++                row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?,
++            )),
++        ).unwrap();
++        assert_eq!(counts, (0, 0, 0));
++        assert_eq!(entity_repository::list_entities_sync(&conn, "story", Some(CHARACTER)).unwrap().len(), 2);
++        assert_eq!(conn.query_row(
++            "SELECT COUNT(*) FROM transcript_entries WHERE kind='entity_attribute_changed'",
++            [], |row| row.get::<_, i64>(0),
++        ).unwrap(), 1);
++    }
+diff --git a/src-tauri/src/features/entities/registry.rs b/src-tauri/src/features/entities/registry.rs
+index dfdcf7d..7fd1580 100644
+--- a/src-tauri/src/features/entities/registry.rs
++++ b/src-tauri/src/features/entities/registry.rs
+@@ -231,0 +232,6 @@ async fn resolve_attribute_candidates(
++    if api_key.trim().is_empty() {
++        return Err(AppError::Invalid(
++            "an embedding API key is required to resolve an unknown attribute".into(),
++        ));
++    }
++
+diff --git a/src-tauri/src/features/entities/repository.rs b/src-tauri/src/features/entities/repository.rs
+index da3ab4b..5053cfc 100644
+--- a/src-tauri/src/features/entities/repository.rs
++++ b/src-tauri/src/features/entities/repository.rs
+@@ -9 +9 @@ use super::{
+-    model::Entity,
++    model::{relationship_id, Entity, EntityLink, CHARACTER, RELATIONSHIP},
+@@ -12,0 +13,11 @@ use super::{
++const ENTITY_SELECT: &str = "SELECT e.id, e.story_id, e.kind,
++    COALESCE(e.name, f.name || CASE l.direction WHEN 'both' THEN ' \u{2194} ' ELSE ' \u{2192} ' END || t.name || ': ' || l.label, e.id),
++    e.appearance_anchor, e.created_at, l.from_id, l.to_id, l.label, l.direction, l.description
++    FROM entities e
++    LEFT JOIN relationships l ON l.entity_id = e.id
++    LEFT JOIN entities f ON f.id = l.from_id AND f.story_id = e.story_id
++        AND f.kind = 'character' AND f.is_present = 1
++    LEFT JOIN entities t ON t.id = l.to_id AND t.story_id = e.story_id
++        AND t.kind = 'character' AND t.is_present = 1
++    WHERE e.story_id = ?1 AND e.is_present = 1";
++
+@@ -13,0 +25,10 @@ fn row_to_entity(row: &rusqlite::Row) -> rusqlite::Result<Entity> {
++    let link = match row.get::<_, Option<String>>(6)? {
++        Some(from_id) => Some(EntityLink {
++            from_id,
++            to_id: row.get(7)?,
++            label: row.get(8)?,
++            direction: row.get(9)?,
++            description: row.get(10)?,
++        }),
++        None => None,
++    };
+@@ -20,0 +42 @@ fn row_to_entity(row: &rusqlite::Row) -> rusqlite::Result<Entity> {
++        link,
+@@ -23,0 +46,15 @@ fn row_to_entity(row: &rusqlite::Row) -> rusqlite::Result<Entity> {
++/// Stored present state, including links hidden because an endpoint is absent.
++pub fn load_entity_raw(
++    conn: &rusqlite::Connection,
++    story_id: &str,
++    entity_id: &str,
++) -> AppResult<Option<Entity>> {
++    Ok(conn
++        .query_row(
++            &format!("{ENTITY_SELECT} AND e.id = ?2"),
++            rusqlite::params![story_id, entity_id],
++            row_to_entity,
++        )
++        .optional()?)
++}
++
+@@ -29,4 +66,3 @@ pub fn list_entities_sync(
+-    let mut sql = "SELECT entities.id, entities.story_id, entities.kind,
+-                          entities.name, entities.appearance_anchor, entities.created_at
+-                   FROM entities
+-                   WHERE entities.story_id = ?1 AND entities.is_present = 1".to_string();
++    let mut sql = format!(
++        "{ENTITY_SELECT} AND (l.entity_id IS NULL OR (f.id IS NOT NULL AND t.id IS NOT NULL))"
++    );
+@@ -34 +70 @@ pub fn list_entities_sync(
+-        sql.push_str(" AND entities.kind = ?2");
++        sql.push_str(" AND e.kind = ?2");
+@@ -36 +72 @@ pub fn list_entities_sync(
+-    sql.push_str(" ORDER BY entities.created_at ASC");
++    sql.push_str(" ORDER BY e.created_at ASC");
+@@ -50,0 +87,135 @@ pub fn list_entities_sync(
++fn recorded_content(source: &str, text: String) -> String {
++    if source == "user" {
++        format!("User edit: {text}")
++    } else {
++        text
++    }
++}
++
++fn trimmed_text(text: Option<&str>) -> Option<String> {
++    text.map(str::trim)
++        .filter(|text| !text.is_empty())
++        .map(str::to_string)
++}
++
++fn validated_name(name: &str) -> AppResult<&str> {
++    let name = name.trim();
++    if name.is_empty() {
++        return Err(AppError::Invalid("name must not be empty".into()));
++    }
++    if name.contains('\u{2192}') || name.contains("->") {
++        return Err(AppError::Invalid("names can't contain arrows".into()));
++    }
++    Ok(name)
++}
++
++fn snapshot(entity: &Entity) -> NameAnchor {
++    NameAnchor {
++        name: entity.name.clone(),
++        appearance_anchor: entity.appearance_anchor.clone(),
++        link: entity.link.clone(),
++    }
++}
++
++fn link_name(link: &EntityLink, from: &Entity, to: &Entity) -> String {
++    let arrow = if link.direction == "both" {
++        '\u{2194}'
++    } else {
++        '\u{2192}'
++    };
++    format!("{} {arrow} {}: {}", from.name, to.name, link.label)
++}
++
++fn validate_link(
++    conn: &rusqlite::Connection,
++    story_id: &str,
++    link: &EntityLink,
++    excluding_id: Option<&str>,
++) -> AppResult<(Entity, Entity)> {
++    if link.label.trim().is_empty() {
++        return Err(AppError::Invalid("label must not be empty".into()));
++    }
++    if !matches!(link.direction.as_str(), "one_way" | "both") {
++        return Err(AppError::Invalid("direction must be one_way or both".into()));
++    }
++    if link.from_id == link.to_id {
++        return Err(AppError::Invalid("relationship endpoints must be distinct".into()));
++    }
++    let endpoint = |id: &str| {
++        load_entity_raw(conn, story_id, id)?
++            .filter(|entity| entity.kind == CHARACTER)
++            .ok_or_else(|| {
++                AppError::Invalid(format!(
++                    "endpoint {id} must be a present character in this story"
++                ))
++            })
++    };
++    let from = endpoint(&link.from_id)?;
++    let to = endpoint(&link.to_id)?;
++    let conflicting_id: Option<String> = conn
++        .query_row(
++            "SELECT e.id FROM relationships l JOIN entities e ON e.id = l.entity_id
++             WHERE e.story_id = ?1 AND e.is_present = 1
++               AND (?5 IS NULL OR e.id != ?5)
++               AND ((l.from_id = ?2 AND l.to_id = ?3)
++                 OR (l.from_id = ?3 AND l.to_id = ?2
++                   AND (?4 = 'both' OR l.direction = 'both')))
++             LIMIT 1",
++            rusqlite::params![story_id, link.from_id, link.to_id, link.direction, excluding_id],
++            |row| row.get(0),
++        )
++        .optional()?;
++    if let Some(id) = conflicting_id {
++        return Err(AppError::Invalid(format!(
++            "relationship conflicts with existing relationship {id}"
++        )));
++    }
++    Ok((from, to))
++}
++
++fn record_create(
++    conn: &rusqlite::Connection,
++    entity: Entity,
++    source: &str,
++    target_entry_id: Option<&str>,
++    turn_id: Option<&str>,
++) -> AppResult<Entity> {
++    let identity: Option<(String, String)> = conn
++        .query_row(
++            "SELECT story_id, kind FROM entities WHERE id = ?1",
++            [&entity.id],
++            |row| Ok((row.get(0)?, row.get(1)?)),
++        )
++        .optional()?;
++    if identity.is_some_and(|(story_id, kind)| story_id != entity.story_id || kind != entity.kind) {
++        return Err(AppError::Invalid(format!(
++            "entity {} belongs to a different story or kind",
++            entity.id
++        )));
++    }
++    let text = if entity.kind == RELATIONSHIP {
++        format!("{} (relationship recorded).", entity.name)
++    } else {
++        format!("{} was added as a character.", entity.name)
++    };
++    let event = EntityEvent::Created {
++        entity_id: entity.id.clone(),
++        kind: entity.kind.clone(),
++        name: (entity.kind == CHARACTER).then(|| entity.name.clone()),
++        appearance_anchor: entity.appearance_anchor.clone(),
++        link: entity.link.clone(),
++        source: source.to_string(),
++        created_at: entity.created_at.clone(),
++    };
++    projection::record(
++        conn,
++        &entity.story_id,
++        target_entry_id,
++        &recorded_content(source, text),
++        &event,
++        turn_id,
++    )?;
++    load_entity_raw(conn, &entity.story_id, &entity.id)?
++        .ok_or_else(|| AppError::Other("created entity was not projected".into()))
++}
++
+@@ -68,3 +239,2 @@ pub fn create_entity_with_id_sync(
+-    let name = name.trim();
+-    if name.is_empty() {
+-        return Err(AppError::Invalid("name must not be empty".into()));
++    if entity_kind != CHARACTER {
++        return Err(AppError::Invalid("kind must be character".into()));
+@@ -72,11 +242,7 @@ pub fn create_entity_with_id_sync(
+-    let now = Utc::now().to_rfc3339();
+-    let anchor = appearance_anchor.map(str::trim).filter(|s| !s.is_empty());
+-    let event = EntityEvent::Created {
+-        entity_id: id.to_string(),
+-        kind: entity_kind.to_string(),
+-        name: name.to_string(),
+-        appearance_anchor: anchor.map(str::to_string),
+-        source: source.to_string(),
+-        created_at: now.clone(),
+-    };
+-    let entry = projection::record(
++    let name = validated_name(name)?;
++    if load_entity_raw(conn, story_id, id)?.is_some() {
++        return update_entity_sync(
++            conn, story_id, id, name, appearance_anchor, source, target_entry_id, turn_id,
++        );
++    }
++    record_create(
+@@ -84 +250,10 @@ pub fn create_entity_with_id_sync(
+-        story_id,
++        Entity {
++            id: id.to_string(),
++            story_id: story_id.to_string(),
++            kind: CHARACTER.into(),
++            name: name.to_string(),
++            appearance_anchor: trimmed_text(appearance_anchor),
++            created_at: Utc::now().to_rfc3339(),
++            link: None,
++        },
++        source,
+@@ -86,2 +260,0 @@ pub fn create_entity_with_id_sync(
+-        &format!("{name} was added as a {entity_kind}."),
+-        &event,
+@@ -89,9 +262 @@ pub fn create_entity_with_id_sync(
+-    )?;
+-    Ok(Entity {
+-        id: id.to_string(),
+-        story_id: story_id.into(),
+-        kind: entity_kind.into(),
+-        name: name.into(),
+-        appearance_anchor: anchor.map(str::to_string),
+-        created_at: entry.created_at,
+-    })
++    )
+@@ -138,3 +303,22 @@ pub fn update_entity_sync(
+-    let name = name.trim();
+-    if name.is_empty() {
+-        return Err(AppError::Invalid("name must not be empty".into()));
++    let before = load_entity_raw(conn, story_id, entity_id)?
++        .ok_or_else(|| AppError::NotFound(format!("entity {entity_id} not found")))?;
++    if before.kind != CHARACTER {
++        return Err(AppError::Invalid("kind must be character".into()));
++    }
++    let after = Entity {
++        name: validated_name(name)?.to_string(),
++        appearance_anchor: trimmed_text(appearance_anchor),
++        ..before.clone()
++    };
++    let mut changes = Vec::new();
++    if before.name != after.name {
++        changes.push(format!("name {} \u{2192} {}", before.name, after.name));
++    }
++    if before.appearance_anchor != after.appearance_anchor {
++        changes.push(match &after.appearance_anchor {
++            Some(anchor) => format!("appearance \u{2192} {anchor:?}"),
++            None => "appearance cleared".into(),
++        });
++    }
++    if changes.is_empty() {
++        return Ok(before);
+@@ -142,12 +325,0 @@ pub fn update_entity_sync(
+-    let before: Entity = conn.query_row(
+-        "SELECT entities.id, entities.story_id, entities.kind, entities.name,
+-                entities.appearance_anchor, entities.created_at
+-         FROM entities
+-         WHERE entities.id = ?1 AND entities.story_id = ?2 AND entities.is_present = 1",
+-        rusqlite::params![entity_id, story_id], row_to_entity,
+-    ).optional()?.ok_or_else(|| AppError::NotFound(format!("entity {entity_id} not found")))?;
+-    let anchor = appearance_anchor.map(str::trim).filter(|s| !s.is_empty());
+-    let content = format!(
+-        "{} is now named {name}; appearance details were updated.",
+-        before.name
+-    );
+@@ -156,7 +328,69 @@ pub fn update_entity_sync(
+-        before: NameAnchor {
+-            name: before.name.clone(),
+-            appearance_anchor: before.appearance_anchor.clone(),
+-        },
+-        after: NameAnchor {
+-            name: name.to_string(),
+-            appearance_anchor: anchor.map(str::to_string),
++        before: snapshot(&before),
++        after: snapshot(&after),
++        source: source.to_string(),
++    };
++    projection::record(
++        conn,
++        story_id,
++        target_entry_id,
++        &recorded_content(source, format!("{}: {}.", before.name, changes.join("; "))),
++        &event,
++        turn_id,
++    )?;
++    Ok(after)
++}
++
++pub fn create_link_sync(
++    conn: &rusqlite::Connection,
++    story_id: &str,
++    mut link: EntityLink,
++    source: &str,
++    target_entry_id: Option<&str>,
++    turn_id: Option<&str>,
++) -> AppResult<Entity> {
++    link.label = link.label.trim().to_string();
++    link.description = trimmed_text(link.description.as_deref());
++    let requested_id = relationship_id(&link.from_id, &link.to_id);
++    let reversed_id = relationship_id(&link.to_id, &link.from_id);
++    // A present reversed mutual link wins over a same-orientation tombstone.
++    let stored: Option<(String, String, String)> = conn
++        .query_row(
++            "SELECT e.id, l.from_id, l.to_id
++             FROM entities e JOIN relationships l ON l.entity_id = e.id
++             WHERE e.story_id = ?1 AND (e.id = ?2
++               OR (?4 = 'both' AND e.id = ?3
++                 AND (e.is_present = 0 OR l.direction = 'both')))
++             ORDER BY e.is_present DESC, (e.id = ?2) DESC LIMIT 1",
++            rusqlite::params![story_id, requested_id, reversed_id, link.direction],
++            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
++        )
++        .optional()?;
++    let id = if let Some((id, from_id, to_id)) = stored {
++        link.from_id = from_id;
++        link.to_id = to_id;
++        id
++    } else {
++        requested_id
++    };
++    let (from, to) = validate_link(conn, story_id, &link, Some(&id))?;
++    if let Some(before) = load_entity_raw(conn, story_id, &id)? {
++        if before.link.as_ref().is_some_and(|old| old.direction != link.direction) {
++            return Err(AppError::Invalid(format!(
++                "relationship conflicts with existing relationship {}", before.id
++            )));
++        }
++        return update_link_sync(
++            conn, story_id, &id, Some(&link.label), Some(&link.direction),
++            Some(link.description.clone()), source, target_entry_id, turn_id,
++        );
++    }
++    record_create(
++        conn,
++        Entity {
++            id,
++            story_id: story_id.to_string(),
++            kind: RELATIONSHIP.into(),
++            name: link_name(&link, &from, &to),
++            appearance_anchor: None,
++            created_at: Utc::now().to_rfc3339(),
++            link: Some(link),
+@@ -163,0 +398,61 @@ pub fn update_entity_sync(
++        source,
++        target_entry_id,
++        turn_id,
++    )
++}
++
++#[allow(clippy::too_many_arguments)]
++pub fn update_link_sync(
++    conn: &rusqlite::Connection,
++    story_id: &str,
++    entity_id: &str,
++    label: Option<&str>,
++    direction: Option<&str>,
++    description: Option<Option<String>>,
++    source: &str,
++    target_entry_id: Option<&str>,
++    turn_id: Option<&str>,
++) -> AppResult<Entity> {
++    let before = load_entity_raw(conn, story_id, entity_id)?
++        .ok_or_else(|| AppError::NotFound(format!("entity {entity_id} not found")))?;
++    if before.kind != RELATIONSHIP {
++        return Err(AppError::Invalid("kind must be relationship".into()));
++    }
++    let old_link = before.link.as_ref()
++        .ok_or_else(|| AppError::Invalid("relationship has no stored link".into()))?;
++    let mut link = old_link.clone();
++    if let Some(label) = label {
++        link.label = label.trim().to_string();
++    }
++    if let Some(direction) = direction {
++        link.direction = direction.to_string();
++    }
++    if let Some(description) = description {
++        link.description = trimmed_text(description.as_deref());
++    }
++    let (from, to) = validate_link(conn, story_id, &link, Some(entity_id))?;
++    if *old_link == link {
++        return Ok(before);
++    }
++    let mut changes = Vec::new();
++    if old_link.label != link.label {
++        changes.push(format!("label {} \u{2192} {}", old_link.label, link.label));
++    }
++    if old_link.direction != link.direction {
++        changes.push(format!("direction {} \u{2192} {}", old_link.direction, link.direction));
++    }
++    if old_link.description != link.description {
++        changes.push(match &link.description {
++            Some(description) => format!("description \u{2192} {description:?}"),
++            None => "description cleared".into(),
++        });
++    }
++    let after = Entity {
++        name: link_name(&link, &from, &to),
++        link: Some(link),
++        ..before.clone()
++    };
++    let event = EntityEvent::Updated {
++        entity_id: entity_id.to_string(),
++        before: snapshot(&before),
++        after: snapshot(&after),
+@@ -166,6 +461,9 @@ pub fn update_entity_sync(
+-    projection::record(conn, story_id, target_entry_id, &content, &event, turn_id)?;
+-    Ok(Entity {
+-        name: name.into(),
+-        appearance_anchor: anchor.map(str::to_string),
+-        ..before
+-    })
++    projection::record(
++        conn,
++        story_id,
++        target_entry_id,
++        &recorded_content(source, format!("{}: {}.", before.name, changes.join("; "))),
++        &event,
++        turn_id,
++    )?;
++    Ok(after)
+@@ -179,2 +477,2 @@ pub(crate) fn delete_entity_sync(
+-    let name: String = conn.query_row("SELECT name FROM entities WHERE story_id = ?1 AND id = ?2 AND is_present = 1", rusqlite::params![story_id, entity_id], |r| r.get(0))
+-        .map_err(|_| AppError::NotFound(format!("entity {entity_id} not found")))?;
++    let before = load_entity_raw(conn, story_id, entity_id)?
++        .ok_or_else(|| AppError::NotFound(format!("entity {entity_id} not found")))?;
+@@ -183 +481 @@ pub(crate) fn delete_entity_sync(
+-        name: name.clone(),
++        name: before.name.clone(),
+@@ -190 +488,3 @@ pub(crate) fn delete_entity_sync(
+-        &format!("{name} was removed from the authoritative entity state."),
++        &recorded_content("user", format!(
++            "{} was removed from the authoritative entity state.", before.name
++        )),
+@@ -195,0 +496,422 @@ pub(crate) fn delete_entity_sync(
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use crate::features::{entities::attributes, transcript};
++    use crate::shared::{db::{with_transaction, Pool}, test_support};
++    use serde_json::{json, Value};
++
++    fn fixture() -> Pool {
++        let pool = crate::shared::db::test_pool();
++        let conn = pool.get().unwrap();
++        test_support::story(&conn, "story");
++        for (id, name) in [("mira", "Mira"), ("varro", "Varro")] {
++            create_entity_with_id_sync(
++                &conn, id, "story", CHARACTER, name, None, "user", None, None,
++            ).unwrap();
++        }
++        drop(conn);
++        pool
++    }
++
++    fn link(from: &str, to: &str, direction: &str) -> EntityLink {
++        EntityLink {
++            from_id: from.into(), to_id: to.into(), label: "friends".into(),
++            direction: direction.into(), description: Some("shared history".into()),
++        }
++    }
++
++    fn entries(conn: &rusqlite::Connection) -> Vec<transcript::model::TranscriptEntry> {
++        transcript::repository::list_logical_entries(conn, "story").unwrap()
++    }
++
++    fn stored_link(conn: &rusqlite::Connection, id: &str) -> Value {
++        conn.query_row(
++            "SELECT e.name, e.appearance_anchor, e.is_present, e.created_at, e.updated_at,
++                    l.from_id, l.to_id, l.label, l.direction, l.description
++             FROM entities e JOIN relationships l ON l.entity_id = e.id
++             WHERE e.story_id = 'story' AND e.id = ?1",
++            [id], |row| Ok(json!({
++                "name": row.get::<_, Option<String>>(0)?,
++                "appearance_anchor": row.get::<_, Option<String>>(1)?,
++                "present": row.get::<_, i64>(2)?,
++                "created_at": row.get::<_, String>(3)?,
++                "updated_at": row.get::<_, String>(4)?,
++                "from_id": row.get::<_, String>(5)?, "to_id": row.get::<_, String>(6)?,
++                "label": row.get::<_, String>(7)?, "direction": row.get::<_, String>(8)?,
++                "description": row.get::<_, Option<String>>(9)?,
++            })),
++        ).unwrap()
++    }
++
++    #[test]
++    fn link_validation_rejects_invalid_endpoints_fields_and_mutual_conflicts() {
++        let pool = fixture();
++        let conn = pool.get().unwrap();
++        test_support::story(&conn, "other");
++        create_entity_with_id_sync(
++            &conn, "outsider", "other", CHARACTER, "Outsider", None, "user", None, None,
++        ).unwrap();
++        create_entity_with_id_sync(
++            &conn, "gone", "story", CHARACTER, "Gone", None, "user", None, None,
++        ).unwrap();
++        delete_entity_sync(&conn, "story", "gone").unwrap();
++        let original = create_link_sync(
++            &conn, "story", link("mira", "varro", "one_way"), "user", None, None,
++        ).unwrap();
++        let mut empty_label = link("mira", "varro", "one_way");
++        empty_label.label = "  ".into();
++        let before = entries(&conn);
++        for invalid in [
++            link("mira", "missing", "one_way"), link("mira", "mira", "one_way"),
++            link("mira", &original.id, "one_way"), link("mira", "outsider", "one_way"),
++            link("mira", "gone", "one_way"), link("mira", "varro", "bad"), empty_label,
++            link("varro", "mira", "both"),
++        ] {
++            assert!(matches!(
++                create_link_sync(&conn, "story", invalid, "user", None, None),
++                Err(AppError::Invalid(_))
++            ));
++        }
++        assert_eq!(entries(&conn), before);
++        assert!(matches!(
++            create_link_sync(&conn, "story", link("mira", "varro", "both"), "user", None, None),
++            Err(AppError::Invalid(message)) if message.contains(&original.id)
++        ));
++        let mutual = update_link_sync(
++            &conn, "story", &original.id, None, Some("both"), None, "user", None, None,
++        ).unwrap();
++        assert!(matches!(
++            create_link_sync(&conn, "story", link("varro", "mira", "one_way"), "user", None, None),
++            Err(AppError::Invalid(message)) if message.contains(&mutual.id)
++        ));
++        assert!(matches!(
++            create_link_sync(&conn, "story", link("mira", "varro", "one_way"), "user", None, None),
++            Err(AppError::Invalid(message)) if message.contains(&mutual.id)
++        ));
++    }
++
++    #[test]
++    fn character_writers_reject_other_kinds_and_arrow_names_without_events() {
++        let pool = fixture();
++        let conn = pool.get().unwrap();
++        let before = entries(&conn);
++        for kind in [RELATIONSHIP, "invalid"] {
++            assert!(matches!(
++                create_entity_with_id_sync(&conn, "new", "story", kind, "New", None, "user", None, None),
++                Err(AppError::Invalid(message)) if message == "kind must be character"
++            ));
++            assert!(matches!(
++                create_entity_sync(&conn, "story", kind, "New", None, "user", None),
++                Err(AppError::Invalid(_))
++            ));
++        }
++        for name in [" ", "Mira -> Varro", "Mira \u{2192} Varro"] {
++            assert!(matches!(
++                create_entity_with_id_sync(&conn, "new", "story", CHARACTER, name, None, "user", None, None),
++                Err(AppError::Invalid(_))
++            ));
++            assert!(matches!(
++                update_entity_sync(&conn, "story", "mira", name, None, "user", None, None),
++                Err(AppError::Invalid(_))
++            ));
++        }
++        assert_eq!(entries(&conn), before);
++        assert_eq!(load_entity_raw(&conn, "story", "mira").unwrap().unwrap().name, "Mira");
++        assert!(load_entity_raw(&conn, "story", "new").unwrap().is_none());
++    }
++
++    #[test]
++    fn relationship_pair_index_counts_present_and_soft_deleted_rows() {
++        let pool = fixture();
++        let conn = pool.get().unwrap();
++        let original = create_link_sync(
++            &conn, "story", link("mira", "varro", "one_way"), "user", None, None,
++        ).unwrap();
++        for deleted in [false, true] {
++            if deleted {
++                delete_entity_sync(&conn, "story", &original.id).unwrap();
++            }
++            let before = stored_link(&conn, &original.id);
++            conn.execute_batch("SAVEPOINT duplicate_probe").unwrap();
++            conn.execute(
++                "INSERT INTO entities (id, story_id, kind, name, is_present, created_at, updated_at)
++                 VALUES ('duplicate', 'story', 'relationship', NULL, 1, 'now', 'now')", [],
++            ).unwrap();
++            let error = conn.execute(
++                "INSERT INTO relationships (entity_id, from_id, to_id, label, direction)
++                 VALUES ('duplicate', 'mira', 'varro', 'rivals', 'one_way')", [],
++            ).unwrap_err();
++            assert!(matches!(
++                error, rusqlite::Error::SqliteFailure(error, _)
++                    if error.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE
++            ));
++            conn.execute_batch("ROLLBACK TO duplicate_probe; RELEASE duplicate_probe").unwrap();
++            assert_eq!(stored_link(&conn, &original.id), before);
++            assert!(before["name"].is_null());
++            assert!(load_entity_raw(&conn, "story", "duplicate").unwrap().is_none());
++            assert_eq!(list_entities_sync(&conn, "story", Some(RELATIONSHIP)).unwrap().len(), usize::from(!deleted));
++        }
++    }
++
++    #[test]
++    fn reviving_links_reuses_id_orientation_created_at_and_stats() {
++        for (direction, reverse) in [("one_way", false), ("both", true)] {
++            let pool = fixture();
++            let conn = pool.get().unwrap();
++            let original = create_link_sync(
++                &conn, "story", link("mira", "varro", direction), "user", None, None,
++            ).unwrap();
++            let affection: String = conn.query_row(
++                "SELECT id FROM attribute_registry WHERE canonical_name = 'Affection'", [], |row| row.get(0),
++            ).unwrap();
++            attributes::set_entity_attribute_sync(&conn, "story", &original.id, &affection, -3.0).unwrap();
++            let stats = serde_json::to_value(
++                attributes::list_entity_attributes_sync(&conn, "story", &original.id).unwrap(),
++            ).unwrap();
++            delete_entity_sync(&conn, "story", &original.id).unwrap();
++            let mut request = if reverse { link("varro", "mira", direction) } else { link("mira", "varro", direction) };
++            request.label = " allies ".into();
++            request.description = Some(" renewed history ".into());
++            let revived = create_link_sync(&conn, "story", request.clone(), "user", None, None).unwrap();
++            assert_eq!(revived.id, original.id);
++            assert_eq!(revived.created_at, original.created_at);
++            let stored = revived.link.as_ref().unwrap();
++            assert_eq!((stored.from_id.as_str(), stored.to_id.as_str()), ("mira", "varro"));
++            assert_eq!(stored.label, "allies");
++            assert_eq!(stored.description.as_deref(), Some("renewed history"));
++            assert_eq!(serde_json::to_value(
++                attributes::list_entity_attributes_sync(&conn, "story", &revived.id).unwrap(),
++            ).unwrap(), stats);
++            let before = entries(&conn);
++            let again = create_link_sync(&conn, "story", request, "user", None, None).unwrap();
++            assert_eq!(serde_json::to_value(&again).unwrap(), serde_json::to_value(&revived).unwrap());
++            assert_eq!(entries(&conn), before);
++            assert_eq!(conn.query_row(
++                "SELECT COUNT(*) FROM relationships WHERE (from_id = 'mira' AND to_id = 'varro')
++                    OR (from_id = 'varro' AND to_id = 'mira')", [], |row| row.get::<_, i64>(0),
++            ).unwrap(), 1);
++            assert!(stored_link(&conn, &revived.id)["name"].is_null());
++        }
++    }
++
++    #[test]
++    fn present_reversed_mutual_link_wins_over_direct_tombstone() {
++        let pool = fixture();
++        let conn = pool.get().unwrap();
++        let forward = create_link_sync(
++            &conn, "story", link("mira", "varro", "one_way"), "user", None, None,
++        ).unwrap();
++        let reverse = create_link_sync(
++            &conn, "story", link("varro", "mira", "one_way"), "user", None, None,
++        ).unwrap();
++        delete_entity_sync(&conn, "story", &forward.id).unwrap();
++        let mutual = update_link_sync(
++            &conn, "story", &reverse.id, None, Some("both"), None, "user", None, None,
++        ).unwrap();
++        let tombstone = stored_link(&conn, &forward.id);
++        let before = entries(&conn);
++        let reused = create_link_sync(
++            &conn, "story", link("mira", "varro", "both"), "user", None, None,
++        ).unwrap();
++        assert_eq!(reused.id, reverse.id);
++        assert_eq!(snapshot(&reused), snapshot(&mutual));
++        assert_eq!(entries(&conn), before);
++        assert_eq!(stored_link(&conn, &forward.id), tombstone);
++        assert_eq!(conn.query_row(
++            "SELECT COUNT(*) FROM relationships l JOIN entities e ON e.id = l.entity_id
++             WHERE e.story_id = 'story' AND e.is_present = 1 AND l.direction = 'both'",
++            [], |row| row.get::<_, i64>(0),
++        ).unwrap(), 1);
++    }
++
++    #[test]
++    fn displayed_links_follow_renames_and_return_after_endpoint_deletion_is_erased() {
++        let pool = fixture();
++        let conn = pool.get().unwrap();
++        let original = create_link_sync(
++            &conn, "story", link("mira", "varro", "both"), "user", None, None,
++        ).unwrap();
++        update_entity_sync(&conn, "story", "mira", "Mira Vale", None, "user", None, None).unwrap();
++        update_entity_sync(&conn, "story", "varro", "Varro Grey", None, "user", None, None).unwrap();
++        assert_eq!(list_entities_sync(&conn, "story", Some(RELATIONSHIP)).unwrap()[0].name,
++            "Mira Vale \u{2194} Varro Grey: friends");
++        let stored_before = stored_link(&conn, &original.id);
++        let (turn_id, _, narration) = test_support::exchange(&conn, "story", "do", "leave", Some("Mira leaves."));
++        projection::record(
++            &conn, "story", narration.as_deref(), "Mira Vale was removed.",
++            &EntityEvent::Deleted { entity_id: "mira".into(), name: "Mira Vale".into(), source: "narrator_tool".into() },
++            Some(&turn_id),
++        ).unwrap();
++        assert!(list_entities_sync(&conn, "story", Some(RELATIONSHIP)).unwrap().is_empty());
++        let raw = load_entity_raw(&conn, "story", &original.id).unwrap().unwrap();
++        assert_eq!(raw.name, original.id);
++        assert_eq!(raw.link, original.link);
++        assert_eq!(stored_link(&conn, &original.id), stored_before);
++        drop(conn);
++        with_transaction(&pool, |tx| {
++            let removed = transcript::erase::erase_last_exchange_in_tx(tx, "story")?.unwrap();
++            projection::replay_after_erase(tx, "story", &removed.entries)
++        }).unwrap();
++        let conn = pool.get().unwrap();
++        assert_eq!(list_entities_sync(&conn, "story", Some(RELATIONSHIP)).unwrap()[0].name,
++            "Mira Vale \u{2194} Varro Grey: friends");
++        assert_eq!(stored_link(&conn, &original.id), stored_before);
++    }
++
++    #[test]
++    fn hidden_link_mutations_use_raw_state_without_overwriting_link_or_null_name() {
++        let pool = fixture();
++        let conn = pool.get().unwrap();
++        let original = create_link_sync(
++            &conn, "story", link("mira", "varro", "one_way"), "user", None, None,
++        ).unwrap();
++        delete_entity_sync(&conn, "story", "mira").unwrap();
++        update_entity_sync(&conn, "story", "varro", "Varro Grey", None, "user", None, None).unwrap();
++        let stored_before = stored_link(&conn, &original.id);
++        let before = entries(&conn);
++        assert!(list_entities_sync(&conn, "story", Some(RELATIONSHIP)).unwrap().is_empty());
++        let raw = load_entity_raw(&conn, "story", &original.id).unwrap().unwrap();
++        assert_eq!(raw.name, original.id);
++        assert_eq!(raw.link, original.link);
++        assert!(load_entity_raw(&conn, "other", &original.id).unwrap().is_none());
++        for label in [None, Some("former friends")] {
++            assert!(matches!(
++                update_link_sync(&conn, "story", &original.id, label, None, None, "user", None, None),
++                Err(AppError::Invalid(message)) if message.contains("mira")
++            ));
++        }
++        assert!(matches!(
++            update_entity_sync(&conn, "story", &original.id, "Not a character", None, "user", None, None),
++            Err(AppError::Invalid(_))
++        ));
++        assert!(matches!(
++            create_entity_with_id_sync(&conn, &original.id, "story", CHARACTER, "Not a character", None, "user", None, None),
++            Err(AppError::Invalid(_))
++        ));
++        assert!(matches!(
++            delete_entity_sync(&conn, "other", &original.id), Err(AppError::NotFound(_))
++        ));
++        assert_eq!(entries(&conn), before);
++        assert_eq!(stored_link(&conn, &original.id), stored_before);
++        assert!(stored_before["name"].is_null());
++        delete_entity_sync(&conn, "story", &original.id).unwrap();
++        assert!(load_entity_raw(&conn, "story", &original.id).unwrap().is_none());
++        let deletion = entries(&conn).pop().unwrap();
++        assert!(deletion.content.unwrap().starts_with(&format!("User edit: {} was removed", original.id)));
++        assert!(stored_link(&conn, &original.id)["name"].is_null());
++        let deleted_before = stored_link(&conn, &original.id);
++        let before = entries(&conn);
++        assert!(matches!(
++            create_entity_with_id_sync(&conn, &original.id, "story", CHARACTER, "Not a character", None, "user", None, None),
++            Err(AppError::Invalid(_))
++        ));
++        assert_eq!(stored_link(&conn, &original.id), deleted_before);
++        assert_eq!(entries(&conn), before);
++    }
++
++    #[test]
++    fn link_updates_keep_endpoints_record_full_snapshots_actual_diffs_and_noops() {
++        let pool = fixture();
++        let conn = pool.get().unwrap();
++        let original = create_link_sync(
++            &conn, "story", link("mira", "varro", "one_way"), "user", None, None,
++        ).unwrap();
++        let created = entries(&conn).pop().unwrap();
++        assert!(created.content.as_deref().unwrap().starts_with("User edit: Mira \u{2192} Varro"));
++        assert!(created.payload["name"].is_null());
++        assert_eq!(created.payload["link"], json!(original.link));
++        let before = entries(&conn);
++        let stored_before = stored_link(&conn, &original.id);
++        let same = update_link_sync(
++            &conn, "story", &original.id, Some(" friends "), Some("one_way"),
++            Some(Some(" shared history ".into())), "user", None, None,
++        ).unwrap();
++        assert_eq!(snapshot(&same), snapshot(&original));
++        assert_eq!(entries(&conn), before);
++        assert_eq!(stored_link(&conn, &original.id), stored_before);
++        for (label, direction) in [(Some(" "), None), (None, Some("bad"))] {
++            assert!(matches!(
++                update_link_sync(&conn, "story", &original.id, label, direction, None, "user", None, None),
++                Err(AppError::Invalid(_))
++            ));
++        }
++        assert_eq!(entries(&conn), before);
++        assert!(matches!(
++            update_link_sync(&conn, "story", "mira", None, None, None, "user", None, None),
++            Err(AppError::Invalid(_))
++        ));
++        for (story_id, id) in [("other", original.id.as_str()), ("story", "missing")] {
++            assert!(matches!(
++                update_link_sync(&conn, story_id, id, None, None, None, "user", None, None),
++                Err(AppError::NotFound(_))
++            ));
++        }
++        assert_eq!(entries(&conn), before);
++        let renamed = update_link_sync(
++            &conn, "story", &original.id, Some("former friends"), None, None, "user", None, None,
++        ).unwrap();
++        let entry = entries(&conn).pop().unwrap();
++        let content = entry.content.as_deref().unwrap();
++        assert!(content.starts_with("User edit: "));
++        assert!(content.contains("label friends \u{2192} former friends"));
++        assert!(!content.contains("direction") && !content.contains("description"));
++        let EntityEvent::Updated { before, after, .. } = EntityEvent::from_entry(&entry).unwrap() else { panic!("expected Updated") };
++        assert_eq!(before, snapshot(&original));
++        assert_eq!(after, snapshot(&renamed));
++        let reverse = create_link_sync(
++            &conn, "story", link("varro", "mira", "one_way"), "user", None, None,
++        ).unwrap();
++        let entries_before = entries(&conn);
++        assert!(matches!(
++            update_link_sync(&conn, "story", &original.id, None, Some("both"), None, "user", None, None),
++            Err(AppError::Invalid(message)) if message.contains(&reverse.id)
++        ));
++        assert_eq!(entries(&conn), entries_before);
++        delete_entity_sync(&conn, "story", &reverse.id).unwrap();
++        let mutual = update_link_sync(
++            &conn, "story", &original.id, None, Some("both"), Some(None), "narrator_tool", None, None,
++        ).unwrap();
++        let entry = entries(&conn).pop().unwrap();
++        let content = entry.content.as_deref().unwrap();
++        assert!(!content.starts_with("User edit: "));
++        assert!(content.contains("direction one_way \u{2192} both") && content.contains("description cleared"));
++        assert!(!content.contains("label "));
++        let final_link = mutual.link.as_ref().unwrap();
++        assert_eq!((final_link.from_id.as_str(), final_link.to_id.as_str()), ("mira", "varro"));
++        assert_eq!(final_link.label, "former friends");
++        assert_eq!(final_link.description, None);
++        assert_eq!(mutual.name, "Mira \u{2194} Varro: former friends");
++        assert!(stored_link(&conn, &original.id)["name"].is_null());
++        let unchanged = entries(&conn);
++        update_link_sync(&conn, "story", &original.id, None, None, None, "user", None, None).unwrap();
++        assert_eq!(entries(&conn), unchanged);
++    }
++
++    #[test]
++    fn character_updates_record_actual_name_appearance_diffs_and_noops() {
++        let pool = fixture();
++        let conn = pool.get().unwrap();
++        let original = load_entity_raw(&conn, "story", "mira").unwrap().unwrap();
++        let before = entries(&conn);
++        let same = update_entity_sync(&conn, "story", "mira", " Mira ", Some(" "), "user", None, None).unwrap();
++        assert_eq!(snapshot(&same), snapshot(&original));
++        assert_eq!(entries(&conn), before);
++        let renamed = update_entity_sync(&conn, "story", "mira", "Mira Vale", None, "user", None, None).unwrap();
++        let entry = entries(&conn).pop().unwrap();
++        assert_eq!(entry.content.as_deref(), Some("User edit: Mira: name Mira \u{2192} Mira Vale."));
++        let EntityEvent::Updated { before, after, .. } = EntityEvent::from_entry(&entry).unwrap() else { panic!("expected Updated") };
++        assert_eq!(before, snapshot(&original));
++        assert_eq!(after, snapshot(&renamed));
++        let appearance = update_entity_sync(&conn, "story", "mira", "Mira Vale", Some(" silver hair "), "narrator_tool", None, None).unwrap();
++        assert_eq!(entries(&conn).pop().unwrap().content.as_deref(), Some("Mira Vale: appearance \u{2192} \"silver hair\"."));
++        assert_eq!(appearance.appearance_anchor.as_deref(), Some("silver hair"));
++        assert_eq!(appearance.created_at, original.created_at);
++        update_entity_sync(&conn, "story", "mira", "Mira Vale", None, "user", None, None).unwrap();
++        assert_eq!(entries(&conn).pop().unwrap().content.as_deref(), Some("User edit: Mira Vale: appearance cleared."));
++        let before = entries(&conn);
++        create_entity_with_id_sync(&conn, "mira", "story", CHARACTER, "Mira Vale", None, "user", None, None).unwrap();
++        assert_eq!(entries(&conn), before);
++        assert!(load_entity_raw(&conn, "other", "mira").unwrap().is_none());
++    }
++}
+diff --git a/src-tauri/src/features/images/generation.rs b/src-tauri/src/features/images/generation.rs
+index 867c160..4503ac9 100644
+--- a/src-tauri/src/features/images/generation.rs
++++ b/src-tauri/src/features/images/generation.rs
+@@ -63 +63,2 @@ fn characters_by_ids(
+-           AND entities.id IN ({placeholders})"
++           AND (entities.id IN ({placeholders})
++                OR entities.name COLLATE NOCASE IN ({placeholders}))"
+@@ -65,0 +67 @@ fn characters_by_ids(
++        .chain(ids.iter().map(String::as_str))
+@@ -288,0 +291,22 @@ mod tests {
++    #[test]
++    fn character_name_resolution_adds_appearance_without_an_image_call() {
++        let pool = crate::shared::db::test_pool();
++        let conn = pool.get().unwrap();
++        crate::shared::test_support::story(&conn, "s");
++        crate::features::entities::create_entity_with_id_sync(
++            &conn, "mira-id", "s", "character", "Mira", Some("silver hair"), "user", None, None,
++        ).unwrap();
++        let characters = characters_by_ids(&conn, "s", &["mIra".into()]).unwrap();
++        assert_eq!(characters, vec![("Mira".to_string(), "silver hair".to_string())]);
++        let matched = characters.iter().collect::<Vec<_>>();
++        let prompt = compose_image_prompt("Painted scene.", "A harbor.", &matched);
++        assert!(prompt.contains("- Mira: silver hair"));
++        assert_eq!(characters_by_ids(&conn, "s", &["mira-id".into()]).unwrap(), characters);
++        let unknown = characters_by_ids(&conn, "s", &["unknown".into()]).unwrap();
++        assert!(unknown.is_empty());
++        assert_eq!(
++            compose_image_prompt("Painted scene.", "A harbor.", &unknown.iter().collect::<Vec<_>>()),
++            "Painted scene. A harbor."
++        );
++    }
++
+diff --git a/src-tauri/src/features/narrator/catalog.rs b/src-tauri/src/features/narrator/catalog.rs
+index 7341547..5da8b13 100644
+--- a/src-tauri/src/features/narrator/catalog.rs
++++ b/src-tauri/src/features/narrator/catalog.rs
+@@ -59 +58,0 @@ pub static TOOLS: &[ToolSpec] = &[
+-    tools::get_entities::SPEC,
+@@ -62,0 +62 @@ pub static TOOLS: &[ToolSpec] = &[
++    tools::save_relationship::SPEC,
+diff --git a/src-tauri/src/features/narrator/tools/adjust_entity_attribute.rs b/src-tauri/src/features/narrator/tools/adjust_entity_attribute.rs
+index 6b5c000..1d5d43a 100644
+--- a/src-tauri/src/features/narrator/tools/adjust_entity_attribute.rs
++++ b/src-tauri/src/features/narrator/tools/adjust_entity_attribute.rs
+@@ -3 +3 @@ use std::sync::Arc;
+-use rig_agent::tool::{PortableDynamicTool, ToolExecutionError, ToolOutput};
++use rig_agent::tool::{PortableDynamicTool, ToolOutput};
+@@ -6 +6 @@ use serde_json::{json, Value};
+-use crate::features::entities::{self, attributes, registry};
++use crate::features::entities::repository;
+@@ -9,0 +10 @@ use crate::features::turn::TurnTx;
++use super::shared::{apply_resolved_stats, object_args, parse_stats, required_string, resolve_entity, resolve_stats};
+@@ -22 +23 @@ pub fn schema() -> Value {
+-            "entity_id": {"type": "string", "description": "A known entity id from available context or an enabled lookup/create tool. The player character is named \"You\"."},
++            "entity": {"type": "string", "description": "A character name, or a relationship as 'Mira → You'. An id is also accepted."},
+@@ -28 +29,2 @@ pub fn schema() -> Value {
+-        "required": ["entity_id", "attribute", "delta", "reason"]
++        "required": ["entity", "attribute", "delta", "reason"],
++        "additionalProperties": false
+@@ -74,86 +76 @@ pub(super) fn tool(
+-                let entity_id = args
+-                    .get("entity_id")
+-                    .and_then(|v| v.as_str())
+-                    .ok_or_else(|| ToolExecutionError::invalid_args("entity_id is required"))?
+-                    .to_string();
+-                let attribute_name = args
+-                    .get("attribute")
+-                    .and_then(|v| v.as_str())
+-                    .filter(|s| !s.trim().is_empty())
+-                    .ok_or_else(|| ToolExecutionError::invalid_args("attribute is required"))?
+-                    .to_string();
+-                let delta = args
+-                    .get("delta")
+-                    .and_then(|v| v.as_f64())
+-                    .ok_or_else(|| ToolExecutionError::invalid_args("delta is required"))?;
+-                let dramatic = args
+-                    .get("dramatic")
+-                    .and_then(|v| v.as_bool())
+-                    .unwrap_or(false);
+-                let reason = args
+-                    .get("reason")
+-                    .and_then(|v| v.as_str())
+-                    .unwrap_or("narration")
+-                    .to_string();
+-
+-                let entity = turn
+-                    .with(|conn| {
+-                        Ok(entities::list_entities_sync(conn, turn.story_id(), None)?
+-                            .into_iter()
+-                            .find(|entity| entity.id == entity_id))
+-                    })
+-                    .await
+-                    .map_err(to_tool_error)?
+-                    .ok_or_else(|| {
+-                        ToolExecutionError::invalid_args(format!("no such entity: {entity_id}"))
+-                    })?;
+-                let resolution = registry::resolve_attribute_in_turn(
+-                    &turn,
+-                    &embedding_api_key,
+-                    &attribute_name,
+-                    &entity.kind,
+-                )
+-                .await
+-                .map_err(to_tool_error)?;
+-                let (before, after, applied) = turn
+-                    .with(|conn| {
+-                        let attribute = if let Some(exact) =
+-                            registry::find_exact_match(conn, &attribute_name)?
+-                        {
+-                            exact
+-                        } else {
+-                            match resolution {
+-                                registry::AttributeResolution::Existing(attribute) => attribute,
+-                                registry::AttributeResolution::AddAlias { attribute, alias } => {
+-                                    registry::add_alias(conn, &attribute.id, &alias)?;
+-                                    attribute
+-                                }
+-                                registry::AttributeResolution::Mint(attribute) => {
+-                                    let id = registry::insert_minted_attribute(conn, &attribute)?;
+-                                    registry::find_attribute_by_id(conn, &id)?
+-                                }
+-                            }
+-                        };
+-                        let (before, source) = attributes::peek_entity_attribute(
+-                            conn,
+-                            turn.story_id(),
+-                            &entity.id,
+-                            &attribute,
+-                        )?;
+-                        if source.as_deref() == Some("user") {
+-                            return Ok((before, before, false));
+-                        }
+-                        let result = attributes::apply_attribute_delta(
+-                            conn,
+-                            turn.story_id(),
+-                            &entity.id,
+-                            &attribute,
+-                            delta,
+-                            &reason,
+-                            &target_entry_id,
+-                            dramatic,
+-                            Some(&turn_id),
+-                        )?;
+-                        Ok((result.0, result.1, true))
+-                    })
+-                    .await
++                let fields = object_args(&args, &["entity", "attribute", "delta", "reason", "dramatic"], NAME)
+@@ -161,8 +78,15 @@ pub(super) fn tool(
+-                if !applied {
+-                    return Ok(ToolOutput::json(json!({
+-                        "before": before,
+-                        "after": before,
+-                        "applied": false,
+-                        "reason": "locked to a player-set value",
+-                    })));
+-                }
++                let reference = required_string(fields, "entity").map_err(to_tool_error)?;
++                let mut change = fields.clone();
++                change.remove("entity");
++                let changes = parse_stats(Some(&Value::Array(vec![Value::Object(change)])))
++                    .map_err(to_tool_error)?.unwrap_or_default();
++                let entity = turn.with(|conn| resolve_entity(conn, turn.story_id(), &reference))
++                    .await.map_err(to_tool_error)?;
++                let resolved = resolve_stats(&turn, &embedding_api_key, &entity.kind, &changes)
++                    .await.map_err(to_tool_error)?;
++                let results = turn.with_savepoint(|conn| {
++                    let current = resolve_entity(conn, turn.story_id(), &entity.id)?;
++                    let current = repository::load_entity_raw(conn, turn.story_id(), &current.id)?
++                        .ok_or_else(|| crate::shared::error::AppError::Invalid(format!("no entity named '{reference}'")))?;
++                    apply_resolved_stats(conn, turn.story_id(), &current.id, resolved, &target_entry_id, &turn_id)
++                }).await.map_err(to_tool_error)?;
+@@ -170 +94 @@ pub(super) fn tool(
+-                    json!({"before": before, "after": after, "applied": true}),
++                    json!({"before": results[0]["before"], "after": results[0]["after"], "applied": true}),
+@@ -180 +104 @@ mod turn_tests {
+-        create_entity::tool as create_entity_tool, get_entities::tool as get_entities_tool,
++        create_entity::tool as create_entity_tool,
+@@ -188 +112 @@ mod turn_tests {
+-    async fn attribute_tool_applies_delta_and_honors_player_lock() {
++    async fn attribute_tool_applies_delta_over_a_player_set_value() {
+@@ -206 +130 @@ mod turn_tests {
+-            .execute(json!({"entity_id":id,"attribute":"Stealth","delta":9,"reason":"sneaking"}))
++            .execute(json!({"entity":"Mira","attribute":"Stealth","delta":9,"reason":"sneaking"}))
+@@ -213,2 +137 @@ mod turn_tests {
+-        let snapshot = get_entities_tool(turn.clone(), target.clone(), turn_id.clone())
+-            .execute(json!({"name":"Mira"}))
++        let snapshot = turn.with(|conn| attributes::list_entity_attributes_sync(conn, turn.story_id(), &id))
+@@ -218 +141 @@ mod turn_tests {
+-            snapshot.as_json().unwrap()["entities"][0]["attributes"][0],
++            json!({"name":snapshot[0].canonical_name,"value":snapshot[0].value,"min":snapshot[0].min,"max":snapshot[0].max}),
+@@ -232,2 +155,2 @@ mod turn_tests {
+-        let locked = adjust
+-            .execute(json!({"entity_id":id,"attribute":"Stealth","delta":5}))
++        let newer = adjust
++            .execute(json!({"entity":id,"attribute":"Stealth","delta":-2,"reason":"later story events"}))
+@@ -237,2 +160,2 @@ mod turn_tests {
+-            locked.as_json().unwrap(),
+-            &json!({"before":7.0,"after":7.0,"applied":false,"reason":"locked to a player-set value"})
++            newer.as_json().unwrap(),
++            &json!({"before":7.0,"after":5.0,"applied":true})
+@@ -239,0 +163,5 @@ mod turn_tests {
++        turn.with(|conn| {
++            let stored = attributes::list_entity_attributes_sync(conn, turn.story_id(), &id)?;
++            assert_eq!(stored[0].source, "inferred");
++            Ok(())
++        }).await.unwrap();
+@@ -245,0 +174,4 @@ mod turn_tests {
++        turn.with(|conn| {
++            conn.execute("DELETE FROM attribute_registry WHERE EXISTS (SELECT 1 FROM json_each(entity_kinds_json) WHERE value = 'character')", [])?;
++            Ok(())
++        }).await.unwrap();
+@@ -247 +179 @@ mod turn_tests {
+-            .execute(json!({"kind":"artifact","name":"Prism"}))
++            .execute(json!({"kind":"character","name":"Prism"}))
+@@ -261 +193 @@ mod turn_tests {
+-        .execute(json!({"entity_id":id,"attribute":"Resonance","delta":1.0}))
++        .execute(json!({"entity":id,"attribute":"Resonance","delta":1.0,"reason":"resonating"}))
+@@ -266 +198 @@ mod turn_tests {
+-            .execute(json!({"factors":[{"entity_id":id,"attribute_name":"Resonance"}]}))
++            .execute(json!({"factors":[{"entity":id,"attribute_name":"Resonance"}]}))
+diff --git a/src-tauri/src/features/narrator/tools/create_entity.rs b/src-tauri/src/features/narrator/tools/create_entity.rs
+index 81a6a09..612a4d1 100644
+--- a/src-tauri/src/features/narrator/tools/create_entity.rs
++++ b/src-tauri/src/features/narrator/tools/create_entity.rs
+@@ -6 +6 @@ use serde_json::{json, Value};
+-use crate::features::entities;
++use crate::features::entities::{self, model::CHARACTER};
+@@ -9,0 +10 @@ use crate::features::turn::TurnTx;
++use super::shared::{nullable_field, object_args, required_string};
+@@ -14 +15 @@ pub const DESCRIPTION: &str =
+-    "Introduce a new entity (character, object, or location) the story just established. \
++    "Introduce a new character the story just established. \
+@@ -21 +22 @@ pub fn schema() -> Value {
+-            "kind": {"type": "string", "description": "character, object, location, relationship, or campaign."},
++            "kind": {"type": "string", "enum": ["character"], "description": "character."},
+@@ -23 +24 @@ pub fn schema() -> Value {
+-            "appearance_anchor": {"type": "string", "description": "A short, stable visual description to keep the entity consistent."}
++            "appearance_anchor": {"type": ["string", "null"], "description": "A short, stable visual description to keep the character consistent."}
+@@ -25 +26,2 @@ pub fn schema() -> Value {
+-        "required": ["kind", "name"]
++        "required": ["kind", "name"],
++        "additionalProperties": false
+@@ -69,11 +71,7 @@ pub(super) fn tool(
+-                let kind = args
+-                    .get("kind")
+-                    .and_then(|v| v.as_str())
+-                    .filter(|s| !s.trim().is_empty())
+-                    .ok_or_else(|| ToolExecutionError::invalid_args("kind is required"))?;
+-                let name = args
+-                    .get("name")
+-                    .and_then(|v| v.as_str())
+-                    .filter(|s| !s.trim().is_empty())
+-                    .ok_or_else(|| ToolExecutionError::invalid_args("name is required"))?;
+-                let appearance_anchor = args.get("appearance_anchor").and_then(|v| v.as_str());
++                let fields = object_args(&args, &["kind", "name", "appearance_anchor"], NAME).map_err(to_tool_error)?;
++                let kind = required_string(fields, "kind").map_err(to_tool_error)?;
++                if kind != CHARACTER {
++                    return Err(ToolExecutionError::invalid_args("kind must be character"));
++                }
++                let name = required_string(fields, "name").map_err(to_tool_error)?;
++                let appearance_anchor = nullable_field(fields, "appearance_anchor").map_err(to_tool_error)?.flatten();
+@@ -82 +80 @@ pub(super) fn tool(
+-                    .with(|conn| {
++                    .with_savepoint(|conn| {
+@@ -84 +82 @@ pub(super) fn tool(
+-                            entities::list_entities_sync(conn, turn.story_id(), Some(kind))?
++                            entities::list_entities_sync(conn, turn.story_id(), Some(&kind))?
+@@ -86 +84 @@ pub(super) fn tool(
+-                                .find(|entity| entity.name.eq_ignore_ascii_case(name))
++                                .find(|entity| entity.name.eq_ignore_ascii_case(&name))
+@@ -94,3 +92,3 @@ pub(super) fn tool(
+-                            kind,
+-                            name,
+-                            appearance_anchor,
++                            &kind,
++                            &name,
++                            appearance_anchor.as_deref(),
+@@ -116 +114 @@ mod turn_tests {
+-        get_entities::tool as get_entities_tool, test_support::fixture,
++        test_support::fixture,
+@@ -119,0 +118 @@ mod turn_tests {
++    use crate::features::entities;
+@@ -156,2 +155 @@ mod turn_tests {
+-        let output = get_entities_tool(turn.clone(), target.clone(), turn_id.clone())
+-            .execute(json!({"kind":"character","name":"mira the bold"}))
++        let output = turn.with(|conn| entities::list_entities_sync(conn, turn.story_id(), Some("character")))
+@@ -161,2 +159,2 @@ mod turn_tests {
+-            output.as_json().unwrap()["entities"][0]["name"],
+-            json!("Mira the Bold")
++            output[0].name,
++            "Mira the Bold"
+@@ -180,0 +179,21 @@ mod turn_tests {
++
++    #[tokio::test]
++    async fn character_only_schema_and_handler_reject_unknown_keys_and_bad_types() {
++        let (_pool, turn, target, turn_id) = fixture();
++        let create = create_entity_tool(turn.clone(), target, turn_id);
++        for args in [
++            json!({"kind":"relationship","name":"Mira"}),
++            json!({"kind":null,"name":"Mira"}), json!({"kind":"character","name":false}),
++            json!({"kind":"character","name":"Mira","appearance_anchor":7}),
++            json!({"kind":"character","name":"Mira","unknown":true}),
++        ] {
++            assert!(create.execute(args).await.is_err());
++        }
++        assert_eq!(super::schema()["properties"]["kind"]["enum"], json!(["character"]));
++        assert_eq!(super::schema()["additionalProperties"], false);
++        turn.with(|conn| {
++            assert!(entities::list_entities_sync(conn, turn.story_id(), None)?.is_empty());
++            Ok(())
++        }).await.unwrap();
++        turn.rollback().await.unwrap();
++    }
+diff --git a/src-tauri/src/features/narrator/tools/get_entities.rs b/src-tauri/src/features/narrator/tools/get_entities.rs
+deleted file mode 100644
+index aa7e464..0000000
+--- a/src-tauri/src/features/narrator/tools/get_entities.rs
++++ /dev/null
+@@ -1,103 +0,0 @@
+-use std::sync::Arc;
+-
+-use rig_agent::tool::{PortableDynamicTool, ToolOutput};
+-use serde_json::{json, Value};
+-
+-use crate::features::entities::{self, attributes};
+-use crate::features::narrator::catalog::{self, ToolAvailability, ToolDeps, ToolSpec};
+-use crate::features::turn::TurnTx;
+-
+-use super::to_tool_error;
+-
+-pub const NAME: &str = "get_entities";
+-pub const DESCRIPTION: &str =
+-    "List known entities (characters, objects, locations) and their current attribute values. \
+-     Use this to check who or what is present before narrating or changing entity state.";
+-
+-pub fn schema() -> Value {
+-    json!({
+-        "type": "object",
+-        "properties": {
+-            "kind": {"type": "string", "description": "Filter by kind: character, object, location, relationship, or campaign."},
+-            "name": {"type": "string", "description": "Filter to an exact (case-insensitive) name match."}
+-        }
+-    })
+-}
+-
+-fn label(_args: &Value) -> String {
+-    "Checking who's here…".to_string()
+-}
+-
+-fn enabled(availability: &ToolAvailability<'_>) -> bool {
+-    catalog::normal_mode(availability) && availability.settings.get_entities
+-}
+-
+-fn build(deps: &ToolDeps) -> PortableDynamicTool {
+-    let (turn, target, turn_id) = catalog::turn(deps);
+-    tool(turn, target, turn_id)
+-}
+-
+-pub const SPEC: ToolSpec = ToolSpec {
+-    name: NAME,
+-    instruction: None,
+-    needs_turn: true,
+-    enabled,
+-    build,
+-    label,
+-};
+-
+-pub(super) fn tool(
+-    turn: Arc<TurnTx>,
+-    _target_entry_id: String,
+-    _turn_id: String,
+-) -> PortableDynamicTool {
+-    PortableDynamicTool::new(
+-        NAME,
+-        DESCRIPTION,
+-        schema(),
+-        move |args: serde_json::Value| {
+-            let turn = turn.clone();
+-            Box::pin(async move {
+-                let kind = args.get("kind").and_then(|v| v.as_str());
+-                let name = args.get("name").and_then(|v| v.as_str());
+-                let out = turn
+-                    .with(|conn| {
+-                        let mut entities =
+-                            entities::list_entities_sync(conn, turn.story_id(), kind)?;
+-                        if let Some(name) = name {
+-                            entities.retain(|entity| entity.name.eq_ignore_ascii_case(name));
+-                        }
+-                        let ids = entities
+-                            .iter()
+-                            .map(|entity| entity.id.as_str())
+-                            .collect::<Vec<_>>();
+-                        let mut attributes = attributes::list_entity_attributes_for_entities_sync(
+-                            conn,
+-                            turn.story_id(),
+-                            &ids,
+-                        )?;
+-                        Ok(entities
+-                            .into_iter()
+-                            .map(|entity| {
+-                                let values = attributes.remove(&entity.id).unwrap_or_default();
+-                                let snapshot = values
+-                                    .into_iter()
+-                                    .map(|value| {
+-                                        json!({
+-                                            "name": value.canonical_name, "value": value.value,
+-                                            "min": value.min, "max": value.max,
+-                                        })
+-                                    })
+-                                    .collect::<Vec<_>>();
+-                                json!({"id": entity.id, "kind": entity.kind, "name": entity.name,
+-                            "appearance_anchor": entity.appearance_anchor, "attributes": snapshot})
+-                            })
+-                            .collect::<Vec<_>>())
+-                    })
+-                    .await
+-                    .map_err(to_tool_error)?;
+-                Ok(ToolOutput::json(json!({"entities": out})))
+-            })
+-        },
+-    )
+-}
+diff --git a/src-tauri/src/features/narrator/tools/illustrate_scene.rs b/src-tauri/src/features/narrator/tools/illustrate_scene.rs
+index 8f7a6fc..c6611f9 100644
+--- a/src-tauri/src/features/narrator/tools/illustrate_scene.rs
++++ b/src-tauri/src/features/narrator/tools/illustrate_scene.rs
+@@ -9,0 +10,3 @@ use crate::features::narrator::catalog::{ToolAvailability, ToolDeps, ToolSpec};
++use super::shared::{object_args, required_string};
++use super::to_tool_error;
++
+@@ -27 +30 @@ pub fn schema() -> Value {
+-            "character_ids": {"type": "array", "items": {"type": "string"}, "description": "Ids of characters visible in the scene, from get_entities."}
++            "characters": {"type": "array", "items": {"type": "string"}, "description": "Names of characters visible in the scene."}
+@@ -29 +32,2 @@ pub fn schema() -> Value {
+-        "required": ["description"]
++        "required": ["description"],
++        "additionalProperties": false
+@@ -62,8 +66,3 @@ pub(super) fn tool(image_requests: Arc<Mutex<Vec<ImageRequest>>>) -> PortableDyn
+-                let description = args
+-                    .get("description")
+-                    .and_then(|v| v.as_str())
+-                    .map(str::trim)
+-                    .filter(|s| !s.is_empty())
+-                    .ok_or_else(|| ToolExecutionError::invalid_args("description is required"))?
+-                    .to_string();
+-                let character_ids = match args.get("character_ids") {
++                let fields = object_args(&args, &["description", "characters"], NAME).map_err(to_tool_error)?;
++                let description = required_string(fields, "description").map_err(to_tool_error)?;
++                let character_ids = match fields.get("characters") {
+@@ -74 +73 @@ pub(super) fn tool(image_requests: Arc<Mutex<Vec<ImageRequest>>>) -> PortableDyn
+-                            ToolExecutionError::invalid_args("character_ids must be an array")
++                            ToolExecutionError::invalid_args("characters must be an array")
+@@ -78 +77 @@ pub(super) fn tool(image_requests: Arc<Mutex<Vec<ImageRequest>>>) -> PortableDyn
+-                            id.as_str().map(str::to_string).ok_or_else(|| {
++                            id.as_str().map(str::trim).filter(|name| !name.is_empty()).map(str::to_string).ok_or_else(|| {
+@@ -80 +79 @@ pub(super) fn tool(image_requests: Arc<Mutex<Vec<ImageRequest>>>) -> PortableDyn
+-                                    "character_ids must contain only strings",
++                                    "characters must contain only non-empty strings",
+@@ -128,0 +128,21 @@ mod turn_tests {
++
++    #[tokio::test]
++    async fn character_names_are_queued_in_internal_ids_and_arguments_are_strict() {
++        let requests = Arc::new(Mutex::new(Vec::new()));
++        let tool = illustrate_scene_tool(requests.clone());
++        for args in [
++            json!({"description":false}), json!({"description":"scene","characters":null}),
++            json!({"description":"scene","characters":[7]}),
++            json!({"description":"scene","characters":[" "]}),
++            json!({"description":"scene","character_ids":["mira"]}),
++            json!({"description":"scene","unknown":true}),
++        ] {
++            assert!(tool.execute(args).await.is_err());
++        }
++        tool.execute(json!({"description":"  lighthouse  ","characters":[" mira ","Unknown"]})).await.unwrap();
++        let queued = requests.lock().await;
++        assert_eq!(queued.len(), 1);
++        assert_eq!(queued[0].description, "lighthouse");
++        assert_eq!(queued[0].character_ids, ["mira", "Unknown"]);
++        assert_eq!(super::schema()["additionalProperties"], false);
++    }
+diff --git a/src-tauri/src/features/narrator/tools/mod.rs b/src-tauri/src/features/narrator/tools/mod.rs
+index 72254b6..eb53f41 100644
+--- a/src-tauri/src/features/narrator/tools/mod.rs
++++ b/src-tauri/src/features/narrator/tools/mod.rs
+@@ -5 +4,0 @@ pub(crate) mod create_entity;
+-pub(crate) mod get_entities;
+@@ -7,0 +7,2 @@ pub(crate) mod roll_check;
++pub(crate) mod save_relationship;
++mod shared;
+@@ -17 +18,6 @@ fn to_tool_error(e: AppError) -> ToolExecutionError {
+-    ToolExecutionError::other(e.to_string())
++    match e {
++        AppError::Invalid(message) | AppError::NotFound(message) => {
++            ToolExecutionError::invalid_args(message)
++        }
++        _ => ToolExecutionError::other(e.to_string()),
++    }
+@@ -93,0 +100,2 @@ mod turn_tests {
++        assert_eq!(specs.iter().map(|spec| spec.name).collect::<Vec<_>>(),
++            ["roll_check", "create_entity", "update_entity", "adjust_entity_attribute", "save_relationship"]);
+diff --git a/src-tauri/src/features/narrator/tools/roll_check.rs b/src-tauri/src/features/narrator/tools/roll_check.rs
+index e30087c..facd12f 100644
+--- a/src-tauri/src/features/narrator/tools/roll_check.rs
++++ b/src-tauri/src/features/narrator/tools/roll_check.rs
+@@ -6 +6 @@ use serde_json::{json, Value};
+-use crate::features::entities::{self, attributes};
++use crate::features::entities::attributes;
+@@ -14,0 +15,2 @@ use crate::shared::error::{AppError, AppResult};
++use super::shared::{object_args, resolve_entity};
++
+@@ -18 +20 @@ pub const DESCRIPTION: &str =
+-     defaults to 50. For one factor, identify the acting entity_id and attribute_name; for two, \
++     defaults to 50. For one factor, name the acting entity and attribute_name; for two, \
+@@ -22 +24 @@ pub const DESCRIPTION: &str =
+-     opponent at 0.5. Do not pass chance_percent with factors, and do not invent entity IDs or \
++     opponent at 0.5. Do not pass chance_percent with factors, and do not invent attribute \
+@@ -24 +26 @@ pub const DESCRIPTION: &str =
+-pub const INSTRUCTION: &str = "For a genuinely uncertain outcome, call roll_check before narrating the result. With no factors it defaults to 50% unless you provide chance_percent. For a check based on registered attributes, select one acting entity-attribute pair or two opposing pairs; the backend reads their current values and calculates the chance. Use get_entities to find IDs and attribute names when that tool is available. Never invent attribute values or pass chance_percent together with factors. Do not roll routine or certain actions.";
++pub const INSTRUCTION: &str = "For a genuinely uncertain outcome, call roll_check before narrating the result. With no factors it defaults to 50% unless you provide chance_percent. For a check based on registered attributes, select one acting entity-attribute pair or two opposing pairs by name; the backend reads their current values and calculates the chance. Never invent attribute values or pass chance_percent together with factors. Do not roll routine or certain actions.";
+@@ -38 +40 @@ pub fn schema() -> Value {
+-                        "entity_id": {"type": "string", "description": "Entity id in this story, preferably from get_entities."},
++                        "entity": {"type": "string", "description": "A character name, or a relationship as 'Mira → You'. An id is also accepted."},
+@@ -41 +43 @@ pub fn schema() -> Value {
+-                    "required": ["entity_id", "attribute_name"],
++                    "required": ["entity", "attribute_name"],
+@@ -81 +83 @@ fn factor_reading(
+-    entity_id: &str,
++    reference: &str,
+@@ -84,4 +86 @@ fn factor_reading(
+-    let entity = entities::list_entities_sync(conn, story_id, None)?
+-        .into_iter()
+-        .find(|entity| entity.id == entity_id)
+-        .ok_or_else(|| AppError::NotFound(format!("entity {entity_id} not found in this story")))?;
++    let entity = resolve_entity(conn, story_id, reference)?;
+@@ -89 +88 @@ fn factor_reading(
+-    let values = attributes::list_entity_attributes_sync(conn, story_id, entity_id)?;
++    let values = attributes::list_entity_attributes_sync(conn, story_id, &entity.id)?;
+@@ -162 +161 @@ pub(super) fn tool(
+-                    None | Some(serde_json::Value::Null) => None,
++                    None => None,
+@@ -179,3 +178,2 @@ pub(super) fn tool(
+-                    let fields = factor.as_object().ok_or_else(|| {
+-                        ToolExecutionError::invalid_args("each factor must be an object")
+-                    })?;
++                    let fields = object_args(factor, &["entity", "attribute_name"], "factor")
++                        .map_err(super::to_tool_error)?;
+@@ -184 +182 @@ pub(super) fn tool(
+-                            "each factor requires only entity_id and attribute_name",
++                            "each factor requires only entity and attribute_name",
+@@ -187,2 +185,2 @@ pub(super) fn tool(
+-                    let entity_id = fields
+-                        .get("entity_id")
++                    let entity = fields
++                        .get("entity")
+@@ -192 +190 @@ pub(super) fn tool(
+-                            ToolExecutionError::invalid_args("factor entity_id is required")
++                            ToolExecutionError::invalid_args("factor entity is required")
+@@ -201 +199 @@ pub(super) fn tool(
+-                    references.push((entity_id, attribute_name));
++                    references.push((entity, attribute_name));
+@@ -255,6 +253 @@ pub(super) fn tool(
+-                    .map_err(|error| match error {
+-                        AppError::NotFound(_) | AppError::Invalid(_) => {
+-                            ToolExecutionError::invalid_args(error.to_string())
+-                        }
+-                        _ => ToolExecutionError::other(error.to_string()),
+-                    })?;
++                    .map_err(super::to_tool_error)?;
+@@ -277,0 +271 @@ mod turn_tests {
++        save_relationship::tool as save_relationship_tool,
+@@ -293 +287 @@ mod turn_tests {
+-            json!(["entity_id", "attribute_name"])
++            json!(["entity", "attribute_name"])
+@@ -373 +367 @@ mod turn_tests {
+-        .execute(json!({"entity_id":id,"attribute":"Stealth","delta":3}))
++        .execute(json!({"entity":"You","attribute":"Stealth","delta":3,"reason":"training"}))
+@@ -378 +372 @@ mod turn_tests {
+-            .execute(json!({"factors":[{"entity_id":id,"attribute_name":"Stealth"}]}))
++            .execute(json!({"factors":[{"entity":"you","attribute_name":"Stealth"}]}))
+@@ -390 +384 @@ mod turn_tests {
+-            .execute(json!({"factors":[{"entity_id":id,"attribute_name":"Sneaking"}]}))
++            .execute(json!({"factors":[{"entity":id,"attribute_name":"Sneaking"}]}))
+@@ -398 +392 @@ mod turn_tests {
+-            .execute(json!({"factors":[{"entity_id":"missing","attribute_name":"Stealth"}]}))
++            .execute(json!({"factors":[{"entity":"missing","attribute_name":"Stealth"}]}))
+@@ -402,0 +397,29 @@ mod turn_tests {
++
++    #[tokio::test]
++    async fn names_and_relationship_arrows_resolve_to_stored_factor_ids() {
++        let (_pool, turn, target, turn_id) = fixture();
++        let create = create_entity_tool(turn.clone(), target.clone(), turn_id.clone());
++        let mira = create.execute(json!({"kind":"character","name":"Mira"})).await.unwrap();
++        let mira_id = mira.as_json().unwrap()["id"].as_str().unwrap();
++        create.execute(json!({"kind":"character","name":"Varro"})).await.unwrap();
++        adjust_entity_attribute_tool(turn.clone(), target.clone(), turn_id.clone(), String::new())
++            .execute(json!({"entity":"Mira","attribute":"Stealth","delta":3,"reason":"practice"})).await.unwrap();
++        save_relationship_tool(turn.clone(), target.clone(), turn_id.clone(), String::new())
++            .execute(json!({"from":"Mira","to":"Varro","label":"rivals",
++                "stats":[{"attribute":"Affection","delta":2,"reason":"a truce"}]})).await.unwrap();
++        let relationship_id = turn.with(|conn| Ok(super::resolve_entity(conn, turn.story_id(), "Mira → Varro")?.id))
++            .await.unwrap();
++        let roll = roll_check_tool(turn.clone(), target, turn_id);
++        let character = roll.execute(json!({"factors":[{"entity":"MIRA","attribute_name":"Stealth"}]})).await.unwrap();
++        assert_eq!(character.as_json().unwrap()["factors"][0]["entity_id"], mira_id);
++        assert_eq!(character.as_json().unwrap()["factors"][0]["value"], 8.0);
++        for reference in ["Mira → Varro", "mira -> varro"] {
++            let relation = roll.execute(json!({"factors":[{"entity":reference,"attribute_name":"Affection"}]})).await.unwrap();
++            assert_eq!(relation.as_json().unwrap()["factors"][0]["entity_id"], relationship_id);
++            assert_eq!(relation.as_json().unwrap()["factors"][0]["value"], 2.0);
++        }
++        assert!(roll.execute(json!({"factors":[{"entity":"Varro -> Mira","attribute_name":"Affection"}]})).await.is_err());
++        assert!(roll.execute(json!({"factors":[{"entity":"Mira","attribute_name":"Stealth","extra":1}]})).await.is_err());
++        assert!(roll.execute(json!({"reason":null})).await.is_err());
++        turn.rollback().await.unwrap();
++    }
+diff --git a/src-tauri/src/features/narrator/tools/save_relationship.rs b/src-tauri/src/features/narrator/tools/save_relationship.rs
+new file mode 100644
+index 0000000..220aaa4
+--- /dev/null
++++ b/src-tauri/src/features/narrator/tools/save_relationship.rs
+@@ -0,0 +1,302 @@
++use std::sync::Arc;
++
++use rig_agent::tool::{PortableDynamicTool, ToolOutput};
++use serde_json::{json, Value};
++
++use crate::features::entities::{
++    self,
++    model::{Entity, EntityLink, RELATIONSHIP},
++    repository,
++};
++use crate::features::narrator::catalog::{self, ToolAvailability, ToolDeps, ToolSpec};
++use crate::features::turn::TurnTx;
++use crate::shared::error::{AppError, AppResult};
++
++use super::shared::{
++    apply_resolved_stats, nullable_field, object_args, optional_string, parse_stats,
++    required_string, resolve_character, resolve_stats, stats_schema,
++};
++use super::to_tool_error;
++
++pub const NAME: &str = "save_relationship";
++pub const DESCRIPTION: &str =
++    "Record how one character relates to another, or update it. There is one relationship per \
++     direction: calling again with the same from and to updates it (a new label replaces the \
++     old one, such as \"former friends\" when a friendship ends). `label` is short (\"estranged \
++     sister\", \"owes money to\", \"siblings\"). Use direction \"both\" only for truly mutual facts \
++     (siblings, married, allies); feelings that differ per side are two one_way relationships. \
++     Use stats for how one feels about the other, such as Affection or Trust.";
++pub const INSTRUCTION: &str = "Use save_relationship when the story establishes or changes how two characters relate.";
++
++pub fn schema() -> Value {
++    json!({
++        "type": "object",
++        "properties": {
++            "from": {"type": "string", "description": "A character name (an id is also accepted)."},
++            "to": {"type": "string", "description": "A character name (an id is also accepted)."},
++            "label": {"type": "string", "description": "Short relationship label, required for a new relationship."},
++            "direction": {"type": "string", "enum": ["one_way", "both"], "description": "one_way for directed feelings; both only for mutual facts. Defaults to one_way when creating."},
++            "description": {"type": ["string", "null"], "description": "Relationship details; null clears it."},
++            "stats": stats_schema()
++        },
++        "required": ["from", "to"],
++        "additionalProperties": false
++    })
++}
++
++fn label(_args: &Value) -> String {
++    "Recording a relationship…".to_string()
++}
++
++fn enabled(availability: &ToolAvailability<'_>) -> bool {
++    catalog::normal_mode(availability) && availability.settings.save_relationship
++}
++
++fn build(deps: &ToolDeps) -> PortableDynamicTool {
++    let (turn, target, turn_id) = catalog::turn(deps);
++    tool(turn, target, turn_id, deps.embedding_api_key.clone())
++}
++
++pub const SPEC: ToolSpec = ToolSpec {
++    name: NAME,
++    instruction: Some(INSTRUCTION),
++    needs_turn: true,
++    enabled,
++    build,
++    label,
++};
++
++fn find_relationship(
++    conn: &rusqlite::Connection,
++    story_id: &str,
++    from: &Entity,
++    to: &Entity,
++    label: Option<&str>,
++    direction: Option<&str>,
++) -> AppResult<Option<Entity>> {
++    if from.id == to.id {
++        return Err(AppError::Invalid("relationship endpoints must be different".into()));
++    }
++    let existing = entities::list_entities_sync(conn, story_id, Some(RELATIONSHIP))?
++        .into_iter().find(|entity| entity.link.as_ref().is_some_and(|link| {
++            (link.from_id == from.id && link.to_id == to.id)
++                || (link.direction == "both" && link.from_id == to.id && link.to_id == from.id)
++        }));
++    if let Some(entity) = &existing {
++        if entity.link.as_ref().is_some_and(|link| {
++            link.direction == "both" && link.from_id != from.id && direction == Some("one_way")
++        }) {
++            return Err(AppError::Invalid(format!(
++                "this relationship is stored as {} ↔ {}; make it one-way in that direction, or record the other direction separately",
++                to.name, from.name,
++            )));
++        }
++    } else if label.is_none() {
++        return Err(AppError::Invalid("label is required for a new relationship".into()));
++    }
++    Ok(existing)
++}
++
++pub(super) fn tool(
++    turn: Arc<TurnTx>,
++    target_entry_id: String,
++    turn_id: String,
++    embedding_api_key: String,
++) -> PortableDynamicTool {
++    PortableDynamicTool::new(NAME, DESCRIPTION, schema(), move |args: Value| {
++        let turn = turn.clone();
++        let target_entry_id = target_entry_id.clone();
++        let turn_id = turn_id.clone();
++        let embedding_api_key = embedding_api_key.clone();
++        Box::pin(async move {
++            let fields = object_args(&args, &["from", "to", "label", "direction", "description", "stats"], NAME)
++                .map_err(to_tool_error)?;
++            let from_reference = required_string(fields, "from").map_err(to_tool_error)?;
++            let to_reference = required_string(fields, "to").map_err(to_tool_error)?;
++            let label = optional_string(fields, "label").map_err(to_tool_error)?;
++            let direction = optional_string(fields, "direction").map_err(to_tool_error)?;
++            if direction.as_deref().is_some_and(|value| !matches!(value, "one_way" | "both")) {
++                return Err(to_tool_error(AppError::Invalid("direction must be one_way or both".into())));
++            }
++            let description = nullable_field(fields, "description").map_err(to_tool_error)?;
++            let stats = parse_stats(fields.get("stats")).map_err(to_tool_error)?;
++            turn.with(|conn| {
++                let from = resolve_character(conn, turn.story_id(), &from_reference)?;
++                let to = resolve_character(conn, turn.story_id(), &to_reference)?;
++                find_relationship(conn, turn.story_id(), &from, &to, label.as_deref(), direction.as_deref())?;
++                Ok(())
++            }).await.map_err(to_tool_error)?;
++            let resolved = resolve_stats(&turn, &embedding_api_key, RELATIONSHIP, stats.as_deref().unwrap_or_default())
++                .await.map_err(to_tool_error)?;
++            let (entity, created, results) = turn.with_savepoint(|conn| {
++                let from = resolve_character(conn, turn.story_id(), &from_reference)?;
++                let to = resolve_character(conn, turn.story_id(), &to_reference)?;
++                let existing = find_relationship(conn, turn.story_id(), &from, &to, label.as_deref(), direction.as_deref())?;
++                let (entity, created) = if let Some(existing) = existing {
++                    (repository::update_link_sync(
++                        conn, turn.story_id(), &existing.id, label.as_deref(), direction.as_deref(),
++                        description.clone(), "narrator_tool", Some(&target_entry_id), Some(&turn_id),
++                    )?, false)
++                } else {
++                    let label = label.clone().ok_or_else(|| AppError::Invalid("label is required for a new relationship".into()))?;
++                    (repository::create_link_sync(conn, turn.story_id(), EntityLink {
++                        from_id: from.id, to_id: to.id, label,
++                        direction: direction.clone().unwrap_or_else(|| "one_way".into()),
++                        description: description.clone().flatten(),
++                    }, "narrator_tool", Some(&target_entry_id), Some(&turn_id))?, true)
++                };
++                let results = apply_resolved_stats(conn, turn.story_id(), &entity.id, resolved, &target_entry_id, &turn_id)?;
++                Ok((entity, created, results))
++            }).await.map_err(to_tool_error)?;
++            let mut output = json!({"name": entity.name, "kind": entity.kind, "created": created});
++            if stats.is_some() {
++                output["stats"] = json!(results);
++            }
++            Ok(ToolOutput::json(output))
++        })
++    })
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use crate::features::entities::{attributes, model::CHARACTER, registry};
++    use crate::shared::db::Pool;
++
++    async fn fixture() -> (Pool, Arc<TurnTx>, String, String) {
++        let (pool, turn, target, turn_id) = super::super::test_support::fixture();
++        turn.with(|conn| {
++            for (id, name) in [("mira", "Mira"), ("varro", "Varro")] {
++                repository::create_entity_with_id_sync(conn, id, turn.story_id(), CHARACTER, name, None,
++                    "narrator_tool", Some(&target), Some(&turn_id))?;
++            }
++            Ok(())
++        }).await.unwrap();
++        (pool, turn, target, turn_id)
++    }
++
++    #[tokio::test]
++    async fn names_repeats_reversed_both_and_relabel_keep_one_relationship() {
++        let (_pool, turn, target, turn_id) = fixture().await;
++        let save = tool(turn.clone(), target, turn_id, String::new());
++        let first = save.execute(json!({"from":" mira ","to":"VARRO","label":" siblings ","direction":"both"}))
++            .await.unwrap();
++        assert_eq!(first.as_json().unwrap(), &json!({"name":"Mira ↔ Varro: siblings","kind":"relationship","created":true}));
++        let second = save.execute(json!({"from":"Varro","to":"Mira"})).await.unwrap();
++        assert_eq!(second.as_json().unwrap(), &json!({"name":"Mira ↔ Varro: siblings","kind":"relationship","created":false}));
++        let same = save.execute(json!({"from":"Mira","to":"Varro","direction":"both","label":"siblings"})).await.unwrap();
++        assert_eq!(same.as_json().unwrap()["created"], false);
++        let changed = save.execute(json!({"from":"Varro","to":"Mira","label":"estranged siblings"})).await.unwrap();
++        assert_eq!(changed.as_json().unwrap()["name"], "Mira ↔ Varro: estranged siblings");
++        turn.with(|conn| {
++            let links = entities::list_entities_sync(conn, turn.story_id(), Some(RELATIONSHIP))?;
++            assert_eq!(links.len(), 1);
++            let link = links[0].link.as_ref().unwrap();
++            assert_eq!((link.from_id.as_str(), link.to_id.as_str(), link.direction.as_str()), ("mira", "varro", "both"));
++            let updates: i64 = conn.query_row("SELECT COUNT(*) FROM transcript_entries WHERE kind='entity_updated'", [], |row| row.get(0))?;
++            assert_eq!(updates, 1);
++            Ok(())
++        }).await.unwrap();
++        turn.rollback().await.unwrap();
++    }
++
++    #[tokio::test]
++    async fn missing_label_unknown_endpoints_and_invalid_arguments_write_nothing() {
++        let (_pool, turn, target, turn_id) = fixture().await;
++        let save = tool(turn.clone(), target, turn_id, String::new());
++        let missing = save.execute(json!({"from":"Mira","to":"Varro"})).await.unwrap_err();
++        assert!(missing.to_string().contains("label is required for a new relationship"));
++        let unknown = save.execute(json!({"from":"Nobody","to":"Varro","label":"rivals"})).await.unwrap_err();
++        assert!(unknown.to_string().contains("no entity named 'Nobody'"));
++        for args in [
++            json!(false), json!({"from":null,"to":"Varro","label":"rivals"}),
++            json!({"from":"Mira","to":"Mira","label":"self"}),
++            json!({"from":"Mira","to":7,"label":"rivals"}),
++            json!({"from":"Mira","to":"Varro","label":null}),
++            json!({"from":"Mira","to":"Varro","label":"rivals","direction":null}),
++            json!({"from":"Mira","to":"Varro","label":"rivals","direction":"sideways"}),
++            json!({"from":"Mira","to":"Varro","label":"rivals","description":false}),
++            json!({"from":"Mira","to":"Varro","label":"rivals","stats":null}),
++            json!({"from":"Mira","to":"Varro","label":"rivals","unknown":true}),
++        ] {
++            assert!(save.execute(args).await.is_err());
++        }
++        turn.with(|conn| {
++            assert!(entities::list_entities_sync(conn, turn.story_id(), Some(RELATIONSHIP))?.is_empty());
++            Ok(())
++        }).await.unwrap();
++        assert_eq!(schema()["required"], json!(["from", "to"]));
++        assert_eq!(schema()["additionalProperties"], false);
++        turn.rollback().await.unwrap();
++    }
++
++    #[tokio::test]
++    async fn reversed_both_to_one_way_is_rejected_instead_of_flipping_meaning() {
++        let (_pool, turn, target, turn_id) = fixture().await;
++        let save = tool(turn.clone(), target, turn_id, String::new());
++        save.execute(json!({"from":"Mira","to":"Varro","label":"allies","direction":"both"})).await.unwrap();
++        let error = save.execute(json!({"from":"Varro","to":"Mira","direction":"one_way","description":"must not write"}))
++            .await.unwrap_err();
++        assert!(error.to_string().contains("this relationship is stored as Mira ↔ Varro; make it one-way in that direction, or record the other direction separately"));
++        turn.with(|conn| {
++            let link = entities::list_entities_sync(conn, turn.story_id(), Some(RELATIONSHIP))?.remove(0).link.unwrap();
++            assert_eq!(link.direction, "both");
++            assert_eq!(link.description, None);
++            Ok(())
++        }).await.unwrap();
++        let forward = save.execute(json!({"from":"Mira","to":"Varro","direction":"one_way"})).await.unwrap();
++        assert_eq!(forward.as_json().unwrap()["name"], "Mira → Varro: allies");
++        turn.rollback().await.unwrap();
++    }
++
++    #[tokio::test]
++    async fn stats_and_nullable_description_return_only_short_results() {
++        let (_pool, turn, target, turn_id) = fixture().await;
++        let save = tool(turn.clone(), target, turn_id, String::new());
++        let first = save.execute(json!({"from":"mira","to":"varro","label":"rivals","description":" old rivalry ",
++            "stats":[{"attribute":"Affection","delta":2,"reason":"a truce"}]})).await.unwrap();
++        assert_eq!(first.as_json().unwrap(), &json!({"name":"Mira → Varro: rivals","kind":"relationship","created":true,
++            "stats":[{"attribute":"Affection","before":0.0,"after":2.0}]}));
++        let second = save.execute(json!({"from":"Mira","to":"Varro",
++            "stats":[{"attribute":"Affection","delta":1,"reason":"cooperation"}]})).await.unwrap();
++        assert_eq!(second.as_json().unwrap()["stats"][0], json!({"attribute":"Affection","before":2.0,"after":3.0}));
++        turn.with(|conn| {
++            let entity = entities::list_entities_sync(conn, turn.story_id(), Some(RELATIONSHIP))?.remove(0);
++            assert_eq!(entity.link.unwrap().description, Some("old rivalry".into()));
++            assert_eq!(attributes::list_entity_attributes_sync(conn, turn.story_id(), &entity.id)?[0].source, "inferred");
++            Ok(())
++        }).await.unwrap();
++        let cleared = save.execute(json!({"from":"Mira","to":"Varro","description":null})).await.unwrap();
++        assert!(cleared.as_json().unwrap().get("stats").is_none());
++        turn.with(|conn| {
++            assert_eq!(entities::list_entities_sync(conn, turn.story_id(), Some(RELATIONSHIP))?[0].link.as_ref().unwrap().description, None);
++            Ok(())
++        }).await.unwrap();
++        turn.rollback().await.unwrap();
++    }
++
++    #[tokio::test]
++    async fn second_stat_prepare_failure_leaves_fields_stats_registry_and_events_unchanged() {
++        let (_pool, turn, target, turn_id) = fixture().await;
++        let save = tool(turn.clone(), target, turn_id, String::new());
++        save.execute(json!({"from":"Mira","to":"Varro","label":"rivals","description":"original"})).await.unwrap();
++        let event_count = turn.with(|conn| {
++            Ok(conn.query_row("SELECT COUNT(*) FROM transcript_entries", [], |row| row.get::<_, i64>(0))?)
++        }).await.unwrap();
++        let error = save.execute(json!({"from":"Mira","to":"Varro","description":"must not remain",
++            "stats":[{"attribute":"Affection","delta":2,"reason":"first"},
++                {"attribute":"Unknown relationship stat","delta":1,"reason":"second"}]})).await.unwrap_err();
++        assert!(error.to_string().contains("stats[1]"));
++        assert!(error.to_string().contains("embedding API key"));
++        turn.with(|conn| {
++            let entity = entities::list_entities_sync(conn, turn.story_id(), Some(RELATIONSHIP))?.remove(0);
++            let raw = repository::load_entity_raw(conn, turn.story_id(), &entity.id)?.unwrap();
++            assert_eq!(raw.link.unwrap().description, Some("original".into()));
++            assert!(attributes::list_entity_attributes_sync(conn, turn.story_id(), &entity.id)?.is_empty());
++            assert!(registry::find_exact_match(conn, "Unknown relationship stat")?.is_none());
++            assert_eq!(conn.query_row("SELECT COUNT(*) FROM transcript_entries", [], |row| row.get::<_, i64>(0))?, event_count);
++            Ok(())
++        }).await.unwrap();
++        turn.rollback().await.unwrap();
++    }
++}
+diff --git a/src-tauri/src/features/narrator/tools/shared.rs b/src-tauri/src/features/narrator/tools/shared.rs
+new file mode 100644
+index 0000000..468b6e3
+--- /dev/null
++++ b/src-tauri/src/features/narrator/tools/shared.rs
+@@ -0,0 +1,293 @@
++use serde_json::{json, Map, Value};
++
++use crate::features::entities::{
++    self, attributes,
++    model::{Entity, CHARACTER},
++    registry::{self, AttributeResolution},
++};
++use crate::features::turn::TurnTx;
++use crate::shared::error::{AppError, AppResult};
++
++pub(super) fn object_args<'a>(
++    args: &'a Value,
++    allowed: &[&str],
++    tool: &str,
++) -> AppResult<&'a Map<String, Value>> {
++    let fields = args
++        .as_object()
++        .ok_or_else(|| AppError::Invalid(format!("{tool} expects an object")))?;
++    if let Some(key) = fields.keys().find(|key| !allowed.contains(&key.as_str())) {
++        return Err(AppError::Invalid(format!("{tool} does not accept '{key}'")));
++    }
++    Ok(fields)
++}
++
++pub(super) fn required_string(fields: &Map<String, Value>, field: &str) -> AppResult<String> {
++    let value = fields
++        .get(field)
++        .ok_or_else(|| AppError::Invalid(format!("{field} is required")))?;
++    let value = value
++        .as_str()
++        .ok_or_else(|| AppError::Invalid(format!("{field} must be a string")))?
++        .trim();
++    if value.is_empty() {
++        return Err(AppError::Invalid(format!("{field} must not be empty")));
++    }
++    Ok(value.to_string())
++}
++
++pub(super) fn optional_string(
++    fields: &Map<String, Value>,
++    field: &str,
++) -> AppResult<Option<String>> {
++    fields.get(field).map(|_| required_string(fields, field)).transpose()
++}
++
++pub(super) fn nullable_field(
++    fields: &Map<String, Value>,
++    field: &str,
++) -> AppResult<Option<Option<String>>> {
++    match fields.get(field) {
++        None => Ok(None),
++        Some(Value::Null) => Ok(Some(None)),
++        Some(Value::String(value)) => {
++            let value = value.trim();
++            Ok(Some((!value.is_empty()).then(|| value.to_string())))
++        }
++        _ => Err(AppError::Invalid(format!("{field} must be a string or null"))),
++    }
++}
++
++pub(super) fn resolve_entity(
++    conn: &rusqlite::Connection,
++    story_id: &str,
++    reference: &str,
++) -> AppResult<Entity> {
++    let reference = reference.trim();
++    let entities = entities::list_entities_sync(conn, story_id, None)?;
++    if let Some(entity) = entities.iter().find(|entity| entity.id == reference) {
++        return Ok(entity.clone());
++    }
++    if let Some((from, to)) = reference
++        .split_once('→')
++        .or_else(|| reference.split_once("->"))
++    {
++        let character = |name: &str| {
++            entities.iter().find(|entity| {
++                entity.kind == CHARACTER && entity.name.eq_ignore_ascii_case(name.trim())
++            })
++        };
++        if let (Some(from), Some(to)) = (character(from), character(to)) {
++            if let Some(entity) = entities.iter().find(|entity| {
++                entity.link.as_ref().is_some_and(|link| {
++                    (link.from_id == from.id && link.to_id == to.id)
++                        || (link.direction == "both" && link.from_id == to.id && link.to_id == from.id)
++                })
++            }) {
++                return Ok(entity.clone());
++            }
++        }
++    } else if let Some(entity) = entities.iter().find(|entity| {
++        entity.kind == CHARACTER && entity.name.eq_ignore_ascii_case(reference)
++    }) {
++        return Ok(entity.clone());
++    }
++    Err(AppError::Invalid(format!("no entity named '{reference}'")))
++}
++
++pub(super) fn resolve_character(
++    conn: &rusqlite::Connection,
++    story_id: &str,
++    reference: &str,
++) -> AppResult<Entity> {
++    let entity = resolve_entity(conn, story_id, reference)?;
++    if entity.kind != CHARACTER {
++        return Err(AppError::Invalid(format!("'{reference}' must name a character")));
++    }
++    Ok(entity)
++}
++
++#[derive(Clone)]
++pub(super) struct StatChange {
++    pub attribute: String,
++    pub delta: f64,
++    pub reason: String,
++    pub dramatic: bool,
++}
++
++pub(super) fn stats_schema() -> Value {
++    json!({
++        "type": "array",
++        "maxItems": 8,
++        "items": {
++            "type": "object",
++            "properties": {
++                "attribute": {"type": "string", "description": "Attribute name, e.g. Affection or Trust."},
++                "delta": {"type": "number", "description": "Positive or negative change, on the attribute's own scale."},
++                "reason": {"type": "string", "description": "Why this changed, for the audit log."},
++                "dramatic": {"type": "boolean", "description": "True only for a major, story-changing swing."}
++            },
++            "required": ["attribute", "delta", "reason"],
++            "additionalProperties": false
++        }
++    })
++}
++
++pub(super) fn parse_stats(value: Option<&Value>) -> AppResult<Option<Vec<StatChange>>> {
++    let Some(value) = value else {
++        return Ok(None);
++    };
++    let values = value
++        .as_array()
++        .ok_or_else(|| AppError::Invalid("stats must be an array".into()))?;
++    if values.len() > 8 {
++        return Err(AppError::Invalid("stats must contain at most 8 items".into()));
++    }
++    values.iter().enumerate().map(|(index, value)| {
++        let parse = || {
++            let fields = object_args(value, &["attribute", "delta", "reason", "dramatic"], "stat")?;
++            let attribute = required_string(fields, "attribute")?;
++            let reason = required_string(fields, "reason")?;
++            let delta = fields.get("delta").and_then(Value::as_f64).filter(|value| value.is_finite())
++                .ok_or_else(|| AppError::Invalid("delta must be a finite number".into()))?;
++            let dramatic = match fields.get("dramatic") {
++                None => false,
++                Some(Value::Bool(value)) => *value,
++                _ => return Err(AppError::Invalid("dramatic must be a boolean".into())),
++            };
++            Ok(StatChange { attribute, delta, reason, dramatic })
++        };
++        parse().map_err(|error: AppError| AppError::Invalid(format!("stats[{index}]: {error}")))
++    }).collect::<AppResult<Vec<_>>>().map(Some)
++}
++
++pub(super) struct ResolvedStat {
++    change: StatChange,
++    resolution: AttributeResolution,
++}
++
++pub(super) async fn resolve_stats(
++    turn: &TurnTx,
++    embedding_api_key: &str,
++    kind: &str,
++    changes: &[StatChange],
++) -> AppResult<Vec<ResolvedStat>> {
++    let mut resolved = Vec::with_capacity(changes.len());
++    for (index, change) in changes.iter().enumerate() {
++        let resolution = registry::resolve_attribute_in_turn(
++            turn, embedding_api_key, &change.attribute, kind,
++        ).await.map_err(|error| match error {
++            AppError::Invalid(message) | AppError::NotFound(message) => {
++                AppError::Invalid(format!("stats[{index}]: {message}"))
++            }
++            error => AppError::Other(format!("stats[{index}]: {error}")),
++        })?;
++        resolved.push(ResolvedStat { change: change.clone(), resolution });
++    }
++    Ok(resolved)
++}
++
++pub(super) fn apply_resolved_stats(
++    conn: &rusqlite::Connection,
++    story_id: &str,
++    entity_id: &str,
++    resolved: Vec<ResolvedStat>,
++    target_entry_id: &str,
++    turn_id: &str,
++) -> AppResult<Vec<Value>> {
++    let mut results = Vec::with_capacity(resolved.len());
++    for ResolvedStat { change, resolution } in resolved {
++        // Another tool may have added this name while the embedding lookup awaited.
++        let attribute = if let Some(exact) = registry::find_exact_match(conn, &change.attribute)? {
++            exact
++        } else {
++            match resolution {
++                AttributeResolution::Existing(attribute) => attribute,
++                AttributeResolution::AddAlias { attribute, alias } => {
++                    registry::add_alias(conn, &attribute.id, &alias)?;
++                    attribute
++                }
++                AttributeResolution::Mint(attribute) => {
++                    let id = registry::insert_minted_attribute(conn, &attribute)?;
++                    registry::find_attribute_by_id(conn, &id)?
++                }
++            }
++        };
++        let (before, after) = attributes::apply_attribute_delta(
++            conn, story_id, entity_id, &attribute, change.delta, &change.reason,
++            target_entry_id, change.dramatic, Some(turn_id),
++        )?;
++        results.push(json!({"attribute": attribute.canonical_name, "before": before, "after": after}));
++    }
++    Ok(results)
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use super::super::test_support::fixture;
++    use crate::features::entities::{model::EntityLink, repository};
++
++    #[test]
++    fn nullable_fields_trim_clear_and_reject_bad_types() {
++        let fields = json!({"set":"  silver hair  ","clear":null,"empty":"  ","bad":false});
++        let fields = fields.as_object().unwrap();
++        assert_eq!(nullable_field(fields, "missing").unwrap(), None);
++        assert_eq!(nullable_field(fields, "set").unwrap(), Some(Some("silver hair".into())));
++        assert_eq!(nullable_field(fields, "clear").unwrap(), Some(None));
++        assert_eq!(nullable_field(fields, "empty").unwrap(), Some(None));
++        assert!(nullable_field(fields, "bad").unwrap_err().to_string().contains("bad must be a string or null"));
++    }
++
++    #[test]
++    fn stat_parser_checks_limit_unknown_keys_types_and_item_indices() {
++        assert!(parse_stats(None).unwrap().is_none());
++        assert!(parse_stats(Some(&Value::Null)).is_err());
++        let good = json!({"attribute":" Affection ","delta":2,"reason":" reunion "});
++        let parsed = parse_stats(Some(&json!([good]))).unwrap().unwrap();
++        assert_eq!(parsed[0].attribute, "Affection");
++        assert_eq!(parsed[0].reason, "reunion");
++        assert!(!parsed[0].dramatic);
++        assert!(parse_stats(Some(&json!(vec![good.clone(); 9]))).is_err());
++        for bad in [
++            json!(false), json!({"attribute":"Trust","delta":"2","reason":"x"}),
++            json!({"attribute":"Trust","delta":2,"reason":null}),
++            json!({"attribute":"Trust","delta":2,"reason":"x","dramatic":1}),
++            json!({"attribute":"Trust","delta":2,"reason":"x","extra":true}),
++        ] {
++            let error = parse_stats(Some(&json!([good.clone(), bad]))).err().unwrap();
++            assert!(error.to_string().contains("stats[1]"));
++        }
++        assert_eq!(stats_schema()["maxItems"], 8);
++        assert_eq!(stats_schema()["items"]["additionalProperties"], false);
++    }
++
++    #[tokio::test]
++    async fn resolver_reads_present_names_ids_and_relationship_arrows() {
++        let (_pool, turn, target, turn_id) = fixture();
++        turn.with(|conn| {
++            for (id, name) in [("mira", "Mira"), ("varro", "Varro")] {
++                repository::create_entity_with_id_sync(conn, id, turn.story_id(), CHARACTER, name, None,
++                    "narrator_tool", Some(&target), Some(&turn_id))?;
++            }
++            let link = repository::create_link_sync(conn, turn.story_id(), EntityLink {
++                from_id: "mira".into(), to_id: "varro".into(), label: "siblings".into(),
++                direction: "both".into(), description: None,
++            }, "narrator_tool", Some(&target), Some(&turn_id))?;
++            assert_eq!(resolve_entity(conn, turn.story_id(), " mira ")?.id, "mira");
++            assert_eq!(resolve_entity(conn, turn.story_id(), "MIRA")?.id, "mira");
++            for reference in ["Mira → Varro", "mira -> varro", "Varro → Mira", "varro -> mira"] {
++                assert_eq!(resolve_entity(conn, turn.story_id(), reference)?.id, link.id);
++            }
++            assert_eq!(resolve_entity(conn, turn.story_id(), &link.id)?.id, link.id);
++            assert!(resolve_character(conn, turn.story_id(), &link.id).is_err());
++            assert!(resolve_entity(conn, "another-story", "Mira").is_err());
++            repository::delete_entity_sync(conn, turn.story_id(), "varro")?;
++            assert!(resolve_entity(conn, turn.story_id(), "Varro").is_err());
++            assert!(resolve_entity(conn, turn.story_id(), &link.id).is_err());
++            assert!(resolve_entity(conn, turn.story_id(), "Mira -> Varro").is_err());
++            Ok(())
++        }).await.unwrap();
++        turn.rollback().await.unwrap();
++    }
++}
+diff --git a/src-tauri/src/features/narrator/tools/update_entity.rs b/src-tauri/src/features/narrator/tools/update_entity.rs
+index 1196f72..4730f89 100644
+--- a/src-tauri/src/features/narrator/tools/update_entity.rs
++++ b/src-tauri/src/features/narrator/tools/update_entity.rs
+@@ -3 +3 @@ use std::sync::Arc;
+-use rig_agent::tool::{PortableDynamicTool, ToolExecutionError, ToolOutput};
++use rig_agent::tool::{PortableDynamicTool, ToolOutput};
+@@ -6 +6 @@ use serde_json::{json, Value};
+-use crate::features::entities;
++use crate::features::entities::{model::CHARACTER, repository};
+@@ -8,0 +9 @@ use crate::features::turn::TurnTx;
++use crate::shared::error::AppError;
+@@ -9,0 +11 @@ use crate::features::turn::TurnTx;
++use super::shared::{nullable_field, object_args, required_string};
+@@ -14 +16 @@ pub const DESCRIPTION: &str =
+-    "Rename an entity or update its appearance description. Use a known entity id; look it up first when the lookup tool is available.";
++    "Rename a character or update its appearance description. Use a known character id.";
+@@ -20 +22 @@ pub fn schema() -> Value {
+-            "id": {"type": "string", "description": "Entity id from get_entities/create_entity."},
++            "id": {"type": "string", "description": "A known character id."},
+@@ -22 +24 @@ pub fn schema() -> Value {
+-            "appearance_anchor": {"type": "string", "description": "The entity's (possibly unchanged) appearance description."}
++            "appearance_anchor": {"type": ["string", "null"], "description": "The character's appearance description. Omit to keep it; null clears it."}
+@@ -24 +26,2 @@ pub fn schema() -> Value {
+-        "required": ["id", "name"]
++        "required": ["id", "name"],
++        "additionalProperties": false
+@@ -64,15 +67,4 @@ pub(super) fn tool(
+-                let id = args
+-                    .get("id")
+-                    .and_then(|v| v.as_str())
+-                    .ok_or_else(|| ToolExecutionError::invalid_args("id is required"))?
+-                    .to_string();
+-                let name = args
+-                    .get("name")
+-                    .and_then(|v| v.as_str())
+-                    .filter(|s| !s.trim().is_empty())
+-                    .ok_or_else(|| ToolExecutionError::invalid_args("name is required"))?
+-                    .to_string();
+-                let appearance_anchor = args
+-                    .get("appearance_anchor")
+-                    .and_then(|v| v.as_str())
+-                    .map(str::to_string);
++                let fields = object_args(&args, &["id", "name", "appearance_anchor"], NAME).map_err(to_tool_error)?;
++                let id = required_string(fields, "id").map_err(to_tool_error)?;
++                let name = required_string(fields, "name").map_err(to_tool_error)?;
++                let appearance_anchor = nullable_field(fields, "appearance_anchor").map_err(to_tool_error)?;
+@@ -81,6 +73,5 @@ pub(super) fn tool(
+-                    .with(|conn| {
+-                        if !entities::list_entities_sync(conn, turn.story_id(), None)?
+-                            .iter()
+-                            .any(|entity| entity.id == id)
+-                        {
+-                            return Ok(false);
++                    .with_savepoint(|conn| {
++                        let before = repository::load_entity_raw(conn, turn.story_id(), &id)?
++                            .ok_or_else(|| AppError::Invalid(format!("no such entity: {id}")))?;
++                        if before.kind != CHARACTER {
++                            return Err(AppError::Invalid("update_entity only updates characters".into()));
+@@ -88 +79,2 @@ pub(super) fn tool(
+-                        entities::update_entity_sync(
++                        let anchor = appearance_anchor.clone().unwrap_or(before.appearance_anchor);
++                        repository::update_entity_sync(
+@@ -93 +85 @@ pub(super) fn tool(
+-                            appearance_anchor.as_deref(),
++                            anchor.as_deref(),
+@@ -97,2 +89 @@ pub(super) fn tool(
+-                        )?;
+-                        Ok(true)
++                        )
+@@ -102,5 +92,0 @@ pub(super) fn tool(
+-                if !updated {
+-                    return Err(ToolExecutionError::invalid_args(format!(
+-                        "no such entity: {id}"
+-                    )));
+-                }
+@@ -108 +94 @@ pub(super) fn tool(
+-                    json!({"id": id, "name": name, "appearance_anchor": appearance_anchor}),
++                    json!({"id": id, "name": updated.name, "appearance_anchor": updated.appearance_anchor}),
+@@ -113,0 +100,28 @@ pub(super) fn tool(
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use super::super::{create_entity::tool as create_entity_tool, test_support::fixture};
++
++    #[tokio::test]
++    async fn nullable_appearance_preserves_omitted_fields_and_rejects_bad_arguments() {
++        let (_pool, turn, target, turn_id) = fixture();
++        let created = create_entity_tool(turn.clone(), target.clone(), turn_id.clone())
++            .execute(json!({"kind":"character","name":"Mira","appearance_anchor":"silver hair"})).await.unwrap();
++        let id = created.as_json().unwrap()["id"].as_str().unwrap();
++        let update = tool(turn.clone(), target, turn_id);
++        let unchanged = update.execute(json!({"id":id,"name":"Mira"})).await.unwrap();
++        assert_eq!(unchanged.as_json().unwrap()["appearance_anchor"], "silver hair");
++        for args in [
++            json!({"id":7,"name":"Mira"}), json!({"id":id,"name":null}),
++            json!({"id":id,"name":"Mira","appearance_anchor":false}),
++            json!({"id":id,"name":"Mira","unknown":true}),
++        ] {
++            assert!(update.execute(args).await.is_err());
++        }
++        let cleared = update.execute(json!({"id":id,"name":"Mira","appearance_anchor":null})).await.unwrap();
++        assert_eq!(cleared.as_json().unwrap()["appearance_anchor"], Value::Null);
++        assert_eq!(schema()["additionalProperties"], false);
++        turn.rollback().await.unwrap();
++    }
++}
+diff --git a/src-tauri/src/features/stories/repository.rs b/src-tauri/src/features/stories/repository.rs
+index b8146f7..52118c8 100644
+--- a/src-tauri/src/features/stories/repository.rs
++++ b/src-tauri/src/features/stories/repository.rs
+@@ -77,2 +76,0 @@ pub(super) fn create_story_in_pool(
+-    object.remove("attributes_enabled");
+-    object.remove("dice_mode");
+@@ -180,3 +178 @@ mod tests {
+-                "author_note": "keep",
+-                "attributes_enabled": false,
+-                "dice_mode": "never"
++                "author_note": "keep"
+@@ -190,2 +185,0 @@ mod tests {
+-        assert!(settings.get("attributes_enabled").is_none());
+-        assert!(settings.get("dice_mode").is_none());
+@@ -211 +205 @@ mod tests {
+-            Some(json!({"narrator_tools":{"roll_check":true}}))
++            Some(json!({"narrator_tools":{"unknown":true}}))
+diff --git a/src-tauri/src/features/stories/settings.rs b/src-tauri/src/features/stories/settings.rs
+index 22867c7..63a6e72 100644
+--- a/src-tauri/src/features/stories/settings.rs
++++ b/src-tauri/src/features/stories/settings.rs
+@@ -13 +13 @@ use crate::shared::error::{AppError, AppResult};
+-#[serde(deny_unknown_fields)]
++#[serde(default, deny_unknown_fields)]
+@@ -15 +15 @@ pub struct NarratorToolSettings {
+-    pub get_entities: bool,
++    pub save_relationship: bool,
+@@ -26 +26 @@ impl Default for NarratorToolSettings {
+-            get_entities: true,
++            save_relationship: true,
+@@ -334,4 +334,4 @@ mod tests {
+-    fn tool_shape_rejects_partial_and_unknown_fields() {
+-        assert!(
+-            serde_json::from_value::<NarratorToolSettings>(json!({"roll_check": true})).is_err()
+-        );
++    fn tool_shape_defaults_missing_fields_and_rejects_unknown_fields() {
++        let tools = serde_json::from_value::<NarratorToolSettings>(json!({"roll_check": false})).unwrap();
++        assert!(!tools.roll_check);
++        assert!(tools.save_relationship);
+diff --git a/src-tauri/src/features/transcript/erase.rs b/src-tauri/src/features/transcript/erase.rs
+index 1608aa1..bffe5f5 100644
+--- a/src-tauri/src/features/transcript/erase.rs
++++ b/src-tauri/src/features/transcript/erase.rs
+@@ -402 +402 @@ mod tests {
+-            transcript_kind::ENTITY_QUERIED,
++            transcript_kind::ENTITY_UPDATED,
+diff --git a/src-tauri/src/features/transcript/filter.rs b/src-tauri/src/features/transcript/filter.rs
+index a64218f..a6b93ef 100644
+--- a/src-tauri/src/features/transcript/filter.rs
++++ b/src-tauri/src/features/transcript/filter.rs
+@@ -45 +44,0 @@ fn record_label(kind: &str) -> (&'static str, bool) {
+-        kind::ENTITY_QUERIED => ("Entity lookups", true),
+diff --git a/src-tauri/src/features/transcript/history.rs b/src-tauri/src/features/transcript/history.rs
+index 2188cc4..bac87c6 100644
+--- a/src-tauri/src/features/transcript/history.rs
++++ b/src-tauri/src/features/transcript/history.rs
+@@ -434 +434 @@ mod tests {
+-                kind::ENTITY_QUERIED,
++                kind::ENTITY_UPDATED,
+@@ -497 +497 @@ mod tests {
+-    fn for_model_ignores_legacy_dice_roll_preference() {
++    fn for_model_keeps_dice_rolls_with_current_defaults() {
+@@ -505,5 +504,0 @@ mod tests {
+-        conn.execute(
+-            "INSERT INTO settings (key, value) VALUES ('context_injection', ?1)",
+-            [r#"{"entity_context_mode":"scoped","dice_rolls_in_context":false}"#],
+-        )
+-        .unwrap();
+@@ -586 +581 @@ mod tests {
+-    fn legacy_entity_queries_remain_contextual_but_tool_calls_do_not() {
++    fn entity_updates_remain_contextual_but_tool_calls_do_not() {
+@@ -591 +586 @@ mod tests {
+-                kind::ENTITY_QUERIED,
++                kind::ENTITY_UPDATED,
+@@ -608 +603 @@ mod tests {
+-            "[Authoritative story event: entity_queried]\nLooked up: Bob"
++            "[Authoritative story event: entity_updated]\nLooked up: Bob"
+@@ -611,0 +607,20 @@ mod tests {
++    #[test]
++    fn player_rename_is_a_labelled_newer_fact_after_narration() {
++        use crate::features::entities;
++        let pool = crate::shared::db::test_pool();
++        let conn = pool.get().unwrap();
++        crate::shared::test_support::story(&conn, "s");
++        entities::create_entity_with_id_sync(&conn, "mira", "s", "character", "Mira", None, "test", None, None).unwrap();
++        repository::append_entry(&conn, "s", kind::NARRATION, "visible", Some("Mira arrives."), &json!({}), None, None).unwrap();
++        entities::update_entity_sync(&conn, "s", "mira", "Mira Vale", None, "user", None, None).unwrap();
++        let history = for_model(&conn, "s", &TranscriptSettings::default(), ImagePolicy::Unsupported).unwrap();
++        let narration = history.iter().position(|turn| turn.content == "Mira arrives.").unwrap();
++        let correction = history.iter().position(|turn| turn.content.contains("User edit: ") && turn.content.contains("name Mira → Mira Vale")).unwrap();
++        assert!(correction > narration);
++        assert!(history[correction].content.starts_with("[Authoritative story event: entity_updated]\nUser edit: "));
++        entities::update_entity_sync(&conn, "s", "mira", "Mira Gray", None, "narrator_tool", None, None).unwrap();
++        let history = for_model(&conn, "s", &TranscriptSettings::default(), ImagePolicy::Unsupported).unwrap();
++        let update = history.iter().find(|turn| turn.content.contains("name Mira Vale → Mira Gray")).unwrap();
++        assert!(!update.content.contains("User edit: "));
++    }
++
+@@ -665 +680 @@ mod tests {
+-            kind::ENTITY_QUERIED,
++            kind::ENTITY_UPDATED,
+diff --git a/src-tauri/src/features/transcript/model.rs b/src-tauri/src/features/transcript/model.rs
+index 4e933c6..efeacdc 100644
+--- a/src-tauri/src/features/transcript/model.rs
++++ b/src-tauri/src/features/transcript/model.rs
+@@ -67 +66,0 @@ pub mod kind {
+-    pub const ENTITY_QUERIED: &str = "entity_queried";
+@@ -85 +83,0 @@ pub mod kind {
+-        ENTITY_QUERIED,
+@@ -98,0 +97,7 @@ mod tests {
++    #[test]
++    fn transcript_catalog_contains_entity_changes_not_lookups() {
++        let items = crate::features::transcript::filter::TranscriptSettings::default().items();
++        assert!(items.iter().any(|item| item.key == "record.entity_updated"));
++        assert!(!items.iter().any(|item| item.key == "record.entity_queried" || item.label == "Entity lookups"));
++    }
++
+diff --git a/src-tauri/src/features/transcript/query.rs b/src-tauri/src/features/transcript/query.rs
+index f3bf6b5..f0afb17 100644
+--- a/src-tauri/src/features/transcript/query.rs
++++ b/src-tauri/src/features/transcript/query.rs
+@@ -69 +69 @@ pub fn entities_touched_since(
+-           AND kind IN (?3, ?4, ?5, ?6, ?7, ?8)",
++            AND kind IN (?3, ?4, ?5, ?6, ?7)",
+@@ -76 +75,0 @@ pub fn entities_touched_since(
+-            kind::ENTITY_QUERIED,
+@@ -314 +313 @@ mod tests {
+-            kind::ENTITY_QUERIED,
++            kind::ENTITY_UPDATED,
+diff --git a/src-tauri/src/prompts.rs b/src-tauri/src/prompts.rs
+index 0c4e865..e2520f4 100644
+--- a/src-tauri/src/prompts.rs
++++ b/src-tauri/src/prompts.rs
+@@ -52 +52 @@ Each turn arrives as tagged input. These tags are input markup. Never reproduce
+-- `<entities>` is authoritative, and user overrides win.
++- `<entities>` is the current record of the story's characters and relationships. When it disagrees with the story, the more recent one is correct; never undo a player correction unless later story events change it.
+@@ -81 +81 @@ pub const ENTITY_CONTEXT_HEADER: &str =
+-    "Current entity state is authoritative. User overrides take precedence over inferred updates.";
++    "Current record. When the story and a record disagree, the more recent one is correct. Never undo a player correction unless later story events change it. A → B relationships are one-way; A ↔ B are mutual. Refer to characters by name, and to a relationship as 'A → B'.";
+diff --git a/src-tauri/src/shared/db.rs b/src-tauri/src/shared/db.rs
+index d22785a..e752f46 100644
+--- a/src-tauri/src/shared/db.rs
++++ b/src-tauri/src/shared/db.rs
+@@ -113,2 +113,2 @@ fn create_schema(conn: &mut PooledConn) -> AppResult<()> {
+-            kind TEXT NOT NULL,
+-            name TEXT NOT NULL,
++            kind TEXT NOT NULL CHECK (kind IN ('character', 'relationship')),
++            name TEXT,
+@@ -118 +118,2 @@ fn create_schema(conn: &mut PooledConn) -> AppResult<()> {
+-            updated_at TEXT NOT NULL
++            updated_at TEXT NOT NULL,
++            CHECK ((kind = 'character') = (name IS NOT NULL))
+@@ -123,0 +125,14 @@ fn create_schema(conn: &mut PooledConn) -> AppResult<()> {
++        -- Endpoint ids deliberately have no foreign keys: endpoint replay
++        -- deletes and recreates rows without replaying their relationships.
++        CREATE TABLE IF NOT EXISTS relationships (
++            entity_id TEXT PRIMARY KEY REFERENCES entities(id) ON DELETE CASCADE,
++            from_id TEXT NOT NULL,
++            to_id TEXT NOT NULL,
++            label TEXT NOT NULL,
++            direction TEXT NOT NULL CHECK (direction IN ('one_way', 'both')),
++            description TEXT
++        );
++        CREATE INDEX IF NOT EXISTS idx_relationships_to ON relationships(to_id);
++        -- Counts soft-deleted rows; revival must reuse relationship_id.
++        CREATE UNIQUE INDEX IF NOT EXISTS idx_relationships_pair ON relationships(from_id, to_id);
++
+@@ -237,10 +251,0 @@ fn seed_attribute_registry(conn: &PooledConn) -> AppResult<()> {
+-        ("Lock Difficulty", &["object"], 0.0, 10.0, "object"),
+-        ("Fragility", &["object"], 0.0, 10.0, "object"),
+-        ("Weight", &["object"], 0.0, 10.0, "object"),
+-        ("Trap Sensitivity", &["object"], 0.0, 10.0, "object"),
+-        ("Value", &["object"], 0.0, 10.0, "object"),
+-        ("Durability", &["object"], 0.0, 10.0, "object"),
+-        ("Visibility", &["location"], 0.0, 10.0, "location"),
+-        ("Terrain Difficulty", &["location"], 0.0, 10.0, "location"),
+-        ("Ambient Danger", &["location"], 0.0, 10.0, "location"),
+-        ("Shelter", &["location"], 0.0, 10.0, "location"),
+@@ -251 +255,0 @@ fn seed_attribute_registry(conn: &PooledConn) -> AppResult<()> {
+-        ("Difficulty", &["campaign"], 0.0, 10.0, "campaign"),
+@@ -439,0 +444 @@ mod tests {
++        assert!(exists("relationships"));
+diff --git a/src/features/narratorTools/NarratorToolsPanel.tsx b/src/features/narratorTools/NarratorToolsPanel.tsx
+index adda5c1..e817078 100644
+--- a/src/features/narratorTools/NarratorToolsPanel.tsx
++++ b/src/features/narratorTools/NarratorToolsPanel.tsx
+@@ -9,2 +9,2 @@ const GROUPS: { title: string; items: { key: keyof NarratorToolSettings; label:
+-      { key: "get_entities", label: "Look up entities", description: "The narrator can read characters and other world state." },
+-      { key: "create_entity", label: "Create entities", description: "The narrator can add persistent characters, places, and objects." },
++      { key: "save_relationship", label: "Record relationships", description: "The narrator can record how characters relate and change relationship stats." },
++      { key: "create_entity", label: "Create entities", description: "The narrator can add persistent characters." },
+diff --git a/src/features/story/store.test.mjs b/src/features/story/store.test.mjs
+index a6600a4..b11f314 100644
+--- a/src/features/story/store.test.mjs
++++ b/src/features/story/store.test.mjs
+@@ -55 +55 @@ globalThis.__storyTestInvoke = async (command, args = {}) => {
+-      const tools = { get_entities: true, create_entity: true, update_entity: true, adjust_entity_attribute: true, roll_check: true, illustrate_scene: true };
++      const tools = { save_relationship: true, create_entity: true, update_entity: true, adjust_entity_attribute: true, roll_check: true, illustrate_scene: true };
+@@ -320 +320 @@ test("rapid independent toggles remain isolated by story and failed saves roll b
+-    store.getState().saveNarratorTools(first, { get_entities: false }),
++    store.getState().saveNarratorTools(first, { save_relationship: false }),
+@@ -324 +324 @@ test("rapid independent toggles remain isolated by story and failed saves roll b
+-  assert.equal(stories.get(first).narrator_tools.get_entities, false);
++  assert.equal(stories.get(first).narrator_tools.save_relationship, false);
+@@ -837 +837 @@ test("snapshot selector validates roll shapes without interpreting outcomes", ()
+-  events.push({ ...rollEvent("not-a-roll", "narration", base), kind: "entity_queried" });
++  events.push({ ...rollEvent("not-a-roll", "narration", base), kind: "entity_updated" });
+diff --git a/src/features/transcript/TurnActivity.tsx b/src/features/transcript/TurnActivity.tsx
+index afb25ee..b1753da 100644
+--- a/src/features/transcript/TurnActivity.tsx
++++ b/src/features/transcript/TurnActivity.tsx
+@@ -11 +10,0 @@ const TOOL_EVENT_KINDS = new Set([
+-  "entity_queried",
+diff --git a/src/shared/types.ts b/src/shared/types.ts
+index e7ecee4..0f1bb6f 100644
+--- a/src/shared/types.ts
++++ b/src/shared/types.ts
+@@ -15 +15 @@ export type TranscriptEntryKind =
+-  | "diceroll" | "tool_call" | "entity_created" | "entity_queried" | "entity_updated" | "entity_deleted"
++  | "diceroll" | "tool_call" | "entity_created" | "entity_updated" | "entity_deleted"
+@@ -29 +29 @@ export interface EntityEventPayload extends TranscriptPayloadBase {
+-  entity_id: string; name?: string; kind?: EntityKind; appearance_anchor?: string | null;
++  entity_id: string; name?: string | null; kind?: EntityKind; appearance_anchor?: string | null;
+@@ -59 +59 @@ export type TranscriptEntry =
+-  | (TranscriptEntryBase & { kind: "diceroll" | "entity_queried"; payload: TranscriptPayloadBase });
++  | (TranscriptEntryBase & { kind: "diceroll"; payload: TranscriptPayloadBase });
+@@ -117 +117 @@ export interface StoryCostBreakdown { turns: TurnCost[]; images: ImageCost[] }
+-export type EntityKind = "character" | "object" | "location" | "relationship" | "campaign";
++export type EntityKind = "character" | "relationship";
+@@ -123 +123 @@ export interface NarratorToolSettings {
+-  get_entities: boolean;
++  save_relationship: boolean;

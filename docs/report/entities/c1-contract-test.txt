@@ -1,0 +1,60 @@
+C1 temporary contract probe (evidence only; not a permanent Rust test)
+
+Insert the test below into the cfg(test) turn_tests module in
+src-tauri/src/features/narrator/tools/mod.rs. That module already imports
+catalog, ToolDeps, friendly_tool_label, test_support::fixture, Arc, and Mutex.
+Add `use serde_json::json;` to the module imports while the probe is inserted.
+
+Run from src-tauri with C1_TOOL_CONTRACT_PHASE=after. The default is before;
+do not use the default after capturing the baseline. For later-stage evidence,
+change only the final output filename to a stage-specific path so the original
+C1 before/after evidence remains intact. Keep all six sample args unchanged.
+Remove the probe and its json import after collecting the dump.
+
+    #[test]
+    fn c1_dump_tool_contract() {
+        let (_pool, turn, target, turn_id) = fixture();
+        let deps = ToolDeps {
+            turn: Some(turn),
+            target_entry_id: Some(target),
+            turn_id: Some(turn_id),
+            embedding_api_key: String::new(),
+            image_requests: Arc::new(Mutex::new(Vec::new())),
+        };
+        let sample_args = [
+            json!({"chance_percent":35,"reason":"escaping a ghoul"}),
+            json!({"kind":"character","name":"Mira"}),
+            json!({"kind":"character","name":"Mira","appearance_anchor":"silver hair"}),
+            json!({"id":"mira","name":"Mira the Bold","appearance_anchor":"silver hair"}),
+            json!({"entity_id":"mira","attribute":"Stealth","delta":3,"reason":"sneaking"}),
+            json!({"description":"a lighthouse at dusk","character_ids":["mira"]}),
+        ];
+        assert_eq!(catalog::TOOLS.len(), sample_args.len());
+        let contract = catalog::TOOLS
+            .iter()
+            .zip(sample_args)
+            .map(|(spec, args)| {
+                let definition = (spec.build)(&deps).definition();
+                assert_eq!(definition.name, spec.name);
+                json!({
+                    "name": definition.name,
+                    "description": definition.description,
+                    "schema": definition.parameters,
+                    "instruction": spec.instruction,
+                    "labels": [
+                        {"args": args, "friendly_tool_label": friendly_tool_label(spec.name, &args.to_string())},
+                        {"args": {}, "friendly_tool_label": friendly_tool_label(spec.name, "{}")},
+                        {"raw_args": "not-json", "friendly_tool_label": friendly_tool_label(spec.name, "not-json")},
+                    ],
+                })
+            })
+            .collect::<Vec<_>>();
+        let phase = std::env::var("C1_TOOL_CONTRACT_PHASE").unwrap_or_else(|_| "before".into());
+        assert!(matches!(phase.as_str(), "before" | "after"));
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../docs/report/entities")
+            .join(format!("c1-tool-contract-{phase}.json"));
+        assert!(path.parent().unwrap().is_dir());
+        std::fs::write(&path, serde_json::to_vec_pretty(&contract).unwrap()).unwrap();
+        println!("C1 tool contract saved to {}", path.display());
+    }

@@ -1,0 +1,31 @@
+{
+  "database": "C:\\Users\\User\\AppData\\Roaming\\com.story-llm.app\\story-llm.sqlite3",
+  "mode": "ro",
+  "query": "SELECT e.id,e.name,e.kind,c.location,c.outfit,c.known_as,l.from_id,l.to_id,l.label,l.direction FROM entities e LEFT JOIN characters c ON c.entity_id=e.id LEFT JOIN relationships l ON l.entity_id=e.id WHERE e.story_id='7b6992ba-996a-4b13-9750-bef67d3eb4c0'",
+  "rows": [
+    {
+      "id": "0834907f-66a8-418b-abff-19d18b92e6f9",
+      "name": "Tom",
+      "kind": "character",
+      "location": "behind the bar",
+      "outfit": "stained apron",
+      "known_as": null,
+      "from_id": null,
+      "to_id": null,
+      "label": null,
+      "direction": null
+    },
+    {
+      "id": "6abab2f7-1876-4ade-9d65-6ca8d72f4751",
+      "name": "You",
+      "kind": "character",
+      "location": null,
+      "outfit": null,
+      "known_as": null,
+      "from_id": null,
+      "to_id": null,
+      "label": null,
+      "direction": null
+    }
+  ]
+}

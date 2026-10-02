@@ -1,0 +1,10 @@
+{"time": 1790797276.0279388, "command": ["click", "@e21"], "result": {"ok": true}}
+{"time": 1790797543.3988092, "command": ["fill", "main textarea", "Look around the room, and illustrate it."], "result": {"ok": true}}
+{"time": 1790798022.0679739, "command": ["fill", "main textarea", "Look around the room, and illustrate it."], "result": {"ok": true}}
+{"time": 1790798093.8802834, "command": ["fill", "main textarea", "the room"], "result": {"ok": true}}
+{"time": 1790798441.0154083, "command": ["fill", "main textarea", "the door"], "result": {"ok": true}}
+{"time": 1790798611.8198373, "command": ["fill", "main textarea", "the floor"], "result": {"ok": true}}
+{"time": 1790798717.7174675, "command": ["select", "#caption-model", "__custom__"], "result": {"ok": true}}
+{"time": 1790798728.9736252, "command": ["fill", "[aria-label^=Custom]", "openai/does-not-exist"], "result": {"ok": true}}
+{"time": 1790798771.104108, "command": ["fill", "main textarea", "the window"], "result": {"ok": true}}
+{"time": 1790798875.6225173, "command": ["select", "#caption-model", "google/gemini-3.5-flash-lite"], "result": {"ok": true}}

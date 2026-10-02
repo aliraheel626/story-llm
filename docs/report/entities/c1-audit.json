@@ -1,0 +1,9 @@
+{
+  "production_added": 929,
+  "production_removed": 870,
+  "test_added": 411,
+  "test_removed": 389,
+  "production_net": 59,
+  "test_net": 22,
+  "numstat": "3\t2\tsrc-tauri/src/ai/mod.rs\n5\t4\tsrc-tauri/src/features/context/blocks.rs\n9\t106\tsrc-tauri/src/features/narrator/catalog.rs\n2\t347\tsrc-tauri/src/features/narrator/dice.rs\n3\t3\tsrc-tauri/src/features/narrator/stream.rs\n0\t649\tsrc-tauri/src/features/narrator/tools.rs\n283\t0\tsrc-tauri/src/features/narrator/tools/adjust_entity_attribute.rs\n181\t0\tsrc-tauri/src/features/narrator/tools/create_entity.rs\n103\t0\tsrc-tauri/src/features/narrator/tools/get_entities.rs\n129\t0\tsrc-tauri/src/features/narrator/tools/illustrate_scene.rs\n104\t0\tsrc-tauri/src/features/narrator/tools/mod.rs\n403\t0\tsrc-tauri/src/features/narrator/tools/roll_check.rs\n113\t0\tsrc-tauri/src/features/narrator/tools/update_entity.rs\n2\t148\tsrc-tauri/src/prompts.rs\n"
+}

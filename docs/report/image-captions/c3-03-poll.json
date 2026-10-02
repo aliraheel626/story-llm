@@ -1,0 +1,1666 @@
+[
+  {
+    "time": 1790797598.87862,
+    "value": false
+  },
+  {
+    "time": 1790797599.3072891,
+    "value": false
+  },
+  {
+    "time": 1790797599.734504,
+    "value": false
+  },
+  {
+    "time": 1790797600.1618216,
+    "value": false
+  },
+  {
+    "time": 1790797600.5888157,
+    "value": false
+  },
+  {
+    "time": 1790797601.0157747,
+    "value": false
+  },
+  {
+    "time": 1790797601.4444132,
+    "value": false
+  },
+  {
+    "time": 1790797601.878875,
+    "value": false
+  },
+  {
+    "time": 1790797602.3117201,
+    "value": false
+  },
+  {
+    "time": 1790797602.7417026,
+    "value": false
+  },
+  {
+    "time": 1790797603.1715846,
+    "value": false
+  },
+  {
+    "time": 1790797603.6004095,
+    "value": false
+  },
+  {
+    "time": 1790797604.0341187,
+    "value": false
+  },
+  {
+    "time": 1790797604.4649947,
+    "value": false
+  },
+  {
+    "time": 1790797604.9182212,
+    "value": false
+  },
+  {
+    "time": 1790797605.3482304,
+    "value": false
+  },
+  {
+    "time": 1790797605.7780237,
+    "value": false
+  },
+  {
+    "time": 1790797606.205825,
+    "value": false
+  },
+  {
+    "time": 1790797606.6399183,
+    "value": false
+  },
+  {
+    "time": 1790797607.0691323,
+    "value": false
+  },
+  {
+    "time": 1790797607.4990785,
+    "value": false
+  },
+  {
+    "time": 1790797607.9316723,
+    "value": false
+  },
+  {
+    "time": 1790797608.3631606,
+    "value": false
+  },
+  {
+    "time": 1790797608.7995448,
+    "value": false
+  },
+  {
+    "time": 1790797609.2669144,
+    "value": false
+  },
+  {
+    "time": 1790797609.7226849,
+    "value": false
+  },
+  {
+    "time": 1790797610.15352,
+    "value": false
+  },
+  {
+    "time": 1790797610.58628,
+    "value": false
+  },
+  {
+    "time": 1790797611.047984,
+    "value": false
+  },
+  {
+    "time": 1790797611.477621,
+    "value": false
+  },
+  {
+    "time": 1790797611.9096932,
+    "value": false
+  },
+  {
+    "time": 1790797612.3371162,
+    "value": false
+  },
+  {
+    "time": 1790797612.7637463,
+    "value": false
+  },
+  {
+    "time": 1790797613.1922715,
+    "value": false
+  },
+  {
+    "time": 1790797613.6214213,
+    "value": false
+  },
+  {
+    "time": 1790797614.0545664,
+    "value": false
+  },
+  {
+    "time": 1790797614.524017,
+    "value": false
+  },
+  {
+    "time": 1790797614.9566321,
+    "value": false
+  },
+  {
+    "time": 1790797615.3858411,
+    "value": false
+  },
+  {
+    "time": 1790797615.8155866,
+    "value": false
+  },
+  {
+    "time": 1790797616.2454555,
+    "value": false
+  },
+  {
+    "time": 1790797616.6782196,
+    "value": false
+  },
+  {
+    "time": 1790797617.1116319,
+    "value": false
+  },
+  {
+    "time": 1790797617.5463436,
+    "value": false
+  },
+  {
+    "time": 1790797617.9761727,
+    "value": false
+  },
+  {
+    "time": 1790797618.4043376,
+    "value": false
+  },
+  {
+    "time": 1790797618.8317719,
+    "value": false
+  },
+  {
+    "time": 1790797619.261817,
+    "value": false
+  },
+  {
+    "time": 1790797619.695711,
+    "value": false
+  },
+  {
+    "time": 1790797620.1240983,
+    "value": false
+  },
+  {
+    "time": 1790797620.5538137,
+    "value": false
+  },
+  {
+    "time": 1790797620.9826815,
+    "value": false
+  },
+  {
+    "time": 1790797621.4098403,
+    "value": false
+  },
+  {
+    "time": 1790797621.8416717,
+    "value": false
+  },
+  {
+    "time": 1790797622.2718022,
+    "value": false
+  },
+  {
+    "time": 1790797622.7004063,
+    "value": false
+  },
+  {
+    "time": 1790797623.1329808,
+    "value": false
+  },
+  {
+    "time": 1790797623.5633202,
+    "value": false
+  },
+  {
+    "time": 1790797623.994148,
+    "value": false
+  },
+  {
+    "time": 1790797624.4246979,
+    "value": false
+  },
+  {
+    "time": 1790797624.8604562,
+    "value": false
+  },
+  {
+    "time": 1790797625.2995207,
+    "value": false
+  },
+  {
+    "time": 1790797625.7265086,
+    "value": false
+  },
+  {
+    "time": 1790797626.1583357,
+    "value": false
+  },
+  {
+    "time": 1790797626.5868077,
+    "value": false
+  },
+  {
+    "time": 1790797627.0178103,
+    "value": false
+  },
+  {
+    "time": 1790797627.4500058,
+    "value": false
+  },
+  {
+    "time": 1790797627.883137,
+    "value": false
+  },
+  {
+    "time": 1790797628.3138583,
+    "value": false
+  },
+  {
+    "time": 1790797628.7416527,
+    "value": false
+  },
+  {
+    "time": 1790797629.1750026,
+    "value": false
+  },
+  {
+    "time": 1790797629.6106298,
+    "value": false
+  },
+  {
+    "time": 1790797630.0392134,
+    "value": false
+  },
+  {
+    "time": 1790797630.4681518,
+    "value": false
+  },
+  {
+    "time": 1790797630.897593,
+    "value": false
+  },
+  {
+    "time": 1790797631.3249233,
+    "value": false
+  },
+  {
+    "time": 1790797631.7540572,
+    "value": false
+  },
+  {
+    "time": 1790797632.184313,
+    "value": false
+  },
+  {
+    "time": 1790797632.6123555,
+    "value": false
+  },
+  {
+    "time": 1790797633.042825,
+    "value": false
+  },
+  {
+    "time": 1790797633.469471,
+    "value": false
+  },
+  {
+    "time": 1790797633.89637,
+    "value": false
+  },
+  {
+    "time": 1790797634.3319428,
+    "value": false
+  },
+  {
+    "time": 1790797634.7616024,
+    "value": false
+  },
+  {
+    "time": 1790797635.1954458,
+    "value": false
+  },
+  {
+    "time": 1790797635.6276143,
+    "value": false
+  },
+  {
+    "time": 1790797636.057456,
+    "value": false
+  },
+  {
+    "time": 1790797636.4886024,
+    "value": false
+  },
+  {
+    "time": 1790797636.9186547,
+    "value": false
+  },
+  {
+    "time": 1790797637.3477674,
+    "value": false
+  },
+  {
+    "time": 1790797637.7753687,
+    "value": false
+  },
+  {
+    "time": 1790797638.2055247,
+    "value": false
+  },
+  {
+    "time": 1790797638.6389947,
+    "value": false
+  },
+  {
+    "time": 1790797639.070344,
+    "value": false
+  },
+  {
+    "time": 1790797639.49869,
+    "value": false
+  },
+  {
+    "time": 1790797639.930287,
+    "value": false
+  },
+  {
+    "time": 1790797640.361461,
+    "value": false
+  },
+  {
+    "time": 1790797640.7924683,
+    "value": false
+  },
+  {
+    "time": 1790797641.2220304,
+    "value": false
+  },
+  {
+    "time": 1790797641.6528301,
+    "value": false
+  },
+  {
+    "time": 1790797642.0809476,
+    "value": false
+  },
+  {
+    "time": 1790797642.5079803,
+    "value": false
+  },
+  {
+    "time": 1790797642.9365168,
+    "value": false
+  },
+  {
+    "time": 1790797643.3648932,
+    "value": false
+  },
+  {
+    "time": 1790797643.7945926,
+    "value": false
+  },
+  {
+    "time": 1790797644.2260153,
+    "value": false
+  },
+  {
+    "time": 1790797644.6537695,
+    "value": false
+  },
+  {
+    "time": 1790797645.0839493,
+    "value": false
+  },
+  {
+    "time": 1790797645.5153122,
+    "value": false
+  },
+  {
+    "time": 1790797645.94564,
+    "value": false
+  },
+  {
+    "time": 1790797646.3766136,
+    "value": false
+  },
+  {
+    "time": 1790797646.8073938,
+    "value": false
+  },
+  {
+    "time": 1790797647.2359524,
+    "value": false
+  },
+  {
+    "time": 1790797647.6637774,
+    "value": false
+  },
+  {
+    "time": 1790797648.0923584,
+    "value": false
+  },
+  {
+    "time": 1790797648.5227427,
+    "value": false
+  },
+  {
+    "time": 1790797648.9504704,
+    "value": false
+  },
+  {
+    "time": 1790797649.3966608,
+    "value": false
+  },
+  {
+    "time": 1790797649.8254461,
+    "value": false
+  },
+  {
+    "time": 1790797650.2551208,
+    "value": false
+  },
+  {
+    "time": 1790797650.7225952,
+    "value": false
+  },
+  {
+    "time": 1790797651.1518812,
+    "value": false
+  },
+  {
+    "time": 1790797651.5838408,
+    "value": false
+  },
+  {
+    "time": 1790797652.0109773,
+    "value": false
+  },
+  {
+    "time": 1790797652.4384649,
+    "value": false
+  },
+  {
+    "time": 1790797652.8682375,
+    "value": false
+  },
+  {
+    "time": 1790797653.2984254,
+    "value": false
+  },
+  {
+    "time": 1790797653.7260659,
+    "value": false
+  },
+  {
+    "time": 1790797654.1801379,
+    "value": false
+  },
+  {
+    "time": 1790797654.6107767,
+    "value": false
+  },
+  {
+    "time": 1790797655.0381238,
+    "value": false
+  },
+  {
+    "time": 1790797655.4748023,
+    "value": false
+  },
+  {
+    "time": 1790797655.905243,
+    "value": false
+  },
+  {
+    "time": 1790797656.335201,
+    "value": false
+  },
+  {
+    "time": 1790797656.7832632,
+    "value": false
+  },
+  {
+    "time": 1790797657.2114866,
+    "value": false
+  },
+  {
+    "time": 1790797657.6386793,
+    "value": false
+  },
+  {
+    "time": 1790797658.0678265,
+    "value": false
+  },
+  {
+    "time": 1790797658.4972427,
+    "value": false
+  },
+  {
+    "time": 1790797658.9292288,
+    "value": false
+  },
+  {
+    "time": 1790797659.3592212,
+    "value": false
+  },
+  {
+    "time": 1790797659.7866805,
+    "value": false
+  },
+  {
+    "time": 1790797660.216044,
+    "value": false
+  },
+  {
+    "time": 1790797660.6714876,
+    "value": false
+  },
+  {
+    "time": 1790797661.1018002,
+    "value": false
+  },
+  {
+    "time": 1790797661.5321615,
+    "value": false
+  },
+  {
+    "time": 1790797661.9841542,
+    "value": false
+  },
+  {
+    "time": 1790797662.4150958,
+    "value": false
+  },
+  {
+    "time": 1790797662.8469536,
+    "value": false
+  },
+  {
+    "time": 1790797663.271971,
+    "value": false
+  },
+  {
+    "time": 1790797663.7001605,
+    "value": false
+  },
+  {
+    "time": 1790797664.1265562,
+    "value": false
+  },
+  {
+    "time": 1790797664.5563219,
+    "value": false
+  },
+  {
+    "time": 1790797664.98462,
+    "value": false
+  },
+  {
+    "time": 1790797665.4143887,
+    "value": false
+  },
+  {
+    "time": 1790797665.8433418,
+    "value": false
+  },
+  {
+    "time": 1790797666.275613,
+    "value": false
+  },
+  {
+    "time": 1790797666.7027557,
+    "value": false
+  },
+  {
+    "time": 1790797667.158395,
+    "value": false
+  },
+  {
+    "time": 1790797667.6129856,
+    "value": false
+  },
+  {
+    "time": 1790797668.0381935,
+    "value": false
+  },
+  {
+    "time": 1790797668.4671671,
+    "value": false
+  },
+  {
+    "time": 1790797668.8976214,
+    "value": false
+  },
+  {
+    "time": 1790797669.3274262,
+    "value": false
+  },
+  {
+    "time": 1790797669.7869701,
+    "value": false
+  },
+  {
+    "time": 1790797670.2195308,
+    "value": false
+  },
+  {
+    "time": 1790797670.64852,
+    "value": false
+  },
+  {
+    "time": 1790797671.0782325,
+    "value": false
+  },
+  {
+    "time": 1790797671.5097752,
+    "value": false
+  },
+  {
+    "time": 1790797671.936956,
+    "value": false
+  },
+  {
+    "time": 1790797672.366003,
+    "value": false
+  },
+  {
+    "time": 1790797672.7962148,
+    "value": false
+  },
+  {
+    "time": 1790797673.224857,
+    "value": false
+  },
+  {
+    "time": 1790797673.6548154,
+    "value": false
+  },
+  {
+    "time": 1790797674.0822103,
+    "value": false
+  },
+  {
+    "time": 1790797674.5118098,
+    "value": false
+  },
+  {
+    "time": 1790797674.9409447,
+    "value": false
+  },
+  {
+    "time": 1790797675.3686483,
+    "value": false
+  },
+  {
+    "time": 1790797675.7932837,
+    "value": false
+  },
+  {
+    "time": 1790797676.2247906,
+    "value": false
+  },
+  {
+    "time": 1790797676.6530833,
+    "value": false
+  },
+  {
+    "time": 1790797677.080475,
+    "value": false
+  },
+  {
+    "time": 1790797677.5142868,
+    "value": false
+  },
+  {
+    "time": 1790797677.9472618,
+    "value": false
+  },
+  {
+    "time": 1790797678.377765,
+    "value": false
+  },
+  {
+    "time": 1790797678.8111742,
+    "value": false
+  },
+  {
+    "time": 1790797679.2421758,
+    "value": false
+  },
+  {
+    "time": 1790797679.6735616,
+    "value": false
+  },
+  {
+    "time": 1790797680.1046286,
+    "value": false
+  },
+  {
+    "time": 1790797680.5446687,
+    "value": false
+  },
+  {
+    "time": 1790797680.9844935,
+    "value": false
+  },
+  {
+    "time": 1790797681.41546,
+    "value": false
+  },
+  {
+    "time": 1790797681.8528204,
+    "value": false
+  },
+  {
+    "time": 1790797682.288018,
+    "value": false
+  },
+  {
+    "time": 1790797682.7192862,
+    "value": false
+  },
+  {
+    "time": 1790797683.1520245,
+    "value": false
+  },
+  {
+    "time": 1790797683.5870285,
+    "value": false
+  },
+  {
+    "time": 1790797684.0175567,
+    "value": false
+  },
+  {
+    "time": 1790797684.4475067,
+    "value": false
+  },
+  {
+    "time": 1790797684.87735,
+    "value": false
+  },
+  {
+    "time": 1790797685.3120918,
+    "value": false
+  },
+  {
+    "time": 1790797685.763062,
+    "value": false
+  },
+  {
+    "time": 1790797686.19904,
+    "value": false
+  },
+  {
+    "time": 1790797686.6316624,
+    "value": false
+  },
+  {
+    "time": 1790797687.0669923,
+    "value": false
+  },
+  {
+    "time": 1790797687.5030797,
+    "value": false
+  },
+  {
+    "time": 1790797687.9409604,
+    "value": false
+  },
+  {
+    "time": 1790797688.3833613,
+    "value": false
+  },
+  {
+    "time": 1790797688.8220859,
+    "value": false
+  },
+  {
+    "time": 1790797689.2578404,
+    "value": false
+  },
+  {
+    "time": 1790797689.712026,
+    "value": false
+  },
+  {
+    "time": 1790797690.1582413,
+    "value": false
+  },
+  {
+    "time": 1790797690.5994687,
+    "value": false
+  },
+  {
+    "time": 1790797691.0353122,
+    "value": false
+  },
+  {
+    "time": 1790797691.47136,
+    "value": false
+  },
+  {
+    "time": 1790797691.9099436,
+    "value": false
+  },
+  {
+    "time": 1790797692.3466523,
+    "value": false
+  },
+  {
+    "time": 1790797692.7816699,
+    "value": false
+  },
+  {
+    "time": 1790797693.2139802,
+    "value": false
+  },
+  {
+    "time": 1790797693.649168,
+    "value": false
+  },
+  {
+    "time": 1790797694.0860405,
+    "value": false
+  },
+  {
+    "time": 1790797694.5211458,
+    "value": false
+  },
+  {
+    "time": 1790797694.9518156,
+    "value": false
+  },
+  {
+    "time": 1790797695.3921354,
+    "value": false
+  },
+  {
+    "time": 1790797695.8328314,
+    "value": false
+  },
+  {
+    "time": 1790797696.267266,
+    "value": false
+  },
+  {
+    "time": 1790797696.699706,
+    "value": false
+  },
+  {
+    "time": 1790797697.1309948,
+    "value": false
+  },
+  {
+    "time": 1790797697.560656,
+    "value": false
+  },
+  {
+    "time": 1790797697.9966507,
+    "value": false
+  },
+  {
+    "time": 1790797698.430822,
+    "value": false
+  },
+  {
+    "time": 1790797698.8890176,
+    "value": false
+  },
+  {
+    "time": 1790797699.3239784,
+    "value": false
+  },
+  {
+    "time": 1790797699.7566848,
+    "value": false
+  },
+  {
+    "time": 1790797700.1901214,
+    "value": false
+  },
+  {
+    "time": 1790797700.6243343,
+    "value": false
+  },
+  {
+    "time": 1790797701.0546556,
+    "value": false
+  },
+  {
+    "time": 1790797701.4862227,
+    "value": false
+  },
+  {
+    "time": 1790797701.9165323,
+    "value": false
+  },
+  {
+    "time": 1790797702.3517816,
+    "value": false
+  },
+  {
+    "time": 1790797702.7808566,
+    "value": false
+  },
+  {
+    "time": 1790797703.211496,
+    "value": false
+  },
+  {
+    "time": 1790797703.6479385,
+    "value": false
+  },
+  {
+    "time": 1790797704.0781775,
+    "value": false
+  },
+  {
+    "time": 1790797704.5086632,
+    "value": false
+  },
+  {
+    "time": 1790797704.945537,
+    "value": false
+  },
+  {
+    "time": 1790797705.375998,
+    "value": false
+  },
+  {
+    "time": 1790797705.8104131,
+    "value": false
+  },
+  {
+    "time": 1790797706.2410853,
+    "value": false
+  },
+  {
+    "time": 1790797706.6761785,
+    "value": false
+  },
+  {
+    "time": 1790797707.1083105,
+    "value": false
+  },
+  {
+    "time": 1790797707.5384474,
+    "value": false
+  },
+  {
+    "time": 1790797707.985095,
+    "value": false
+  },
+  {
+    "time": 1790797708.425923,
+    "value": false
+  },
+  {
+    "time": 1790797708.8596613,
+    "value": false
+  },
+  {
+    "time": 1790797709.2931745,
+    "value": false
+  },
+  {
+    "time": 1790797709.7260838,
+    "value": false
+  },
+  {
+    "time": 1790797710.1563036,
+    "value": false
+  },
+  {
+    "time": 1790797710.5866828,
+    "value": false
+  },
+  {
+    "time": 1790797711.0176742,
+    "value": false
+  },
+  {
+    "time": 1790797711.452415,
+    "value": false
+  },
+  {
+    "time": 1790797711.8880754,
+    "value": false
+  },
+  {
+    "time": 1790797712.3187122,
+    "value": false
+  },
+  {
+    "time": 1790797712.7511435,
+    "value": false
+  },
+  {
+    "time": 1790797713.187364,
+    "value": false
+  },
+  {
+    "time": 1790797713.6188056,
+    "value": false
+  },
+  {
+    "time": 1790797714.0544648,
+    "value": false
+  },
+  {
+    "time": 1790797714.4837863,
+    "value": false
+  },
+  {
+    "time": 1790797714.9156582,
+    "value": false
+  },
+  {
+    "time": 1790797715.3787415,
+    "value": false
+  },
+  {
+    "time": 1790797715.810207,
+    "value": false
+  },
+  {
+    "time": 1790797716.2414098,
+    "value": false
+  },
+  {
+    "time": 1790797716.673252,
+    "value": false
+  },
+  {
+    "time": 1790797717.1052449,
+    "value": false
+  },
+  {
+    "time": 1790797717.538531,
+    "value": false
+  },
+  {
+    "time": 1790797717.9715424,
+    "value": false
+  },
+  {
+    "time": 1790797718.4048746,
+    "value": false
+  },
+  {
+    "time": 1790797718.8353574,
+    "value": false
+  },
+  {
+    "time": 1790797719.308182,
+    "value": false
+  },
+  {
+    "time": 1790797719.7365396,
+    "value": false
+  },
+  {
+    "time": 1790797720.2032945,
+    "value": false
+  },
+  {
+    "time": 1790797720.6342204,
+    "value": false
+  },
+  {
+    "time": 1790797721.0672538,
+    "value": false
+  },
+  {
+    "time": 1790797721.4998145,
+    "value": false
+  },
+  {
+    "time": 1790797721.9292116,
+    "value": false
+  },
+  {
+    "time": 1790797722.3904862,
+    "value": false
+  },
+  {
+    "time": 1790797722.8205905,
+    "value": false
+  },
+  {
+    "time": 1790797723.2514155,
+    "value": false
+  },
+  {
+    "time": 1790797723.6808493,
+    "value": false
+  },
+  {
+    "time": 1790797724.1135948,
+    "value": false
+  },
+  {
+    "time": 1790797724.5470262,
+    "value": false
+  },
+  {
+    "time": 1790797724.9743578,
+    "value": false
+  },
+  {
+    "time": 1790797725.407341,
+    "value": false
+  },
+  {
+    "time": 1790797725.8360367,
+    "value": false
+  },
+  {
+    "time": 1790797726.2661269,
+    "value": false
+  },
+  {
+    "time": 1790797726.7312503,
+    "value": false
+  },
+  {
+    "time": 1790797727.161671,
+    "value": false
+  },
+  {
+    "time": 1790797727.5914154,
+    "value": false
+  },
+  {
+    "time": 1790797728.0221906,
+    "value": false
+  },
+  {
+    "time": 1790797728.4527104,
+    "value": false
+  },
+  {
+    "time": 1790797728.8852777,
+    "value": false
+  },
+  {
+    "time": 1790797729.3209834,
+    "value": false
+  },
+  {
+    "time": 1790797729.7539706,
+    "value": false
+  },
+  {
+    "time": 1790797730.18866,
+    "value": false
+  },
+  {
+    "time": 1790797730.653794,
+    "value": false
+  },
+  {
+    "time": 1790797731.0841827,
+    "value": false
+  },
+  {
+    "time": 1790797731.5192595,
+    "value": false
+  },
+  {
+    "time": 1790797731.9521625,
+    "value": false
+  },
+  {
+    "time": 1790797732.3859658,
+    "value": false
+  },
+  {
+    "time": 1790797732.8296764,
+    "value": false
+  },
+  {
+    "time": 1790797733.2670124,
+    "value": false
+  },
+  {
+    "time": 1790797733.7003443,
+    "value": false
+  },
+  {
+    "time": 1790797734.1472118,
+    "value": false
+  },
+  {
+    "time": 1790797734.5970063,
+    "value": false
+  },
+  {
+    "time": 1790797735.0316389,
+    "value": false
+  },
+  {
+    "time": 1790797735.4653184,
+    "value": false
+  },
+  {
+    "time": 1790797735.904592,
+    "value": false
+  },
+  {
+    "time": 1790797736.336714,
+    "value": false
+  },
+  {
+    "time": 1790797736.7700958,
+    "value": false
+  },
+  {
+    "time": 1790797737.1998858,
+    "value": false
+  },
+  {
+    "time": 1790797737.6317427,
+    "value": false
+  },
+  {
+    "time": 1790797738.0617385,
+    "value": false
+  },
+  {
+    "time": 1790797738.4921615,
+    "value": false
+  },
+  {
+    "time": 1790797738.9308636,
+    "value": false
+  },
+  {
+    "time": 1790797739.3650315,
+    "value": false
+  },
+  {
+    "time": 1790797739.7994192,
+    "value": false
+  },
+  {
+    "time": 1790797740.2763245,
+    "value": false
+  },
+  {
+    "time": 1790797740.7198195,
+    "value": false
+  },
+  {
+    "time": 1790797741.1582808,
+    "value": false
+  },
+  {
+    "time": 1790797741.5941317,
+    "value": false
+  },
+  {
+    "time": 1790797742.0280204,
+    "value": false
+  },
+  {
+    "time": 1790797742.462394,
+    "value": false
+  },
+  {
+    "time": 1790797742.8980236,
+    "value": false
+  },
+  {
+    "time": 1790797743.3345013,
+    "value": false
+  },
+  {
+    "time": 1790797743.7664957,
+    "value": false
+  },
+  {
+    "time": 1790797744.2037513,
+    "value": false
+  },
+  {
+    "time": 1790797744.6465688,
+    "value": false
+  },
+  {
+    "time": 1790797745.0842328,
+    "value": false
+  },
+  {
+    "time": 1790797745.5170612,
+    "value": false
+  },
+  {
+    "time": 1790797745.9469237,
+    "value": false
+  },
+  {
+    "time": 1790797746.386514,
+    "value": false
+  },
+  {
+    "time": 1790797746.8171933,
+    "value": false
+  },
+  {
+    "time": 1790797747.2474835,
+    "value": false
+  },
+  {
+    "time": 1790797747.677944,
+    "value": false
+  },
+  {
+    "time": 1790797748.109854,
+    "value": false
+  },
+  {
+    "time": 1790797748.5415127,
+    "value": false
+  },
+  {
+    "time": 1790797748.9722106,
+    "value": false
+  },
+  {
+    "time": 1790797749.4004123,
+    "value": false
+  },
+  {
+    "time": 1790797749.8325975,
+    "value": false
+  },
+  {
+    "time": 1790797750.26283,
+    "value": false
+  },
+  {
+    "time": 1790797750.6996317,
+    "value": false
+  },
+  {
+    "time": 1790797751.1397665,
+    "value": false
+  },
+  {
+    "time": 1790797751.571786,
+    "value": false
+  },
+  {
+    "time": 1790797752.0041935,
+    "value": false
+  },
+  {
+    "time": 1790797752.4375808,
+    "value": false
+  },
+  {
+    "time": 1790797752.8727963,
+    "value": false
+  },
+  {
+    "time": 1790797753.2995787,
+    "value": false
+  },
+  {
+    "time": 1790797753.7318609,
+    "value": false
+  },
+  {
+    "time": 1790797754.1616652,
+    "value": false
+  },
+  {
+    "time": 1790797754.5910432,
+    "value": false
+  },
+  {
+    "time": 1790797755.0211906,
+    "value": false
+  },
+  {
+    "time": 1790797755.451221,
+    "value": false
+  },
+  {
+    "time": 1790797755.880119,
+    "value": false
+  },
+  {
+    "time": 1790797756.308579,
+    "value": false
+  },
+  {
+    "time": 1790797756.7364135,
+    "value": false
+  },
+  {
+    "time": 1790797757.1645954,
+    "value": false
+  },
+  {
+    "time": 1790797757.5932662,
+    "value": false
+  },
+  {
+    "time": 1790797758.0241551,
+    "value": false
+  },
+  {
+    "time": 1790797758.4535127,
+    "value": false
+  },
+  {
+    "time": 1790797758.8823764,
+    "value": false
+  },
+  {
+    "time": 1790797759.3136742,
+    "value": false
+  },
+  {
+    "time": 1790797759.7411878,
+    "value": false
+  },
+  {
+    "time": 1790797760.1718614,
+    "value": false
+  },
+  {
+    "time": 1790797760.6043305,
+    "value": false
+  },
+  {
+    "time": 1790797761.0329907,
+    "value": false
+  },
+  {
+    "time": 1790797761.464031,
+    "value": false
+  },
+  {
+    "time": 1790797761.892183,
+    "value": false
+  },
+  {
+    "time": 1790797762.3214662,
+    "value": false
+  },
+  {
+    "time": 1790797762.7480671,
+    "value": false
+  },
+  {
+    "time": 1790797763.2043207,
+    "value": false
+  },
+  {
+    "time": 1790797763.634866,
+    "value": false
+  },
+  {
+    "time": 1790797764.0667324,
+    "value": false
+  },
+  {
+    "time": 1790797764.4959526,
+    "value": false
+  },
+  {
+    "time": 1790797764.927681,
+    "value": false
+  },
+  {
+    "time": 1790797765.3564277,
+    "value": false
+  },
+  {
+    "time": 1790797765.7834475,
+    "value": false
+  },
+  {
+    "time": 1790797766.2134838,
+    "value": false
+  },
+  {
+    "time": 1790797766.643501,
+    "value": false
+  },
+  {
+    "time": 1790797767.0734105,
+    "value": false
+  },
+  {
+    "time": 1790797767.5010495,
+    "value": false
+  },
+  {
+    "time": 1790797767.9294555,
+    "value": false
+  },
+  {
+    "time": 1790797768.3583176,
+    "value": false
+  },
+  {
+    "time": 1790797768.7887695,
+    "value": false
+  },
+  {
+    "time": 1790797769.2189658,
+    "value": false
+  },
+  {
+    "time": 1790797769.6499405,
+    "value": false
+  },
+  {
+    "time": 1790797770.0779717,
+    "value": false
+  },
+  {
+    "time": 1790797770.5324986,
+    "value": false
+  },
+  {
+    "time": 1790797770.959694,
+    "value": false
+  },
+  {
+    "time": 1790797771.3949463,
+    "value": false
+  },
+  {
+    "time": 1790797771.827301,
+    "value": false
+  },
+  {
+    "time": 1790797772.2728927,
+    "value": false
+  },
+  {
+    "time": 1790797772.703446,
+    "value": false
+  },
+  {
+    "time": 1790797773.1327424,
+    "value": false
+  },
+  {
+    "time": 1790797773.5621412,
+    "value": false
+  },
+  {
+    "time": 1790797773.9906037,
+    "value": false
+  },
+  {
+    "time": 1790797774.4185345,
+    "value": false
+  },
+  {
+    "time": 1790797774.8487458,
+    "value": false
+  },
+  {
+    "time": 1790797775.27456,
+    "value": false
+  },
+  {
+    "time": 1790797775.705346,
+    "value": false
+  },
+  {
+    "time": 1790797776.1343699,
+    "value": false
+  },
+  {
+    "time": 1790797776.5610323,
+    "value": false
+  },
+  {
+    "time": 1790797776.9899287,
+    "value": false
+  },
+  {
+    "time": 1790797777.4185197,
+    "value": false
+  },
+  {
+    "time": 1790797777.8457086,
+    "value": false
+  },
+  {
+    "time": 1790797778.3060782,
+    "value": false
+  },
+  {
+    "time": 1790797778.7325294,
+    "value": false
+  }
+]

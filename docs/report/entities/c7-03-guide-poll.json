@@ -1,0 +1,575 @@
+[
+  {
+    "time": 1790923451.5998716,
+    "condition": true,
+    "snapshot": {
+      "elements": [
+        {
+          "depth": 1,
+          "name": "story-llmStories+ New storyEntities QA✕CharactersC",
+          "ref": "e1",
+          "role": "generic"
+        },
+        {
+          "depth": 3,
+          "name": "Sidebar",
+          "ref": "e2",
+          "role": "complementary"
+        },
+        {
+          "depth": 5,
+          "name": "Close sidebar (Ctrl+B)",
+          "ref": "e3",
+          "role": "button"
+        },
+        {
+          "depth": 7,
+          "name": "Stories",
+          "ref": "e4",
+          "role": "button"
+        },
+        {
+          "depth": 8,
+          "name": "+ New story",
+          "ref": "e5",
+          "role": "button"
+        },
+        {
+          "depth": 10,
+          "name": "Entities QA",
+          "ref": "e6",
+          "role": "button"
+        },
+        {
+          "depth": 10,
+          "name": "✕",
+          "ref": "e7",
+          "role": "button"
+        },
+        {
+          "depth": 7,
+          "name": "Characters",
+          "ref": "e8",
+          "role": "button"
+        },
+        {
+          "depth": 8,
+          "name": "Entity tabs",
+          "ref": "e9",
+          "role": "group"
+        },
+        {
+          "depth": 9,
+          "name": "Characters",
+          "ref": "e10",
+          "role": "button"
+        },
+        {
+          "depth": 9,
+          "name": "Relationships",
+          "ref": "e11",
+          "role": "button"
+        },
+        {
+          "depth": 8,
+          "name": "New character",
+          "ref": "e12",
+          "role": "button"
+        },
+        {
+          "depth": 10,
+          "name": "Edit character",
+          "ref": "e13",
+          "role": "button"
+        },
+        {
+          "depth": 10,
+          "name": "Edit character",
+          "ref": "e14",
+          "role": "button"
+        },
+        {
+          "depth": 10,
+          "name": "Edit character",
+          "ref": "e15",
+          "role": "button"
+        },
+        {
+          "depth": 7,
+          "name": "Narrator Tools",
+          "ref": "e16",
+          "role": "button"
+        },
+        {
+          "depth": 8,
+          "name": "All tools start on for every story. Entity tools c",
+          "ref": "e17",
+          "role": "paragraph"
+        },
+        {
+          "checked": true,
+          "depth": 10,
+          "ref": "e18",
+          "role": "checkbox",
+          "value": "on"
+        },
+        {
+          "checked": true,
+          "depth": 10,
+          "ref": "e19",
+          "role": "checkbox",
+          "value": "on"
+        },
+        {
+          "checked": true,
+          "depth": 10,
+          "ref": "e20",
+          "role": "checkbox",
+          "value": "on"
+        },
+        {
+          "checked": false,
+          "depth": 10,
+          "ref": "e21",
+          "role": "checkbox",
+          "value": "on"
+        },
+        {
+          "depth": 7,
+          "name": "Transcript",
+          "ref": "e22",
+          "role": "button"
+        },
+        {
+          "checked": true,
+          "depth": 10,
+          "ref": "e23",
+          "role": "checkbox",
+          "value": "on"
+        },
+        {
+          "checked": true,
+          "depth": 10,
+          "ref": "e24",
+          "role": "checkbox",
+          "value": "on"
+        },
+        {
+          "checked": true,
+          "depth": 10,
+          "ref": "e25",
+          "role": "checkbox",
+          "value": "on"
+        },
+        {
+          "checked": true,
+          "depth": 10,
+          "ref": "e26",
+          "role": "checkbox",
+          "value": "on"
+        },
+        {
+          "checked": true,
+          "depth": 10,
+          "ref": "e27",
+          "role": "checkbox",
+          "value": "on"
+        },
+        {
+          "checked": false,
+          "depth": 10,
+          "ref": "e28",
+          "role": "checkbox",
+          "value": "on"
+        },
+        {
+          "checked": true,
+          "depth": 10,
+          "ref": "e29",
+          "role": "checkbox",
+          "value": "on"
+        },
+        {
+          "checked": false,
+          "depth": 10,
+          "ref": "e30",
+          "role": "checkbox",
+          "value": "on"
+        },
+        {
+          "checked": true,
+          "depth": 10,
+          "ref": "e31",
+          "role": "checkbox",
+          "value": "on"
+        },
+        {
+          "checked": false,
+          "depth": 10,
+          "ref": "e32",
+          "role": "checkbox",
+          "value": "on"
+        },
+        {
+          "checked": true,
+          "depth": 10,
+          "ref": "e33",
+          "role": "checkbox",
+          "value": "on"
+        },
+        {
+          "checked": false,
+          "depth": 10,
+          "ref": "e34",
+          "role": "checkbox",
+          "value": "on"
+        },
+        {
+          "checked": true,
+          "depth": 10,
+          "ref": "e35",
+          "role": "checkbox",
+          "value": "on"
+        },
+        {
+          "checked": true,
+          "depth": 10,
+          "ref": "e36",
+          "role": "checkbox",
+          "value": "on"
+        },
+        {
+          "checked": true,
+          "depth": 10,
+          "ref": "e37",
+          "role": "checkbox",
+          "value": "on"
+        },
+        {
+          "checked": true,
+          "depth": 10,
+          "ref": "e38",
+          "role": "checkbox",
+          "value": "on"
+        },
+        {
+          "checked": true,
+          "depth": 10,
+          "ref": "e39",
+          "role": "checkbox",
+          "value": "on"
+        },
+        {
+          "checked": false,
+          "depth": 10,
+          "ref": "e40",
+          "role": "checkbox",
+          "value": "on"
+        },
+        {
+          "checked": false,
+          "depth": 10,
+          "ref": "e41",
+          "role": "checkbox",
+          "value": "on"
+        },
+        {
+          "depth": 8,
+          "name": "Preview next request",
+          "ref": "e42",
+          "role": "button"
+        },
+        {
+          "depth": 9,
+          "name": "System: # Role You are the narrator of an interact",
+          "ref": "e43",
+          "role": "paragraph"
+        },
+        {
+          "depth": 9,
+          "name": "record: [Authoritative story event: entity_created",
+          "ref": "e44",
+          "role": "paragraph"
+        },
+        {
+          "depth": 9,
+          "name": "record: [Authoritative story event: entity_updated",
+          "ref": "e45",
+          "role": "paragraph"
+        },
+        {
+          "depth": 9,
+          "name": "record: [Authoritative story event: entity_updated",
+          "ref": "e46",
+          "role": "paragraph"
+        },
+        {
+          "depth": 9,
+          "name": "record: [Authoritative story event: entity_updated",
+          "ref": "e47",
+          "role": "paragraph"
+        },
+        {
+          "depth": 9,
+          "name": "player: <entities> Current record. When the story ",
+          "ref": "e48",
+          "role": "paragraph"
+        },
+        {
+          "depth": 9,
+          "name": "Injected: <entities> Current record. When the stor",
+          "ref": "e49",
+          "role": "paragraph"
+        },
+        {
+          "depth": 7,
+          "name": "Context",
+          "ref": "e50",
+          "role": "button"
+        },
+        {
+          "checked": true,
+          "depth": 12,
+          "name": "Characters shown",
+          "ref": "e51",
+          "role": "radio",
+          "value": "on"
+        },
+        {
+          "checked": false,
+          "depth": 12,
+          "name": "Characters hidden",
+          "ref": "e52",
+          "role": "radio",
+          "value": "on"
+        },
+        {
+          "checked": true,
+          "depth": 12,
+          "name": "Relationships shown",
+          "ref": "e53",
+          "role": "radio",
+          "value": "on"
+        },
+        {
+          "checked": false,
+          "depth": 12,
+          "name": "Relationships hidden",
+          "ref": "e54",
+          "role": "radio",
+          "value": "on"
+        },
+        {
+          "depth": 8,
+          "name": "Hidden kinds are left out of the entities block. T",
+          "ref": "e55",
+          "role": "paragraph"
+        },
+        {
+          "checked": true,
+          "depth": 9,
+          "ref": "e56",
+          "role": "checkbox",
+          "value": "on"
+        },
+        {
+          "depth": 9,
+          "name": "Tone, ongoing constraints, things to keep in mind.",
+          "ref": "e57",
+          "role": "textbox"
+        },
+        {
+          "depth": 8,
+          "disabled": true,
+          "name": "Save",
+          "ref": "e58",
+          "role": "button"
+        },
+        {
+          "checked": true,
+          "depth": 9,
+          "ref": "e59",
+          "role": "checkbox",
+          "value": "on"
+        },
+        {
+          "depth": 7,
+          "name": "Text Model",
+          "ref": "e60",
+          "role": "button"
+        },
+        {
+          "depth": 9,
+          "name": "OpenRouterNous PortalOllama (ollama-dev.greatworkf",
+          "ref": "e61",
+          "role": "combobox",
+          "value": "openrouter"
+        },
+        {
+          "depth": 9,
+          "name": "Grok 4.7Grok 4.3Claude Sonnet 4.5Hermes 4 70BHerme",
+          "ref": "e62",
+          "role": "combobox",
+          "value": "x-ai/grok-4.7"
+        },
+        {
+          "depth": 9,
+          "name": "•••••••• (leave blank to keep)",
+          "ref": "e63",
+          "role": "textbox"
+        },
+        {
+          "depth": 8,
+          "name": "Save",
+          "ref": "e64",
+          "role": "button"
+        },
+        {
+          "depth": 7,
+          "name": "Image Model",
+          "ref": "e65",
+          "role": "button"
+        },
+        {
+          "depth": 7,
+          "name": "Features",
+          "ref": "e66",
+          "role": "button"
+        },
+        {
+          "depth": 3,
+          "name": "Text $0.0259Images $0.00 (0)Cached input 6.1KTotal",
+          "ref": "e67",
+          "role": "main"
+        },
+        {
+          "depth": 7,
+          "name": "Entities QA",
+          "ref": "e68",
+          "role": "heading"
+        },
+        {
+          "depth": 9,
+          "name": "StoryMy estranged sister Mira waits for me in the ",
+          "ref": "e69",
+          "role": "paragraph"
+        },
+        {
+          "depth": 10,
+          "name": "Edit",
+          "ref": "e70",
+          "role": "button"
+        },
+        {
+          "depth": 9,
+          "name": "▸ThinkingThe user has submitted a story passage to",
+          "ref": "e71",
+          "role": "button"
+        },
+        {
+          "depth": 9,
+          "name": "The tavern's low light catches the grey of that cl",
+          "ref": "e72",
+          "role": "paragraph"
+        },
+        {
+          "depth": 11,
+          "name": "Edit",
+          "ref": "e73",
+          "role": "button"
+        },
+        {
+          "depth": 10,
+          "name": "Edit",
+          "ref": "e74",
+          "role": "button"
+        },
+        {
+          "depth": 9,
+          "name": "▸Thinking & 3 tool callsThe user wants me to recor",
+          "ref": "e75",
+          "role": "button"
+        },
+        {
+          "depth": 9,
+          "name": "Mira does not rise when she sees you. She sits wit",
+          "ref": "e76",
+          "role": "paragraph"
+        },
+        {
+          "depth": 11,
+          "name": "Edit",
+          "ref": "e77",
+          "role": "button"
+        },
+        {
+          "depth": 11,
+          "name": "Retry",
+          "ref": "e78",
+          "role": "button"
+        },
+        {
+          "depth": 11,
+          "name": "Erase",
+          "ref": "e79",
+          "role": "button"
+        },
+        {
+          "depth": 9,
+          "name": "Do",
+          "ref": "e80",
+          "role": "button"
+        },
+        {
+          "depth": 9,
+          "name": "Say",
+          "ref": "e81",
+          "role": "button"
+        },
+        {
+          "depth": 9,
+          "name": "Story",
+          "ref": "e82",
+          "role": "button"
+        },
+        {
+          "depth": 9,
+          "name": "Guide",
+          "ref": "e83",
+          "role": "button"
+        },
+        {
+          "depth": 9,
+          "name": "See",
+          "ref": "e84",
+          "role": "button"
+        },
+        {
+          "depth": 8,
+          "name": "Continue ⏵",
+          "ref": "e85",
+          "role": "button"
+        },
+        {
+          "depth": 7,
+          "name": "Steer the story out of character...",
+          "ref": "e86",
+          "role": "textbox"
+        },
+        {
+          "depth": 10,
+          "name": "DefaultNoneMinimalLowMediumHighExtra highMax",
+          "ref": "e87",
+          "role": "combobox"
+        },
+        {
+          "depth": 9,
+          "disabled": true,
+          "name": "Send",
+          "ref": "e88",
+          "role": "button"
+        }
+      ]
+    }
+  }
+]

@@ -1,0 +1,9 @@
+52	122	src-tauri/src/features/context/blocks.rs
+1	5	src-tauri/src/features/context/preview.rs
+0	2	src-tauri/src/features/narrator/generation.rs
+23	13	src-tauri/src/features/stories/settings.rs
+3	3	src-tauri/src/features/transcript/history.rs
+1	75	src-tauri/src/features/transcript/query.rs
+20	9	src/features/context/ContextPanel.tsx
+12	12	src/features/story/store.test.mjs
+1	1	src/shared/types.ts

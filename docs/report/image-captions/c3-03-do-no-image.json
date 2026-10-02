@@ -1,0 +1,403 @@
+{
+  "captured_at": 1790797880.5844748,
+  "snapshot": {
+    "elements": [
+      {
+        "depth": 1,
+        "name": "story-llmStories+ New storyThe Door Without a Key✕",
+        "ref": "e1",
+        "role": "generic"
+      },
+      {
+        "depth": 3,
+        "name": "Sidebar",
+        "ref": "e2",
+        "role": "complementary"
+      },
+      {
+        "depth": 5,
+        "name": "Close sidebar (Ctrl+B)",
+        "ref": "e3",
+        "role": "button"
+      },
+      {
+        "depth": 7,
+        "name": "Stories",
+        "ref": "e4",
+        "role": "button"
+      },
+      {
+        "depth": 8,
+        "name": "+ New story",
+        "ref": "e5",
+        "role": "button"
+      },
+      {
+        "depth": 10,
+        "name": "The Door Without a Key",
+        "ref": "e6",
+        "role": "button"
+      },
+      {
+        "depth": 10,
+        "name": "✕",
+        "ref": "e7",
+        "role": "button"
+      },
+      {
+        "depth": 10,
+        "name": "Underside of Ice",
+        "ref": "e8",
+        "role": "button"
+      },
+      {
+        "depth": 10,
+        "name": "✕",
+        "ref": "e9",
+        "role": "button"
+      },
+      {
+        "depth": 10,
+        "name": "Except That It Has",
+        "ref": "e10",
+        "role": "button"
+      },
+      {
+        "depth": 10,
+        "name": "✕",
+        "ref": "e11",
+        "role": "button"
+      },
+      {
+        "depth": 10,
+        "name": "The Room Holds Its Breath",
+        "ref": "e12",
+        "role": "button"
+      },
+      {
+        "depth": 10,
+        "name": "✕",
+        "ref": "e13",
+        "role": "button"
+      },
+      {
+        "depth": 10,
+        "name": "The Unbroken Seal",
+        "ref": "e14",
+        "role": "button"
+      },
+      {
+        "depth": 10,
+        "name": "✕",
+        "ref": "e15",
+        "role": "button"
+      },
+      {
+        "depth": 7,
+        "name": "Characters",
+        "ref": "e16",
+        "role": "button"
+      },
+      {
+        "depth": 7,
+        "name": "Narrator Tools",
+        "ref": "e17",
+        "role": "button"
+      },
+      {
+        "depth": 7,
+        "name": "Transcript",
+        "ref": "e18",
+        "role": "button"
+      },
+      {
+        "depth": 7,
+        "name": "Context",
+        "ref": "e19",
+        "role": "button"
+      },
+      {
+        "depth": 7,
+        "name": "Text Model",
+        "ref": "e20",
+        "role": "button"
+      },
+      {
+        "depth": 7,
+        "name": "Image Model",
+        "ref": "e21",
+        "role": "button"
+      },
+      {
+        "depth": 7,
+        "name": "Features",
+        "ref": "e22",
+        "role": "button"
+      },
+      {
+        "depth": 3,
+        "name": "Text $0.0222Images $0.00 (0)Cached input 5.4KTotal",
+        "ref": "e23",
+        "role": "main"
+      },
+      {
+        "depth": 7,
+        "name": "The Door Without a Key",
+        "ref": "e24",
+        "role": "heading"
+      },
+      {
+        "depth": 9,
+        "name": "Look around the room, and illustrate it.",
+        "ref": "e25",
+        "role": "paragraph"
+      },
+      {
+        "depth": 10,
+        "name": "Edit",
+        "ref": "e26",
+        "role": "button"
+      },
+      {
+        "depth": 9,
+        "name": "▸Thinking & 1 tool callThe user wants me to look a",
+        "ref": "e27",
+        "role": "button"
+      },
+      {
+        "depth": 9,
+        "name": "The room takes shape as you turn through it. I'll ",
+        "ref": "e28",
+        "role": "paragraph"
+      },
+      {
+        "depth": 11,
+        "name": "Edit",
+        "ref": "e29",
+        "role": "button"
+      },
+      {
+        "depth": 11,
+        "name": "Retry",
+        "ref": "e30",
+        "role": "button"
+      },
+      {
+        "depth": 11,
+        "name": "Erase",
+        "ref": "e31",
+        "role": "button"
+      },
+      {
+        "depth": 9,
+        "name": "Do",
+        "ref": "e32",
+        "role": "button"
+      },
+      {
+        "depth": 9,
+        "name": "Say",
+        "ref": "e33",
+        "role": "button"
+      },
+      {
+        "depth": 9,
+        "name": "Story",
+        "ref": "e34",
+        "role": "button"
+      },
+      {
+        "depth": 9,
+        "name": "Guide",
+        "ref": "e35",
+        "role": "button"
+      },
+      {
+        "depth": 9,
+        "name": "See",
+        "ref": "e36",
+        "role": "button"
+      },
+      {
+        "depth": 8,
+        "name": "Continue ⏵",
+        "ref": "e37",
+        "role": "button"
+      },
+      {
+        "depth": 7,
+        "name": "What do you do?",
+        "ref": "e38",
+        "role": "textbox"
+      },
+      {
+        "depth": 10,
+        "name": "DefaultNoneMinimalLowMediumHighExtra highMax",
+        "ref": "e39",
+        "role": "combobox"
+      },
+      {
+        "depth": 9,
+        "disabled": true,
+        "name": "Send",
+        "ref": "e40",
+        "role": "button"
+      }
+    ]
+  },
+  "dom": "{\"text\":\"story-llm\\nSTORIES\\n+ New story\\nThe Door Without a Key\\n✕\\nUnderside of Ice\\n✕\\nExcept That It Has\\n✕\\nThe Room Holds Its Breath\\n✕\\nThe Unbroken Seal\\n✕\\nCHARACTERS\\nNARRATOR TOOLS\\nTRANSCRIPT\\nCONTEXT\\nTEXT MODEL\\nIMAGE MODEL\\nFEATURES\\nText $0.0222\\nImages $0.00 (0)\\nCached input 5.4K\\nTotal $0.0222\\nThe Door Without a Key\\n\\nLook around the room, and illustrate it.\\n\\nEdit\\n▸\\nThinking & 1 tool call\\nThe user wants me to look around the room and illustrate it. I need to follow the narratio\\n\\nThe room takes shape as you turn through it. I'll fix what is here before describing it.The ceiling slopes so low on the left that your shoulder nearly brushes it. The plaster is the color of old tea, cracked along the beam, and the air holds the cold of a room that has not been lived in long enough to warm.\\n\\nAn iron bed takes most of the floor. Its blanket is gray wool, thin at the fold, and the mattress sags toward the wall. At the foot stands a deal table with one leg shimmed by a folded scrap of paper. An oil lamp sits there, glass chimney sooted, wick unlit. Beside it, a washstand leans a little: chipped white basin, a cake of soap gone hard at the edges, a towel stiff on its nail.\\n\\nThe only window is small and streaked with soot. Rain has been at the glass. Through it you make out wet cobbles, a gutter running brown, and the opposite wall of some other building close enough to touch if the sash would open. The street is quiet. Somewhere below, a stove ticks as it cools.\\n\\nCoal dust ghosts the hearth. A single chair, cane seat frayed, waits under the window as if someone meant to sit and watch the street and then thought better of it. Your own shadow stretches long across the boards when you turn. Nothing else moves. The door, painted the same tired brown as the wainscot, is shut, and the key is not in the lock.\\n\\n$0.0222\\nEdit\\nRetry\\nErase\\nDo\\nSay\\nStory\\nGuide\\nSee\\nContinue ⏵\\nEnter to send · Shift + Enter for a new line\\nEffort\\nDefault\\nNone\\nMinimal\\nLow\\nMedium\\nHigh\\nExtra high\\nMax\\nSend\",\"controls\":[{\"tag\":\"BUTTON\",\"text\":\"\",\"type\":\"button\",\"value\":\"\",\"disabled\":false,\"label\":\"Close sidebar (Ctrl+B)\"},{\"tag\":\"BUTTON\",\"text\":\"Stories\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"+ New story\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"The Door Without a Key\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"✕\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"Underside of Ice\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"✕\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"Except That It Has\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"✕\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"The Room Holds Its Breath\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"✕\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"The Unbroken Seal\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"✕\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"Characters\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"Narrator Tools\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"Transcript\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"Context\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"Text Model\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"Image Model\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"Features\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"Edit\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"▸Thinking & 1 tool callThe user wants me to look around the room and illustrate it. I need to follow the narratio\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"Edit\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"Retry\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"Erase\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"Do\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"Say\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"Story\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"Guide\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"See\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"Continue ⏵\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"SELECT\",\"text\":\"DefaultNoneMinimalLowMediumHighExtra highMax\",\"type\":\"select-one\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"Send\",\"type\":\"submit\",\"value\":\"\",\"disabled\":true,\"label\":null}],\"images\":[]}",
+  "image_settings": [
+    {
+      "value": "{\"caption_model\":\"google/gemini-3.5-flash-lite\",\"captions_enabled\":true,\"enabled\":true,\"model\":\"google/gemini-3.1-flash-image-preview\",\"style\":\"Digital painting, atmospheric scene illustration. anime\"}"
+    }
+  ],
+  "stories": [
+    {
+      "id": "e4c1027f-26b2-44c9-9205-5fe9648b1c9e",
+      "title": "The Door Without a Key",
+      "created_at": "2026-09-30T17:43:49.083999500+00:00",
+      "updated_at": "2026-09-30T19:46:20.706853400+00:00",
+      "settings_json": "{\"narrator_tools\":{\"adjust_entity_attribute\":true,\"create_entity\":true,\"get_entities\":true,\"illustrate_scene\":false,\"roll_check\":true,\"update_entity\":true},\"transcript\":{\"include\":{\"action.continue\":true,\"action.do\":true,\"action.guide\":true,\"action.say\":true,\"action.see\":false,\"action.story\":true,\"images\":false,\"narration\":true,\"narration.thoughts\":false,\"record.context_note_updated\":false,\"record.diceroll\":true,\"record.entity_attribute_changed\":true,\"record.entity_attribute_removed\":true,\"record.entity_created\":true,\"record.entity_deleted\":true,\"record.entity_queried\":true,\"record.entity_updated\":true,\"record.image_generated\":true,\"record.tool_call\":false}}}"
+    }
+  ],
+  "records": [
+    {
+      "id": "907099ad-5c80-435d-a0ea-e5fc6a02f469",
+      "story_id": "e4c1027f-26b2-44c9-9205-5fe9648b1c9e",
+      "seq": 0,
+      "kind": "entity_created",
+      "visibility": "hidden",
+      "content": "You was added as a character.",
+      "payload_json": "{\"appearance_anchor\":null,\"entity_id\":\"f29f3f21-c710-4286-b9b4-c42e575c54f4\",\"kind\":\"character\",\"name\":\"You\",\"source\":\"story_bootstrap\"}",
+      "target_entry_id": null,
+      "turn_id": null,
+      "created_at": "2026-09-30T17:43:49.084297800+00:00"
+    },
+    {
+      "id": "986cedac-42cf-4999-93af-7c1a2376dfa0",
+      "story_id": "e4c1027f-26b2-44c9-9205-5fe9648b1c9e",
+      "seq": 1,
+      "kind": "player_message",
+      "visibility": "visible",
+      "content": "Look around the room, and illustrate it.",
+      "payload_json": "{\"input_mode\":\"do\"}",
+      "target_entry_id": null,
+      "turn_id": "2c3f04d0-09a9-4029-bb02-b5bfcbc5dcc7",
+      "created_at": "2026-09-30T19:45:52.113145200+00:00"
+    },
+    {
+      "id": "329fda8d-d3bd-4a50-bc58-fa8609dae9c9",
+      "story_id": "e4c1027f-26b2-44c9-9205-5fe9648b1c9e",
+      "seq": 2,
+      "kind": "narration",
+      "visibility": "visible",
+      "content": "The room takes shape as you turn through it. I'll fix what is here before describing it.The ceiling slopes so low on the left that your shoulder nearly brushes it. The plaster is the color of old tea, cracked along the beam, and the air holds the cold of a room that has not been lived in long enough to warm.\n\nAn iron bed takes most of the floor. Its blanket is gray wool, thin at the fold, and the mattress sags toward the wall. At the foot stands a deal table with one leg shimmed by a folded scrap of paper. An oil lamp sits there, glass chimney sooted, wick unlit. Beside it, a washstand leans a little: chipped white basin, a cake of soap gone hard at the edges, a towel stiff on its nail.\n\nThe only window is small and streaked with soot. Rain has been at the glass. Through it you make out wet cobbles, a gutter running brown, and the opposite wall of some other building close enough to touch if the sash would open. The street is quiet. Somewhere below, a stove ticks as it cools.\n\nCoal dust ghosts the hearth. A single chair, cane seat frayed, waits under the window as if someone meant to sit and watch the street and then thought better of it. Your own shadow stretches long across the boards when you turn. Nothing else moves. The door, painted the same tired brown as the wainscot, is shut, and the key is not in the lock.",
+      "payload_json": "{\"input_mode\":\"generated\",\"thoughts\":\"The user wants me to look around the room and illustrate it. I need to follow the narration rules and the tool instructions.\\nI step into the dimly lit room, my boots scraping softly against the worn wooden floorboards. The air hangs heavy with the scent of aged parchment and faint incense, curling from a small brazier in the corner. Sunlight filters through cracked shutters, casting golden shafts across shelves crammed with leather-bound tomes and dusty scrolls that whisper secrets of forgotten realms. A narrow bed with rumpled linens sits against one wall, while a sturdy oak desk holds scattered quills and half-finished maps. Through the window, I glimpse the distant spires of a city skyline, their towers piercing low-hanging clouds. The space feels both intimate and vast — a sanctuary for the curious, or perhaps a trap for the unwary. My gaze lingers on the faint etchings carved into the windowsill, symbols that seem to shift when I blink.The user wanted me to look around the room and illustrate it. I created the location entity. Now I need to narrate in second person, vivid literary prose. There's no illustrate_scene tool available de...\"}",
+      "target_entry_id": null,
+      "turn_id": "2c3f04d0-09a9-4029-bb02-b5bfcbc5dcc7",
+      "created_at": "2026-09-30T19:45:52.116639400+00:00"
+    },
+    {
+      "id": "caf9c8bc-457a-4e2e-8bec-85abeae80911",
+      "story_id": "e4c1027f-26b2-44c9-9205-5fe9648b1c9e",
+      "seq": 3,
+      "kind": "entity_created",
+      "visibility": "hidden",
+      "content": "The Upper Room was added as a location.",
+      "payload_json": "{\"appearance_anchor\":\"A narrow boarding-house room under a slanted ceiling: iron bed with a gray wool blanket, scarred washstand and chipped basin, one soot-streaked window onto a wet cobbled street, coal stove gone cold, and a single unlit oil lamp on a deal table.\",\"entity_id\":\"a8f69a69-aeaa-400f-991d-7d1c3b9658d8\",\"kind\":\"location\",\"name\":\"The Upper Room\",\"source\":\"narrator_tool\"}",
+      "target_entry_id": "329fda8d-d3bd-4a50-bc58-fa8609dae9c9",
+      "turn_id": "2c3f04d0-09a9-4029-bb02-b5bfcbc5dcc7",
+      "created_at": "2026-09-30T19:46:13.048057100+00:00"
+    },
+    {
+      "id": "b2a5a1d3-b695-492a-a2a8-c7be4350db41",
+      "story_id": "e4c1027f-26b2-44c9-9205-5fe9648b1c9e",
+      "seq": 4,
+      "kind": "tool_call",
+      "visibility": "hidden",
+      "content": "Introducing The Upper Room…",
+      "payload_json": "{\"args\":{\"appearance_anchor\":\"A narrow boarding-house room under a slanted ceiling: iron bed with a gray wool blanket, scarred washstand and chipped basin, one soot-streaked window onto a wet cobbled street, coal stove gone cold, and a single unlit oil lamp on a deal table.\",\"kind\":\"location\",\"name\":\"The Upper Room\"},\"ok\":true,\"result\":{\"created\":true,\"id\":\"a8f69a69-aeaa-400f-991d-7d1c3b9658d8\",\"kind\":\"location\",\"name\":\"The Upper Room\"},\"tool\":\"create_entity\"}",
+      "target_entry_id": "329fda8d-d3bd-4a50-bc58-fa8609dae9c9",
+      "turn_id": "2c3f04d0-09a9-4029-bb02-b5bfcbc5dcc7",
+      "created_at": "2026-09-30T19:46:20.706853400+00:00"
+    }
+  ],
+  "images": [],
+  "usage": [
+    {
+      "id": "e0fdb60d-b818-42c3-9bb0-2283c43f9a20",
+      "story_id": "e4c1027f-26b2-44c9-9205-5fe9648b1c9e",
+      "kind": "narration",
+      "provider": "openrouter",
+      "model": "x-ai/grok-4.7",
+      "response_id": "gen-1790797556-YwobkgZWPtpqsrVNkCVW",
+      "input_tokens": 3078,
+      "output_tokens": 1164,
+      "cached_input_tokens": 1152,
+      "cache_write_tokens": 0,
+      "cost_usd": 0.011412,
+      "created_at": "2026-09-30T19:46:31.376050500+00:00",
+      "turn_id": "2c3f04d0-09a9-4029-bb02-b5bfcbc5dcc7",
+      "image_asset_id": null,
+      "duration_ms": null,
+      "earlier_attempt": 0
+    },
+    {
+      "id": "91c44365-0a37-4386-90c1-b3e4acc5eda5",
+      "story_id": "e4c1027f-26b2-44c9-9205-5fe9648b1c9e",
+      "kind": "narration",
+      "provider": "openrouter",
+      "model": "x-ai/grok-4.7",
+      "response_id": "gen-1790797576-wLmYIIn7rWRiPTo7foeg",
+      "input_tokens": 4300,
+      "output_tokens": 381,
+      "cached_input_tokens": 3072,
+      "cache_write_tokens": 0,
+      "cost_usd": 0.006278,
+      "created_at": "2026-09-30T19:46:31.376294100+00:00",
+      "turn_id": "2c3f04d0-09a9-4029-bb02-b5bfcbc5dcc7",
+      "image_asset_id": null,
+      "duration_ms": null,
+      "earlier_attempt": 0
+    },
+    {
+      "id": "f29b7c3b-eaf0-49c1-a85b-9b805e674ada",
+      "story_id": "e4c1027f-26b2-44c9-9205-5fe9648b1c9e",
+      "kind": "title",
+      "provider": "openrouter",
+      "model": "x-ai/grok-4.7",
+      "response_id": "gen-1790797586-Q9ohMjkO2Y6ocL8cx5c7",
+      "input_tokens": 1711,
+      "output_tokens": 476,
+      "cached_input_tokens": 1152,
+      "cache_write_tokens": 0,
+      "cost_usd": 0.00455,
+      "created_at": "2026-09-30T19:46:31.376378900+00:00",
+      "turn_id": "2c3f04d0-09a9-4029-bb02-b5bfcbc5dcc7",
+      "image_asset_id": null,
+      "duration_ms": null,
+      "earlier_attempt": 0
+    }
+  ],
+  "logs": [
+    {
+      "args": [
+        "%cDownload the React DevTools for a better development experience: https://reactjs.org/link/react-devtools",
+        "font-weight:bold"
+      ],
+      "id": 1,
+      "level": "info",
+      "source": "at http://localhost:1420/node_modules/.vite/deps/react-dom-Cn6-HCcb.js?v=568018e4:17222:52",
+      "timestamp": 1790797058187
+    },
+    {
+      "args": [
+        "invalid input: mistralai/mistral-nemo can't read images; pick a vision model for captions"
+      ],
+      "id": 2,
+      "level": "error",
+      "source": "at save (http://localhost:1420/src/features/settings/useSettingsForm.ts:34:12)",
+      "timestamp": 1790797399143
+    }
+  ]
+}

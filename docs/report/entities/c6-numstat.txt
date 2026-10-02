@@ -1,0 +1,7 @@
+24	6	src-tauri/src/features/entities/commands.rs
+1	0	src-tauri/src/lib.rs
+254	187	src/features/characters/CharactersPanel.tsx
+7	6	src/features/characters/api.ts
+231	1	src/features/story/store.test.mjs
+87	35	src/features/story/store.ts
+15	3	src/shared/types.ts

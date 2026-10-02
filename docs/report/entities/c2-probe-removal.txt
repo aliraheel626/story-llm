@@ -1,0 +1,3 @@
+Command: git diff HEAD -- src-tauri/src/features/narrator/tools/mod.rs
+Exit: 0
+

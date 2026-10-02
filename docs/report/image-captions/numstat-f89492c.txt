@@ -1,0 +1,17 @@
+1	0	src-tauri/src/features/images/openrouter.rs
+13	2	src-tauri/src/features/settings/commands.rs
+4	0	src-tauri/src/features/settings/model.rs
+40	14	src-tauri/src/features/settings/repository.rs
+6	0	src-tauri/src/features/settings/text_model.rs
+39	3	src/features/settings/ImageModelPanel.tsx
+2	2	src/features/settings/api.ts
+4	2	src/features/settings/settingsStore.ts
+2	1	src/features/settings/useSettingsForm.ts
+1	1	src/shared/types.ts
+
+{
+  "production_added": 95,
+  "production_deleted": 25,
+  "test_added": 17,
+  "test_deleted": 0
+}

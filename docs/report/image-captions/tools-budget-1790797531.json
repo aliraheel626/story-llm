@@ -1,0 +1,292 @@
+{
+  "captured_at": 1790797532.0337057,
+  "snapshot": {
+    "elements": [
+      {
+        "depth": 1,
+        "name": "story-llmStories+ New storyNew story✕Underside of ",
+        "ref": "e1",
+        "role": "generic"
+      },
+      {
+        "depth": 3,
+        "name": "Sidebar",
+        "ref": "e2",
+        "role": "complementary"
+      },
+      {
+        "depth": 5,
+        "name": "Close sidebar (Ctrl+B)",
+        "ref": "e3",
+        "role": "button"
+      },
+      {
+        "depth": 7,
+        "name": "Stories",
+        "ref": "e4",
+        "role": "button"
+      },
+      {
+        "depth": 8,
+        "name": "+ New story",
+        "ref": "e5",
+        "role": "button"
+      },
+      {
+        "depth": 10,
+        "name": "New story",
+        "ref": "e6",
+        "role": "button"
+      },
+      {
+        "depth": 10,
+        "name": "✕",
+        "ref": "e7",
+        "role": "button"
+      },
+      {
+        "depth": 10,
+        "name": "Underside of Ice",
+        "ref": "e8",
+        "role": "button"
+      },
+      {
+        "depth": 10,
+        "name": "✕",
+        "ref": "e9",
+        "role": "button"
+      },
+      {
+        "depth": 10,
+        "name": "Except That It Has",
+        "ref": "e10",
+        "role": "button"
+      },
+      {
+        "depth": 10,
+        "name": "✕",
+        "ref": "e11",
+        "role": "button"
+      },
+      {
+        "depth": 10,
+        "name": "The Room Holds Its Breath",
+        "ref": "e12",
+        "role": "button"
+      },
+      {
+        "depth": 10,
+        "name": "✕",
+        "ref": "e13",
+        "role": "button"
+      },
+      {
+        "depth": 10,
+        "name": "The Unbroken Seal",
+        "ref": "e14",
+        "role": "button"
+      },
+      {
+        "depth": 10,
+        "name": "✕",
+        "ref": "e15",
+        "role": "button"
+      },
+      {
+        "depth": 7,
+        "name": "Characters",
+        "ref": "e16",
+        "role": "button"
+      },
+      {
+        "depth": 7,
+        "name": "Narrator Tools",
+        "ref": "e17",
+        "role": "button"
+      },
+      {
+        "depth": 8,
+        "name": "All six tools start on for every story. Entity too",
+        "ref": "e18",
+        "role": "paragraph"
+      },
+      {
+        "checked": false,
+        "depth": 10,
+        "ref": "e19",
+        "role": "checkbox",
+        "value": "on"
+      },
+      {
+        "checked": false,
+        "depth": 10,
+        "ref": "e20",
+        "role": "checkbox",
+        "value": "on"
+      },
+      {
+        "checked": false,
+        "depth": 10,
+        "ref": "e21",
+        "role": "checkbox",
+        "value": "on"
+      },
+      {
+        "checked": false,
+        "depth": 10,
+        "ref": "e22",
+        "role": "checkbox",
+        "value": "on"
+      },
+      {
+        "checked": false,
+        "depth": 10,
+        "ref": "e23",
+        "role": "checkbox",
+        "value": "on"
+      },
+      {
+        "checked": false,
+        "depth": 10,
+        "ref": "e24",
+        "role": "checkbox",
+        "value": "on"
+      },
+      {
+        "depth": 7,
+        "name": "Transcript",
+        "ref": "e25",
+        "role": "button"
+      },
+      {
+        "depth": 7,
+        "name": "Context",
+        "ref": "e26",
+        "role": "button"
+      },
+      {
+        "depth": 7,
+        "name": "Text Model",
+        "ref": "e27",
+        "role": "button"
+      },
+      {
+        "depth": 7,
+        "name": "Image Model",
+        "ref": "e28",
+        "role": "button"
+      },
+      {
+        "depth": 7,
+        "name": "Features",
+        "ref": "e29",
+        "role": "button"
+      },
+      {
+        "depth": 3,
+        "name": "Text $0.00Images $0.00 (0)Cached input 0Total $0.0",
+        "ref": "e30",
+        "role": "main"
+      },
+      {
+        "depth": 7,
+        "name": "New story",
+        "ref": "e31",
+        "role": "heading"
+      },
+      {
+        "depth": 7,
+        "name": "The page is blank. Use Do, Say, or Story below to ",
+        "ref": "e32",
+        "role": "paragraph"
+      },
+      {
+        "depth": 9,
+        "name": "Do",
+        "ref": "e33",
+        "role": "button"
+      },
+      {
+        "depth": 9,
+        "name": "Say",
+        "ref": "e34",
+        "role": "button"
+      },
+      {
+        "depth": 9,
+        "name": "Story",
+        "ref": "e35",
+        "role": "button"
+      },
+      {
+        "depth": 9,
+        "name": "Guide",
+        "ref": "e36",
+        "role": "button"
+      },
+      {
+        "depth": 9,
+        "name": "See",
+        "ref": "e37",
+        "role": "button"
+      },
+      {
+        "depth": 8,
+        "disabled": true,
+        "name": "Continue ⏵",
+        "ref": "e38",
+        "role": "button"
+      },
+      {
+        "depth": 7,
+        "name": "What do you do?",
+        "ref": "e39",
+        "role": "textbox"
+      },
+      {
+        "depth": 10,
+        "name": "DefaultNoneMinimalLowMediumHighExtra highMax",
+        "ref": "e40",
+        "role": "combobox"
+      },
+      {
+        "depth": 9,
+        "disabled": true,
+        "name": "Send",
+        "ref": "e41",
+        "role": "button"
+      }
+    ]
+  },
+  "dom": "{\"text\":\"story-llm\\nSTORIES\\n+ New story\\nNew story\\n✕\\nUnderside of Ice\\n✕\\nExcept That It Has\\n✕\\nThe Room Holds Its Breath\\n✕\\nThe Unbroken Seal\\n✕\\nCHARACTERS\\nNARRATOR TOOLS\\n\\nAll six tools start on for every story. Entity tools can change persistent world state; dice and image calls can add cost. Turn off any tool independently before writing.\\n\\nENTITY\\nLook up entities\\nThe narrator can read characters and other world state.\\nCreate entities\\nThe narrator can add persistent characters, places, and objects.\\nUpdate entities\\nThe narrator can change persistent world details.\\nAdjust attributes\\nThe narrator can change entity stats. Manual edits remain available when off.\\nDICE\\nRoll uncertain outcomes\\nThe narrator may give a chance or reference up to two stored attributes. Rolls read stats but never change them.\\nIMAGE\\nIllustrate scenes\\nThe narrator may illustrate striking moments on its own. See works either way, whenever the image service and key are configured. Images may incur provider charges.\\nTRANSCRIPT\\nCONTEXT\\nTEXT MODEL\\nIMAGE MODEL\\nFEATURES\\nText $0.00\\nImages $0.00 (0)\\nCached input 0\\nTotal $0.00\\nNew story\\n\\nThe page is blank. Use Do, Say, or Story below to begin.\\n\\nDo\\nSay\\nStory\\nGuide\\nSee\\nContinue ⏵\\nEnter to send · Shift + Enter for a new line\\nEffort\\nDefault\\nNone\\nMinimal\\nLow\\nMedium\\nHigh\\nExtra high\\nMax\\nSend\",\"controls\":[{\"tag\":\"BUTTON\",\"text\":\"\",\"type\":\"button\",\"value\":\"\",\"disabled\":false,\"label\":\"Close sidebar (Ctrl+B)\"},{\"tag\":\"BUTTON\",\"text\":\"Stories\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"+ New story\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"New story\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"✕\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"Underside of Ice\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"✕\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"Except That It Has\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"✕\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"The Room Holds Its Breath\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"✕\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"The Unbroken Seal\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"✕\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"Characters\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"Narrator Tools\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"INPUT\",\"text\":\"\",\"type\":\"checkbox\",\"value\":\"on\",\"checked\":false,\"disabled\":false,\"label\":null},{\"tag\":\"INPUT\",\"text\":\"\",\"type\":\"checkbox\",\"value\":\"on\",\"checked\":false,\"disabled\":false,\"label\":null},{\"tag\":\"INPUT\",\"text\":\"\",\"type\":\"checkbox\",\"value\":\"on\",\"checked\":false,\"disabled\":false,\"label\":null},{\"tag\":\"INPUT\",\"text\":\"\",\"type\":\"checkbox\",\"value\":\"on\",\"checked\":false,\"disabled\":false,\"label\":null},{\"tag\":\"INPUT\",\"text\":\"\",\"type\":\"checkbox\",\"value\":\"on\",\"checked\":false,\"disabled\":false,\"label\":null},{\"tag\":\"INPUT\",\"text\":\"\",\"type\":\"checkbox\",\"value\":\"on\",\"checked\":false,\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"Transcript\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"Context\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"Text Model\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"Image Model\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"Features\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"Do\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"Say\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"Story\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"Guide\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"See\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"Continue ⏵\",\"type\":\"submit\",\"value\":\"\",\"disabled\":true,\"label\":null},{\"tag\":\"SELECT\",\"text\":\"DefaultNoneMinimalLowMediumHighExtra highMax\",\"type\":\"select-one\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"Send\",\"type\":\"submit\",\"value\":\"\",\"disabled\":true,\"label\":null}],\"images\":[]}",
+  "image_settings": [
+    {
+      "value": "{\"caption_model\":\"google/gemini-3.5-flash-lite\",\"captions_enabled\":true,\"enabled\":true,\"model\":\"google/gemini-3.1-flash-image-preview\",\"style\":\"Digital painting, atmospheric scene illustration. anime\"}"
+    }
+  ],
+  "stories": [],
+  "records": [],
+  "images": [],
+  "usage": [],
+  "logs": [
+    {
+      "args": [
+        "%cDownload the React DevTools for a better development experience: https://reactjs.org/link/react-devtools",
+        "font-weight:bold"
+      ],
+      "id": 1,
+      "level": "info",
+      "source": "at http://localhost:1420/node_modules/.vite/deps/react-dom-Cn6-HCcb.js?v=568018e4:17222:52",
+      "timestamp": 1790797058187
+    },
+    {
+      "args": [
+        "invalid input: mistralai/mistral-nemo can't read images; pick a vision model for captions"
+      ],
+      "id": 2,
+      "level": "error",
+      "source": "at save (http://localhost:1420/src/features/settings/useSettingsForm.ts:34:12)",
+      "timestamp": 1790797399143
+    }
+  ]
+}

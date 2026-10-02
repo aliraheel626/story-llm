@@ -1,0 +1,851 @@
+{
+  "captured_at": 1790798586.7847579,
+  "snapshot": {
+    "elements": [
+      {
+        "depth": 1,
+        "name": "story-llmStories+ New storyTurning in Place✕The Do",
+        "ref": "e1",
+        "role": "generic"
+      },
+      {
+        "depth": 3,
+        "name": "Sidebar",
+        "ref": "e2",
+        "role": "complementary"
+      },
+      {
+        "depth": 5,
+        "name": "Close sidebar (Ctrl+B)",
+        "ref": "e3",
+        "role": "button"
+      },
+      {
+        "depth": 7,
+        "name": "Stories",
+        "ref": "e4",
+        "role": "button"
+      },
+      {
+        "depth": 8,
+        "name": "+ New story",
+        "ref": "e5",
+        "role": "button"
+      },
+      {
+        "depth": 10,
+        "name": "Turning in Place",
+        "ref": "e6",
+        "role": "button"
+      },
+      {
+        "depth": 10,
+        "name": "✕",
+        "ref": "e7",
+        "role": "button"
+      },
+      {
+        "depth": 10,
+        "name": "The Door Without a Key",
+        "ref": "e8",
+        "role": "button"
+      },
+      {
+        "depth": 10,
+        "name": "✕",
+        "ref": "e9",
+        "role": "button"
+      },
+      {
+        "depth": 10,
+        "name": "Underside of Ice",
+        "ref": "e10",
+        "role": "button"
+      },
+      {
+        "depth": 10,
+        "name": "✕",
+        "ref": "e11",
+        "role": "button"
+      },
+      {
+        "depth": 10,
+        "name": "Except That It Has",
+        "ref": "e12",
+        "role": "button"
+      },
+      {
+        "depth": 10,
+        "name": "✕",
+        "ref": "e13",
+        "role": "button"
+      },
+      {
+        "depth": 10,
+        "name": "The Room Holds Its Breath",
+        "ref": "e14",
+        "role": "button"
+      },
+      {
+        "depth": 10,
+        "name": "✕",
+        "ref": "e15",
+        "role": "button"
+      },
+      {
+        "depth": 10,
+        "name": "The Unbroken Seal",
+        "ref": "e16",
+        "role": "button"
+      },
+      {
+        "depth": 10,
+        "name": "✕",
+        "ref": "e17",
+        "role": "button"
+      },
+      {
+        "depth": 7,
+        "name": "Characters",
+        "ref": "e18",
+        "role": "button"
+      },
+      {
+        "depth": 7,
+        "name": "Narrator Tools",
+        "ref": "e19",
+        "role": "button"
+      },
+      {
+        "depth": 7,
+        "name": "Transcript",
+        "ref": "e20",
+        "role": "button"
+      },
+      {
+        "depth": 7,
+        "name": "Context",
+        "ref": "e21",
+        "role": "button"
+      },
+      {
+        "depth": 7,
+        "name": "Text Model",
+        "ref": "e22",
+        "role": "button"
+      },
+      {
+        "depth": 7,
+        "name": "Image Model",
+        "ref": "e23",
+        "role": "button"
+      },
+      {
+        "checked": true,
+        "depth": 9,
+        "ref": "e24",
+        "role": "checkbox",
+        "value": "on"
+      },
+      {
+        "depth": 9,
+        "name": "Nano Banana 2 Lite (fastest)FLUX.2 Pro (anime-frie",
+        "ref": "e25",
+        "role": "combobox",
+        "value": "__custom__"
+      },
+      {
+        "depth": 9,
+        "name": "provider/model",
+        "ref": "e26",
+        "role": "textbox",
+        "value": "google/gemini-3.1-flash-image-preview"
+      },
+      {
+        "depth": 10,
+        "name": "Painterly",
+        "ref": "e27",
+        "role": "button"
+      },
+      {
+        "depth": 10,
+        "name": "Anime",
+        "ref": "e28",
+        "role": "button"
+      },
+      {
+        "depth": 10,
+        "name": "Realistic",
+        "ref": "e29",
+        "role": "button"
+      },
+      {
+        "depth": 10,
+        "name": "Comic",
+        "ref": "e30",
+        "role": "button"
+      },
+      {
+        "depth": 9,
+        "name": "Style prefix applied to every generated image...",
+        "ref": "e31",
+        "role": "textbox",
+        "value": "Digital painting, atmospheric scene illustration. anime"
+      },
+      {
+        "depth": 9,
+        "name": "Captions",
+        "ref": "e32",
+        "role": "heading"
+      },
+      {
+        "checked": false,
+        "depth": 10,
+        "ref": "e33",
+        "role": "checkbox",
+        "value": "on"
+      },
+      {
+        "depth": 10,
+        "disabled": true,
+        "name": "Gemini 3.5 Flash Lite (default)Gemini 3.8 Flash (s",
+        "ref": "e34",
+        "role": "combobox",
+        "value": "google/gemini-3.5-flash-lite"
+      },
+      {
+        "depth": 9,
+        "name": "Describes each image in words, shown under the ima",
+        "ref": "e35",
+        "role": "paragraph"
+      },
+      {
+        "depth": 8,
+        "name": "Uses OpenRouter, key set.",
+        "ref": "e36",
+        "role": "paragraph"
+      },
+      {
+        "depth": 8,
+        "name": "Save",
+        "ref": "e37",
+        "role": "button"
+      },
+      {
+        "depth": 7,
+        "name": "Features",
+        "ref": "e38",
+        "role": "button"
+      },
+      {
+        "depth": 3,
+        "name": "Text $0.0193Images $0.1377 (2)Cached input 5.6KTot",
+        "ref": "e39",
+        "role": "main"
+      },
+      {
+        "depth": 7,
+        "name": "Turning in Place",
+        "ref": "e40",
+        "role": "heading"
+      },
+      {
+        "depth": 9,
+        "name": "Look around the room, and illustrate it.",
+        "ref": "e41",
+        "role": "paragraph"
+      },
+      {
+        "depth": 10,
+        "name": "Edit",
+        "ref": "e42",
+        "role": "button"
+      },
+      {
+        "depth": 9,
+        "name": "▸Thinking & 2 tool callsThe user wants me to look ",
+        "ref": "e43",
+        "role": "button"
+      },
+      {
+        "depth": 9,
+        "name": "You turn in place, taking the room in slowly.",
+        "ref": "e44",
+        "role": "paragraph"
+      },
+      {
+        "depth": 10,
+        "name": "A sunlit attic bedroom with peeling yellow-beige w",
+        "ref": "e45",
+        "role": "img"
+      },
+      {
+        "depth": 12,
+        "name": "🖼Image details▲",
+        "ref": "e46",
+        "role": "button"
+      },
+      {
+        "depth": 14,
+        "name": "A sunlit attic bedroom with peeling yellow-beige w",
+        "ref": "e47",
+        "role": "paragraph"
+      },
+      {
+        "depth": 13,
+        "name": "Digital painting, atmospheric scene illustration. ",
+        "ref": "e48",
+        "role": "paragraph"
+      },
+      {
+        "depth": 10,
+        "name": "A dimly lit, heavy wooden door is set within dark ",
+        "ref": "e49",
+        "role": "img"
+      },
+      {
+        "depth": 12,
+        "name": "🖼Image details▲",
+        "ref": "e50",
+        "role": "button"
+      },
+      {
+        "depth": 14,
+        "name": "A dimly lit, heavy wooden door is set within dark ",
+        "ref": "e51",
+        "role": "paragraph"
+      },
+      {
+        "depth": 13,
+        "name": "Digital painting, atmospheric scene illustration. ",
+        "ref": "e52",
+        "role": "paragraph"
+      },
+      {
+        "depth": 11,
+        "name": "Edit",
+        "ref": "e53",
+        "role": "button"
+      },
+      {
+        "depth": 11,
+        "name": "Retry",
+        "ref": "e54",
+        "role": "button"
+      },
+      {
+        "depth": 11,
+        "name": "Erase",
+        "ref": "e55",
+        "role": "button"
+      },
+      {
+        "depth": 9,
+        "name": "Do",
+        "ref": "e56",
+        "role": "button"
+      },
+      {
+        "depth": 9,
+        "name": "Say",
+        "ref": "e57",
+        "role": "button"
+      },
+      {
+        "depth": 9,
+        "name": "Story",
+        "ref": "e58",
+        "role": "button"
+      },
+      {
+        "depth": 9,
+        "name": "Guide",
+        "ref": "e59",
+        "role": "button"
+      },
+      {
+        "depth": 9,
+        "name": "See",
+        "ref": "e60",
+        "role": "button"
+      },
+      {
+        "depth": 8,
+        "name": "Continue ⏵",
+        "ref": "e61",
+        "role": "button"
+      },
+      {
+        "depth": 7,
+        "name": "Optional: what to show, such as \"the brass orrery\"",
+        "ref": "e62",
+        "role": "textbox"
+      },
+      {
+        "depth": 10,
+        "name": "DefaultNoneMinimalLowMediumHighExtra highMax",
+        "ref": "e63",
+        "role": "combobox"
+      },
+      {
+        "depth": 9,
+        "name": "Generate",
+        "ref": "e64",
+        "role": "button"
+      }
+    ]
+  },
+  "dom": "{\"text\":\"story-llm\\nSTORIES\\n+ New story\\nTurning in Place\\n✕\\nThe Door Without a Key\\n✕\\nUnderside of Ice\\n✕\\nExcept That It Has\\n✕\\nThe Room Holds Its Breath\\n✕\\nThe Unbroken Seal\\n✕\\nCHARACTERS\\nNARRATOR TOOLS\\nTRANSCRIPT\\nCONTEXT\\nTEXT MODEL\\nIMAGE MODEL\\nEnable image generation\\nModel\\nNano Banana 2 Lite (fastest)\\nFLUX.2 Pro (anime-friendly)\\nGrok Imagine 2.0\\nCustom…\\nStyle\\nPainterly\\nAnime\\nRealistic\\nComic\\nCaptions\\nCaption images\\nCaption model\\nGemini 3.5 Flash Lite (default)\\nGemini 3.8 Flash (sharper)\\nGemini 2.5 Flash Lite (cheapest)\\nGPT-5 nano\\nCustom…\\n\\nDescribes each image in words, shown under the image. About $0.0006 per image. Whether the narrator sees captions is set per story under Context → Transcript.\\n\\nUses OpenRouter, key set.\\n\\nSave\\nFEATURES\\nText $0.0193\\nImages $0.1377 (2)\\nCached input 5.6K\\nTotal $0.1570\\nTurning in Place\\n\\nLook around the room, and illustrate it.\\n\\nEdit\\n▸\\nThinking & 2 tool calls\\nThe user wants me to look around the room and illustrate it. I need to call illustrate_sce\\n\\nYou turn in place, taking the room in slowly.\\n\\n$0.0077\\n🖼\\nImage details\\n▲\\nWhat was drawn\\n\\nA sunlit attic bedroom with peeling yellow-beige walls and a wooden floor features an unmade metal-framed bed against the back wall, covered in rumpled blankets. Sunlight streams in through a window on the right, illuminating dust motes in the air and casting bright squares of light on the floorboards. A wooden chair with a dark coat draped over it sits in the foreground left, while a small table with a pitcher and teacup stands next to the bed, and a washing stand with a basin and a towel hangs below a framed mirror on the right wall.\\n\\nPrompt\\n\\nDigital painting, atmospheric scene illustration. anime A narrow rented room seen from the middle of the floor at eye level, as if the viewer has just turned in place. Late-afternoon sun cuts through one tall window with a half-drawn linen curtain, laying a sharp gold bar across scuffed wooden floorboards and stirring dust in the air. An iron bed with a rumpled gray blanket stands against the left wall. A small wooden table holds a chipped enamel pitcher and a cold cup of tea. A dark coat is thrown over the back of a chair. Wallpaper the color of old paper peels at the seams. A clouded mirror hangs crooked above a washstand. Shadows pool in the corners; the window is the bright focal point. No people are visible.\\n\\n$0.0685 · 11.1 s\\n🖼\\nImage details\\n▲\\nWhat was drawn\\n\\nA dimly lit, heavy wooden door is set within dark stone walls and plank flooring. A lit lantern on the left casts a warm glow, while a narrow sliver of bright blue light shows underneath the closed door. The door itself is secured with a rusted metal latch.\\n\\nPrompt\\n\\nDigital painting, atmospheric scene illustration. anime A tall heavy door of near-black vertical wood panels set into a dim interior wall, grain raised and scarred, a crooked pitted iron latch low on the door, a thin line of colder light leaking under the bottom edge, low warm lamplight from the room falling across worn floorboards, close composition centered on the door, no window, ominous and still\\n\\n$0.0681 · 10.0 s\\nEdit\\nRetry\\nErase\\nDo\\nSay\\nStory\\nGuide\\nSee\\nContinue ⏵\\nEnter to generate · Shift + Enter for a new line\\nEffort\\nDefault\\nNone\\nMinimal\\nLow\\nMedium\\nHigh\\nExtra high\\nMax\\nGenerate\",\"controls\":[{\"tag\":\"BUTTON\",\"text\":\"\",\"type\":\"button\",\"value\":\"\",\"disabled\":false,\"label\":\"Close sidebar (Ctrl+B)\"},{\"tag\":\"BUTTON\",\"text\":\"Stories\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"+ New story\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"Turning in Place\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"✕\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"The Door Without a Key\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"✕\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"Underside of Ice\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"✕\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"Except That It Has\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"✕\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"The Room Holds Its Breath\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"✕\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"The Unbroken Seal\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"✕\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"Characters\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"Narrator Tools\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"Transcript\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"Context\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"Text Model\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"Image Model\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"INPUT\",\"text\":\"\",\"type\":\"checkbox\",\"value\":\"on\",\"checked\":true,\"disabled\":false,\"label\":null},{\"tag\":\"SELECT\",\"text\":\"Nano Banana 2 Lite (fastest)FLUX.2 Pro (anime-friendly)Grok Imagine 2.0Custom…\",\"type\":\"select-one\",\"value\":\"__custom__\",\"disabled\":false,\"label\":null},{\"tag\":\"INPUT\",\"text\":\"\",\"type\":\"text\",\"value\":\"google/gemini-3.1-flash-image-preview\",\"checked\":false,\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"Painterly\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"Anime\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"Realistic\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"Comic\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"INPUT\",\"text\":\"\",\"type\":\"checkbox\",\"value\":\"on\",\"checked\":false,\"disabled\":false,\"label\":null},{\"tag\":\"SELECT\",\"text\":\"Gemini 3.5 Flash Lite (default)Gemini 3.8 Flash (sharper)Gemini 2.5 Flash Lite (cheapest)GPT-5 nanoCustom…\",\"type\":\"select-one\",\"value\":\"google/gemini-3.5-flash-lite\",\"disabled\":true,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"Save\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"Features\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"Edit\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"▸Thinking & 2 tool callsThe user wants me to look around the room and illustrate it. I need to call illustrate_sce\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"🖼Image details▲\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"🖼Image details▲\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"Edit\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"Retry\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"Erase\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"Do\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"Say\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"Story\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"Guide\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"See\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"Continue ⏵\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"SELECT\",\"text\":\"DefaultNoneMinimalLowMediumHighExtra highMax\",\"type\":\"select-one\",\"value\":\"\",\"disabled\":false,\"label\":null},{\"tag\":\"BUTTON\",\"text\":\"Generate\",\"type\":\"submit\",\"value\":\"\",\"disabled\":false,\"label\":null}],\"images\":[{\"alt\":\"A sunlit attic bedroom with peeling yellow-beige walls and a wooden floor features an unmade metal-framed bed against the back wall, covered in rumpled blankets. Sunlight streams in through a window on the right, illuminating dust motes in the air and casting bright squares of light on the floorboards. A wooden chair with a dark coat draped over it sits in the foreground left, while a small table with a pitcher and teacup stands next to the bed, and a washing stand with a basin and a towel hangs below a framed mirror on the right wall.\",\"src\":\"http://storyimg.localhost/242acfea-1403-4140-af97-a3753fe35e4e\",\"complete\":true,\"naturalWidth\":1408},{\"alt\":\"A dimly lit, heavy wooden door is set within dark stone walls and plank flooring. A lit lantern on the left casts a warm glow, while a narrow sliver of bright blue light shows underneath the closed door. The door itself is secured with a rusted metal latch.\",\"src\":\"http://storyimg.localhost/8de96595-bafa-4423-a716-0538eb62ab3d\",\"complete\":true,\"naturalWidth\":1408}]}",
+  "image_settings": [
+    {
+      "value": "{\"caption_model\":\"google/gemini-3.5-flash-lite\",\"captions_enabled\":false,\"enabled\":true,\"model\":\"google/gemini-3.1-flash-image-preview\",\"style\":\"Digital painting, atmospheric scene illustration. anime\"}"
+    }
+  ],
+  "stories": [
+    {
+      "id": "71c21723-a3be-4728-afb7-384fa7d9007f",
+      "title": "Turning in Place",
+      "created_at": "2026-09-30T19:52:26.695195300+00:00",
+      "updated_at": "2026-09-30T20:02:18.522797+00:00",
+      "settings_json": "{\"narrator_tools\":{\"adjust_entity_attribute\":false,\"create_entity\":false,\"get_entities\":false,\"illustrate_scene\":true,\"roll_check\":false,\"update_entity\":false},\"transcript\":{\"include\":{\"action.continue\":true,\"action.do\":true,\"action.guide\":true,\"action.say\":true,\"action.see\":false,\"action.story\":true,\"images\":false,\"narration\":true,\"narration.thoughts\":false,\"record.context_note_updated\":false,\"record.diceroll\":true,\"record.entity_attribute_changed\":true,\"record.entity_attribute_removed\":true,\"record.entity_created\":true,\"record.entity_deleted\":true,\"record.entity_queried\":true,\"record.entity_updated\":true,\"record.image_captioned\":true,\"record.image_generated\":false,\"record.tool_call\":false}}}"
+    },
+    {
+      "id": "e4c1027f-26b2-44c9-9205-5fe9648b1c9e",
+      "title": "The Door Without a Key",
+      "created_at": "2026-09-30T17:43:49.083999500+00:00",
+      "updated_at": "2026-09-30T19:46:20.706853400+00:00",
+      "settings_json": "{\"narrator_tools\":{\"adjust_entity_attribute\":true,\"create_entity\":true,\"get_entities\":true,\"illustrate_scene\":false,\"roll_check\":true,\"update_entity\":true},\"transcript\":{\"include\":{\"action.continue\":true,\"action.do\":true,\"action.guide\":true,\"action.say\":true,\"action.see\":false,\"action.story\":true,\"images\":false,\"narration\":true,\"narration.thoughts\":false,\"record.context_note_updated\":false,\"record.diceroll\":true,\"record.entity_attribute_changed\":true,\"record.entity_attribute_removed\":true,\"record.entity_created\":true,\"record.entity_deleted\":true,\"record.entity_queried\":true,\"record.entity_updated\":true,\"record.image_generated\":true,\"record.tool_call\":false}}}"
+    }
+  ],
+  "records": [
+    {
+      "id": "6a5be659-1adb-4ac2-8b45-39e41c6c8cbc",
+      "story_id": "71c21723-a3be-4728-afb7-384fa7d9007f",
+      "seq": 0,
+      "kind": "entity_created",
+      "visibility": "hidden",
+      "content": "You was added as a character.",
+      "payload_json": "{\"appearance_anchor\":null,\"entity_id\":\"e80043ca-707b-40ef-8b3e-41fd9d3188e1\",\"kind\":\"character\",\"name\":\"You\",\"source\":\"story_bootstrap\"}",
+      "target_entry_id": null,
+      "turn_id": null,
+      "created_at": "2026-09-30T19:52:26.695707400+00:00"
+    },
+    {
+      "id": "e360480e-ce80-455e-97f9-44eb6e886eee",
+      "story_id": "71c21723-a3be-4728-afb7-384fa7d9007f",
+      "seq": 1,
+      "kind": "player_message",
+      "visibility": "visible",
+      "content": "Look around the room, and illustrate it.",
+      "payload_json": "{\"input_mode\":\"do\"}",
+      "target_entry_id": null,
+      "turn_id": "14979e0a-2152-436f-adb8-aca20fa535fd",
+      "created_at": "2026-09-30T19:53:55.809510600+00:00"
+    },
+    {
+      "id": "77bbb771-151c-4c51-9569-f77df46faffe",
+      "story_id": "71c21723-a3be-4728-afb7-384fa7d9007f",
+      "seq": 2,
+      "kind": "narration",
+      "visibility": "visible",
+      "content": "You turn in place, taking the room in slowly.",
+      "payload_json": "{\"input_mode\":\"generated\",\"thoughts\":\"The user wants me to look around the room and illustrate it. I need to call illustrate_scene since they asked to illustrate. There's no prior context about what room we're in, so I need to establish a...\"}",
+      "target_entry_id": null,
+      "turn_id": "14979e0a-2152-436f-adb8-aca20fa535fd",
+      "created_at": "2026-09-30T19:53:55.810486300+00:00"
+    },
+    {
+      "id": "50cd3d24-0f00-48d0-86ce-739eb7da58b6",
+      "story_id": "71c21723-a3be-4728-afb7-384fa7d9007f",
+      "seq": 3,
+      "kind": "player_message",
+      "visibility": "visible",
+      "content": "the room",
+      "payload_json": "{\"input_mode\":\"see\"}",
+      "target_entry_id": null,
+      "turn_id": "8cf627eb-8e60-4240-a82f-217c7af6749e",
+      "created_at": "2026-09-30T19:55:02.650774200+00:00"
+    },
+    {
+      "id": "49c876e3-4b0d-4919-ab15-26e040245357",
+      "story_id": "71c21723-a3be-4728-afb7-384fa7d9007f",
+      "seq": 4,
+      "kind": "tool_call",
+      "visibility": "hidden",
+      "content": "Sketching the scene…",
+      "payload_json": "{\"args\":{\"character_ids\":[],\"description\":\"A narrow rented room seen from the middle of the floor at eye level, as if the viewer has just turned in place. Late-afternoon sun cuts through one tall window with a half-drawn linen curtain, laying a sharp gold bar across scuffed wooden floorboards and stirring dust in the air. An iron bed with a rumpled gray blanket stands against the left wall. A small wooden table holds a chipped enamel pitcher and a cold cup of tea. A dark coat is thrown over the back of a chair. Wallpaper the color of old paper peels at the seams. A clouded mirror hangs crooked above a washstand. Shadows pool in the corners; the window is the bright focal point. No people are visible.\"},\"ok\":true,\"result\":{\"queued\":true},\"tool\":\"illustrate_scene\"}",
+      "target_entry_id": "77bbb771-151c-4c51-9569-f77df46faffe",
+      "turn_id": "8cf627eb-8e60-4240-a82f-217c7af6749e",
+      "created_at": "2026-09-30T19:55:17.760651900+00:00"
+    },
+    {
+      "id": "fbc5bf64-be0a-4fe7-ab7e-c6b90017ec7c",
+      "story_id": "71c21723-a3be-4728-afb7-384fa7d9007f",
+      "seq": 5,
+      "kind": "image_generated",
+      "visibility": "hidden",
+      "content": "A scene image was generated depicting: A narrow rented room seen from the middle of the floor at eye level, as if the viewer has just turned in place. Late-afternoon sun cuts through one tall window with a half-drawn linen curtain, laying a sharp gold bar across scuffed wooden floorboards and stirring dust in the air. An iron bed with a rumpled gray blanket stands against the left wall. A small wooden table holds a chipped enamel pitcher and a cold cup of tea. A dark coat is thrown over the back of a chair. Wallpaper the color of old paper peels at the seams. A clouded mirror hangs crooked above a washstand. Shadows pool in the corners; the window is the bright focal point. No people are visible.",
+      "payload_json": "{\"asset_id\":\"242acfea-1403-4140-af97-a3753fe35e4e\",\"prompt\":\"Digital painting, atmospheric scene illustration. anime A narrow rented room seen from the middle of the floor at eye level, as if the viewer has just turned in place. Late-afternoon sun cuts through one tall window with a half-drawn linen curtain, laying a sharp gold bar across scuffed wooden floorboards and stirring dust in the air. An iron bed with a rumpled gray blanket stands against the left wall. A small wooden table holds a chipped enamel pitcher and a cold cup of tea. A dark coat is thrown over the back of a chair. Wallpaper the color of old paper peels at the seams. A clouded mirror hangs crooked above a washstand. Shadows pool in the corners; the window is the bright focal point. No people are visible.\"}",
+      "target_entry_id": "50cd3d24-0f00-48d0-86ce-739eb7da58b6",
+      "turn_id": "8cf627eb-8e60-4240-a82f-217c7af6749e",
+      "created_at": "2026-09-30T19:55:28.858572300+00:00"
+    },
+    {
+      "id": "2748be5e-aa0e-4b71-a173-7586437c253f",
+      "story_id": "71c21723-a3be-4728-afb7-384fa7d9007f",
+      "seq": 6,
+      "kind": "image_captioned",
+      "visibility": "hidden",
+      "content": "The generated scene image shows: A sunlit attic bedroom with peeling yellow-beige walls and a wooden floor features an unmade metal-framed bed against the back wall, covered in rumpled blankets. Sunlight streams in through a window on the right, illuminating dust motes in the air and casting bright squares of light on the floorboards. A wooden chair with a dark coat draped over it sits in the foreground left, while a small table with a pitcher and teacup stands next to the bed, and a washing stand with a basin and a towel hangs below a framed mirror on the right wall.",
+      "payload_json": "{\"asset_id\":\"242acfea-1403-4140-af97-a3753fe35e4e\",\"caption\":\"A sunlit attic bedroom with peeling yellow-beige walls and a wooden floor features an unmade metal-framed bed against the back wall, covered in rumpled blankets. Sunlight streams in through a window on the right, illuminating dust motes in the air and casting bright squares of light on the floorboards. A wooden chair with a dark coat draped over it sits in the foreground left, while a small table with a pitcher and teacup stands next to the bed, and a washing stand with a basin and a towel hangs below a framed mirror on the right wall.\",\"model\":\"google/gemini-3.5-flash-lite\"}",
+      "target_entry_id": "50cd3d24-0f00-48d0-86ce-739eb7da58b6",
+      "turn_id": "8cf627eb-8e60-4240-a82f-217c7af6749e",
+      "created_at": "2026-09-30T19:55:32.165100200+00:00"
+    },
+    {
+      "id": "dccb9828-6a5f-421d-88eb-a87f9159a8fd",
+      "story_id": "71c21723-a3be-4728-afb7-384fa7d9007f",
+      "seq": 7,
+      "kind": "player_message",
+      "visibility": "visible",
+      "content": "the door",
+      "payload_json": "{\"input_mode\":\"see\"}",
+      "target_entry_id": null,
+      "turn_id": "92817887-e53f-49d4-82f1-413a027da09f",
+      "created_at": "2026-09-30T20:00:51.134118500+00:00"
+    },
+    {
+      "id": "50f22f76-f833-4621-86ae-60af24910e16",
+      "story_id": "71c21723-a3be-4728-afb7-384fa7d9007f",
+      "seq": 8,
+      "kind": "tool_call",
+      "visibility": "hidden",
+      "content": "Sketching the scene…",
+      "payload_json": "{\"args\":{\"character_ids\":[\"You\"],\"description\":\"A tall heavy door of near-black vertical wood panels set into a dim interior wall, grain raised and scarred, a crooked pitted iron latch low on the door, a thin line of colder light leaking under the bottom edge, low warm lamplight from the room falling across worn floorboards, close composition centered on the door, no window, ominous and still\"},\"ok\":true,\"result\":{\"queued\":true},\"tool\":\"illustrate_scene\"}",
+      "target_entry_id": "77bbb771-151c-4c51-9569-f77df46faffe",
+      "turn_id": "92817887-e53f-49d4-82f1-413a027da09f",
+      "created_at": "2026-09-30T20:01:00.587113+00:00"
+    },
+    {
+      "id": "bdd19df4-f481-4c77-a768-addfe43e3748",
+      "story_id": "71c21723-a3be-4728-afb7-384fa7d9007f",
+      "seq": 9,
+      "kind": "image_generated",
+      "visibility": "hidden",
+      "content": "A scene image was generated depicting: A tall heavy door of near-black vertical wood panels set into a dim interior wall, grain raised and scarred, a crooked pitted iron latch low on the door, a thin line of colder light leaking under the bottom edge, low warm lamplight from the room falling across worn floorboards, close composition centered on the door, no window, ominous and still",
+      "payload_json": "{\"asset_id\":\"8de96595-bafa-4423-a716-0538eb62ab3d\",\"prompt\":\"Digital painting, atmospheric scene illustration. anime A tall heavy door of near-black vertical wood panels set into a dim interior wall, grain raised and scarred, a crooked pitted iron latch low on the door, a thin line of colder light leaking under the bottom edge, low warm lamplight from the room falling across worn floorboards, close composition centered on the door, no window, ominous and still\"}",
+      "target_entry_id": "dccb9828-6a5f-421d-88eb-a87f9159a8fd",
+      "turn_id": "92817887-e53f-49d4-82f1-413a027da09f",
+      "created_at": "2026-09-30T20:01:10.573222800+00:00"
+    },
+    {
+      "id": "0c0e789d-3958-447e-94e8-d0c1d9c9f42e",
+      "story_id": "71c21723-a3be-4728-afb7-384fa7d9007f",
+      "seq": 10,
+      "kind": "image_captioned",
+      "visibility": "hidden",
+      "content": "The generated scene image shows: A dimly lit, heavy wooden door is set within dark stone walls and plank flooring. A lit lantern on the left casts a warm glow, while a narrow sliver of bright blue light shows underneath the closed door. The door itself is secured with a rusted metal latch.",
+      "payload_json": "{\"asset_id\":\"8de96595-bafa-4423-a716-0538eb62ab3d\",\"caption\":\"A dimly lit, heavy wooden door is set within dark stone walls and plank flooring. A lit lantern on the left casts a warm glow, while a narrow sliver of bright blue light shows underneath the closed door. The door itself is secured with a rusted metal latch.\",\"model\":\"google/gemini-3.5-flash-lite\"}",
+      "target_entry_id": "dccb9828-6a5f-421d-88eb-a87f9159a8fd",
+      "turn_id": "92817887-e53f-49d4-82f1-413a027da09f",
+      "created_at": "2026-09-30T20:01:14.143658100+00:00"
+    },
+    {
+      "id": "907099ad-5c80-435d-a0ea-e5fc6a02f469",
+      "story_id": "e4c1027f-26b2-44c9-9205-5fe9648b1c9e",
+      "seq": 0,
+      "kind": "entity_created",
+      "visibility": "hidden",
+      "content": "You was added as a character.",
+      "payload_json": "{\"appearance_anchor\":null,\"entity_id\":\"f29f3f21-c710-4286-b9b4-c42e575c54f4\",\"kind\":\"character\",\"name\":\"You\",\"source\":\"story_bootstrap\"}",
+      "target_entry_id": null,
+      "turn_id": null,
+      "created_at": "2026-09-30T17:43:49.084297800+00:00"
+    },
+    {
+      "id": "986cedac-42cf-4999-93af-7c1a2376dfa0",
+      "story_id": "e4c1027f-26b2-44c9-9205-5fe9648b1c9e",
+      "seq": 1,
+      "kind": "player_message",
+      "visibility": "visible",
+      "content": "Look around the room, and illustrate it.",
+      "payload_json": "{\"input_mode\":\"do\"}",
+      "target_entry_id": null,
+      "turn_id": "2c3f04d0-09a9-4029-bb02-b5bfcbc5dcc7",
+      "created_at": "2026-09-30T19:45:52.113145200+00:00"
+    },
+    {
+      "id": "329fda8d-d3bd-4a50-bc58-fa8609dae9c9",
+      "story_id": "e4c1027f-26b2-44c9-9205-5fe9648b1c9e",
+      "seq": 2,
+      "kind": "narration",
+      "visibility": "visible",
+      "content": "The room takes shape as you turn through it. I'll fix what is here before describing it.The ceiling slopes so low on the left that your shoulder nearly brushes it. The plaster is the color of old tea, cracked along the beam, and the air holds the cold of a room that has not been lived in long enough to warm.\n\nAn iron bed takes most of the floor. Its blanket is gray wool, thin at the fold, and the mattress sags toward the wall. At the foot stands a deal table with one leg shimmed by a folded scrap of paper. An oil lamp sits there, glass chimney sooted, wick unlit. Beside it, a washstand leans a little: chipped white basin, a cake of soap gone hard at the edges, a towel stiff on its nail.\n\nThe only window is small and streaked with soot. Rain has been at the glass. Through it you make out wet cobbles, a gutter running brown, and the opposite wall of some other building close enough to touch if the sash would open. The street is quiet. Somewhere below, a stove ticks as it cools.\n\nCoal dust ghosts the hearth. A single chair, cane seat frayed, waits under the window as if someone meant to sit and watch the street and then thought better of it. Your own shadow stretches long across the boards when you turn. Nothing else moves. The door, painted the same tired brown as the wainscot, is shut, and the key is not in the lock.",
+      "payload_json": "{\"input_mode\":\"generated\",\"thoughts\":\"The user wants me to look around the room and illustrate it. I need to follow the narration rules and the tool instructions.\\nI step into the dimly lit room, my boots scraping softly against the worn wooden floorboards. The air hangs heavy with the scent of aged parchment and faint incense, curling from a small brazier in the corner. Sunlight filters through cracked shutters, casting golden shafts across shelves crammed with leather-bound tomes and dusty scrolls that whisper secrets of forgotten realms. A narrow bed with rumpled linens sits against one wall, while a sturdy oak desk holds scattered quills and half-finished maps. Through the window, I glimpse the distant spires of a city skyline, their towers piercing low-hanging clouds. The space feels both intimate and vast — a sanctuary for the curious, or perhaps a trap for the unwary. My gaze lingers on the faint etchings carved into the windowsill, symbols that seem to shift when I blink.The user wanted me to look around the room and illustrate it. I created the location entity. Now I need to narrate in second person, vivid literary prose. There's no illustrate_scene tool available de...\"}",
+      "target_entry_id": null,
+      "turn_id": "2c3f04d0-09a9-4029-bb02-b5bfcbc5dcc7",
+      "created_at": "2026-09-30T19:45:52.116639400+00:00"
+    },
+    {
+      "id": "caf9c8bc-457a-4e2e-8bec-85abeae80911",
+      "story_id": "e4c1027f-26b2-44c9-9205-5fe9648b1c9e",
+      "seq": 3,
+      "kind": "entity_created",
+      "visibility": "hidden",
+      "content": "The Upper Room was added as a location.",
+      "payload_json": "{\"appearance_anchor\":\"A narrow boarding-house room under a slanted ceiling: iron bed with a gray wool blanket, scarred washstand and chipped basin, one soot-streaked window onto a wet cobbled street, coal stove gone cold, and a single unlit oil lamp on a deal table.\",\"entity_id\":\"a8f69a69-aeaa-400f-991d-7d1c3b9658d8\",\"kind\":\"location\",\"name\":\"The Upper Room\",\"source\":\"narrator_tool\"}",
+      "target_entry_id": "329fda8d-d3bd-4a50-bc58-fa8609dae9c9",
+      "turn_id": "2c3f04d0-09a9-4029-bb02-b5bfcbc5dcc7",
+      "created_at": "2026-09-30T19:46:13.048057100+00:00"
+    },
+    {
+      "id": "b2a5a1d3-b695-492a-a2a8-c7be4350db41",
+      "story_id": "e4c1027f-26b2-44c9-9205-5fe9648b1c9e",
+      "seq": 4,
+      "kind": "tool_call",
+      "visibility": "hidden",
+      "content": "Introducing The Upper Room…",
+      "payload_json": "{\"args\":{\"appearance_anchor\":\"A narrow boarding-house room under a slanted ceiling: iron bed with a gray wool blanket, scarred washstand and chipped basin, one soot-streaked window onto a wet cobbled street, coal stove gone cold, and a single unlit oil lamp on a deal table.\",\"kind\":\"location\",\"name\":\"The Upper Room\"},\"ok\":true,\"result\":{\"created\":true,\"id\":\"a8f69a69-aeaa-400f-991d-7d1c3b9658d8\",\"kind\":\"location\",\"name\":\"The Upper Room\"},\"tool\":\"create_entity\"}",
+      "target_entry_id": "329fda8d-d3bd-4a50-bc58-fa8609dae9c9",
+      "turn_id": "2c3f04d0-09a9-4029-bb02-b5bfcbc5dcc7",
+      "created_at": "2026-09-30T19:46:20.706853400+00:00"
+    }
+  ],
+  "images": [
+    {
+      "id": "242acfea-1403-4140-af97-a3753fe35e4e",
+      "entry_id": "77bbb771-151c-4c51-9569-f77df46faffe",
+      "path": "",
+      "prompt": "Digital painting, atmospheric scene illustration. anime A narrow rented room seen from the middle of the floor at eye level, as if the viewer has just turned in place. Late-afternoon sun cuts through one tall window with a half-drawn linen curtain, laying a sharp gold bar across scuffed wooden floorboards and stirring dust in the air. An iron bed with a rumpled gray blanket stands against the left wall. A small wooden table holds a chipped enamel pitcher and a cold cup of tea. A dark coat is thrown over the back of a chair. Wallpaper the color of old paper peels at the seams. A clouded mirror hangs crooked above a washstand. Shadows pool in the corners; the window is the bright focal point. No people are visible.",
+      "created_at": "2026-09-30T19:55:28.855854200+00:00"
+    },
+    {
+      "id": "8de96595-bafa-4423-a716-0538eb62ab3d",
+      "entry_id": "77bbb771-151c-4c51-9569-f77df46faffe",
+      "path": "",
+      "prompt": "Digital painting, atmospheric scene illustration. anime A tall heavy door of near-black vertical wood panels set into a dim interior wall, grain raised and scarred, a crooked pitted iron latch low on the door, a thin line of colder light leaking under the bottom edge, low warm lamplight from the room falling across worn floorboards, close composition centered on the door, no window, ominous and still",
+      "created_at": "2026-09-30T20:01:10.571757400+00:00"
+    }
+  ],
+  "usage": [
+    {
+      "id": "e0fdb60d-b818-42c3-9bb0-2283c43f9a20",
+      "story_id": "e4c1027f-26b2-44c9-9205-5fe9648b1c9e",
+      "kind": "narration",
+      "provider": "openrouter",
+      "model": "x-ai/grok-4.7",
+      "response_id": "gen-1790797556-YwobkgZWPtpqsrVNkCVW",
+      "input_tokens": 3078,
+      "output_tokens": 1164,
+      "cached_input_tokens": 1152,
+      "cache_write_tokens": 0,
+      "cost_usd": 0.011412,
+      "created_at": "2026-09-30T19:46:31.376050500+00:00",
+      "turn_id": "2c3f04d0-09a9-4029-bb02-b5bfcbc5dcc7",
+      "image_asset_id": null,
+      "duration_ms": null,
+      "earlier_attempt": 0
+    },
+    {
+      "id": "91c44365-0a37-4386-90c1-b3e4acc5eda5",
+      "story_id": "e4c1027f-26b2-44c9-9205-5fe9648b1c9e",
+      "kind": "narration",
+      "provider": "openrouter",
+      "model": "x-ai/grok-4.7",
+      "response_id": "gen-1790797576-wLmYIIn7rWRiPTo7foeg",
+      "input_tokens": 4300,
+      "output_tokens": 381,
+      "cached_input_tokens": 3072,
+      "cache_write_tokens": 0,
+      "cost_usd": 0.006278,
+      "created_at": "2026-09-30T19:46:31.376294100+00:00",
+      "turn_id": "2c3f04d0-09a9-4029-bb02-b5bfcbc5dcc7",
+      "image_asset_id": null,
+      "duration_ms": null,
+      "earlier_attempt": 0
+    },
+    {
+      "id": "f29b7c3b-eaf0-49c1-a85b-9b805e674ada",
+      "story_id": "e4c1027f-26b2-44c9-9205-5fe9648b1c9e",
+      "kind": "title",
+      "provider": "openrouter",
+      "model": "x-ai/grok-4.7",
+      "response_id": "gen-1790797586-Q9ohMjkO2Y6ocL8cx5c7",
+      "input_tokens": 1711,
+      "output_tokens": 476,
+      "cached_input_tokens": 1152,
+      "cache_write_tokens": 0,
+      "cost_usd": 0.00455,
+      "created_at": "2026-09-30T19:46:31.376378900+00:00",
+      "turn_id": "2c3f04d0-09a9-4029-bb02-b5bfcbc5dcc7",
+      "image_asset_id": null,
+      "duration_ms": null,
+      "earlier_attempt": 0
+    },
+    {
+      "id": "f062b16e-7464-4d22-aba9-1b6f29880fcf",
+      "story_id": "71c21723-a3be-4728-afb7-384fa7d9007f",
+      "kind": "narration",
+      "provider": "openrouter",
+      "model": "x-ai/grok-4.7",
+      "response_id": "gen-1790798040-lqAYs2y7eCDDmzLdnn6g",
+      "input_tokens": 2206,
+      "output_tokens": 170,
+      "cached_input_tokens": 1152,
+      "cache_write_tokens": 0,
+      "cost_usd": 0.003704,
+      "created_at": "2026-09-30T19:54:10.080968900+00:00",
+      "turn_id": "14979e0a-2152-436f-adb8-aca20fa535fd",
+      "image_asset_id": null,
+      "duration_ms": null,
+      "earlier_attempt": 0
+    },
+    {
+      "id": "18c8c682-b0ee-4bf7-825d-1139735872eb",
+      "story_id": "71c21723-a3be-4728-afb7-384fa7d9007f",
+      "kind": "title",
+      "provider": "openrouter",
+      "model": "x-ai/grok-4.7",
+      "response_id": "gen-1790798045-b9OoIQBBG5kk3f4vsXKh",
+      "input_tokens": 1414,
+      "output_tokens": 487,
+      "cached_input_tokens": 1152,
+      "cache_write_tokens": 0,
+      "cost_usd": 0.004022,
+      "created_at": "2026-09-30T19:54:10.081178700+00:00",
+      "turn_id": "14979e0a-2152-436f-adb8-aca20fa535fd",
+      "image_asset_id": null,
+      "duration_ms": null,
+      "earlier_attempt": 0
+    },
+    {
+      "id": "84b4a5ff-cb68-43a2-9ba1-e51bc804220a",
+      "story_id": "71c21723-a3be-4728-afb7-384fa7d9007f",
+      "kind": "narration",
+      "provider": "openrouter",
+      "model": "x-ai/grok-4.7",
+      "response_id": "gen-1790798106-XoHLXISwedhyihCcwRbK",
+      "input_tokens": 2244,
+      "output_tokens": 889,
+      "cached_input_tokens": 1152,
+      "cache_write_tokens": 0,
+      "cost_usd": 0.008094,
+      "created_at": "2026-09-30T19:55:32.168495600+00:00",
+      "turn_id": "8cf627eb-8e60-4240-a82f-217c7af6749e",
+      "image_asset_id": null,
+      "duration_ms": null,
+      "earlier_attempt": 0
+    },
+    {
+      "id": "3875d79e-0673-417a-a70e-2a1c215f0355",
+      "story_id": "71c21723-a3be-4728-afb7-384fa7d9007f",
+      "kind": "image",
+      "provider": "openrouter",
+      "model": "google/gemini-3.1-flash-image-preview",
+      "response_id": null,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cached_input_tokens": 0,
+      "cache_write_tokens": 0,
+      "cost_usd": 0.0685005,
+      "created_at": "2026-09-30T19:55:32.168932500+00:00",
+      "turn_id": "8cf627eb-8e60-4240-a82f-217c7af6749e",
+      "image_asset_id": "242acfea-1403-4140-af97-a3753fe35e4e",
+      "duration_ms": 11094,
+      "earlier_attempt": 0
+    },
+    {
+      "id": "566b0f1c-db33-4c3d-a5f7-97be0574edd3",
+      "story_id": "71c21723-a3be-4728-afb7-384fa7d9007f",
+      "kind": "caption",
+      "provider": "openrouter",
+      "model": "google/gemini-3.5-flash-lite",
+      "response_id": "gen-1790798133-r2yNbsVmjLmUNkwyHyTC",
+      "input_tokens": 1143,
+      "output_tokens": 114,
+      "cached_input_tokens": 0,
+      "cache_write_tokens": 0,
+      "cost_usd": 0.0006279,
+      "created_at": "2026-09-30T19:55:32.169239600+00:00",
+      "turn_id": "8cf627eb-8e60-4240-a82f-217c7af6749e",
+      "image_asset_id": null,
+      "duration_ms": null,
+      "earlier_attempt": 0
+    },
+    {
+      "id": "e510d36e-26d4-42fc-8a44-8267c74cd98d",
+      "story_id": "71c21723-a3be-4728-afb7-384fa7d9007f",
+      "kind": "narration",
+      "provider": "openrouter",
+      "model": "x-ai/grok-4.7",
+      "response_id": "gen-1790798455-KP4V7f7wugcvFLpygDWb",
+      "input_tokens": 2244,
+      "output_tokens": 372,
+      "cached_input_tokens": 2176,
+      "cache_write_tokens": 0,
+      "cost_usd": 0.003456,
+      "created_at": "2026-09-30T20:01:14.143878600+00:00",
+      "turn_id": "92817887-e53f-49d4-82f1-413a027da09f",
+      "image_asset_id": null,
+      "duration_ms": null,
+      "earlier_attempt": 0
+    },
+    {
+      "id": "d753ba88-cb92-40a8-aeaf-7503a05811a0",
+      "story_id": "71c21723-a3be-4728-afb7-384fa7d9007f",
+      "kind": "image",
+      "provider": "openrouter",
+      "model": "google/gemini-3.1-flash-image-preview",
+      "response_id": null,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cached_input_tokens": 0,
+      "cache_write_tokens": 0,
+      "cost_usd": 0.0681195,
+      "created_at": "2026-09-30T20:01:14.143998300+00:00",
+      "turn_id": "92817887-e53f-49d4-82f1-413a027da09f",
+      "image_asset_id": "8de96595-bafa-4423-a716-0538eb62ab3d",
+      "duration_ms": 9983,
+      "earlier_attempt": 0
+    },
+    {
+      "id": "1ca8a946-4736-46d8-b72f-9841d528914b",
+      "story_id": "71c21723-a3be-4728-afb7-384fa7d9007f",
+      "kind": "caption",
+      "provider": "openrouter",
+      "model": "google/gemini-3.5-flash-lite",
+      "response_id": "gen-1790798475-dpqeZpOwvvFI3gLwUtqi",
+      "input_tokens": 1143,
+      "output_tokens": 54,
+      "cached_input_tokens": 0,
+      "cache_write_tokens": 0,
+      "cost_usd": 0.0004779,
+      "created_at": "2026-09-30T20:01:14.144044600+00:00",
+      "turn_id": "92817887-e53f-49d4-82f1-413a027da09f",
+      "image_asset_id": null,
+      "duration_ms": null,
+      "earlier_attempt": 0
+    }
+  ],
+  "logs": [
+    {
+      "args": [
+        "%cDownload the React DevTools for a better development experience: https://reactjs.org/link/react-devtools",
+        "font-weight:bold"
+      ],
+      "id": 1,
+      "level": "info",
+      "source": "at http://localhost:1420/node_modules/.vite/deps/react-dom-Cn6-HCcb.js?v=568018e4:17222:52",
+      "timestamp": 1790797058187
+    },
+    {
+      "args": [
+        "invalid input: mistralai/mistral-nemo can't read images; pick a vision model for captions"
+      ],
+      "id": 2,
+      "level": "error",
+      "source": "at save (http://localhost:1420/src/features/settings/useSettingsForm.ts:34:12)",
+      "timestamp": 1790797399143
+    }
+  ]
+}

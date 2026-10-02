@@ -1,0 +1,26 @@
+Command: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets
+Exit: 0
+
+    Checking story-llm v0.1.0 (C:\Users\User\Documents\GitHub\story-llm\src-tauri)
+warning: unused imports: `create_link_sync`, `load_entity_raw`, and `update_link_sync`
+  --> src\features\entities\mod.rs:11:53
+   |
+11 |     create_entity_sync, create_entity_with_id_sync, create_link_sync, list_entities_sync,
+   |                                                     ^^^^^^^^^^^^^^^^
+12 |     load_entity_raw, update_entity_sync, update_link_sync,
+   |     ^^^^^^^^^^^^^^^                      ^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: `story-llm` (lib) generated 1 warning (run `cargo clippy --fix --lib -p story-llm -- ` to apply 1 suggestion)
+warning: this expression creates a reference which is immediately dereferenced by the compiler
+   --> src\features\entities\projection.rs:486:65
+    |
+486 |             let stats = attributes::list_entity_attributes_sync(&conn, "story", &relationship.id)
+    |                                                                 ^^^^^ help: change this to: `conn`
+    |
+    = help: for further information visit https://rust-lang.github.io/rust-clippy/rust-1.97.0/index.html#needless_borrow
+    = note: `#[warn(clippy::needless_borrow)]` on by default
+
+warning: `story-llm` (lib test) generated 2 warnings (1 duplicate) (run `cargo clippy --fix --lib -p story-llm --tests -- ` to apply 1 suggestion)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 9.79s

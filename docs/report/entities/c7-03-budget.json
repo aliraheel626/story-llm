@@ -1,0 +1,14 @@
+{
+  "mode": "ro",
+  "usage_totals": [
+    {
+      "kind": "narration",
+      "calls": 1,
+      "cost_usd": 0.012182
+    }
+  ],
+  "text_calls": 1,
+  "text_calls_remaining": 14,
+  "image_calls": 0,
+  "caption_calls": 0
+}

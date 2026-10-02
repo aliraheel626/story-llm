@@ -1,0 +1,61 @@
+C1 behavior-preserving narrator tool split
+Branch: entities
+No commits made by the C1 worker.
+
+Order of evidence capture and moves:
+1. Added one temporary c1_dump_tool_contract Rust test in original tools.rs.
+2. Ran cargo test -- --nocapture and saved c1-cargo-test-before.txt.
+3. Read and verified c1-tool-contract-before.json existed before any move.
+4. Created narrator/tools directory and ran the required command:
+   git mv src-tauri/src/features/narrator/tools.rs src-tauri/src/features/narrator/tools/mod.rs
+5. Split six tools, moved dice adapters/integration tests and prompt schema test,
+   and updated callers. All permanent test assertions and sample args preserved.
+6. Ran cargo test -- --nocapture with C1_TOOL_CONTRACT_PHASE=after and saved
+   c1-cargo-test-after-with-probe.txt and c1-tool-contract-after.json.
+7. Ran FC /B on before/after JSON. Exit 0; no differences encountered.
+   Output saved in c1-tool-contract-compare.txt.
+8. Preserved probe source/insertion instructions in c1-contract-test.txt;
+   removed throwaway test and its unused import from Rust source.
+9. Ran cargo test and saved c1-cargo-test-after.txt.
+
+Test counts:
+Baseline library suite: 187 passed, 0 failed, 0 ignored (includes 1 throwaway).
+Baseline permanent count: 186 = 187 - 1.
+After split with probe: 187 passed, 0 failed, 0 ignored (includes 1 throwaway).
+After split permanent count: 186 = 187 - 1.
+Final suite without probe: 186 passed, 0 failed, 0 ignored.
+Binary and doctest suites: 0 tests at baseline and final.
+Permanent test count is unchanged.
+
+Contract scope:
+Six tools in original catalog order: roll_check, get_entities, create_entity,
+update_entity, adjust_entity_attribute, illustrate_scene.
+Each entry captures actual built tool name, description, schema JSON,
+catalog instruction (including null), and friendly_tool_label for representative,
+empty-object, and invalid-JSON sample arguments. Before/after are byte-identical.
+
+Source paths changed:
+src-tauri/src/features/narrator/tools.rs -> tools/mod.rs
+src-tauri/src/features/narrator/tools/get_entities.rs
+src-tauri/src/features/narrator/tools/create_entity.rs
+src-tauri/src/features/narrator/tools/update_entity.rs
+src-tauri/src/features/narrator/tools/adjust_entity_attribute.rs
+src-tauri/src/features/narrator/tools/roll_check.rs
+src-tauri/src/features/narrator/tools/illustrate_scene.rs
+src-tauri/src/features/narrator/catalog.rs
+src-tauri/src/features/narrator/dice.rs
+src-tauri/src/features/narrator/stream.rs
+src-tauri/src/prompts.rs
+src-tauri/src/ai/mod.rs
+src-tauri/src/features/context/blocks.rs
+
+Final checks/caveats:
+git diff --check HEAD passed (only Git LF-to-CRLF normalization warnings).
+No throwaway probe or stale moved-tool references remain in src-tauri/src.
+No database implementation, live database, secrets, or docs/report/entities.md
+was touched. Cargo tests use existing test fixtures; no live model requests.
+No unrelated files were formatted. No later-stage implementation was performed.
+Evidence lives under the repository's ignored docs/report/entities directory.
+git mv staged the rename when the temporary probe still existed; final module
+edits are unstaged and six new modules are untracked. Coordinator must stage
+the complete final C1 source paths before committing, not just the rename.

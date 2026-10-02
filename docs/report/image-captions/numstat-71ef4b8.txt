@@ -1,0 +1,21 @@
+22	0	src-tauri/src/ai/mod.rs
+1	0	src-tauri/src/features/context/preview.rs
+87	2	src-tauri/src/features/images/generation.rs
+8	0	src-tauri/src/features/stories/settings.rs
+82	10	src-tauri/src/features/transcript/attachments.rs
+1	0	src-tauri/src/features/transcript/filter.rs
+39	0	src-tauri/src/features/transcript/history.rs
+19	0	src-tauri/src/features/transcript/model.rs
+40	0	src-tauri/src/features/usage/model.rs
+72	4	src-tauri/src/features/usage/repository.rs
+15	0	src-tauri/src/prompts.rs
+1	1	src-tauri/src/shared/db.rs
+9	5	src/features/transcript/TranscriptEntryView.tsx
+4	2	src/shared/types.ts
+
+{
+  "production_added": 148,
+  "production_deleted": 21,
+  "test_added": 252,
+  "test_deleted": 3
+}

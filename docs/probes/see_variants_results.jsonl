@@ -1,0 +1,35 @@
+{"variant": "baseline", "run": 1, "provider": "xAI", "cost": 0.004808, "called_tool": true, "leaked_text": "{\"description\": \"A close view of a smooth black stone resting on a folded letter on a weat"}
+{"variant": "baseline", "run": 2, "provider": "xAI", "cost": 0.004826, "called_tool": true, "leaked_text": "{\"description\": \"A close view of a smooth black pebble resting on a folded letter on a wor"}
+{"variant": "baseline", "run": 3, "provider": "xAI", "cost": 0.003182, "called_tool": true, "leaked_text": "{\"description\": \"A smooth black stone, small enough to fit in a palm, resting on a folded "}
+{"variant": "no_mention", "run": 1, "provider": "xAI", "cost": 0.005056, "called_tool": true, "leaked_text": "The stone is heavier than its size suggests, warm where the light has found it and cold in"}
+{"variant": "no_mention", "run": 2, "provider": "xAI", "cost": 0.003652, "called_tool": true, "leaked_text": ""}
+{"variant": "no_mention", "run": 3, "provider": "xAI", "cost": 0.00214, "called_tool": true, "leaked_text": ""}
+{"variant": "empty_reply", "run": 1, "provider": "xAI", "cost": 0.004958, "called_tool": true, "leaked_text": "{\"name\": \"illustrate_scene\", \"parameters\": {\"description\": \"A close view of a smooth black"}
+{"variant": "empty_reply", "run": 2, "provider": "xAI", "cost": 0.003806, "called_tool": true, "leaked_text": ""}
+{"variant": "empty_reply", "run": 3, "provider": "xAI", "cost": 0.002468, "called_tool": true, "leaked_text": ""}
+{"variant": "named_choice", "run": 1, "provider": "xAI", "cost": 0.004408, "called_tool": true, "leaked_text": ""}
+{"variant": "named_choice", "run": 2, "provider": "xAI", "cost": 0.002914, "called_tool": true, "leaked_text": ""}
+{"variant": "named_choice", "run": 3, "provider": "xAI", "cost": 0.003058, "called_tool": true, "leaked_text": "{\"name\": \"illustrate_scene\", \"parameters\": {\"description\": \"A close view of a smooth black"}
+{"variant": "auto_choice", "run": 1, "provider": "xAI", "cost": 0.002926, "called_tool": true, "leaked_text": ""}
+{"variant": "auto_choice", "run": 2, "provider": "xAI", "cost": 0.002308, "called_tool": true, "leaked_text": "I'll show you the stone on the sill."}
+{"variant": "auto_choice", "run": 3, "provider": "xAI", "cost": 0.00211, "called_tool": true, "leaked_text": ""}
+total cost 0.05262
+{"variant": "no_mention", "run": 1, "provider": "xAI", "cost": 0.00226, "called_tool": true, "leaked_text": ""}
+{"variant": "no_mention", "run": 2, "provider": "xAI", "cost": 0.003172, "called_tool": true, "leaked_text": ""}
+{"variant": "no_mention", "run": 3, "provider": "xAI", "cost": 0.002242, "called_tool": true, "leaked_text": ""}
+{"variant": "no_mention", "run": 4, "provider": "xAI", "cost": 0.003868, "called_tool": true, "leaked_text": "<tool_call>\nillustrate_scene(description=Close view of a smooth black stone, rounded and w"}
+{"variant": "no_mention", "run": 5, "provider": "xAI", "cost": 0.002812, "called_tool": true, "leaked_text": "The stone is small enough to close your hand around, river-worn until every edge has gone."}
+{"variant": "no_mention", "run": 6, "provider": "xAI", "cost": 0.002926, "called_tool": true, "leaked_text": ""}
+{"variant": "no_mention_named", "run": 1, "provider": "xAI", "cost": 0.005592, "called_tool": true, "leaked_text": "<tool_call>\nillustrate_scene(description=A close view of a smooth black pebble on a worn w"}
+{"variant": "no_mention_named", "run": 2, "provider": "xAI", "cost": 0.003924, "called_tool": true, "leaked_text": "You lift the stone from the letter. It is heavier than its size, worn smooth as a tide-pol"}
+{"variant": "no_mention_named", "run": 3, "provider": "xAI", "cost": 0.002682, "called_tool": true, "leaked_text": ""}
+{"variant": "no_mention_named", "run": 4, "provider": "xAI", "cost": 0.004824, "called_tool": true, "leaked_text": "You lift the stone from the letter. It is heavier than its size suggests, river-smooth, an"}
+{"variant": "no_mention_named", "run": 5, "provider": "xAI", "cost": 0.00348, "called_tool": true, "leaked_text": "I'll show you the stone on the sill."}
+{"variant": "no_mention_named", "run": 6, "provider": "xAI", "cost": 0.002178, "called_tool": true, "leaked_text": ""}
+{"variant": "no_mention_auto", "run": 1, "provider": "xAI", "cost": 0.004278, "called_tool": true, "leaked_text": ""}
+{"variant": "no_mention_auto", "run": 2, "provider": "xAI", "cost": 0.003738, "called_tool": true, "leaked_text": ""}
+{"variant": "no_mention_auto", "run": 3, "provider": "xAI", "cost": 0.002922, "called_tool": true, "leaked_text": ""}
+{"variant": "no_mention_auto", "run": 4, "provider": "xAI", "cost": 0.001686, "called_tool": false, "leaked_text": "The stone is heavier than it looks, cool against your palm, and the light finds every worn"}
+{"variant": "no_mention_auto", "run": 5, "provider": "xAI", "cost": 0.002832, "called_tool": true, "leaked_text": ""}
+{"variant": "no_mention_auto", "run": 6, "provider": "xAI", "cost": 0.002724, "called_tool": true, "leaked_text": "The stone is small enough to sit in a palm, black as wet shale, worn smooth on every face."}
+total cost 0.05814
