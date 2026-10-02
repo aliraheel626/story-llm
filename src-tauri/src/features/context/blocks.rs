@@ -1,18 +1,14 @@
 //! Ordered per-message context assembly for narrator requests.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
-use crate::ai::{HistoryTurn, TextModelConfig};
 use crate::features::entities::{
     self,
-    model::{Entity, EntityAttributeValue},
+    model::{Entity, EntityAttributeValue, CHARACTER, RELATIONSHIP},
 };
-use crate::features::transcript::{query, repository};
-use crate::features::stories::settings::{EntityContext, ContextSettings};
+use crate::features::stories::settings::{ContextSettings, EntityVisibility};
 use crate::prompts;
 use crate::shared::error::AppResult;
-
-use super::raw_tail_boundary;
 
 pub(crate) struct ToolDescription<'a> {
     pub name: &'a str,
@@ -22,8 +18,6 @@ pub(crate) struct ToolDescription<'a> {
 pub(crate) struct Inputs<'a> {
     pub conn: &'a rusqlite::Connection,
     pub story_id: &'a str,
-    pub history: &'a [HistoryTurn],
-    pub config: &'a TextModelConfig,
     pub context: &'a ContextSettings,
     pub tools: &'a [ToolDescription<'a>],
     pub rejected_reply: Option<&'a str>,
@@ -37,20 +31,14 @@ pub(crate) struct ContextPlan {
 fn format_entity_context(
     data: &[Entity],
     attributes: &HashMap<String, Vec<EntityAttributeValue>>,
-    detailed_entity_ids: Option<&HashSet<String>>,
+    visibility: EntityVisibility,
 ) -> String {
-    let mut lines = vec![prompts::ENTITY_CONTEXT_HEADER.to_string()];
-    for entity in data {
-        if detailed_entity_ids.is_some_and(|entity_ids| !entity_ids.contains(&entity.id)) {
-            lines.push(if entity.link.is_some() {
-                format!("- {}", entity.name)
-            } else {
-                let known_as = entity.character.known_as.as_deref()
-                    .map(|text| format!("; known to the player as: {text}")).unwrap_or_default();
-                format!("- {} ({}){known_as}", entity.name, entity.kind)
-            });
-            continue;
-        }
+    let mut lines = Vec::new();
+    for entity in data.iter().filter(|entity| match entity.kind.as_str() {
+        CHARACTER => visibility.character,
+        RELATIONSHIP => visibility.relationship,
+        _ => false,
+    }) {
         let mut details = String::new();
         if let Some(link) = &entity.link {
             if let Some(text) = &link.description {
@@ -87,22 +75,11 @@ fn format_entity_context(
             entity.name, entity.kind
         ));
     }
-    format!("<entities>\n{}\n</entities>", lines.join("\n"))
-}
-
-fn touched_entity_ids(
-    conn: &rusqlite::Connection,
-    raw_tail: &[HistoryTurn],
-) -> AppResult<HashSet<String>> {
-    let Some(first_id) = raw_tail
-        .iter()
-        .filter_map(|turn| turn.entry_id.as_deref())
-        .next()
-    else {
-        return Ok(HashSet::new());
-    };
-    let first = repository::get_entry(conn, first_id)?;
-    query::entities_touched_since(conn, &first.story_id, first.seq)
+    if lines.is_empty() {
+        String::new()
+    } else {
+        format!("<entities>\n{}\n{}\n</entities>", prompts::ENTITY_CONTEXT_HEADER, lines.join("\n"))
+    }
 }
 
 fn tool_context(specs: &[ToolDescription<'_>]) -> String {
@@ -139,7 +116,7 @@ pub(crate) fn combine_context_blocks(parts: &[String]) -> String {
 }
 
 pub(crate) fn build_message_context(inputs: &Inputs<'_>) -> AppResult<ContextPlan> {
-    let (entities, attributes) = if inputs.context.entities == EntityContext::None {
+    let (entities, attributes) = if !inputs.context.entity_kinds.character && !inputs.context.entity_kinds.relationship {
         (Vec::new(), HashMap::new())
     } else {
         let entities = entities::list_entities_sync(inputs.conn, inputs.story_id, None)?;
@@ -154,11 +131,7 @@ pub(crate) fn build_message_context(inputs: &Inputs<'_>) -> AppResult<ContextPla
         )?;
         (entities, attributes)
     };
-    let entities_full = if inputs.context.entities == EntityContext::None {
-        String::new()
-    } else {
-        format_entity_context(&entities, &attributes, None)
-    };
+    let entities_full = format_entity_context(&entities, &attributes, inputs.context.entity_kinds);
     let note = inputs.context.author_note.trim();
     let author_note = if inputs.context.author_note_enabled && !note.is_empty() {
         format!("<author_note>{note}</author_note>")
@@ -171,32 +144,18 @@ pub(crate) fn build_message_context(inputs: &Inputs<'_>) -> AppResult<ContextPla
         String::new()
     };
 
-    let full = combine_context_blocks(&[entities_full.clone(), author_note.clone(), tools.clone()]);
-    let entities_live = if inputs.context.entities != EntityContext::Scoped {
-        entities_full
-    } else {
-        let split = raw_tail_boundary(
-            inputs.history,
-            inputs.config,
-            &prompts::narrator_system_prompt(),
-            &full,
-        );
-        let touched = touched_entity_ids(inputs.conn, &inputs.history[split..])?;
-        format_entity_context(&entities, &attributes, Some(&touched))
-    };
+    let full = combine_context_blocks(&[entities_full, author_note, tools]);
     let retry = inputs
         .rejected_reply
         .map(prompts::retry_instruction)
         .unwrap_or_default();
-    let live = combine_context_blocks(&[entities_live, author_note, tools, retry]);
+    let live = combine_context_blocks(&[full.clone(), retry]);
     Ok(ContextPlan { live, full })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ai::{HistoryRole, HistoryTurnMarker};
-    use crate::features::transcript::model::kind as transcript_kind;
     use crate::features::{
         entities,
         images::model::ImageRequest,
@@ -211,16 +170,6 @@ mod tests {
     use std::sync::Arc;
     use tokio::sync::Mutex;
 
-    fn config() -> TextModelConfig {
-        TextModelConfig {
-            provider: "openrouter".into(),
-            model: "test".into(),
-            api_key: "test".into(),
-            context_window: 32_768,
-            supports_images: false,
-        }
-    }
-
     fn descriptions<'a>(specs: &'a [&'a ToolSpec]) -> Vec<ToolDescription<'a>> {
         specs
             .iter()
@@ -231,11 +180,11 @@ mod tests {
             .collect()
     }
 
-    fn story_with_entity_query() -> (Pool, HistoryTurn) {
+    fn story() -> Pool {
         let pool = crate::shared::db::test_pool();
         let conn = pool.get().unwrap();
         crate::shared::test_support::story_with_settings(
-            &conn, "s", json!({"author_note":"Keep it terse."}),
+            &conn, "s", json!({"context": {"author_note":"Keep it terse."}}),
         );
         entities::create_entity_with_id_sync(
             &conn,
@@ -249,35 +198,13 @@ mod tests {
             None,
         )
         .unwrap();
-        let query_id = crate::shared::test_support::record(
-            &conn, "s", transcript_kind::ENTITY_UPDATED, Some("Bob's appearance changed."),
-            json!({"entity_ids":["bob"]}), None, None,
-        );
-        conn.execute(
-            "UPDATE stories SET settings_json = ?1 WHERE id = 's'",
-            [json!({"context": {"entities":"scoped", "author_note":"Keep it terse.", "author_note_enabled":true, "tool_instructions":true}}).to_string()],
-        )
-        .unwrap();
         drop(conn);
-
-        (
-            pool,
-            HistoryTurn {
-                entry_id: Some(query_id),
-                role: HistoryRole::Narrator,
-                content: "[Authoritative story event: entity_updated]\nBob's appearance changed.".into(),
-                marker: HistoryTurnMarker::Transcript,
-                images: Vec::new(),
-                reasoning: None,
-            },
-        )
+        pool
     }
 
     #[tokio::test]
     async fn pipeline_builds_all_blocks_in_fixed_order() {
-        let (pool, history_turn) = story_with_entity_query();
-        let history = vec![history_turn];
-        let config = config();
+        let pool = story();
         let settings = NarratorToolSettings::default();
         let tools = catalog::enabled(&ToolAvailability {
             settings: &settings,
@@ -291,8 +218,6 @@ mod tests {
                 build_message_context(&Inputs {
                     conn,
                     story_id: "s",
-                    history: &history,
-                    config: &config,
                     context: &context,
                     tools: &descriptions(&tools),
                     rejected_reply: None,
@@ -311,16 +236,17 @@ mod tests {
         assert!(plan.live.contains(&tool_context(&descriptions(&tools))));
         assert!(plan.full.contains(&tool_context(&descriptions(&tools))));
         assert!(plan.full.contains("<entities>"));
+        assert_eq!(plan.full, plan.live);
     }
 
     #[tokio::test]
     async fn context_sees_uncommitted_story_and_entity_changes() {
-        let (pool, history_turn) = story_with_entity_query();
+        let pool = story();
         let turn = TurnTx::begin(&pool, &Default::default(), "s").unwrap();
         turn.with(|conn| {
             conn.execute(
                 "UPDATE stories SET settings_json = ?1 WHERE id = 's'",
-                [json!({"context": {"entities":"scoped", "author_note":"A new direction.", "author_note_enabled":true, "tool_instructions":true}}).to_string()],
+                [json!({"context": {"author_note":"A new direction.", "author_note_enabled":true, "tool_instructions":true}}).to_string()],
             )?;
             entities::create_entity_with_id_sync(
                 conn, "alice", "s", "character", "Alice", Some("a blue coat"),
@@ -328,15 +254,12 @@ mod tests {
             )?;
             Ok(())
         }).await.unwrap();
-        let history = vec![history_turn];
         let plan = turn
             .with(|conn| {
                 let context = crate::features::stories::settings::read_context_settings(conn, "s")?;
                 build_message_context(&Inputs {
                     conn,
                     story_id: "s",
-                    history: &history,
-                    config: &config(),
                     context: &context,
                     tools: &[],
                     rejected_reply: None,
@@ -407,7 +330,7 @@ mod tests {
             assert_eq!(alice_attributes[0].canonical_name, "Accuracy");
             assert_eq!(alice_attributes[0].value, 7.0);
             let context = ContextSettings {
-                entities: EntityContext::All,
+                entity_kinds: EntityVisibility::default(),
                 author_note_enabled: false,
                 author_note: String::new(),
                 tool_instructions: false,
@@ -415,8 +338,6 @@ mod tests {
             let plan = build_message_context(&Inputs {
                 conn,
                 story_id: "s",
-                history: &[],
-                config: &config(),
                 context: &context,
                 tools: &[],
                 rejected_reply: None,
@@ -434,7 +355,7 @@ mod tests {
 
     #[tokio::test]
     async fn muted_note_and_tool_instructions_leave_offered_tools_unchanged() {
-        let (pool, history_turn) = story_with_entity_query();
+        let pool = story();
         let turn = TurnTx::begin(&pool, &Default::default(), "s").unwrap();
         let specs = catalog::enabled(&ToolAvailability {
             settings: &NarratorToolSettings::default(),
@@ -444,7 +365,7 @@ mod tests {
         let plan = turn
             .with(|conn| {
                 let context = ContextSettings {
-                    entities: EntityContext::None,
+                    entity_kinds: EntityVisibility { character: false, relationship: false },
                     author_note_enabled: false,
                     author_note: "Keep it terse.".into(),
                     tool_instructions: false,
@@ -452,8 +373,6 @@ mod tests {
                 build_message_context(&Inputs {
                     conn,
                     story_id: "s",
-                    history: &[history_turn],
-                    config: &config(),
                     context: &context,
                     tools: &descriptions(&specs),
                     rejected_reply: None,
@@ -469,7 +388,7 @@ mod tests {
 
     #[tokio::test]
     async fn retry_adds_rejected_text_only_to_live_context_after_tools() {
-        let (pool, history_turn) = story_with_entity_query();
+        let pool = story();
         let turn = TurnTx::begin(&pool, &Default::default(), "s").unwrap();
         turn.with(|conn| {
             let context = crate::features::stories::settings::read_context_settings(conn, "s")?;
@@ -477,12 +396,9 @@ mod tests {
                 name: "roll_check",
                 instruction: Some(roll_check::INSTRUCTION),
             }];
-            let history = [history_turn];
             let base = Inputs {
                 conn,
                 story_id: "s",
-                history: &history,
-                config: &config(),
                 context: &context,
                 tools: &tools,
                 rejected_reply: Some("Rejected narration."),
@@ -524,12 +440,9 @@ mod tests {
         entities::attributes::set_entity_attribute_sync(&conn, "s", &kael.id, &health.id, 7.0).unwrap();
         let data = entities::list_entities_sync(&conn, "s", None).unwrap();
         let attrs = entities::attributes::list_entity_attributes_for_entities_sync(&conn, "s", &[&kael.id]).unwrap();
-        let text = format_entity_context(&data, &attrs, None);
+        let text = format_entity_context(&data, &attrs, EntityVisibility::default());
         assert!(text.contains("- Kael (character); known to the player as: the hooded stranger; location: the Rusty Anchor; outfit: grey cloak; gender: female; age: 34; role: smuggler; appearance: scarred lip; attributes: Health=7"));
         assert!(text.contains("Names here are true names."));
-        let summary = format_entity_context(&data, &attrs, Some(&HashSet::new()));
-        assert!(summary.contains("- Kael (character); known to the player as: the hooded stranger"));
-        assert!(!summary.contains("location: the Rusty Anchor"));
     }
 
     #[test]
@@ -556,13 +469,30 @@ mod tests {
         let data = entities::list_entities_sync(&conn, "s", None).unwrap();
         let ids = data.iter().map(|entity| entity.id.as_str()).collect::<Vec<_>>();
         let attrs = entities::attributes::list_entity_attributes_for_entities_sync(&conn, "s", &ids).unwrap();
-        let text = format_entity_context(&data, &attrs, None);
+        let text = format_entity_context(&data, &attrs, EntityVisibility::default());
         assert!(text.starts_with(&format!("<entities>\n{}", prompts::ENTITY_CONTEXT_HEADER)));
         assert!(text.contains("- Mira → You: estranged sister (relationship); description: Still resents your departure; attributes: Affection=8, Trust=-2"));
         assert!(text.contains("- Mira ↔ Varro: siblings (relationship)"));
-        let summary = format_entity_context(&data, &attrs, Some(&HashSet::new()));
-        assert!(summary.contains("\n- Mira → You: estranged sister\n"));
-        assert!(!summary.contains("Still resents"));
+        for (character, relationship) in [(true, false), (false, true), (false, false)] {
+            let context = ContextSettings {
+                entity_kinds: EntityVisibility { character, relationship },
+                author_note_enabled: false,
+                tool_instructions: false,
+                ..Default::default()
+            };
+            let plan = build_message_context(&Inputs {
+                conn: &conn, story_id: "s", context: &context, tools: &[], rejected_reply: None,
+            }).unwrap();
+            assert_eq!(plan.full, plan.live);
+            assert_eq!(plan.live.lines().any(|line| line.starts_with("- ") && line.contains("(character)")), character);
+            assert_eq!(plan.live.lines().any(|line| line.starts_with("- ") && line.contains(" → ")), relationship);
+            assert_eq!(plan.live.contains("\n- Mira ↔ Varro: siblings (relationship)"), relationship);
+            assert_eq!(plan.live.contains("<entities>"), character || relationship);
+            if relationship {
+                assert!(plan.live.contains("- Mira → You: estranged sister (relationship); description: Still resents your departure; attributes: Affection=8, Trust=-2"));
+            }
+        }
+        assert_eq!(format_entity_context(&[], &HashMap::new(), EntityVisibility::default()), "");
     }
 
     #[test]

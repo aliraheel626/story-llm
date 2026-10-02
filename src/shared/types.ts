@@ -72,7 +72,7 @@ export interface TextModelSettings { provider: string; model: string; has_api_ke
 export interface ImageModelSettings { model: string; enabled: boolean; style: string; has_api_key: boolean; captions_enabled: boolean; caption_model: string }
 export interface TranscriptItem { key: string; group: string; label: string; enabled: boolean }
 export interface ContextSettings {
-  entities: "none" | "all" | "scoped";
+  entity_kinds: { character: boolean; relationship: boolean };
   author_note_enabled: boolean;
   author_note: string;
   tool_instructions: boolean;

@@ -93,7 +93,7 @@ globalThis.__storyTestInvoke = async (command, args = {}) => {
       ];
     }
     case "get_story_context_settings": {
-      const settings = { entities: "all", author_note_enabled: true, author_note: `Note ${args.storyId}`, tool_instructions: true };
+      const settings = { entity_kinds: { character: true, relationship: true }, author_note_enabled: true, author_note: `Note ${args.storyId}`, tool_instructions: true };
       if (nextContextLoad) {
         const wait = nextContextLoad;
         nextContextLoad = null;
@@ -397,9 +397,9 @@ test("delayed transcript and context loads for A cannot show A data in B", async
   nextContextSave = new Promise((_, reject) => { rejectContext = reject; });
   store.getState().setActiveStory("A");
   const transcriptSave = contextStore.getState().toggleTranscriptItem("A", "images", true);
-  const contextSave = contextStore.getState().saveContextSettings("A", { entities: "scoped" });
+  const contextSave = contextStore.getState().saveContextSettings("A", { entity_kinds: { character: true, relationship: false } });
   assert.equal(contextStore.getState().stories.A.items[0].enabled, true);
-  assert.equal(contextStore.getState().stories.A.context.entities, "scoped");
+  assert.deepEqual(contextStore.getState().stories.A.context.entity_kinds, { character: true, relationship: false });
   store.getState().setActiveStory("B");
   rejectTranscript(new Error("A transcript failed"));
   rejectContext(new Error("A context failed"));
@@ -410,9 +410,9 @@ test("delayed transcript and context loads for A cannot show A data in B", async
   await assert.rejects(contextSave, /A context failed/);
   assert.equal(visible().items[0].enabled, true);
   assert.equal(visible().noteDraft, "Unsent B draft");
-  assert.equal(visible().context.entities, "all");
+  assert.deepEqual(visible().context.entity_kinds, { character: true, relationship: true });
   assert.equal(contextStore.getState().stories.A.items[0].enabled, false);
-  assert.equal(contextStore.getState().stories.A.context.entities, "all");
+  assert.deepEqual(contextStore.getState().stories.A.context.entity_kinds, { character: true, relationship: true });
   assert.deepEqual(calls.filter(({ command, args }) => command === "save_story_transcript_settings" && args.storyId === "A").slice(-2).map(({ args }) => args.include),
     [{ images: true, narration: true }, { images: false, narration: true }]);
   store.getState().setActiveStory(previousStoryId);
@@ -427,18 +427,18 @@ test("a second toggle while a save is in flight is ignored", async () => {
   nextContextSave = new Promise((resolve) => { releaseContext = resolve; });
   const firstTranscript = contextStore.getState().toggleTranscriptItem(storyId, "images", true);
   const secondTranscript = contextStore.getState().toggleTranscriptItem(storyId, "narration", false);
-  const firstContext = contextStore.getState().saveContextSettings(storyId, { entities: "scoped" });
+  const firstContext = contextStore.getState().saveContextSettings(storyId, { entity_kinds: { character: true, relationship: false } });
   const secondContext = contextStore.getState().saveContextSettings(storyId, { tool_instructions: false });
   assert.deepEqual(contextStore.getState().stories[storyId].items.map((item) => item.enabled), [true, true]);
-  assert.equal(contextStore.getState().stories[storyId].context.entities, "scoped");
+  assert.deepEqual(contextStore.getState().stories[storyId].context.entity_kinds, { character: true, relationship: false });
   assert.equal(contextStore.getState().stories[storyId].context.tool_instructions, true);
   releaseTranscript();
   releaseContext();
   await Promise.all([firstTranscript, secondTranscript, firstContext, secondContext]);
   assert.deepEqual(calls.filter(({ command, args }) => command === "save_story_transcript_settings" && args.storyId === storyId).map(({ args }) => args.include),
     [{ images: true, narration: true }]);
-  assert.deepEqual(calls.filter(({ command, args }) => command === "save_story_context_settings" && args.storyId === storyId).map(({ args }) => [args.settings.entities, args.settings.tool_instructions]),
-    [["scoped", true]]);
+  assert.deepEqual(calls.filter(({ command, args }) => command === "save_story_context_settings" && args.storyId === storyId).map(({ args }) => [args.settings.entity_kinds, args.settings.tool_instructions]),
+    [[{ character: true, relationship: false }, true]]);
   assert.deepEqual(contextStore.getState().stories[storyId].items.map((item) => item.enabled), [true, true]);
   assert.equal(contextStore.getState().stories[storyId].transcriptSaving, false);
   assert.equal(contextStore.getState().stories[storyId].contextSaving, false);
@@ -452,13 +452,13 @@ test("a failed save restores previous items and shows the error", async () => {
   nextTranscriptSave = new Promise((_, reject) => { rejectTranscript = reject; });
   nextContextSave = new Promise((_, reject) => { rejectContext = reject; });
   const failedTranscript = contextStore.getState().toggleTranscriptItem(storyId, "images", true);
-  const failedContext = contextStore.getState().saveContextSettings(storyId, { entities: "scoped" });
+  const failedContext = contextStore.getState().saveContextSettings(storyId, { entity_kinds: { character: true, relationship: false } });
   rejectTranscript(new Error("transcript failed"));
   rejectContext(new Error("context failed"));
   await assert.rejects(failedTranscript, /transcript failed/);
   await assert.rejects(failedContext, /context failed/);
   assert.deepEqual(contextStore.getState().stories[storyId].items.map((item) => item.enabled), [false, true]);
-  assert.equal(contextStore.getState().stories[storyId].context.entities, "all");
+  assert.deepEqual(contextStore.getState().stories[storyId].context.entity_kinds, { character: true, relationship: true });
   assert.match(contextStore.getState().stories[storyId].transcriptError, /transcript failed/);
   assert.match(contextStore.getState().stories[storyId].contextError, /context failed/);
 });
@@ -468,7 +468,7 @@ test("preview is not loaded while a context save is in flight", async () => {
   await Promise.all([contextStore.getState().loadTranscriptSettings(storyId), contextStore.getState().loadContextSettings(storyId)]);
   let releaseSave;
   nextContextSave = new Promise((resolve) => { releaseSave = resolve; });
-  const save = contextStore.getState().saveContextSettings(storyId, { entities: "none" });
+  const save = contextStore.getState().saveContextSettings(storyId, { entity_kinds: { character: false, relationship: false } });
   await contextStore.getState().loadPreview(storyId);
   assert.equal(calls.filter(({ command, args }) => command === "preview_story_context" && args.storyId === storyId).length, 0);
   assert.equal(contextStore.getState().stories[storyId].preview, null);

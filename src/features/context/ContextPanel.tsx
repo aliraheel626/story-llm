@@ -22,15 +22,26 @@ export function ContextPanel() {
   const toggle = (change: Partial<ContextSettings>) => save(storyId, change).catch(() => undefined);
   return (
     <div className="flex flex-col gap-3 text-xs">
-      <label className="flex flex-col gap-1 text-muted">Entities
-        <select value={context.entities} disabled={contextSaving}
-          onChange={(event) => toggle({ entities: event.target.value as ContextSettings["entities"] })}
-          className="w-full rounded border border-border bg-bg px-2 py-1.5 text-text focus:outline-none focus:border-accent">
-          <option value="none">Off</option>
-          <option value="all">All</option>
-          <option value="scoped">Only recent</option>
-        </select>
-      </label>
+      <fieldset className="flex flex-col gap-2" disabled={contextSaving}>
+        <legend className="mb-1 text-muted">Entities in context</legend>
+        {([["character", "Characters"], ["relationship", "Relationships"]] as const).map(([kind, label]) => (
+          <div key={kind} className="flex items-center justify-between gap-2">
+            <span className="text-text">{label}</span>
+            <div className="flex items-center gap-3">
+              {[true, false].map((shown) => (
+                <label key={String(shown)} className="flex items-center gap-1.5 text-text">
+                  <input type="radio" name={`${storyId}-context-${kind}`} aria-label={`${label} ${shown ? "shown" : "hidden"}`}
+                    checked={context.entity_kinds[kind] === shown}
+                    onChange={() => toggle({ entity_kinds: { ...context.entity_kinds, [kind]: shown } })}
+                    className="accent-accent" />
+                  {shown ? "Shown" : "Hidden"}
+                </label>
+              ))}
+            </div>
+          </div>
+        ))}
+      </fieldset>
+      <p className="text-muted">Hidden kinds are left out of the entities block. The narrator still sees their changes in history if the Transcript panel includes entity records.</p>
       <label className="flex items-center gap-2 text-text">
         <input type="checkbox" checked={context.author_note_enabled} disabled={contextSaving}
           onChange={(event) => toggle({ author_note_enabled: event.target.checked })} className="accent-accent" />

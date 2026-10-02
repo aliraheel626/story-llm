@@ -161,19 +161,26 @@ pub(super) fn save_reasoning_effort(
     })
 }
 
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum EntityContext {
-    #[default]
-    All,
-    Scoped,
-    None,
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct EntityVisibility {
+    pub character: bool,
+    pub relationship: bool,
+}
+
+impl Default for EntityVisibility {
+    fn default() -> Self {
+        Self {
+            character: true,
+            relationship: true,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct ContextSettings {
-    pub entities: EntityContext,
+    pub entity_kinds: EntityVisibility,
     pub author_note_enabled: bool,
     pub author_note: String,
     pub tool_instructions: bool,
@@ -182,7 +189,7 @@ pub struct ContextSettings {
 impl Default for ContextSettings {
     fn default() -> Self {
         Self {
-            entities: EntityContext::All,
+            entity_kinds: EntityVisibility::default(),
             author_note_enabled: true,
             author_note: String::new(),
             tool_instructions: true,
@@ -245,7 +252,7 @@ mod tests {
         let conn = pool.get().unwrap();
         test_support::story_with_settings(&conn, "s", json!({
             "transcript": {"include": {"images": true}},
-            "context": {"author_note": "n", "entities": "scoped"}
+            "context": {"author_note": "n", "entity_kinds": {"character": false, "relationship": true}}
         }));
         let path = crate::shared::db::database_path(&pool).unwrap();
         drop(conn);
@@ -255,7 +262,7 @@ mod tests {
         assert!(read_transcript_settings(&conn, "s").unwrap().includes("images"));
         let context = read_context_settings(&conn, "s").unwrap();
         assert_eq!(context.author_note, "n");
-        assert_eq!(context.entities, EntityContext::Scoped);
+        assert_eq!(context.entity_kinds, EntityVisibility { character: false, relationship: true });
     }
 
     #[test]
@@ -495,12 +502,15 @@ mod tests {
 
     #[test]
     fn partial_context_uses_serde_defaults() {
+        assert_eq!(EntityVisibility::default(), EntityVisibility { character: true, relationship: true });
         let pool = stories();
         let conn = pool.get().unwrap();
-        conn.execute("UPDATE stories SET settings_json = '{\"context\":{\"author_note\":\"x\"}}' WHERE id = 'first'", []).unwrap();
+        conn.execute("UPDATE stories SET settings_json = ?1 WHERE id = 'first'",
+            [json!({"context": {"author_note": "x", "entity_kinds": {"relationship": false}}}).to_string()]).unwrap();
         assert_eq!(
             read_context_settings(&conn, "first").unwrap(),
             ContextSettings {
+                entity_kinds: EntityVisibility { relationship: false, ..Default::default() },
                 author_note: "x".into(),
                 ..ContextSettings::default()
             }
@@ -512,7 +522,7 @@ mod tests {
         let pool = stories();
         let mut context = read_story_context_settings(&pool, "first").unwrap();
         assert_eq!(context, ContextSettings::default());
-        context.entities = EntityContext::Scoped;
+        context.entity_kinds.relationship = false;
         context.author_note_enabled = false;
         context.tool_instructions = false;
         save_story_context_settings(&pool, "first", context.clone()).unwrap();

@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use rusqlite::OptionalExtension;
 
-use crate::shared::error::{AppError, AppResult};
+use crate::shared::error::AppResult;
 
 use super::{
     model::{kind, TranscriptEntry},
@@ -55,46 +55,6 @@ pub fn select(
                 && ids.as_ref().is_none_or(|ids| ids.contains(&entry.id))
         })
         .collect())
-}
-
-/// Entity ids named by entity events with `seq >= since_seq`.
-pub fn entities_touched_since(
-    conn: &rusqlite::Connection,
-    story_id: &str,
-    since_seq: i64,
-) -> AppResult<HashSet<String>> {
-    let mut stmt = conn.prepare(
-        "SELECT payload_json FROM transcript_entries
-         WHERE story_id = ?1 AND seq >= ?2
-            AND kind IN (?3, ?4, ?5, ?6, ?7)",
-    )?;
-    let rows = stmt.query_map(
-        rusqlite::params![
-            story_id,
-            since_seq,
-            kind::ENTITY_CREATED,
-            kind::ENTITY_UPDATED,
-            kind::ENTITY_DELETED,
-            kind::ENTITY_ATTRIBUTE_CHANGED,
-            kind::ENTITY_ATTRIBUTE_REMOVED,
-        ],
-        |row| row.get::<_, String>(0),
-    )?;
-    let mut touched = HashSet::new();
-    for row in rows {
-        let payload = serde_json::from_str::<serde_json::Value>(&row?)
-            .map_err(|error| AppError::Other(format!("invalid transcript payload JSON: {error}")))?;
-        if let Some(id) = payload.get("entity_id").and_then(serde_json::Value::as_str) {
-            touched.insert(id.to_string());
-        }
-        if let Some(ids) = payload
-            .get("entity_ids")
-            .and_then(serde_json::Value::as_array)
-        {
-            touched.extend(ids.iter().filter_map(|id| id.as_str().map(str::to_string)));
-        }
-    }
-    Ok(touched)
 }
 
 /// The latest active narration entry id, if any.
@@ -290,38 +250,4 @@ mod tests {
         );
     }
 
-    #[test]
-    fn touched_entities_reads_single_and_multiple_ids_from_the_raw_tail() {
-        let pool = story();
-        let conn = pool.get().unwrap();
-        append(
-            &conn,
-            kind::ENTITY_CREATED,
-            None,
-            json!({"entity_id":"before"}),
-            None,
-        );
-        let boundary = append(
-            &conn,
-            kind::ENTITY_UPDATED,
-            None,
-            json!({"entity_id":"one"}),
-            None,
-        );
-        append(
-            &conn,
-            kind::ENTITY_UPDATED,
-            None,
-            json!({"entity_ids":["two","three"]}),
-            None,
-        );
-        let touched = entities_touched_since(&conn, "story", boundary.seq).unwrap();
-        assert_eq!(
-            touched,
-            ["one", "two", "three"]
-                .into_iter()
-                .map(str::to_string)
-                .collect()
-        );
-    }
 }

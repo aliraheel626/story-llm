@@ -54,8 +54,6 @@ pub fn build_preview(
     let plan = build_message_context(&Inputs {
         conn,
         story_id,
-        history: &history,
-        config: model,
         context: &context,
         tools,
         rejected_reply: None,
@@ -115,7 +113,7 @@ mod tests {
         let conn = pool.get().unwrap();
         let story_settings = json!({
             "transcript": {"include": {"images": true, "narration.thoughts": true}},
-            "context": {"entities": "scoped", "author_note": "Keep it tense.",
+            "context": {"author_note": "Keep it tense.",
                           "author_note_enabled": true, "tool_instructions": true}
         });
         test_support::story_with_settings(&conn, "s", story_settings);
@@ -241,8 +239,6 @@ mod tests {
             let plan = build_message_context(&Inputs {
                 conn: &conn,
                 story_id: "s",
-                history: &history,
-                config: &config,
                 context: &context,
                 tools: &tools(),
                 rejected_reply: None,

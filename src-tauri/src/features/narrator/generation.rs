@@ -124,8 +124,6 @@ pub async fn prepare(inputs: NarratorInputs<'_>) -> AppResult<Prepared> {
             context::build_message_context(&context::blocks::Inputs {
                 conn,
                 story_id: inputs.story_id,
-                history: &inputs.transcript,
-                config: &config,
                 context: &context,
                 tools: &descriptions,
                 rejected_reply: inputs.rejected_reply.as_deref(),
