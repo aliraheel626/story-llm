@@ -164,7 +164,7 @@ All modes first check **Reuse** (below), then make any missing assets **in paral
 
 ### Phase 0: Probe (a script, no app code; plan: [image-anchoring-probe.md](../plans/image-anchoring-probe.md))
 
-**Goal:** prove the image API does what the modes assume, on the current model, before building anything.
+**Goal:** prove the image API does what the modes assume, on a cheap model with the current one as a comparison, before building anything.
 
 - **Hand-made cards:** 2 characters, one with two outfits, and 1 location.
 - **Tests:**
