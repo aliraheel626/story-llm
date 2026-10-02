@@ -33,8 +33,8 @@ Plus a few single calls:
 - **No app code changes.** No edits under `src/` or `src-tauri/`. Work on `main`, and commit only the files under `docs/report/image-anchoring-probe/`.
 - **Everything goes in `docs/report/image-anchoring-probe/`:** the script (`probe.py`), the key-out code (`keyout.py`), every image, `results.jsonl`, the contact sheets and `REPORT.md`.
 - **API key:**
-  - The script reads it from the `OPENROUTER_API_KEY` environment variable, which the user sets.
-  - **Never open, read, copy or print `secrets.json`.** If the variable is missing, stop and ask the user.
+  - The script reads the key the app already uses, `text_model.openrouter.api_key` in `%APPDATA%\com.story-llm.app\secrets.json`, the same way [see_probe.py](../probes/see_probe.py) does.
+  - **Read only.** Open the file in read mode, keep the key in memory, and never modify, move, copy or delete `secrets.json`.
   - The key must never appear in any saved file or console output. Before committing, run `git grep -n -i "sk-or" -- docs/report/image-anchoring-probe` and confirm it prints nothing.
 - **Spending cap: $5.00.**
   - After every call, add `usage.cost` from the response to a running total kept in `results.jsonl`.
@@ -221,5 +221,5 @@ Don't write a recommendation for which model to adopt. The user decides that fro
   - every image is on a contact sheet
   - every score cites a sheet
 - **References:** each reference sent was the file the step names. Check the logged reference names against the step table.
-- **No secrets:** `git grep -n -i "sk-or\|secrets.json"` under the report folder prints only this plan's rule text, if anything.
+- **No secrets:** `git grep -n -i "sk-or"` under the report folder prints nothing, and `secrets.json` is unchanged (same size and modified time as before the run).
 - **App untouched:** `git status` shows no change outside `docs/report/image-anchoring-probe/`.
