@@ -6,6 +6,7 @@ use crate::features::transcript::{model::TranscriptEntry, repository};
 use crate::shared::error::{AppError, AppResult};
 
 use super::events::EntityEvent;
+use super::model::CHARACTER;
 
 pub enum ApplyMode {
     Live,
@@ -25,17 +26,17 @@ pub fn apply(
             entity_id,
             kind,
             name,
-            appearance_anchor,
+            character,
             link,
             created_at,
             ..
         } => {
             conn.execute(
                 "INSERT INTO entities
-                 (id, story_id, kind, name, appearance_anchor, is_present, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+                 (id, story_id, kind, name, is_present, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
                  ON CONFLICT(id) DO UPDATE SET
-                     name=excluded.name, appearance_anchor=excluded.appearance_anchor,
+                     name=excluded.name,
                      is_present=excluded.is_present, updated_at=excluded.updated_at
                  WHERE entities.story_id=excluded.story_id",
                 rusqlite::params![
@@ -43,12 +44,26 @@ pub fn apply(
                     story_id,
                     kind,
                     name,
-                    appearance_anchor,
                     is_present,
                     created_at,
                     now
                 ],
             )?;
+            if kind.as_str() == CHARACTER {
+                conn.execute(
+                    "INSERT INTO characters
+                     (entity_id, known_as, appearance_anchor, gender, age, role, location, outfit)
+                     SELECT id, ?3, ?4, ?5, ?6, ?7, ?8, ?9 FROM entities WHERE story_id=?1 AND id=?2
+                     ON CONFLICT(entity_id) DO UPDATE SET
+                         known_as=excluded.known_as, appearance_anchor=excluded.appearance_anchor,
+                         gender=excluded.gender, age=excluded.age, role=excluded.role,
+                         location=excluded.location, outfit=excluded.outfit",
+                    rusqlite::params![
+                        story_id, entity_id, character.known_as, character.appearance_anchor,
+                        character.gender, character.age, character.role, character.location, character.outfit
+                    ],
+                )?;
+            }
             if let Some(link) = link {
                 conn.execute(
                     "INSERT INTO relationships (entity_id, from_id, to_id, label, direction, description)
@@ -71,20 +86,29 @@ pub fn apply(
             conn.execute(
                 "UPDATE entities
                  SET name=CASE WHEN ?1 THEN ?2 ELSE name END,
-                     appearance_anchor=CASE WHEN ?3 THEN ?4 ELSE appearance_anchor END,
-                     is_present=?5, updated_at=?6
-                 WHERE story_id=?7 AND id=?8",
+                     is_present=?3, updated_at=?4
+                 WHERE story_id=?5 AND id=?6",
                 rusqlite::params![
                     character && before.name != after.name,
                     after.name,
-                    character && before.appearance_anchor != after.appearance_anchor,
-                    after.appearance_anchor,
                     is_present,
                     now,
                     story_id,
                     entity_id
                 ],
             )?;
+            if character {
+                // Column names come only from the model's fixed field metadata.
+                for ((field, before), (_, after)) in before.character.fields().into_iter().zip(after.character.fields()) {
+                    if before != after {
+                        conn.execute(
+                            &format!("UPDATE characters SET {field}=?1
+                                      WHERE entity_id IN (SELECT id FROM entities WHERE story_id=?2 AND id=?3)"),
+                            rusqlite::params![after, story_id, entity_id],
+                        )?;
+                    }
+                }
+            }
             if let (Some(before), Some(after)) = (&before.link, &after.link) {
                 conn.execute(
                     "UPDATE relationships
@@ -248,28 +272,32 @@ pub fn replay_after_erase(
 mod tests {
     use super::*;
     use crate::features::{
-        entities::{attributes, model::{EntityLink, CHARACTER}, repository as entity_repository},
+        entities::{attributes, model::{CharacterFields, CharacterPatch, EntityLink}, repository as entity_repository},
         transcript::repository as transcript_repository,
     };
     use crate::shared::{db::with_transaction, test_support};
 
-    type StateSnapshot = Vec<(String, Option<String>, Option<String>, i64)>;
+    type StateSnapshot = Vec<(String, Option<String>, CharacterFields, i64)>;
     type AttributeSnapshot = Vec<(String, String, f64, String)>;
 
     fn snapshots(conn: &rusqlite::Connection) -> (StateSnapshot, AttributeSnapshot) {
         let state = {
             let mut stmt = conn
                 .prepare(
-                    "SELECT id, name, appearance_anchor, is_present
-                     FROM entities WHERE story_id = 'story' ORDER BY id",
+                    "SELECT e.id, e.name, c.known_as, c.appearance_anchor, c.gender, c.age, c.role, c.location, c.outfit, e.is_present
+                     FROM entities e LEFT JOIN characters c ON c.entity_id=e.id
+                     WHERE e.story_id = 'story' ORDER BY e.id",
                 )
                 .unwrap();
             stmt.query_map([], |row| {
                 Ok((
                     row.get(0)?,
                     row.get(1)?,
-                    row.get(2)?,
-                    row.get(3)?,
+                    CharacterFields {
+                        known_as: row.get(2)?, appearance_anchor: row.get(3)?, gender: row.get(4)?,
+                        age: row.get(5)?, role: row.get(6)?, location: row.get(7)?, outfit: row.get(8)?,
+                    },
+                    row.get(9)?,
                 ))
             })
             .unwrap()
@@ -441,6 +469,89 @@ mod tests {
         )
         .unwrap();
         assert_eq!(snapshots(&conn), before);
+    }
+
+    #[test]
+    fn character_rows_replay_and_erasing_updates_restore_all_fields() {
+        let pool = crate::shared::db::test_pool();
+        let conn = pool.get().unwrap();
+        test_support::story(&conn, "story");
+        let original = CharacterFields {
+            known_as: Some("the hooded stranger".into()), appearance_anchor: Some("silver hair".into()),
+            gender: Some("female".into()), age: Some("34".into()), role: Some("pirate".into()),
+            location: Some("the docks".into()), outfit: Some("a grey cloak".into()),
+        };
+        let mira = entity_repository::create_character_sync(
+            &conn, "story", "Mira", original.clone(), "user", None, None,
+        ).unwrap();
+        let initial = snapshots(&conn);
+        assert_eq!(initial.0[0].2, original);
+        let (turn_id, action_id, narration_id) =
+            test_support::exchange(&conn, "story", "do", "enter the inn", Some("Mira is revealed."));
+        let patch: CharacterPatch = serde_json::from_value(serde_json::json!({
+            "known_as":null, "appearance_anchor":"black armor", "gender":null,
+            "age":"35", "role":"innkeeper", "location":"the inn", "outfit":null
+        })).unwrap();
+        entity_repository::update_character_sync(
+            &conn, "story", &mira.id, None, &patch, "narrator_tool",
+            narration_id.as_deref(), Some(&turn_id),
+        ).unwrap();
+        let updated = snapshots(&conn);
+        assert_eq!(updated.0[0].2, patch.apply_to(&original));
+        let affected = HashSet::from([mira.id.clone()]);
+        replay(&conn, "story", &affected, None).unwrap();
+        assert_eq!(snapshots(&conn), updated);
+        let mira_id = mira.id;
+        drop(conn);
+
+        let removed = with_transaction(&pool, |tx| {
+            let removed = crate::features::transcript::erase::erase_last_exchange_in_tx(tx, "story")?.unwrap();
+            replay_after_erase(tx, "story", &removed.entries)?;
+            Ok(removed.visible_ids)
+        }).unwrap();
+        assert_eq!(removed, vec![action_id, narration_id.unwrap()]);
+        let conn = pool.get().unwrap();
+        assert_eq!(snapshots(&conn), initial);
+        assert_eq!(conn.query_row("SELECT COUNT(*) FROM characters WHERE entity_id=?1", [&mira_id], |row| row.get::<_, i64>(0)).unwrap(), 1);
+    }
+
+    #[test]
+    fn erasing_a_narrated_role_preserves_a_later_player_age_edit() {
+        let pool = crate::shared::db::test_pool();
+        let conn = pool.get().unwrap();
+        test_support::story(&conn, "story");
+        let original = CharacterFields {
+            role: Some("pirate".into()), age: Some("34".into()),
+            appearance_anchor: Some("silver hair".into()), ..Default::default()
+        };
+        let mira = entity_repository::create_character_sync(
+            &conn, "story", "Mira", original.clone(), "user", None, None,
+        ).unwrap();
+        let (turn_id, action_id, narration_id) =
+            test_support::exchange(&conn, "story", "do", "meet Mira", Some("Mira is an innkeeper."));
+        let role: CharacterPatch = serde_json::from_value(serde_json::json!({"role":"innkeeper"})).unwrap();
+        entity_repository::update_character_sync(
+            &conn, "story", &mira.id, None, &role, "narrator_tool",
+            narration_id.as_deref(), Some(&turn_id),
+        ).unwrap();
+        let age: CharacterPatch = serde_json::from_value(serde_json::json!({"age":"35"})).unwrap();
+        entity_repository::update_character_sync(
+            &conn, "story", &mira.id, None, &age, "user", None, None,
+        ).unwrap();
+        let mira_id = mira.id;
+        drop(conn);
+
+        let removed = with_transaction(&pool, |tx| {
+            let removed = crate::features::transcript::erase::erase_last_exchange_in_tx(tx, "story")?.unwrap();
+            replay_after_erase(tx, "story", &removed.entries)?;
+            Ok(removed.visible_ids)
+        }).unwrap();
+        assert_eq!(removed, vec![action_id, narration_id.unwrap()]);
+        let conn = pool.get().unwrap();
+        let stored = entity_repository::load_entity_raw(&conn, "story", &mira_id).unwrap().unwrap();
+        assert_eq!(stored.character, CharacterFields { age: Some("35".into()), ..original });
+        assert_eq!(stored.name, "Mira");
+        assert_eq!(snapshots(&conn).0[0].2, stored.character);
     }
 
     #[test]

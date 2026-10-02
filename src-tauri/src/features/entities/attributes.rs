@@ -294,7 +294,8 @@ mod tests {
             "INSERT INTO stories (id, title, created_at, updated_at, settings_json)
                  VALUES ('story', 'Story', 'now', 'now', '{}');
              INSERT INTO entities (id, story_id, kind, name, created_at, updated_at)
-                 VALUES ('entity', 'story', 'character', 'Mira', 'now', 'now');",
+                 VALUES ('entity', 'story', 'character', 'Mira', 'now', 'now');
+             INSERT INTO characters (entity_id) VALUES ('entity');",
         )
         .unwrap();
         let attribute_id = conn

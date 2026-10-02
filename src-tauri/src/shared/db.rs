@@ -112,7 +112,6 @@ fn create_schema(conn: &mut PooledConn) -> AppResult<()> {
             story_id TEXT NOT NULL REFERENCES stories(id) ON DELETE CASCADE,
             kind TEXT NOT NULL CHECK (kind IN ('character', 'relationship')),
             name TEXT,
-            appearance_anchor TEXT,
             is_present INTEGER NOT NULL DEFAULT 1,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL,
@@ -121,6 +120,17 @@ fn create_schema(conn: &mut PooledConn) -> AppResult<()> {
         CREATE INDEX IF NOT EXISTS idx_entities_story_name ON entities(story_id, name);
         CREATE UNIQUE INDEX IF NOT EXISTS idx_entities_name_ci
             ON entities(story_id, name COLLATE NOCASE) WHERE is_present = 1;
+
+        CREATE TABLE IF NOT EXISTS characters (
+            entity_id TEXT PRIMARY KEY REFERENCES entities(id) ON DELETE CASCADE,
+            known_as TEXT,
+            appearance_anchor TEXT,
+            gender TEXT,
+            age TEXT,
+            role TEXT,
+            location TEXT,
+            outfit TEXT
+        );
 
         -- Endpoint ids deliberately have no foreign keys: endpoint replay
         -- deletes and recreates rows without replaying their relationships.
@@ -399,7 +409,8 @@ mod tests {
             "INSERT INTO stories (id,title,created_at,updated_at) VALUES
              ('existing','Existing','now','now'), ('fresh','Fresh','now','now');
              INSERT INTO entities (id,story_id,kind,name,is_present,created_at,updated_at)
-             VALUES ('original','existing','character','yOu',1,'now','now');",
+             VALUES ('original','existing','character','yOu',1,'now','now');
+             INSERT INTO characters (entity_id) VALUES ('original');",
         ).unwrap();
         for story_id in ["existing", "fresh"] {
             seed_player_entity(&conn, story_id).unwrap();
@@ -442,6 +453,7 @@ mod tests {
         assert!(!exists("story_entity_state"));
         assert!(exists("entities"));
         assert!(exists("relationships"));
+        assert!(exists("characters"));
         let entity_columns = conn
             .prepare("PRAGMA table_info(entities)")
             .unwrap()
@@ -451,7 +463,18 @@ mod tests {
             .unwrap();
         assert_eq!(
             entity_columns,
-            ["id", "story_id", "kind", "name", "appearance_anchor", "is_present", "created_at", "updated_at"]
+            ["id", "story_id", "kind", "name", "is_present", "created_at", "updated_at"]
+        );
+        let character_columns = conn
+            .prepare("PRAGMA table_info(characters)")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(
+            character_columns,
+            ["entity_id", "known_as", "appearance_anchor", "gender", "age", "role", "location", "outfit"]
         );
         let attribute_columns = conn
             .prepare("PRAGMA table_info(entity_attributes)")
@@ -579,7 +602,8 @@ mod tests {
                  VALUES ('first', 'First', 'now', 'now', '{}'),
                         ('second', 'Second', 'now', 'now', '{}');
              INSERT INTO entities (id, story_id, kind, name, created_at, updated_at)
-                 VALUES ('one', 'first', 'character', 'Mira', 'now', 'now');",
+                 VALUES ('one', 'first', 'character', 'Mira', 'now', 'now');
+             INSERT INTO characters (entity_id) VALUES ('one');",
         )
         .unwrap();
 
@@ -606,6 +630,7 @@ mod tests {
             [],
         )
         .unwrap();
+        conn.execute("INSERT INTO characters (entity_id) VALUES ('three')", []).unwrap();
     }
 
     #[test]

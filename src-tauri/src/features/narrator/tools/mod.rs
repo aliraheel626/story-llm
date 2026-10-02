@@ -1,12 +1,10 @@
 //! Narrator tool modules and shared activity labels.
 
-pub(crate) mod adjust_entity_attribute;
-pub(crate) mod create_entity;
 pub(crate) mod illustrate_scene;
 pub(crate) mod roll_check;
+pub(crate) mod save_character;
 pub(crate) mod save_relationship;
 mod shared;
-pub(crate) mod update_entity;
 
 use rig_agent::tool::ToolExecutionError;
 
@@ -79,10 +77,10 @@ mod turn_tests {
     use tokio::sync::Mutex;
 
     #[test]
-    fn labels_and_catalog_keep_existing_contract() {
+    fn labels_and_catalog_follow_character_tools() {
         assert_eq!(
-            friendly_tool_label("create_entity", r#"{"name":"Mira"}"#),
-            "Introducing Mira…"
+            friendly_tool_label("save_character", r#"{"name":"Mira"}"#),
+            "Recording Mira…"
         );
         assert_eq!(
             friendly_tool_label("roll_check", r#"{"reason":"escaping"}"#),
@@ -95,10 +93,10 @@ mod turn_tests {
             image_enabled: false,
             illustrate: false,
         });
-        assert_eq!(specs.len(), 5);
+        assert_eq!(specs.len(), 3);
         assert_eq!(specs[0].name, "roll_check");
         assert_eq!(specs.iter().map(|spec| spec.name).collect::<Vec<_>>(),
-            ["roll_check", "create_entity", "update_entity", "adjust_entity_attribute", "save_relationship"]);
+            ["roll_check", "save_character", "save_relationship"]);
         let (_pool, turn, target, turn_id) = fixture();
         let deps = ToolDeps {
             turn: Some(turn),
@@ -108,5 +106,18 @@ mod turn_tests {
             image_requests: Arc::new(Mutex::new(Vec::new())),
         };
         assert_eq!((specs[0].build)(&deps).name(), "roll_check");
+        assert_eq!((specs[1].build)(&deps).name(), "save_character");
+    }
+
+    #[test]
+    fn character_toggle_preserves_final_catalog_order() {
+        assert_eq!(catalog::TOOLS.iter().map(|spec| spec.name).collect::<Vec<_>>(),
+            ["roll_check", "save_character", "save_relationship", "illustrate_scene"]);
+        let settings = NarratorToolSettings { save_character: false, ..Default::default() };
+        let enabled = catalog::enabled(&ToolAvailability { settings: &settings, image_enabled: true, illustrate: false });
+        assert_eq!(enabled.iter().map(|spec| spec.name).collect::<Vec<_>>(),
+            ["roll_check", "save_relationship", "illustrate_scene"]);
+        let image_only = catalog::enabled(&ToolAvailability { settings: &settings, image_enabled: true, illustrate: true });
+        assert_eq!(image_only.iter().map(|spec| spec.name).collect::<Vec<_>>(), ["illustrate_scene"]);
     }
 }

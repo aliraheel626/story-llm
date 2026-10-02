@@ -52,7 +52,7 @@ globalThis.__storyTestInvoke = async (command, args = {}) => {
       const blank = [...stories].reverse().find(([id, saved]) => saved.title === "New story" && !saved.played && !entries.get(id)?.length);
       if (blank) return { id: blank[0], title: "New story", settings_json: "{}" };
       const id = `story-${stories.size + 1}`;
-      const tools = { save_relationship: true, create_entity: true, update_entity: true, adjust_entity_attribute: true, roll_check: true, illustrate_scene: true };
+      const tools = { save_character: true, save_relationship: true, roll_check: true, illustrate_scene: true };
       stories.set(id, { title: "New story", narrator_tools: tools });
       return { id, title: "New story", settings_json: "{}" };
     }
@@ -327,9 +327,9 @@ test("rapid independent toggles remain isolated by story and failed saves roll b
   assert.equal(stories.get(second).narrator_tools.roll_check, false);
   assert.equal(stories.get(second).narrator_tools.illustrate_scene, true);
   failTools = true;
-  await assert.rejects(store.getState().saveNarratorTools(second, { create_entity: false }), /save rejected/);
+  await assert.rejects(store.getState().saveNarratorTools(second, { save_character: false }), /save rejected/);
   failTools = false;
-  assert.equal(store.getState().bundles[second].narratorTools.create_entity, true);
+  assert.equal(store.getState().bundles[second].narratorTools.save_character, true);
 });
 
 test("replacement keeps original through streaming and failure, then clears old caches on success", async () => {

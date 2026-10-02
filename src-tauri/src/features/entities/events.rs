@@ -2,12 +2,12 @@ use serde_json::{json, Value};
 
 use crate::features::transcript::model::{kind, TranscriptEntry};
 
-use super::model::EntityLink;
+use super::model::{CharacterFields, EntityLink};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct NameAnchor {
     pub name: String,
-    pub appearance_anchor: Option<String>,
+    pub character: CharacterFields,
     pub link: Option<EntityLink>,
 }
 
@@ -17,7 +17,7 @@ pub enum EntityEvent {
         entity_id: String,
         kind: String,
         name: Option<String>,
-        appearance_anchor: Option<String>,
+        character: CharacterFields,
         link: Option<EntityLink>,
         source: String,
         created_at: String,
@@ -25,7 +25,7 @@ pub enum EntityEvent {
     Updated {
         entity_id: String,
         before: NameAnchor,
-        after: NameAnchor,
+        after: Box<NameAnchor>,
         source: String,
     },
     Deleted {
@@ -69,7 +69,7 @@ impl EntityEvent {
                 entity_id,
                 kind,
                 name,
-                appearance_anchor,
+                character,
                 link,
                 source,
                 ..
@@ -78,9 +78,13 @@ impl EntityEvent {
                     "entity_id": entity_id,
                     "kind": kind,
                     "name": name,
-                    "appearance_anchor": appearance_anchor,
                     "source": source
                 });
+                for (field, value) in character.fields() {
+                    if let Some(value) = value {
+                        payload[field] = json!(value);
+                    }
+                }
                 if let Some(link) = link {
                     payload["link"] = json!(link);
                 }
@@ -95,15 +99,20 @@ impl EntityEvent {
                 let mut payload = json!({
                     "entity_id": entity_id,
                     "before": {
-                        "name": before.name,
-                        "appearance_anchor": before.appearance_anchor
+                        "name": before.name
                     },
                     "after": {
-                        "name": after.name,
-                        "appearance_anchor": after.appearance_anchor
+                        "name": after.name
                     },
                     "source": source
                 });
+                for (key, snapshot) in [("before", before), ("after", after)] {
+                    for (field, value) in snapshot.character.fields() {
+                        if let Some(value) = value {
+                            payload[key][field] = json!(value);
+                        }
+                    }
+                }
                 if let Some(link) = &before.link {
                     payload["before"]["link"] = json!(link);
                 }
@@ -161,6 +170,7 @@ impl EntityEvent {
 
     pub fn from_entry(entry: &TranscriptEntry) -> Option<Self> {
         let string = |value: Option<&Value>| value.and_then(Value::as_str).map(str::to_string);
+        let character = |value: &Value| serde_json::from_value::<CharacterFields>(value.clone()).ok();
         let link = |value: Option<&Value>| match value {
             Some(value) => serde_json::from_value::<Option<EntityLink>>(value.clone()).ok(),
             None => Some(None),
@@ -172,7 +182,7 @@ impl EntityEvent {
                 entity_id,
                 kind: string(entry.payload.get("kind"))?,
                 name: string(entry.payload.get("name")),
-                appearance_anchor: string(entry.payload.get("appearance_anchor")),
+                character: character(&entry.payload)?,
                 link: link(entry.payload.get("link"))?,
                 source,
                 created_at: entry.created_at.clone(),
@@ -184,14 +194,14 @@ impl EntityEvent {
                     entity_id,
                     before: NameAnchor {
                         name: string(before.get("name"))?,
-                        appearance_anchor: string(before.get("appearance_anchor")),
+                        character: character(before)?,
                         link: link(before.get("link"))?,
                     },
-                    after: NameAnchor {
+                    after: Box::new(NameAnchor {
                         name: string(after.get("name"))?,
-                        appearance_anchor: string(after.get("appearance_anchor")),
+                        character: character(after)?,
                         link: link(after.get("link"))?,
-                    },
+                    }),
                     source,
                 })
             }
@@ -288,15 +298,16 @@ mod tests {
                 "entity_id": "entity",
                 "kind": "character",
                 "name": "Mira",
-                "appearance_anchor": null,
+                "gender": "female",
                 "source": "user"
             }),
         ))
         .unwrap();
         assert!(matches!(
             created,
-            EntityEvent::Created { name: Some(name), link: None, created_at, .. }
-                if name == "Mira" && created_at == "transcript-created-at"
+            EntityEvent::Created { name: Some(name), character, link: None, created_at, .. }
+                if name == "Mira" && character.gender.as_deref() == Some("female")
+                    && character.age.is_none() && created_at == "transcript-created-at"
         ));
 
         let changed = EntityEvent::from_entry(&entry(
@@ -327,7 +338,7 @@ mod tests {
             entity_id: "relationship:mira:varro".into(),
             kind: "relationship".into(),
             name: None,
-            appearance_anchor: None,
+            character: CharacterFields::default(),
             link: Some(link.clone()),
             source: "narrator_tool".into(),
             created_at: "transcript-created-at".into(),
@@ -341,14 +352,14 @@ mod tests {
             entity_id: "relationship:mira:varro".into(),
             before: NameAnchor {
                 name: "rivals".into(),
-                appearance_anchor: None,
+                character: CharacterFields::default(),
                 link: Some(link.clone()),
             },
-            after: NameAnchor {
+            after: Box::new(NameAnchor {
                 name: "former rivals".into(),
-                appearance_anchor: None,
+                character: CharacterFields::default(),
                 link: Some(EntityLink { label: "former rivals".into(), ..link }),
-            },
+            }),
             source: "user".into(),
         };
         assert_eq!(
@@ -359,25 +370,37 @@ mod tests {
             entity_id: "mira".into(),
             kind: "character".into(),
             name: Some("Mira".into()),
-            appearance_anchor: Some("silver hair".into()),
+            character: CharacterFields {
+                known_as: Some("the hooded stranger".into()),
+                appearance_anchor: Some("silver hair".into()), ..Default::default()
+            },
             link: None,
             source: "user".into(),
             created_at: "transcript-created-at".into(),
         };
         assert!(character.payload().get("link").is_none());
+        assert!(character.payload().get("age").is_none());
         assert_eq!(
             EntityEvent::from_entry(&entry(character.kind(), character.payload())),
             Some(character)
         );
         let character_update = EntityEvent::Updated {
             entity_id: "mira".into(),
-            before: NameAnchor { name: "Mira".into(), appearance_anchor: None, link: None },
-            after: NameAnchor { name: "Mira".into(), appearance_anchor: Some("silver hair".into()), link: None },
+            before: NameAnchor {
+                name: "Mira".into(), link: None,
+                character: CharacterFields { known_as: Some("the hooded stranger".into()), ..Default::default() },
+            },
+            after: Box::new(NameAnchor {
+                name: "Mira".into(), link: None,
+                character: CharacterFields { appearance_anchor: Some("silver hair".into()), ..Default::default() },
+            }),
             source: "user".into(),
         };
         let payload = character_update.payload();
         assert!(payload["before"].get("link").is_none());
         assert!(payload["after"].get("link").is_none());
+        assert_eq!(payload["before"]["known_as"], "the hooded stranger");
+        assert!(payload["after"].get("known_as").is_none());
         assert_eq!(
             EntityEvent::from_entry(&entry(character_update.kind(), payload)),
             Some(character_update)
@@ -393,8 +416,8 @@ mod tests {
         .is_none());
         let payload = json!({
             "entity_id":"entity", "source":"user",
-            "before":{"name":"Mira", "appearance_anchor":null},
-            "after":{"name":"Mira Vale", "appearance_anchor":null}
+            "before":{"name":"Mira", "role":"pirate"},
+            "after":{"name":"Mira Vale", "role":"innkeeper"}
         });
         assert!(EntityEvent::from_entry(&entry(kind::ENTITY_UPDATED, payload.clone())).is_some());
         for field in ["before", "after", "source"] {

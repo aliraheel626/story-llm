@@ -2,14 +2,14 @@ use tauri::State;
 
 use crate::features::turn::TurnGate;
 use crate::shared::db::{blocking, with_transaction, Pool};
-use crate::shared::error::AppResult;
+use crate::shared::error::{AppError, AppResult};
 
 use super::attributes::{
     list_entity_attributes_sync, remove_entity_attribute_sync, set_entity_attribute_sync,
 };
-use super::model::{AttributeRegistryEntry, Entity, EntityAttributeValue};
+use super::model::{AttributeRegistryEntry, CharacterFields, CharacterPatch, Entity, EntityAttributeValue, CHARACTER};
 use super::registry::list_attribute_registry_sync;
-use super::repository::delete_entity_sync;
+use super::repository::{create_character_sync, delete_entity_sync, update_character_sync};
 use super::{create_entity_sync, list_entities_sync, update_entity_sync};
 
 #[tauri::command]
@@ -30,6 +30,7 @@ pub async fn create_entity(
     kind: String,
     name: String,
     appearance_anchor: Option<String>,
+    fields: Option<CharacterFields>,
 ) -> AppResult<Entity> {
     let ticket = gate.check_idle(&story_id)?;
     let gate = gate.inner().clone();
@@ -37,15 +38,17 @@ pub async fn create_entity(
     blocking(move || {
         with_transaction(&pool, |tx| {
             gate.still_idle(&ticket)?;
-            create_entity_sync(
-                tx,
-                &story_id,
-                &kind,
-                &name,
-                appearance_anchor.as_deref(),
-                "user",
-                None,
-            )
+            match fields {
+                Some(fields) => {
+                    if kind != CHARACTER {
+                        return Err(AppError::Invalid("kind must be character".into()));
+                    }
+                    create_character_sync(tx, &story_id, &name, fields, "user", None, None)
+                }
+                None => create_entity_sync(
+                    tx, &story_id, &kind, &name, appearance_anchor.as_deref(), "user", None,
+                ),
+            }
         })
     })
     .await
@@ -59,6 +62,7 @@ pub async fn update_entity(
     entity_id: String,
     name: String,
     appearance_anchor: Option<String>,
+    fields: Option<CharacterPatch>,
 ) -> AppResult<Entity> {
     let ticket = gate.check_idle(&story_id)?;
     let gate = gate.inner().clone();
@@ -66,16 +70,14 @@ pub async fn update_entity(
     blocking(move || {
         with_transaction(&pool, |tx| {
             gate.still_idle(&ticket)?;
-            update_entity_sync(
-                tx,
-                &story_id,
-                &entity_id,
-                &name,
-                appearance_anchor.as_deref(),
-                "user",
-                None,
-                None,
-            )
+            match fields {
+                Some(fields) => update_character_sync(
+                    tx, &story_id, &entity_id, Some(&name), &fields, "user", None, None,
+                ),
+                None => update_entity_sync(
+                    tx, &story_id, &entity_id, &name, appearance_anchor.as_deref(), "user", None, None,
+                ),
+            }
         })
     })
     .await

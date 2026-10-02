@@ -13,9 +13,7 @@ use crate::shared::error::{AppError, AppResult};
 #[serde(default, deny_unknown_fields)]
 pub struct NarratorToolSettings {
     pub save_relationship: bool,
-    pub create_entity: bool,
-    pub update_entity: bool,
-    pub adjust_entity_attribute: bool,
+    pub save_character: bool,
     pub roll_check: bool,
     pub illustrate_scene: bool,
 }
@@ -24,9 +22,7 @@ impl Default for NarratorToolSettings {
     fn default() -> Self {
         Self {
             save_relationship: true,
-            create_entity: true,
-            update_entity: true,
-            adjust_entity_attribute: true,
+            save_character: true,
             roll_check: true,
             illustrate_scene: true,
         }

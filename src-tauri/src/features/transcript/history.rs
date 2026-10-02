@@ -605,6 +605,22 @@ mod tests {
     }
 
     #[test]
+    fn hidden_characters_still_send_newer_player_role_corrections_in_history() {
+        use crate::features::{entities::{self, model::{CharacterFields, CharacterPatch}}, stories::settings::{self, ContextSettings, EntityContext}};
+        let pool = crate::shared::db::test_pool();
+        let conn = pool.get().unwrap();
+        crate::shared::test_support::story(&conn, "s");
+        settings::write_context_settings(&conn, "s", ContextSettings { entities: EntityContext::None, ..Default::default() }).unwrap();
+        let mira = entities::repository::create_character_sync(&conn, "s", "Mira", CharacterFields { role: Some("pirate".into()), ..Default::default() }, "narrator_tool", None, None).unwrap();
+        repository::append_entry(&conn, "s", kind::NARRATION, "visible", Some("Mira greets you."), &json!({}), None, None).unwrap();
+        let patch: CharacterPatch = serde_json::from_value(json!({"role":"innkeeper"})).unwrap();
+        entities::repository::update_character_sync(&conn, "s", &mira.id, None, &patch, "user", None, None).unwrap();
+        assert_eq!(settings::read_context_settings(&conn, "s").unwrap().entities, EntityContext::None);
+        let history = for_model(&conn, "s", &TranscriptSettings::default(), ImagePolicy::Unsupported).unwrap();
+        assert!(history.iter().any(|turn| turn.content.contains("User edit: Mira: role pirate → innkeeper")));
+    }
+
+    #[test]
     fn player_rename_is_a_labelled_newer_fact_after_narration() {
         use crate::features::entities;
         let pool = crate::shared::db::test_pool();

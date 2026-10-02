@@ -117,8 +117,8 @@ mod tests {
         ).unwrap();
         let snapshot = |conn: &rusqlite::Connection| {
             conn.prepare(
-                "SELECT id, kind, name, appearance_anchor, is_present, created_at, updated_at
-                 FROM entities WHERE story_id = 's' ORDER BY id",
+                "SELECT e.id, e.kind, e.name, c.appearance_anchor, e.is_present, e.created_at, e.updated_at
+                 FROM entities e JOIN characters c ON c.entity_id=e.id WHERE e.story_id = 's' ORDER BY e.id",
             ).unwrap().query_map([], |row| Ok((
                 row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?,
                 row.get::<_, Option<String>>(3)?, row.get::<_, i64>(4)?,
@@ -160,7 +160,8 @@ mod tests {
             &conn, "b", "s", "character", "mira", Some("black armor"), "user", None, None,
         ).unwrap();
         let b_before: (String, Option<String>, i64, String) = conn.query_row(
-            "SELECT name, appearance_anchor, is_present, updated_at FROM entities WHERE story_id = 's' AND id = 'b'",
+            "SELECT e.name, c.appearance_anchor, e.is_present, e.updated_at
+             FROM entities e JOIN characters c ON c.entity_id=e.id WHERE e.story_id = 's' AND e.id = 'b'",
             [], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         ).unwrap();
         drop(conn);
@@ -172,11 +173,13 @@ mod tests {
         );
         let conn = pool.get().unwrap();
         assert_eq!(conn.query_row(
-            "SELECT name, appearance_anchor, is_present FROM entities WHERE story_id = 's' AND id = 'a'",
+            "SELECT e.name, c.appearance_anchor, e.is_present
+             FROM entities e JOIN characters c ON c.entity_id=e.id WHERE e.story_id = 's' AND e.id = 'a'",
             [], |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?, row.get::<_, i64>(2)?)),
         ).unwrap(), ("Mira".into(), Some("silver hair".into()), 0));
         assert_eq!(conn.query_row(
-            "SELECT name, appearance_anchor, is_present, updated_at FROM entities WHERE story_id = 's' AND id = 'b'",
+            "SELECT e.name, c.appearance_anchor, e.is_present, e.updated_at
+             FROM entities e JOIN characters c ON c.entity_id=e.id WHERE e.story_id = 's' AND e.id = 'b'",
             [], |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?, row.get::<_, i64>(2)?, row.get::<_, String>(3)?)),
         ).unwrap(), b_before);
         let present = entities::list_entities_sync(&conn, "s", None).unwrap();
@@ -211,7 +214,7 @@ mod tests {
         );
         let present = entities::list_entities_sync(&pool.get().unwrap(), "s", None).unwrap();
         assert_eq!(present.len(), 1);
-        assert_eq!((present[0].id.as_str(), present[0].name.as_str(), present[0].appearance_anchor.as_deref()),
+        assert_eq!((present[0].id.as_str(), present[0].name.as_str(), present[0].character.appearance_anchor.as_deref()),
             ("a", "Mira", Some("black armor")));
         assert_eq!(present[0].created_at, created_at);
     }

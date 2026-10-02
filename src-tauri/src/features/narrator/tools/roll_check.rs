@@ -266,8 +266,7 @@ pub(super) fn tool(
 #[cfg(test)]
 mod turn_tests {
     use super::super::{
-        adjust_entity_attribute::tool as adjust_entity_attribute_tool,
-        create_entity::tool as create_entity_tool, test_support::fixture,
+        save_character::tool as save_character_tool, test_support::fixture,
         save_relationship::tool as save_relationship_tool,
     };
     use super::schema as roll_check_schema;
@@ -349,24 +348,11 @@ mod turn_tests {
     #[tokio::test]
     async fn factor_reads_current_turn_attribute_and_alias() {
         let (_pool, turn, target, turn_id) = fixture();
-        let entity =
-            create_entity_tool(turn.clone(), target.clone(), turn_id.clone())
-                .execute(json!({"kind":"character","name":"You"}))
-                .await
-                .unwrap();
-        let id = entity.as_json().unwrap()["id"]
-            .as_str()
-            .unwrap()
-            .to_string();
-        adjust_entity_attribute_tool(
-            turn.clone(),
-            target.clone(),
-            turn_id.clone(),
-            String::new(),
-        )
-        .execute(json!({"entity":"You","attribute":"Stealth","delta":3,"reason":"training"}))
-        .await
-        .unwrap();
+        save_character_tool(turn.clone(), target.clone(), turn_id.clone(), String::new())
+            .execute(json!({"name":"You","stats":[{"attribute":"Stealth","delta":3,"reason":"training"}]}))
+            .await.unwrap();
+        let id = turn.with(|conn| Ok(super::resolve_entity(conn, turn.story_id(), "You")?.id))
+            .await.unwrap();
         let roll = roll_check_tool(turn.clone(), target, turn_id);
         let result = roll
             .execute(json!({"factors":[{"entity":"you","attribute_name":"Stealth"}]}))
@@ -398,12 +384,11 @@ mod turn_tests {
     #[tokio::test]
     async fn names_and_relationship_arrows_resolve_to_stored_factor_ids() {
         let (_pool, turn, target, turn_id) = fixture();
-        let create = create_entity_tool(turn.clone(), target.clone(), turn_id.clone());
-        let mira = create.execute(json!({"kind":"character","name":"Mira"})).await.unwrap();
-        let mira_id = mira.as_json().unwrap()["id"].as_str().unwrap();
-        create.execute(json!({"kind":"character","name":"Varro"})).await.unwrap();
-        adjust_entity_attribute_tool(turn.clone(), target.clone(), turn_id.clone(), String::new())
-            .execute(json!({"entity":"Mira","attribute":"Stealth","delta":3,"reason":"practice"})).await.unwrap();
+        let save = save_character_tool(turn.clone(), target.clone(), turn_id.clone(), String::new());
+        save.execute(json!({"name":"Mira","stats":[{"attribute":"Stealth","delta":3,"reason":"practice"}]})).await.unwrap();
+        save.execute(json!({"name":"Varro"})).await.unwrap();
+        let mira_id = turn.with(|conn| Ok(super::resolve_entity(conn, turn.story_id(), "Mira")?.id))
+            .await.unwrap();
         save_relationship_tool(turn.clone(), target.clone(), turn_id.clone(), String::new())
             .execute(json!({"from":"Mira","to":"Varro","label":"rivals",
                 "stats":[{"attribute":"Affection","delta":2,"reason":"a truce"}]})).await.unwrap();

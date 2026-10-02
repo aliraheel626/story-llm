@@ -55,11 +55,11 @@ fn characters_by_ids(
         .collect::<Vec<_>>()
         .join(", ");
     let mut stmt = conn.prepare(&format!(
-        "SELECT entities.name, entities.appearance_anchor
-         FROM entities
+        "SELECT entities.name, characters.appearance_anchor
+         FROM entities JOIN characters ON characters.entity_id=entities.id
          WHERE entities.story_id = ?
            AND entities.kind = 'character' AND entities.is_present = 1
-           AND entities.appearance_anchor IS NOT NULL
+           AND characters.appearance_anchor IS NOT NULL
            AND (entities.id IN ({placeholders})
                 OR entities.name COLLATE NOCASE IN ({placeholders}))"
     ))?;

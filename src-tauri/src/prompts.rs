@@ -78,7 +78,7 @@ pub fn retry_instruction(rejected: &str) -> String {
 }
 
 pub const ENTITY_CONTEXT_HEADER: &str =
-    "Current record. When the story and a record disagree, the more recent one is correct. Never undo a player correction unless later story events change it. A → B relationships are one-way; A ↔ B are mutual. Refer to characters by name, and to a relationship as 'A → B'.";
+    "Current record. When the story and a record disagree, the more recent one is correct. Never undo a player correction unless later story events change it. A → B relationships are one-way; A ↔ B are mutual. Refer to characters by name, and to a relationship as 'A → B'. Names here are true names. When an entry says 'known to the player as', narrate it only that way until the story reveals the name.";
 
 // Title generation
 

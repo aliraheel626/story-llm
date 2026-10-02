@@ -6,14 +6,16 @@ use crate::shared::error::{AppError, AppResult};
 
 use super::{
     events::{EntityEvent, NameAnchor},
-    model::{relationship_id, Entity, EntityLink, CHARACTER, RELATIONSHIP},
+    model::{relationship_id, CharacterFields, CharacterPatch, Entity, EntityLink, CHARACTER, RELATIONSHIP},
     projection,
 };
 
 const ENTITY_SELECT: &str = "SELECT e.id, e.story_id, e.kind,
     COALESCE(e.name, f.name || CASE l.direction WHEN 'both' THEN ' \u{2194} ' ELSE ' \u{2192} ' END || t.name || ': ' || l.label, e.id),
-    e.appearance_anchor, e.created_at, l.from_id, l.to_id, l.label, l.direction, l.description
+    c.appearance_anchor, e.created_at, l.from_id, l.to_id, l.label, l.direction, l.description,
+    c.known_as, c.gender, c.age, c.role, c.location, c.outfit
     FROM entities e
+    LEFT JOIN characters c ON c.entity_id = e.id
     LEFT JOIN relationships l ON l.entity_id = e.id
     LEFT JOIN entities f ON f.id = l.from_id AND f.story_id = e.story_id
         AND f.kind = 'character' AND f.is_present = 1
@@ -37,7 +39,15 @@ fn row_to_entity(row: &rusqlite::Row) -> rusqlite::Result<Entity> {
         story_id: row.get(1)?,
         kind: row.get(2)?,
         name: row.get(3)?,
-        appearance_anchor: row.get(4)?,
+        character: CharacterFields {
+            known_as: row.get(11)?,
+            appearance_anchor: row.get(4)?,
+            gender: row.get(12)?,
+            age: row.get(13)?,
+            role: row.get(14)?,
+            location: row.get(15)?,
+            outfit: row.get(16)?,
+        },
         created_at: row.get(5)?,
         link,
     })
@@ -98,7 +108,7 @@ fn trimmed_text(text: Option<&str>) -> Option<String> {
         .map(str::to_string)
 }
 
-fn validated_name(name: &str) -> AppResult<&str> {
+pub(crate) fn validated_name(name: &str) -> AppResult<&str> {
     let name = name.trim();
     if name.is_empty() {
         return Err(AppError::Invalid("name must not be empty".into()));
@@ -112,7 +122,7 @@ fn validated_name(name: &str) -> AppResult<&str> {
 fn snapshot(entity: &Entity) -> NameAnchor {
     NameAnchor {
         name: entity.name.clone(),
-        appearance_anchor: entity.appearance_anchor.clone(),
+        character: entity.character.clone(),
         link: entity.link.clone(),
     }
 }
@@ -173,49 +183,53 @@ fn validate_link(
     Ok((from, to))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn record_create(
     conn: &rusqlite::Connection,
-    entity: Entity,
+    id: &str,
+    story_id: &str,
+    kind: &str,
+    name: &str,
+    character: CharacterFields,
+    link: Option<EntityLink>,
     source: &str,
     target_entry_id: Option<&str>,
     turn_id: Option<&str>,
 ) -> AppResult<Entity> {
+    let character = character.normalize()?;
     let identity: Option<(String, String)> = conn
         .query_row(
             "SELECT story_id, kind FROM entities WHERE id = ?1",
-            [&entity.id],
+            [id],
             |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .optional()?;
-    if identity.is_some_and(|(story_id, kind)| story_id != entity.story_id || kind != entity.kind) {
-        return Err(AppError::Invalid(format!(
-            "entity {} belongs to a different story or kind",
-            entity.id
-        )));
+    if identity.is_some_and(|(stored_story, stored_kind)| stored_story != story_id || stored_kind != kind) {
+        return Err(AppError::Invalid(format!("entity {id} belongs to a different story or kind")));
     }
-    let text = if entity.kind == RELATIONSHIP {
-        format!("{} (relationship recorded).", entity.name)
+    let text = if kind == RELATIONSHIP {
+        format!("{name} (relationship recorded).")
     } else {
-        format!("{} was added as a character.", entity.name)
+        format!("{name} was added as a character.")
     };
     let event = EntityEvent::Created {
-        entity_id: entity.id.clone(),
-        kind: entity.kind.clone(),
-        name: (entity.kind == CHARACTER).then(|| entity.name.clone()),
-        appearance_anchor: entity.appearance_anchor.clone(),
-        link: entity.link.clone(),
+        entity_id: id.to_string(),
+        kind: kind.to_string(),
+        name: (kind == CHARACTER).then(|| name.to_string()),
+        character,
+        link,
         source: source.to_string(),
-        created_at: entity.created_at.clone(),
+        created_at: Utc::now().to_rfc3339(),
     };
     projection::record(
         conn,
-        &entity.story_id,
+        story_id,
         target_entry_id,
         &recorded_content(source, text),
         &event,
         turn_id,
     )?;
-    load_entity_raw(conn, &entity.story_id, &entity.id)?
+    load_entity_raw(conn, story_id, id)?
         .ok_or_else(|| AppError::Other("created entity was not projected".into()))
 }
 
@@ -247,15 +261,15 @@ pub fn create_entity_with_id_sync(
     }
     record_create(
         conn,
-        Entity {
-            id: id.to_string(),
-            story_id: story_id.to_string(),
-            kind: CHARACTER.into(),
-            name: name.to_string(),
+        id,
+        story_id,
+        CHARACTER,
+        name,
+        CharacterFields {
             appearance_anchor: trimmed_text(appearance_anchor),
-            created_at: Utc::now().to_rfc3339(),
-            link: None,
+            ..Default::default()
         },
+        None,
         source,
         target_entry_id,
         turn_id,
@@ -286,9 +300,21 @@ pub fn create_entity_sync(
     )
 }
 
-/// Renames/updates an entity's appearance, mirroring `create_entity_sync`'s
-/// `source`/`target_entry_id` shape so both the user-facing command and a
-/// narrator tool's staged commit can call it identically.
+pub fn create_character_sync(
+    conn: &rusqlite::Connection,
+    story_id: &str,
+    name: &str,
+    fields: CharacterFields,
+    source: &str,
+    target_entry_id: Option<&str>,
+    turn_id: Option<&str>,
+) -> AppResult<Entity> {
+    record_create(
+        conn, &Uuid::new_v4().to_string(), story_id, CHARACTER, validated_name(name)?,
+        fields, None, source, target_entry_id, turn_id,
+    )
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn update_entity_sync(
     conn: &rusqlite::Connection,
@@ -300,24 +326,61 @@ pub fn update_entity_sync(
     target_entry_id: Option<&str>,
     turn_id: Option<&str>,
 ) -> AppResult<Entity> {
+    update_character_sync(
+        conn, story_id, entity_id, Some(name),
+        &CharacterPatch {
+            appearance_anchor: Some(appearance_anchor.map(str::to_string)),
+            ..Default::default()
+        },
+        source, target_entry_id, turn_id,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn update_character_sync(
+    conn: &rusqlite::Connection,
+    story_id: &str,
+    entity_id: &str,
+    name: Option<&str>,
+    patch: &CharacterPatch,
+    source: &str,
+    target_entry_id: Option<&str>,
+    turn_id: Option<&str>,
+) -> AppResult<Entity> {
     let before = load_entity_raw(conn, story_id, entity_id)?
         .ok_or_else(|| AppError::NotFound(format!("entity {entity_id} not found")))?;
     if before.kind != CHARACTER {
         return Err(AppError::Invalid("kind must be character".into()));
     }
+    let patch = patch.clone().normalize()?;
     let after = Entity {
-        name: validated_name(name)?.to_string(),
-        appearance_anchor: trimmed_text(appearance_anchor),
+        name: match name {
+            Some(name) => validated_name(name)?.to_string(),
+            None => before.name.clone(),
+        },
+        character: patch.apply_to(&before.character),
         ..before.clone()
     };
     let mut changes = Vec::new();
     if before.name != after.name {
         changes.push(format!("name {} \u{2192} {}", before.name, after.name));
     }
-    if before.appearance_anchor != after.appearance_anchor {
-        changes.push(match &after.appearance_anchor {
-            Some(anchor) => format!("appearance \u{2192} {anchor:?}"),
-            None => "appearance cleared".into(),
+    for ((field, old), (_, new)) in before.character.fields().into_iter().zip(after.character.fields()) {
+        if old == new {
+            continue;
+        }
+        let label = match field {
+            "known_as" => "known as",
+            "appearance_anchor" => "appearance",
+            _ => field,
+        };
+        changes.push(match new {
+            Some(value) if field == "appearance_anchor" => format!("{label} \u{2192} {value:?}"),
+            Some(value) => match old.as_deref() {
+                Some(previous) => format!("{label} {previous} \u{2192} {value}"),
+                None => format!("{label} \u{2192} {value}"),
+            },
+            None => format!("{label} cleared"),
         });
     }
     if changes.is_empty() {
@@ -326,7 +389,7 @@ pub fn update_entity_sync(
     let event = EntityEvent::Updated {
         entity_id: entity_id.to_string(),
         before: snapshot(&before),
-        after: snapshot(&after),
+        after: Box::new(snapshot(&after)),
         source: source.to_string(),
     };
     projection::record(
@@ -386,15 +449,12 @@ pub fn create_link_sync(
     }
     record_create(
         conn,
-        Entity {
-            id,
-            story_id: story_id.to_string(),
-            kind: RELATIONSHIP.into(),
-            name: link_name(&link, &from, &to),
-            appearance_anchor: None,
-            created_at: Utc::now().to_rfc3339(),
-            link: Some(link),
-        },
+        &id,
+        story_id,
+        RELATIONSHIP,
+        &link_name(&link, &from, &to),
+        CharacterFields::default(),
+        Some(link),
         source,
         target_entry_id,
         turn_id,
@@ -455,7 +515,7 @@ pub fn update_link_sync(
     let event = EntityEvent::Updated {
         entity_id: entity_id.to_string(),
         before: snapshot(&before),
-        after: snapshot(&after),
+        after: Box::new(snapshot(&after)),
         source: source.to_string(),
     };
     projection::record(
@@ -527,9 +587,10 @@ mod tests {
 
     fn stored_link(conn: &rusqlite::Connection, id: &str) -> Value {
         conn.query_row(
-            "SELECT e.name, e.appearance_anchor, e.is_present, e.created_at, e.updated_at,
+            "SELECT e.name, c.appearance_anchor, e.is_present, e.created_at, e.updated_at,
                     l.from_id, l.to_id, l.label, l.direction, l.description
              FROM entities e JOIN relationships l ON l.entity_id = e.id
+             LEFT JOIN characters c ON c.entity_id = e.id
              WHERE e.story_id = 'story' AND e.id = ?1",
             [id], |row| Ok(json!({
                 "name": row.get::<_, Option<String>>(0)?,
@@ -858,7 +919,7 @@ mod tests {
         assert!(!content.contains("direction") && !content.contains("description"));
         let EntityEvent::Updated { before, after, .. } = EntityEvent::from_entry(&entry).unwrap() else { panic!("expected Updated") };
         assert_eq!(before, snapshot(&original));
-        assert_eq!(after, snapshot(&renamed));
+        assert_eq!(*after, snapshot(&renamed));
         let reverse = create_link_sync(
             &conn, "story", link("varro", "mira", "one_way"), "user", None, None,
         ).unwrap();
@@ -902,10 +963,10 @@ mod tests {
         assert_eq!(entry.content.as_deref(), Some("User edit: Mira: name Mira \u{2192} Mira Vale."));
         let EntityEvent::Updated { before, after, .. } = EntityEvent::from_entry(&entry).unwrap() else { panic!("expected Updated") };
         assert_eq!(before, snapshot(&original));
-        assert_eq!(after, snapshot(&renamed));
+        assert_eq!(*after, snapshot(&renamed));
         let appearance = update_entity_sync(&conn, "story", "mira", "Mira Vale", Some(" silver hair "), "narrator_tool", None, None).unwrap();
         assert_eq!(entries(&conn).pop().unwrap().content.as_deref(), Some("Mira Vale: appearance \u{2192} \"silver hair\"."));
-        assert_eq!(appearance.appearance_anchor.as_deref(), Some("silver hair"));
+        assert_eq!(appearance.character.appearance_anchor.as_deref(), Some("silver hair"));
         assert_eq!(appearance.created_at, original.created_at);
         update_entity_sync(&conn, "story", "mira", "Mira Vale", None, "user", None, None).unwrap();
         assert_eq!(entries(&conn).pop().unwrap().content.as_deref(), Some("User edit: Mira Vale: appearance cleared."));
@@ -913,5 +974,82 @@ mod tests {
         create_entity_with_id_sync(&conn, "mira", "story", CHARACTER, "Mira Vale", None, "user", None, None).unwrap();
         assert_eq!(entries(&conn), before);
         assert!(load_entity_raw(&conn, "other", "mira").unwrap().is_none());
+    }
+
+    #[test]
+    fn deserialized_character_patch_sets_clears_preserves_and_records_only_changes() {
+        let pool = fixture();
+        let conn = pool.get().unwrap();
+        let fields = json!({
+            "known_as": "the stranger", "appearance_anchor": "silver hair", "gender": "woman",
+            "age": "30", "role": "pirate", "location": "tavern", "outfit": "cloak",
+        });
+        let original = create_character_sync(
+            &conn, "story", " Kael ", serde_json::from_value(fields.clone()).unwrap(), "user", None, None,
+        ).unwrap();
+        assert_eq!(serde_json::to_value(&original.character).unwrap(), fields);
+        assert_eq!(original.name, "Kael");
+        let patch: CharacterPatch = serde_json::from_value(json!({
+            "known_as": " ", "location": " the docks ", "outfit": null,
+        })).unwrap();
+        assert_eq!(patch.outfit, Some(None));
+        assert_eq!(patch.role, None);
+        let count = entries(&conn).len();
+        let updated = update_character_sync(
+            &conn, "story", &original.id, None, &patch, "user", None, None,
+        ).unwrap();
+        assert_eq!(entries(&conn).len(), count + 1);
+        assert_eq!(serde_json::to_value(&updated.character).unwrap(), json!({
+            "known_as": null, "appearance_anchor": "silver hair", "gender": "woman", "age": "30",
+            "role": "pirate", "location": "the docks", "outfit": null,
+        }));
+        let entry = entries(&conn).pop().unwrap();
+        assert_eq!(entry.content.as_deref(), Some(
+            "User edit: Kael: known as cleared; location tavern \u{2192} the docks; outfit cleared."
+        ));
+        let EntityEvent::Updated { before, after, .. } = EntityEvent::from_entry(&entry).unwrap() else { panic!("expected Updated") };
+        assert_eq!(before, snapshot(&original));
+        assert_eq!(*after, snapshot(&updated));
+        assert_eq!(snapshot(&load_entity_raw(&conn, "story", &original.id).unwrap().unwrap()), snapshot(&updated));
+        for unchanged in [patch, serde_json::from_value(json!({})).unwrap()] {
+            let same = update_character_sync(
+                &conn, "story", &original.id, Some(" Kael "), &unchanged, "user", None, None,
+            ).unwrap();
+            assert_eq!(snapshot(&same), snapshot(&updated));
+        }
+        assert_eq!(entries(&conn).len(), count + 1);
+    }
+
+    #[test]
+    fn short_character_fields_count_unicode_scalars_and_anchor_is_unlimited() {
+        let pool = fixture();
+        let conn = pool.get().unwrap();
+        let count = entries(&conn).len();
+        for field in ["known_as", "gender", "age", "role", "location", "outfit"] {
+            let mut input = json!({});
+            input[field] = json!("x".repeat(201));
+            assert!(matches!(
+                create_character_sync(&conn, "story", "Invalid", serde_json::from_value(input.clone()).unwrap(), "user", None, None),
+                Err(AppError::Invalid(_))
+            ));
+            let patch = serde_json::from_value(input).unwrap();
+            assert!(matches!(
+                update_character_sync(&conn, "story", "mira", None, &patch, "user", None, None),
+                Err(AppError::Invalid(_))
+            ));
+        }
+        assert_eq!(entries(&conn).len(), count);
+        let boundary = "\u{754c}".repeat(200);
+        let fields = serde_json::from_value(json!({
+            "known_as": boundary, "gender": boundary, "age": boundary, "role": boundary,
+            "location": boundary, "outfit": boundary, "appearance_anchor": "a".repeat(401),
+        })).unwrap();
+        let created = create_character_sync(&conn, "story", "Boundary", fields, "user", None, None).unwrap();
+        assert_eq!(created.character.known_as.as_deref(), Some(boundary.as_str()));
+        assert_eq!(created.character.appearance_anchor.as_deref().unwrap().len(), 401);
+        let patch = serde_json::from_value(json!({"role": boundary, "appearance_anchor": "b".repeat(501)})).unwrap();
+        let updated = update_character_sync(&conn, "story", "mira", None, &patch, "user", None, None).unwrap();
+        assert_eq!(updated.character.role.as_deref(), Some(boundary.as_str()));
+        assert_eq!(updated.character.appearance_anchor.as_deref().unwrap().len(), 501);
     }
 }

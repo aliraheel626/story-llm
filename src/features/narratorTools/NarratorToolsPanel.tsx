@@ -6,10 +6,8 @@ const GROUPS: { title: string; items: { key: keyof NarratorToolSettings; label: 
   {
     title: "Entity",
     items: [
+      { key: "save_character", label: "Record characters", description: "The narrator can record character facts and stats, including location and outfit." },
       { key: "save_relationship", label: "Record relationships", description: "The narrator can record how characters relate and change relationship stats." },
-      { key: "create_entity", label: "Create entities", description: "The narrator can add persistent characters." },
-      { key: "update_entity", label: "Update entities", description: "The narrator can change persistent world details." },
-      { key: "adjust_entity_attribute", label: "Adjust attributes", description: "The narrator can change entity stats. Manual edits remain available when off." },
     ],
   },
   {
@@ -50,7 +48,7 @@ export function NarratorToolsPanel() {
   return (
     <div className="flex flex-col gap-3 text-xs">
       <p className="rounded border border-border bg-bg px-2 py-2 leading-5 text-muted">
-        All six tools start on for every story. Entity tools can change persistent world state; dice and image calls can add cost. Turn off any tool independently before writing.
+        All tools start on for every story. Entity tools can change persistent world state; dice and image calls can add cost. Turn off any tool independently before writing.
       </p>
       {GROUPS.map((group) => (
         <fieldset key={group.title} className="flex flex-col gap-1.5 border-t border-border pt-2">

@@ -117,13 +117,13 @@ export interface StoryCostBreakdown { turns: TurnCost[]; images: ImageCost[] }
 export type EntityKind = "character" | "relationship";
 export interface Entity {
   id: string; story_id: string; kind: EntityKind; name: string;
-  appearance_anchor: string | null; created_at: string;
+  known_as: string | null; appearance_anchor: string | null;
+  gender: string | null; age: string | null; role: string | null;
+  location: string | null; outfit: string | null; created_at: string;
 }
 export interface NarratorToolSettings {
   save_relationship: boolean;
-  create_entity: boolean;
-  update_entity: boolean;
-  adjust_entity_attribute: boolean;
+  save_character: boolean;
   roll_check: boolean;
   illustrate_scene: boolean;
 }

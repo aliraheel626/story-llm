@@ -45,15 +45,32 @@ fn format_entity_context(
             lines.push(if entity.link.is_some() {
                 format!("- {}", entity.name)
             } else {
-                format!("- {} ({})", entity.name, entity.kind)
+                let known_as = entity.character.known_as.as_deref()
+                    .map(|text| format!("; known to the player as: {text}")).unwrap_or_default();
+                format!("- {} ({}){known_as}", entity.name, entity.kind)
             });
             continue;
         }
-        let details = if let Some(link) = &entity.link {
-            link.description.as_deref().map(|text| format!("; description: {text}"))
+        let mut details = String::new();
+        if let Some(link) = &entity.link {
+            if let Some(text) = &link.description {
+                details.push_str(&format!("; description: {text}"));
+            }
         } else {
-            entity.appearance_anchor.as_deref().map(|text| format!("; appearance: {text}"))
-        }.unwrap_or_default();
+            for (label, value) in [
+                ("known to the player as", &entity.character.known_as),
+                ("location", &entity.character.location),
+                ("outfit", &entity.character.outfit),
+                ("gender", &entity.character.gender),
+                ("age", &entity.character.age),
+                ("role", &entity.character.role),
+                ("appearance", &entity.character.appearance_anchor),
+            ] {
+                if let Some(text) = value {
+                    details.push_str(&format!("; {label}: {text}"));
+                }
+            }
+        }
         let attributes = match attributes.get(&entity.id) {
             Some(attrs) if !attrs.is_empty() => format!(
                 "; attributes: {}",
@@ -385,7 +402,7 @@ mod tests {
             assert_eq!(snapshot.len(), 1);
             assert_eq!(alice.id, "alice");
             assert_eq!(alice.name, "Alice");
-            assert_eq!(alice.appearance_anchor.as_deref(), Some("blue coat"));
+            assert_eq!(alice.character.appearance_anchor.as_deref(), Some("blue coat"));
             assert_eq!(alice_attributes.len(), 1);
             assert_eq!(alice_attributes[0].canonical_name, "Accuracy");
             assert_eq!(alice_attributes[0].value, 7.0);
@@ -493,6 +510,29 @@ mod tests {
     }
 
     #[test]
+    fn character_facts_render_in_order_with_true_name_and_perceived_title() {
+        use crate::features::entities::model::CharacterFields;
+        let pool = crate::shared::db::test_pool();
+        let conn = pool.get().unwrap();
+        crate::shared::test_support::story(&conn, "s");
+        let kael = entities::repository::create_character_sync(&conn, "s", "Kael", CharacterFields {
+            known_as: Some("the hooded stranger".into()), appearance_anchor: Some("scarred lip".into()),
+            gender: Some("female".into()), age: Some("34".into()), role: Some("smuggler".into()),
+            location: Some("the Rusty Anchor".into()), outfit: Some("grey cloak".into()),
+        }, "narrator_tool", None, None).unwrap();
+        let health = entities::registry::find_exact_match(&conn, "Health").unwrap().unwrap();
+        entities::attributes::set_entity_attribute_sync(&conn, "s", &kael.id, &health.id, 7.0).unwrap();
+        let data = entities::list_entities_sync(&conn, "s", None).unwrap();
+        let attrs = entities::attributes::list_entity_attributes_for_entities_sync(&conn, "s", &[&kael.id]).unwrap();
+        let text = format_entity_context(&data, &attrs, None);
+        assert!(text.contains("- Kael (character); known to the player as: the hooded stranger; location: the Rusty Anchor; outfit: grey cloak; gender: female; age: 34; role: smuggler; appearance: scarred lip; attributes: Health=7"));
+        assert!(text.contains("Names here are true names."));
+        let summary = format_entity_context(&data, &attrs, Some(&HashSet::new()));
+        assert!(summary.contains("- Kael (character); known to the player as: the hooded stranger"));
+        assert!(!summary.contains("location: the Rusty Anchor"));
+    }
+
+    #[test]
     fn relationship_context_has_current_names_directions_description_and_stats() {
         use crate::features::entities::model::EntityLink;
         let pool = crate::shared::db::test_pool();
@@ -529,9 +569,7 @@ mod tests {
     fn tool_instructions_name_only_available_tools() {
         let mut settings = NarratorToolSettings {
             save_relationship: false,
-            create_entity: false,
-            update_entity: false,
-            adjust_entity_attribute: false,
+            save_character: false,
             roll_check: false,
             ..NarratorToolSettings::default()
         };
@@ -593,9 +631,7 @@ mod tests {
     fn built_tool_names_match_injected_names_across_availability_combinations() {
         let disabled = NarratorToolSettings {
             save_relationship: false,
-            create_entity: false,
-            update_entity: false,
-            adjust_entity_attribute: false,
+            save_character: false,
             roll_check: false,
             illustrate_scene: false,
         };
@@ -604,7 +640,7 @@ mod tests {
             (
                 NarratorToolSettings {
                     roll_check: true,
-                    update_entity: true,
+                    save_character: true,
                     ..disabled
                 },
                 false,

@@ -332,8 +332,9 @@ mod tests {
         .unwrap();
         let unrelated_projection: (String, Option<String>, i64, String) = conn
             .query_row(
-                "SELECT name, appearance_anchor, is_present, updated_at
-                 FROM entities WHERE story_id = 's' AND id = 'unrelated'",
+                "SELECT e.name, c.appearance_anchor, e.is_present, e.updated_at
+                 FROM entities e JOIN characters c ON c.entity_id=e.id
+                 WHERE e.story_id = 's' AND e.id = 'unrelated'",
                 [],
                 |row| {
                     Ok((
@@ -471,7 +472,8 @@ mod tests {
         );
         let mira: (String, Option<String>) = conn
             .query_row(
-                "SELECT name, appearance_anchor FROM entities WHERE story_id = 's' AND id = 'mira'",
+                "SELECT e.name, c.appearance_anchor FROM entities e JOIN characters c ON c.entity_id=e.id
+                 WHERE e.story_id = 's' AND e.id = 'mira'",
                 [],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
@@ -505,8 +507,9 @@ mod tests {
         );
         assert_eq!(
             conn.query_row(
-                "SELECT name, appearance_anchor, is_present, updated_at
-                 FROM entities WHERE story_id = 's' AND id = 'unrelated'",
+                "SELECT e.name, c.appearance_anchor, e.is_present, e.updated_at
+                 FROM entities e JOIN characters c ON c.entity_id=e.id
+                 WHERE e.story_id = 's' AND e.id = 'unrelated'",
                 [],
                 |row| Ok((
                     row.get::<_, String>(0)?,
@@ -580,7 +583,7 @@ mod tests {
             .query_row(
                 "SELECT
                     (SELECT COUNT(*) FROM entities WHERE id = 'temporary'),
-                    (SELECT COUNT(*) FROM entities WHERE story_id = 's' AND id = 'temporary'),
+                    (SELECT COUNT(*) FROM characters WHERE entity_id = 'temporary'),
                     (SELECT COUNT(*) FROM entity_attributes WHERE entity_id = 'temporary')",
                 [],
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
