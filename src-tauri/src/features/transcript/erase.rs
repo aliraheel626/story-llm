@@ -330,24 +330,10 @@ mod tests {
             None,
         )
         .unwrap();
-        let mira_last_event_id: String = conn
+        let unrelated_projection: (String, Option<String>, i64, String) = conn
             .query_row(
-                "SELECT last_event_id FROM story_entity_state WHERE story_id = 's' AND entity_id = 'mira'",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        let attribute_last_event_id: String = conn
-            .query_row(
-                "SELECT last_event_id FROM entity_attributes WHERE story_id = 's' AND entity_id = 'mira' AND attribute_id = ?1",
-                [&trust_id],
-                |row| row.get(0),
-            )
-            .unwrap();
-        let unrelated_projection: (String, Option<String>, i64, String, String) = conn
-            .query_row(
-                "SELECT name, appearance_anchor, is_present, updated_at, last_event_id
-                 FROM story_entity_state WHERE story_id = 's' AND entity_id = 'unrelated'",
+                "SELECT name, appearance_anchor, is_present, updated_at
+                 FROM entities WHERE story_id = 's' AND id = 'unrelated'",
                 [],
                 |row| {
                     Ok((
@@ -355,7 +341,6 @@ mod tests {
                         row.get(1)?,
                         row.get(2)?,
                         row.get(3)?,
-                        row.get(4)?,
                     ))
                 },
             )
@@ -484,11 +469,11 @@ mod tests {
             .unwrap(),
             1
         );
-        let mira: (String, Option<String>, String) = conn
+        let mira: (String, Option<String>) = conn
             .query_row(
-                "SELECT name, appearance_anchor, last_event_id FROM story_entity_state WHERE story_id = 's' AND entity_id = 'mira'",
+                "SELECT name, appearance_anchor FROM entities WHERE story_id = 's' AND id = 'mira'",
                 [],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .unwrap();
         assert_eq!(
@@ -496,23 +481,22 @@ mod tests {
             (
                 "Mira".into(),
                 Some("silver hair".into()),
-                mira_last_event_id
             )
         );
-        let restored_attribute: (f64, String, String) = conn
+        let restored_attribute: (f64, String) = conn
             .query_row(
-                "SELECT value, source, last_event_id FROM entity_attributes WHERE story_id = 's' AND entity_id = 'mira' AND attribute_id = ?1",
+                "SELECT value, source FROM entity_attributes JOIN entities ON entities.id = entity_attributes.entity_id WHERE entities.story_id = 's' AND entity_id = 'mira' AND attribute_id = ?1",
                 [&trust_id],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .unwrap();
         assert_eq!(
             restored_attribute,
-            (2.0, "inferred".into(), attribute_last_event_id)
+            (2.0, "inferred".into())
         );
         assert_eq!(
             conn.query_row(
-                "SELECT COUNT(*) FROM story_entity_state WHERE story_id = 's' AND entity_id = 'temporary'",
+                "SELECT COUNT(*) FROM entities WHERE story_id = 's' AND id = 'temporary'",
                 [],
                 |row| row.get::<_, i64>(0)
             )
@@ -521,15 +505,14 @@ mod tests {
         );
         assert_eq!(
             conn.query_row(
-                "SELECT name, appearance_anchor, is_present, updated_at, last_event_id
-                 FROM story_entity_state WHERE story_id = 's' AND entity_id = 'unrelated'",
+                "SELECT name, appearance_anchor, is_present, updated_at
+                 FROM entities WHERE story_id = 's' AND id = 'unrelated'",
                 [],
                 |row| Ok((
                     row.get::<_, String>(0)?,
                     row.get::<_, Option<String>>(1)?,
                     row.get::<_, i64>(2)?,
-                    row.get::<_, String>(3)?,
-                    row.get::<_, String>(4)?
+                    row.get::<_, String>(3)?
                 ))
             )
             .unwrap(),
@@ -597,7 +580,7 @@ mod tests {
             .query_row(
                 "SELECT
                     (SELECT COUNT(*) FROM entities WHERE id = 'temporary'),
-                    (SELECT COUNT(*) FROM story_entity_state WHERE entity_id = 'temporary'),
+                    (SELECT COUNT(*) FROM entities WHERE story_id = 's' AND id = 'temporary'),
                     (SELECT COUNT(*) FROM entity_attributes WHERE entity_id = 'temporary')",
                 [],
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),

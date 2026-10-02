@@ -94,8 +94,127 @@ pub async fn erase_last_exchange(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::features::entities::events::EntityEvent;
     use crate::features::turn::TurnTx;
     use crate::shared::test_support;
+
+    #[test]
+    fn erasing_a_deletion_cannot_restore_a_reused_present_name() {
+        let pool = crate::shared::db::test_pool();
+        let conn = pool.get().unwrap();
+        test_support::story(&conn, "s");
+        entities::create_entity_with_id_sync(
+            &conn, "a", "s", "character", "Mira", Some("silver hair"), "user", None, None,
+        ).unwrap();
+        let (turn_id, _, narration_id) = test_support::exchange(&conn, "s", "do", "act", Some("Mira leaves."));
+        entities::projection::record(
+            &conn, "s", narration_id.as_deref(), "Mira was removed.",
+            &EntityEvent::Deleted { entity_id: "a".into(), name: "Mira".into(), source: "narrator_tool".into() },
+            Some(&turn_id),
+        ).unwrap();
+        entities::create_entity_with_id_sync(
+            &conn, "b", "s", "character", "mira", Some("black armor"), "user", None, None,
+        ).unwrap();
+        let snapshot = |conn: &rusqlite::Connection| {
+            conn.prepare(
+                "SELECT id, kind, name, appearance_anchor, is_present, created_at, updated_at
+                 FROM entities WHERE story_id = 's' ORDER BY id",
+            ).unwrap().query_map([], |row| Ok((
+                row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?,
+                row.get::<_, Option<String>>(3)?, row.get::<_, i64>(4)?,
+                row.get::<_, String>(5)?, row.get::<_, String>(6)?,
+            ))).unwrap().collect::<Result<Vec<_>, _>>().unwrap()
+        };
+        let before = snapshot(&conn);
+        let entries = repository::list_logical_entries(&conn, "s").unwrap();
+        let updated_at: String = conn.query_row("SELECT updated_at FROM stories WHERE id = 's'", [], |row| row.get(0)).unwrap();
+        drop(conn);
+
+        let gate = TurnGate::default();
+        assert!(matches!(
+            erase_with_ticket(&pool, &gate, gate.check_idle("s").unwrap(), "s"),
+            Err(AppError::Db(rusqlite::Error::SqliteFailure(error, _)))
+                if error.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE
+        ));
+        let conn = pool.get().unwrap();
+        assert_eq!(snapshot(&conn), before);
+        assert_eq!(repository::list_logical_entries(&conn, "s").unwrap(), entries);
+        assert_eq!(turns::last_turn(&conn, "s").unwrap().unwrap().id, turn_id);
+        assert_eq!(conn.query_row("SELECT updated_at FROM stories WHERE id = 's'", [], |row| row.get::<_, String>(0)).unwrap(), updated_at);
+    }
+
+    #[test]
+    fn erasing_earlier_narration_allows_reused_historical_names() {
+        let pool = crate::shared::db::test_pool();
+        let conn = pool.get().unwrap();
+        test_support::story(&conn, "s");
+        entities::create_entity_with_id_sync(
+            &conn, "a", "s", "character", "Mira", Some("silver hair"), "user", None, None,
+        ).unwrap();
+        let (turn_id, action_id, narration_id) = test_support::exchange(&conn, "s", "do", "act", Some("A new cloak."));
+        entities::update_entity_sync(
+            &conn, "s", "a", "Mira", Some("red cloak"), "narrator_tool", narration_id.as_deref(), Some(&turn_id),
+        ).unwrap();
+        entities::repository::delete_entity_sync(&conn, "s", "a").unwrap();
+        entities::create_entity_with_id_sync(
+            &conn, "b", "s", "character", "mira", Some("black armor"), "user", None, None,
+        ).unwrap();
+        let b_before: (String, Option<String>, i64, String) = conn.query_row(
+            "SELECT name, appearance_anchor, is_present, updated_at FROM entities WHERE story_id = 's' AND id = 'b'",
+            [], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        ).unwrap();
+        drop(conn);
+
+        let gate = TurnGate::default();
+        assert_eq!(
+            erase_with_ticket(&pool, &gate, gate.check_idle("s").unwrap(), "s").unwrap(),
+            vec![action_id, narration_id.unwrap()]
+        );
+        let conn = pool.get().unwrap();
+        assert_eq!(conn.query_row(
+            "SELECT name, appearance_anchor, is_present FROM entities WHERE story_id = 's' AND id = 'a'",
+            [], |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?, row.get::<_, i64>(2)?)),
+        ).unwrap(), ("Mira".into(), Some("silver hair".into()), 0));
+        assert_eq!(conn.query_row(
+            "SELECT name, appearance_anchor, is_present, updated_at FROM entities WHERE story_id = 's' AND id = 'b'",
+            [], |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?, row.get::<_, i64>(2)?, row.get::<_, String>(3)?)),
+        ).unwrap(), b_before);
+        let present = entities::list_entities_sync(&conn, "s", None).unwrap();
+        assert_eq!(present.len(), 1);
+        assert_eq!(present[0].id, "b");
+    }
+
+    #[test]
+    fn erasing_narrator_rename_preserves_later_player_anchor_edit() {
+        let pool = crate::shared::db::test_pool();
+        let conn = pool.get().unwrap();
+        test_support::story(&conn, "s");
+        entities::create_entity_with_id_sync(
+            &conn, "a", "s", "character", "Mira", Some("silver hair"), "user", None, None,
+        ).unwrap();
+        let created_at: String = conn.query_row(
+            "SELECT created_at FROM entities WHERE id = 'a'", [], |row| row.get(0),
+        ).unwrap();
+        let (turn_id, action_id, narration_id) = test_support::exchange(&conn, "s", "do", "act", Some("Mira Vale arrives."));
+        entities::update_entity_sync(
+            &conn, "s", "a", "Mira Vale", Some("silver hair"), "narrator_tool", narration_id.as_deref(), Some(&turn_id),
+        ).unwrap();
+        entities::update_entity_sync(
+            &conn, "s", "a", "Mira Vale", Some("black armor"), "user", None, None,
+        ).unwrap();
+        drop(conn);
+
+        let gate = TurnGate::default();
+        assert_eq!(
+            erase_with_ticket(&pool, &gate, gate.check_idle("s").unwrap(), "s").unwrap(),
+            vec![action_id, narration_id.unwrap()]
+        );
+        let present = entities::list_entities_sync(&pool.get().unwrap(), "s", None).unwrap();
+        assert_eq!(present.len(), 1);
+        assert_eq!((present[0].id.as_str(), present[0].name.as_str(), present[0].appearance_anchor.as_deref()),
+            ("a", "Mira", Some("black armor")));
+        assert_eq!(present[0].created_at, created_at);
+    }
 
     #[test]
     fn editing_the_generating_story_is_refused_before_writing() {

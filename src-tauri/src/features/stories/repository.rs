@@ -192,9 +192,7 @@ mod tests {
         let conn = pool.get().unwrap();
         let (name, kind): (String, String) = conn
             .query_row(
-                "SELECT story_entity_state.name, entities.kind FROM story_entity_state
-             JOIN entities ON entities.id = story_entity_state.entity_id
-             WHERE story_entity_state.story_id = ?1",
+                "SELECT name, kind FROM entities WHERE story_id = ?1 AND is_present = 1",
                 [&created.id],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )

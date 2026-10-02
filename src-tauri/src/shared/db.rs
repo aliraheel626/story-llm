@@ -111,22 +111,15 @@ fn create_schema(conn: &mut PooledConn) -> AppResult<()> {
             id TEXT PRIMARY KEY,
             story_id TEXT NOT NULL REFERENCES stories(id) ON DELETE CASCADE,
             kind TEXT NOT NULL,
-            created_at TEXT NOT NULL
-        );
-
-        CREATE TABLE IF NOT EXISTS story_entity_state (
-            story_id TEXT NOT NULL REFERENCES stories(id) ON DELETE CASCADE,
-            entity_id TEXT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
             name TEXT NOT NULL,
             appearance_anchor TEXT,
             is_present INTEGER NOT NULL DEFAULT 1,
-            updated_at TEXT NOT NULL,
-            last_event_id TEXT REFERENCES transcript_entries(id) ON DELETE SET NULL,
-            PRIMARY KEY (story_id, entity_id)
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
         );
-        CREATE INDEX IF NOT EXISTS idx_story_entities_name ON story_entity_state(story_id, name);
-        CREATE UNIQUE INDEX IF NOT EXISTS idx_story_entities_name_ci
-            ON story_entity_state(story_id, name COLLATE NOCASE);
+        CREATE INDEX IF NOT EXISTS idx_entities_story_name ON entities(story_id, name);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_entities_name_ci
+            ON entities(story_id, name COLLATE NOCASE) WHERE is_present = 1;
 
         CREATE TABLE IF NOT EXISTS attribute_registry (
             id TEXT PRIMARY KEY,
@@ -144,14 +137,12 @@ fn create_schema(conn: &mut PooledConn) -> AppResult<()> {
             ON attribute_registry(canonical_name COLLATE NOCASE);
 
         CREATE TABLE IF NOT EXISTS entity_attributes (
-            story_id TEXT NOT NULL REFERENCES stories(id) ON DELETE CASCADE,
             entity_id TEXT NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
             attribute_id TEXT NOT NULL REFERENCES attribute_registry(id) ON DELETE CASCADE,
             value REAL NOT NULL,
             source TEXT NOT NULL,
             updated_at TEXT NOT NULL,
-            last_event_id TEXT REFERENCES transcript_entries(id) ON DELETE SET NULL,
-            PRIMARY KEY (story_id, entity_id, attribute_id)
+            PRIMARY KEY (entity_id, attribute_id)
         );
 
         CREATE TABLE IF NOT EXISTS image_assets (
@@ -207,8 +198,8 @@ fn create_schema(conn: &mut PooledConn) -> AppResult<()> {
 /// Idempotent on name: story creation calls this inside its own transaction.
 pub(crate) fn seed_player_entity(conn: &rusqlite::Connection, story_id: &str) -> AppResult<()> {
     let exists: bool = conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM story_entity_state
-         WHERE story_id = ?1 AND name = 'You' COLLATE NOCASE)",
+        "SELECT EXISTS(SELECT 1 FROM entities
+         WHERE story_id = ?1 AND name = 'You' COLLATE NOCASE AND is_present = 1)",
         [story_id],
         |row| row.get(0),
     )?;
@@ -403,17 +394,17 @@ mod tests {
         conn.execute_batch(
             "INSERT INTO stories (id,title,created_at,updated_at) VALUES
              ('existing','Existing','now','now'), ('fresh','Fresh','now','now');
-             INSERT INTO entities (id,story_id,kind,created_at) VALUES ('original','existing','character','now');
-             INSERT INTO story_entity_state (story_id,entity_id,name,is_present,updated_at)
-             VALUES ('existing','original','yOu',1,'now');",
+             INSERT INTO entities (id,story_id,kind,name,is_present,created_at,updated_at)
+             VALUES ('original','existing','character','yOu',1,'now','now');",
         ).unwrap();
         for story_id in ["existing", "fresh"] {
             seed_player_entity(&conn, story_id).unwrap();
             seed_player_entity(&conn, story_id).unwrap();
             let (count, attributes): (i64, i64) = conn
                 .query_row(
-                    "SELECT COUNT(*), (SELECT COUNT(*) FROM entity_attributes WHERE story_id=?1)
-                 FROM story_entity_state WHERE story_id=?1 AND name='You' COLLATE NOCASE",
+                    "SELECT COUNT(*), (SELECT COUNT(*) FROM entity_attributes
+                     JOIN entities ON entities.id = entity_attributes.entity_id WHERE entities.story_id=?1)
+                 FROM entities WHERE story_id=?1 AND name='You' COLLATE NOCASE AND is_present=1",
                     [story_id],
                     |row| Ok((row.get(0)?, row.get(1)?)),
                 )
@@ -421,7 +412,7 @@ mod tests {
             assert_eq!((count, attributes), (1, 0));
         }
         let original: String = conn.query_row(
-            "SELECT entity_id FROM story_entity_state WHERE story_id='existing' AND name='You' COLLATE NOCASE",
+            "SELECT id FROM entities WHERE story_id='existing' AND name='You' COLLATE NOCASE",
             [], |row| row.get(0),
         ).unwrap();
         assert_eq!(original, "original");
@@ -444,7 +435,36 @@ mod tests {
         assert!(!exists("ledger_entries"));
         assert!(exists("turns"));
         assert!(!exists("timeline_entries"));
-        assert!(exists("story_entity_state"));
+        assert!(!exists("story_entity_state"));
+        assert!(exists("entities"));
+        let entity_columns = conn
+            .prepare("PRAGMA table_info(entities)")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(
+            entity_columns,
+            ["id", "story_id", "kind", "name", "appearance_anchor", "is_present", "created_at", "updated_at"]
+        );
+        let attribute_columns = conn
+            .prepare("PRAGMA table_info(entity_attributes)")
+            .unwrap()
+            .query_map([], |row| Ok((row.get::<_, String>(1)?, row.get::<_, i64>(5)?)))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(
+            attribute_columns,
+            [
+                ("entity_id".to_string(), 1),
+                ("attribute_id".to_string(), 2),
+                ("value".to_string(), 0),
+                ("source".to_string(), 0),
+                ("updated_at".to_string(), 0),
+            ]
+        );
         assert!(!exists("branches"));
         assert!(exists("image_assets"));
         let image_columns = conn
@@ -553,21 +573,15 @@ mod tests {
             "INSERT INTO stories (id, title, created_at, updated_at, settings_json)
                  VALUES ('first', 'First', 'now', 'now', '{}'),
                         ('second', 'Second', 'now', 'now', '{}');
-             INSERT INTO entities (id, story_id, kind, created_at)
-                 VALUES ('one', 'first', 'character', 'now'),
-                        ('two', 'first', 'character', 'now'),
-                        ('three', 'second', 'character', 'now');
-             INSERT INTO story_entity_state
-                 (story_id, entity_id, name, appearance_anchor, is_present, updated_at, last_event_id)
-                 VALUES ('first', 'one', 'Mira', NULL, 1, 'now', NULL);",
+             INSERT INTO entities (id, story_id, kind, name, created_at, updated_at)
+                 VALUES ('one', 'first', 'character', 'Mira', 'now', 'now');",
         )
         .unwrap();
 
         let error = conn
             .execute(
-                "INSERT INTO story_entity_state
-                 (story_id, entity_id, name, appearance_anchor, is_present, updated_at, last_event_id)
-                 VALUES ('first', 'two', 'mira', NULL, 1, 'now', NULL)",
+                "INSERT INTO entities (id, story_id, kind, name, created_at, updated_at)
+                 VALUES ('two', 'first', 'character', 'mira', 'now', 'now')",
                 [],
             )
             .unwrap_err();
@@ -582,9 +596,8 @@ mod tests {
             )
         ));
         conn.execute(
-            "INSERT INTO story_entity_state
-             (story_id, entity_id, name, appearance_anchor, is_present, updated_at, last_event_id)
-             VALUES ('second', 'three', 'mira', NULL, 1, 'now', NULL)",
+            "INSERT INTO entities (id, story_id, kind, name, created_at, updated_at)
+             VALUES ('three', 'second', 'character', 'mira', 'now', 'now')",
             [],
         )
         .unwrap();

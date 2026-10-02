@@ -27,9 +27,9 @@ pub fn list_entities_sync(
     filter_kind: Option<&str>,
 ) -> AppResult<Vec<Entity>> {
     let mut sql = "SELECT entities.id, entities.story_id, entities.kind,
-                          story_entity_state.name, story_entity_state.appearance_anchor, entities.created_at
-                   FROM entities JOIN story_entity_state ON story_entity_state.entity_id = entities.id
-                   WHERE entities.story_id = ?1 AND story_entity_state.story_id = ?1 AND story_entity_state.is_present = 1".to_string();
+                          entities.name, entities.appearance_anchor, entities.created_at
+                   FROM entities
+                   WHERE entities.story_id = ?1 AND entities.is_present = 1".to_string();
     if filter_kind.is_some() {
         sql.push_str(" AND entities.kind = ?2");
     }
@@ -140,10 +140,10 @@ pub fn update_entity_sync(
         return Err(AppError::Invalid("name must not be empty".into()));
     }
     let before: Entity = conn.query_row(
-        "SELECT entities.id, entities.story_id, entities.kind, story_entity_state.name,
-                story_entity_state.appearance_anchor, entities.created_at
-         FROM entities JOIN story_entity_state ON story_entity_state.entity_id = entities.id
-         WHERE entities.id = ?1 AND story_entity_state.story_id = ?2 AND story_entity_state.is_present = 1",
+        "SELECT entities.id, entities.story_id, entities.kind, entities.name,
+                entities.appearance_anchor, entities.created_at
+         FROM entities
+         WHERE entities.id = ?1 AND entities.story_id = ?2 AND entities.is_present = 1",
         rusqlite::params![entity_id, story_id], row_to_entity,
     ).optional()?.ok_or_else(|| AppError::NotFound(format!("entity {entity_id} not found")))?;
     let anchor = appearance_anchor.map(str::trim).filter(|s| !s.is_empty());
@@ -176,7 +176,7 @@ pub(crate) fn delete_entity_sync(
     story_id: &str,
     entity_id: &str,
 ) -> AppResult<()> {
-    let name: String = conn.query_row("SELECT name FROM story_entity_state WHERE story_id = ?1 AND entity_id = ?2 AND is_present = 1", rusqlite::params![story_id, entity_id], |r| r.get(0))
+    let name: String = conn.query_row("SELECT name FROM entities WHERE story_id = ?1 AND id = ?2 AND is_present = 1", rusqlite::params![story_id, entity_id], |r| r.get(0))
         .map_err(|_| AppError::NotFound(format!("entity {entity_id} not found")))?;
     let event = EntityEvent::Deleted {
         entity_id: entity_id.to_string(),

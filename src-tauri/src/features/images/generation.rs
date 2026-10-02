@@ -55,15 +55,14 @@ fn characters_by_ids(
         .collect::<Vec<_>>()
         .join(", ");
     let mut stmt = conn.prepare(&format!(
-        "SELECT story_entity_state.name, story_entity_state.appearance_anchor
-         FROM entities JOIN story_entity_state ON story_entity_state.entity_id = entities.id
-         WHERE entities.story_id = ? AND story_entity_state.story_id = ?
-           AND entities.kind = 'character' AND story_entity_state.is_present = 1
-           AND story_entity_state.appearance_anchor IS NOT NULL
+        "SELECT entities.name, entities.appearance_anchor
+         FROM entities
+         WHERE entities.story_id = ?
+           AND entities.kind = 'character' AND entities.is_present = 1
+           AND entities.appearance_anchor IS NOT NULL
            AND entities.id IN ({placeholders})"
     ))?;
     let params = std::iter::once(story_id)
-        .chain(std::iter::once(story_id))
         .chain(ids.iter().map(String::as_str));
     let characters = stmt
         .query_map(rusqlite::params_from_iter(params), |row| {

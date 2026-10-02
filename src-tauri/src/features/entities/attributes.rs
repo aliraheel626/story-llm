@@ -26,7 +26,9 @@ pub fn peek_entity_attribute(
 ) -> AppResult<(f64, Option<String>)> {
     let existing: Option<(f64, String)> = conn
         .query_row(
-            "SELECT value, source FROM entity_attributes WHERE story_id = ?1 AND entity_id = ?2 AND attribute_id = ?3",
+            "SELECT value, source FROM entity_attributes
+             JOIN entities ON entities.id = entity_attributes.entity_id
+             WHERE entities.story_id = ?1 AND entity_id = ?2 AND attribute_id = ?3",
             rusqlite::params![story_id, entity_id, attribute.id],
             |r| Ok((r.get(0)?, r.get(1)?)),
         )
@@ -127,10 +129,11 @@ pub(crate) fn list_entity_attributes_sync(
     entity_id: &str,
 ) -> AppResult<Vec<EntityAttributeValue>> {
     let mut stmt = conn.prepare(
-        "SELECT entity_attributes.story_id, entity_attributes.entity_id, entity_attributes.attribute_id, attribute_registry.canonical_name,
+        "SELECT entities.story_id, entity_attributes.entity_id, entity_attributes.attribute_id, attribute_registry.canonical_name,
                 entity_attributes.value, attribute_registry.min, attribute_registry.max, entity_attributes.updated_at, entity_attributes.source
          FROM entity_attributes JOIN attribute_registry ON attribute_registry.id = entity_attributes.attribute_id
-         WHERE entity_attributes.story_id = ?1 AND entity_attributes.entity_id = ?2 ORDER BY attribute_registry.canonical_name ASC")?;
+         JOIN entities ON entities.id = entity_attributes.entity_id
+         WHERE entities.story_id = ?1 AND entity_attributes.entity_id = ?2 ORDER BY attribute_registry.canonical_name ASC")?;
     let rows = stmt.query_map(
         rusqlite::params![story_id, entity_id],
         row_to_entity_attribute,
@@ -157,10 +160,11 @@ pub(crate) fn list_entity_attributes_for_entities_sync(
         .collect::<Vec<_>>()
         .join(", ");
     let mut stmt = conn.prepare(&format!(
-        "SELECT entity_attributes.story_id, entity_attributes.entity_id, entity_attributes.attribute_id, attribute_registry.canonical_name,
+        "SELECT entities.story_id, entity_attributes.entity_id, entity_attributes.attribute_id, attribute_registry.canonical_name,
                 entity_attributes.value, attribute_registry.min, attribute_registry.max, entity_attributes.updated_at, entity_attributes.source
          FROM entity_attributes JOIN attribute_registry ON attribute_registry.id = entity_attributes.attribute_id
-         WHERE entity_attributes.story_id = ? AND entity_attributes.entity_id IN ({placeholders})
+         JOIN entities ON entities.id = entity_attributes.entity_id
+         WHERE entities.story_id = ? AND entity_attributes.entity_id IN ({placeholders})
          ORDER BY entity_attributes.entity_id, attribute_registry.canonical_name ASC"
     ))?;
     let params = std::iter::once(story_id).chain(entity_ids.iter().copied());
@@ -193,9 +197,9 @@ pub(crate) fn set_entity_attribute_sync(
             "{name} must be between {min} and {max}"
         )));
     }
-    conn.query_row("SELECT 1 FROM story_entity_state WHERE story_id = ?1 AND entity_id = ?2 AND is_present = 1", rusqlite::params![story_id, entity_id], |_| Ok(()))
+    conn.query_row("SELECT 1 FROM entities WHERE story_id = ?1 AND id = ?2 AND is_present = 1", rusqlite::params![story_id, entity_id], |_| Ok(()))
         .map_err(|_| AppError::NotFound(format!("entity {entity_id} not found")))?;
-    let before: Option<f64> = conn.query_row("SELECT value FROM entity_attributes WHERE story_id = ?1 AND entity_id = ?2 AND attribute_id = ?3", rusqlite::params![story_id, entity_id, attribute_id], |r| r.get(0)).optional()?;
+    let before: Option<f64> = conn.query_row("SELECT value FROM entity_attributes JOIN entities ON entities.id = entity_attributes.entity_id WHERE entities.story_id = ?1 AND entity_id = ?2 AND attribute_id = ?3", rusqlite::params![story_id, entity_id, attribute_id], |r| r.get(0)).optional()?;
     let event = EntityEvent::AttributeChanged {
         entity_id: entity_id.to_string(),
         attribute_id: attribute_id.to_string(),
@@ -220,8 +224,9 @@ pub(crate) fn set_entity_attribute_sync(
         None,
     )?;
     let updated_at = conn.query_row(
-        "SELECT updated_at FROM entity_attributes
-         WHERE story_id = ?1 AND entity_id = ?2 AND attribute_id = ?3",
+        "SELECT entity_attributes.updated_at FROM entity_attributes
+         JOIN entities ON entities.id = entity_attributes.entity_id
+         WHERE entities.story_id = ?1 AND entity_id = ?2 AND attribute_id = ?3",
         rusqlite::params![story_id, entity_id, attribute_id],
         |row| row.get(0),
     )?;
@@ -245,7 +250,7 @@ pub(crate) fn remove_entity_attribute_sync(
     attribute_id: &str,
 ) -> AppResult<()> {
     let prior: Option<(f64, String)> = conn.query_row(
-        "SELECT entity_attributes.value, attribute_registry.canonical_name FROM entity_attributes JOIN attribute_registry ON attribute_registry.id = entity_attributes.attribute_id WHERE entity_attributes.story_id = ?1 AND entity_attributes.entity_id = ?2 AND entity_attributes.attribute_id = ?3",
+        "SELECT entity_attributes.value, attribute_registry.canonical_name FROM entity_attributes JOIN attribute_registry ON attribute_registry.id = entity_attributes.attribute_id JOIN entities ON entities.id = entity_attributes.entity_id WHERE entities.story_id = ?1 AND entity_attributes.entity_id = ?2 AND entity_attributes.attribute_id = ?3",
         rusqlite::params![story_id, entity_id, attribute_id], |r| Ok((r.get(0)?, r.get(1)?))).optional()?;
     let Some((before, name)) = prior else {
         return Ok(());
@@ -281,11 +286,8 @@ mod tests {
         conn.execute_batch(
             "INSERT INTO stories (id, title, created_at, updated_at, settings_json)
                  VALUES ('story', 'Story', 'now', 'now', '{}');
-             INSERT INTO entities (id, story_id, kind, created_at)
-                 VALUES ('entity', 'story', 'character', 'now');
-             INSERT INTO story_entity_state
-                 (story_id, entity_id, name, appearance_anchor, is_present, updated_at, last_event_id)
-                 VALUES ('story', 'entity', 'Mira', NULL, 1, 'now', NULL);",
+             INSERT INTO entities (id, story_id, kind, name, created_at, updated_at)
+                 VALUES ('entity', 'story', 'character', 'Mira', 'now', 'now');",
         )
         .unwrap();
         let attribute_id = conn
@@ -346,12 +348,27 @@ mod tests {
         let stored: (f64, String) = conn
             .query_row(
                 "SELECT value, source FROM entity_attributes
-                 WHERE story_id = 'story' AND entity_id = 'entity' AND attribute_id = ?1",
+                 JOIN entities ON entities.id = entity_attributes.entity_id
+                 WHERE entities.story_id = 'story' AND entity_id = 'entity' AND attribute_id = ?1",
                 [&attribute_id],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .unwrap();
         assert_eq!(stored, (7.0, "user".into()));
+    }
+
+    #[test]
+    fn wrong_story_attribute_reads_are_empty() {
+        let (pool, attribute_id) = attribute_helper_fixture();
+        let conn = pool.get().unwrap();
+        crate::shared::test_support::story(&conn, "other");
+        set_entity_attribute_sync(&conn, "story", "entity", &attribute_id, 7.0).unwrap();
+        assert_eq!(list_entity_attributes_sync(&conn, "story", "entity").unwrap().len(), 1);
+        assert!(list_entity_attributes_sync(&conn, "other", "entity").unwrap().is_empty());
+        let values = list_entity_attributes_for_entities_sync(&conn, "other", &["entity"]).unwrap();
+        assert!(values["entity"].is_empty());
+        let attribute = find_attribute_by_id(&conn, &attribute_id).unwrap();
+        assert_eq!(peek_entity_attribute(&conn, "other", "entity", &attribute).unwrap(), (5.0, None));
     }
 
     #[test]
