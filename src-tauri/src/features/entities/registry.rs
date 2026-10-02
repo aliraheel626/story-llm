@@ -229,6 +229,12 @@ async fn resolve_attribute_candidates(
         )));
     }
 
+    if api_key.trim().is_empty() {
+        return Err(AppError::Invalid(
+            "an embedding API key is required to resolve an unknown attribute".into(),
+        ));
+    }
+
     let client = openrouter::Client::builder()
         .api_key(api_key.to_string())
         .build()

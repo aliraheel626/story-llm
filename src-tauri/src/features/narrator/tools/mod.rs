@@ -2,9 +2,10 @@
 
 pub(crate) mod adjust_entity_attribute;
 pub(crate) mod create_entity;
-pub(crate) mod get_entities;
 pub(crate) mod illustrate_scene;
 pub(crate) mod roll_check;
+pub(crate) mod save_relationship;
+mod shared;
 pub(crate) mod update_entity;
 
 use rig_agent::tool::ToolExecutionError;
@@ -14,7 +15,12 @@ use crate::shared::error::AppError;
 use super::catalog;
 
 fn to_tool_error(e: AppError) -> ToolExecutionError {
-    ToolExecutionError::other(e.to_string())
+    match e {
+        AppError::Invalid(message) | AppError::NotFound(message) => {
+            ToolExecutionError::invalid_args(message)
+        }
+        _ => ToolExecutionError::other(e.to_string()),
+    }
 }
 
 /// Tool name + args → a friendly, generic activity label for the frontend.
@@ -91,6 +97,8 @@ mod turn_tests {
         });
         assert_eq!(specs.len(), 5);
         assert_eq!(specs[0].name, "roll_check");
+        assert_eq!(specs.iter().map(|spec| spec.name).collect::<Vec<_>>(),
+            ["roll_check", "create_entity", "update_entity", "adjust_entity_attribute", "save_relationship"]);
         let (_pool, turn, target, turn_id) = fixture();
         let deps = ToolDeps {
             turn: Some(turn),

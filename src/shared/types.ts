@@ -12,7 +12,7 @@ export type InputMode = ActionMode | "generated";
 export type TranscriptVisibility = "visible" | "hidden";
 export type TranscriptEntryKind =
   | "player_message" | "narration" | "content_edited"
-  | "diceroll" | "tool_call" | "entity_created" | "entity_queried" | "entity_updated" | "entity_deleted"
+  | "diceroll" | "tool_call" | "entity_created" | "entity_updated" | "entity_deleted"
   | "entity_attribute_changed" | "entity_attribute_removed" | "image_generated" | "image_captioned"
   | "context_summary";
 
@@ -26,7 +26,7 @@ interface TranscriptPayloadBase extends Record<string, unknown> {
 export interface NarrativePayload extends TranscriptPayloadBase { input_mode: InputMode; thoughts?: string }
 export interface ContentEditedPayload extends TranscriptPayloadBase { reason: "user_edit" | string }
 export interface EntityEventPayload extends TranscriptPayloadBase {
-  entity_id: string; name?: string; kind?: EntityKind; appearance_anchor?: string | null;
+  entity_id: string; name?: string | null; kind?: EntityKind; appearance_anchor?: string | null;
   before?: Record<string, unknown> | null; after?: Record<string, unknown> | null;
 }
 export interface EntityAttributeEventPayload extends TranscriptPayloadBase {
@@ -56,7 +56,7 @@ export type TranscriptEntry =
   | (TranscriptEntryBase & { kind: "image_captioned"; payload: ImageCaptionedPayload })
   | (TranscriptEntryBase & { kind: "context_summary"; payload: ContextSummaryPayload })
   | (TranscriptEntryBase & { kind: "tool_call"; payload: ToolCallPayload })
-  | (TranscriptEntryBase & { kind: "diceroll" | "entity_queried"; payload: TranscriptPayloadBase });
+  | (TranscriptEntryBase & { kind: "diceroll"; payload: TranscriptPayloadBase });
 export interface TurnSummary { id: string; status: "pending" | "complete" | "failed" }
 export interface TranscriptSnapshot { visible: TranscriptEntry[]; hidden: TranscriptEntry[]; turns: TurnSummary[] }
 
@@ -114,13 +114,13 @@ export interface ImageCost {
 }
 export interface StoryCostBreakdown { turns: TurnCost[]; images: ImageCost[] }
 
-export type EntityKind = "character" | "object" | "location" | "relationship" | "campaign";
+export type EntityKind = "character" | "relationship";
 export interface Entity {
   id: string; story_id: string; kind: EntityKind; name: string;
   appearance_anchor: string | null; created_at: string;
 }
 export interface NarratorToolSettings {
-  get_entities: boolean;
+  save_relationship: boolean;
   create_entity: boolean;
   update_entity: boolean;
   adjust_entity_attribute: boolean;

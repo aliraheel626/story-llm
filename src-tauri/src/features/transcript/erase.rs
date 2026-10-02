@@ -399,7 +399,7 @@ mod tests {
         let query = append_entry(
             &conn,
             "s",
-            transcript_kind::ENTITY_QUERIED,
+            transcript_kind::ENTITY_UPDATED,
             "hidden",
             Some("Looked up Mira"),
             &json!({"entity_ids":["mira"]}),

@@ -1,12 +1,13 @@
 use std::sync::Arc;
 
-use rig_agent::tool::{PortableDynamicTool, ToolExecutionError, ToolOutput};
+use rig_agent::tool::{PortableDynamicTool, ToolOutput};
 use serde_json::{json, Value};
 
-use crate::features::entities::{self, attributes, registry};
+use crate::features::entities::repository;
 use crate::features::narrator::catalog::{self, ToolAvailability, ToolDeps, ToolSpec};
 use crate::features::turn::TurnTx;
 
+use super::shared::{apply_resolved_stats, object_args, parse_stats, required_string, resolve_entity, resolve_stats};
 use super::to_tool_error;
 
 pub const NAME: &str = "adjust_entity_attribute";
@@ -19,13 +20,14 @@ pub fn schema() -> Value {
     json!({
         "type": "object",
         "properties": {
-            "entity_id": {"type": "string", "description": "A known entity id from available context or an enabled lookup/create tool. The player character is named \"You\"."},
+            "entity": {"type": "string", "description": "A character name, or a relationship as 'Mira → You'. An id is also accepted."},
             "attribute": {"type": "string", "description": "Attribute name, e.g. \"Trust\"."},
             "delta": {"type": "number", "description": "Positive or negative change, on the attribute's own scale."},
             "dramatic": {"type": "boolean", "description": "True only for a major, story-changing swing."},
             "reason": {"type": "string", "description": "Why this changed, for the audit log."}
         },
-        "required": ["entity_id", "attribute", "delta", "reason"]
+        "required": ["entity", "attribute", "delta", "reason"],
+        "additionalProperties": false
     })
 }
 
@@ -71,103 +73,25 @@ pub(super) fn tool(
             let turn_id = turn_id.clone();
             let embedding_api_key = embedding_api_key.clone();
             Box::pin(async move {
-                let entity_id = args
-                    .get("entity_id")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| ToolExecutionError::invalid_args("entity_id is required"))?
-                    .to_string();
-                let attribute_name = args
-                    .get("attribute")
-                    .and_then(|v| v.as_str())
-                    .filter(|s| !s.trim().is_empty())
-                    .ok_or_else(|| ToolExecutionError::invalid_args("attribute is required"))?
-                    .to_string();
-                let delta = args
-                    .get("delta")
-                    .and_then(|v| v.as_f64())
-                    .ok_or_else(|| ToolExecutionError::invalid_args("delta is required"))?;
-                let dramatic = args
-                    .get("dramatic")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false);
-                let reason = args
-                    .get("reason")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("narration")
-                    .to_string();
-
-                let entity = turn
-                    .with(|conn| {
-                        Ok(entities::list_entities_sync(conn, turn.story_id(), None)?
-                            .into_iter()
-                            .find(|entity| entity.id == entity_id))
-                    })
-                    .await
-                    .map_err(to_tool_error)?
-                    .ok_or_else(|| {
-                        ToolExecutionError::invalid_args(format!("no such entity: {entity_id}"))
-                    })?;
-                let resolution = registry::resolve_attribute_in_turn(
-                    &turn,
-                    &embedding_api_key,
-                    &attribute_name,
-                    &entity.kind,
-                )
-                .await
-                .map_err(to_tool_error)?;
-                let (before, after, applied) = turn
-                    .with(|conn| {
-                        let attribute = if let Some(exact) =
-                            registry::find_exact_match(conn, &attribute_name)?
-                        {
-                            exact
-                        } else {
-                            match resolution {
-                                registry::AttributeResolution::Existing(attribute) => attribute,
-                                registry::AttributeResolution::AddAlias { attribute, alias } => {
-                                    registry::add_alias(conn, &attribute.id, &alias)?;
-                                    attribute
-                                }
-                                registry::AttributeResolution::Mint(attribute) => {
-                                    let id = registry::insert_minted_attribute(conn, &attribute)?;
-                                    registry::find_attribute_by_id(conn, &id)?
-                                }
-                            }
-                        };
-                        let (before, source) = attributes::peek_entity_attribute(
-                            conn,
-                            turn.story_id(),
-                            &entity.id,
-                            &attribute,
-                        )?;
-                        if source.as_deref() == Some("user") {
-                            return Ok((before, before, false));
-                        }
-                        let result = attributes::apply_attribute_delta(
-                            conn,
-                            turn.story_id(),
-                            &entity.id,
-                            &attribute,
-                            delta,
-                            &reason,
-                            &target_entry_id,
-                            dramatic,
-                            Some(&turn_id),
-                        )?;
-                        Ok((result.0, result.1, true))
-                    })
-                    .await
+                let fields = object_args(&args, &["entity", "attribute", "delta", "reason", "dramatic"], NAME)
                     .map_err(to_tool_error)?;
-                if !applied {
-                    return Ok(ToolOutput::json(json!({
-                        "before": before,
-                        "after": before,
-                        "applied": false,
-                        "reason": "locked to a player-set value",
-                    })));
-                }
+                let reference = required_string(fields, "entity").map_err(to_tool_error)?;
+                let mut change = fields.clone();
+                change.remove("entity");
+                let changes = parse_stats(Some(&Value::Array(vec![Value::Object(change)])))
+                    .map_err(to_tool_error)?.unwrap_or_default();
+                let entity = turn.with(|conn| resolve_entity(conn, turn.story_id(), &reference))
+                    .await.map_err(to_tool_error)?;
+                let resolved = resolve_stats(&turn, &embedding_api_key, &entity.kind, &changes)
+                    .await.map_err(to_tool_error)?;
+                let results = turn.with_savepoint(|conn| {
+                    let current = resolve_entity(conn, turn.story_id(), &entity.id)?;
+                    let current = repository::load_entity_raw(conn, turn.story_id(), &current.id)?
+                        .ok_or_else(|| crate::shared::error::AppError::Invalid(format!("no entity named '{reference}'")))?;
+                    apply_resolved_stats(conn, turn.story_id(), &current.id, resolved, &target_entry_id, &turn_id)
+                }).await.map_err(to_tool_error)?;
                 Ok(ToolOutput::json(
-                    json!({"before": before, "after": after, "applied": true}),
+                    json!({"before": results[0]["before"], "after": results[0]["after"], "applied": true}),
                 ))
             })
         },
@@ -177,7 +101,7 @@ pub(super) fn tool(
 #[cfg(test)]
 mod turn_tests {
     use super::super::{
-        create_entity::tool as create_entity_tool, get_entities::tool as get_entities_tool,
+        create_entity::tool as create_entity_tool,
         roll_check::tool as roll_check_tool, test_support::fixture,
     };
     use super::tool as adjust_entity_attribute_tool;
@@ -185,7 +109,7 @@ mod turn_tests {
     use serde_json::json;
 
     #[tokio::test]
-    async fn attribute_tool_applies_delta_and_honors_player_lock() {
+    async fn attribute_tool_applies_delta_over_a_player_set_value() {
         let (_pool, turn, target, turn_id) = fixture();
         let id = create_entity_tool(turn.clone(), target.clone(), turn_id.clone())
             .execute(json!({"kind":"character","name":"Mira"}))
@@ -203,19 +127,18 @@ mod turn_tests {
             String::new(),
         );
         let output = adjust
-            .execute(json!({"entity_id":id,"attribute":"Stealth","delta":9,"reason":"sneaking"}))
+            .execute(json!({"entity":"Mira","attribute":"Stealth","delta":9,"reason":"sneaking"}))
             .await
             .unwrap();
         assert_eq!(
             output.as_json().unwrap(),
             &json!({"before":5.0,"after":8.0,"applied":true})
         );
-        let snapshot = get_entities_tool(turn.clone(), target.clone(), turn_id.clone())
-            .execute(json!({"name":"Mira"}))
+        let snapshot = turn.with(|conn| attributes::list_entity_attributes_sync(conn, turn.story_id(), &id))
             .await
             .unwrap();
         assert_eq!(
-            snapshot.as_json().unwrap()["entities"][0]["attributes"][0],
+            json!({"name":snapshot[0].canonical_name,"value":snapshot[0].value,"min":snapshot[0].min,"max":snapshot[0].max}),
             json!({"name":"Stealth","value":8.0,"min":0.0,"max":10.0})
         );
         turn.with(|conn| {
@@ -229,22 +152,31 @@ mod turn_tests {
                 rusqlite::params![id, attribute.id])?;
             Ok(())
         }).await.unwrap();
-        let locked = adjust
-            .execute(json!({"entity_id":id,"attribute":"Stealth","delta":5}))
+        let newer = adjust
+            .execute(json!({"entity":id,"attribute":"Stealth","delta":-2,"reason":"later story events"}))
             .await
             .unwrap();
         assert_eq!(
-            locked.as_json().unwrap(),
-            &json!({"before":7.0,"after":7.0,"applied":false,"reason":"locked to a player-set value"})
+            newer.as_json().unwrap(),
+            &json!({"before":7.0,"after":5.0,"applied":true})
         );
+        turn.with(|conn| {
+            let stored = attributes::list_entity_attributes_sync(conn, turn.story_id(), &id)?;
+            assert_eq!(stored[0].source, "inferred");
+            Ok(())
+        }).await.unwrap();
         turn.rollback().await.unwrap();
     }
 
     #[tokio::test]
     async fn minted_attribute_is_immediately_available_to_later_tools() {
         let (pool, turn, target, turn_id) = fixture();
+        turn.with(|conn| {
+            conn.execute("DELETE FROM attribute_registry WHERE EXISTS (SELECT 1 FROM json_each(entity_kinds_json) WHERE value = 'character')", [])?;
+            Ok(())
+        }).await.unwrap();
         let id = create_entity_tool(turn.clone(), target.clone(), turn_id.clone())
-            .execute(json!({"kind":"artifact","name":"Prism"}))
+            .execute(json!({"kind":"character","name":"Prism"}))
             .await
             .unwrap()
             .as_json()
@@ -258,12 +190,12 @@ mod turn_tests {
             turn_id.clone(),
             String::new(),
         )
-        .execute(json!({"entity_id":id,"attribute":"Resonance","delta":1.0}))
+        .execute(json!({"entity":id,"attribute":"Resonance","delta":1.0,"reason":"resonating"}))
         .await
         .unwrap();
         assert_eq!(output.as_json().unwrap()["after"], json!(6.0));
         let roll = roll_check_tool(turn.clone(), target, turn_id)
-            .execute(json!({"factors":[{"entity_id":id,"attribute_name":"Resonance"}]}))
+            .execute(json!({"factors":[{"entity":id,"attribute_name":"Resonance"}]}))
             .await
             .unwrap();
         assert_eq!(roll.as_json().unwrap()["factors"][0]["value"], json!(6.0));

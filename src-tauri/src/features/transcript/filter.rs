@@ -42,7 +42,6 @@ fn record_label(kind: &str) -> (&'static str, bool) {
         kind::IMAGE_CAPTIONED => ("Image captions", true),
         kind::TOOL_CALL => ("Tool calls", false),
         kind::ENTITY_CREATED => ("Entity created", true),
-        kind::ENTITY_QUERIED => ("Entity lookups", true),
         kind::ENTITY_UPDATED => ("Entity updated", true),
         kind::ENTITY_DELETED => ("Entity deleted", true),
         kind::ENTITY_ATTRIBUTE_CHANGED => ("Attribute changed", true),

@@ -110,16 +110,31 @@ fn create_schema(conn: &mut PooledConn) -> AppResult<()> {
         CREATE TABLE IF NOT EXISTS entities (
             id TEXT PRIMARY KEY,
             story_id TEXT NOT NULL REFERENCES stories(id) ON DELETE CASCADE,
-            kind TEXT NOT NULL,
-            name TEXT NOT NULL,
+            kind TEXT NOT NULL CHECK (kind IN ('character', 'relationship')),
+            name TEXT,
             appearance_anchor TEXT,
             is_present INTEGER NOT NULL DEFAULT 1,
             created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
+            updated_at TEXT NOT NULL,
+            CHECK ((kind = 'character') = (name IS NOT NULL))
         );
         CREATE INDEX IF NOT EXISTS idx_entities_story_name ON entities(story_id, name);
         CREATE UNIQUE INDEX IF NOT EXISTS idx_entities_name_ci
             ON entities(story_id, name COLLATE NOCASE) WHERE is_present = 1;
+
+        -- Endpoint ids deliberately have no foreign keys: endpoint replay
+        -- deletes and recreates rows without replaying their relationships.
+        CREATE TABLE IF NOT EXISTS relationships (
+            entity_id TEXT PRIMARY KEY REFERENCES entities(id) ON DELETE CASCADE,
+            from_id TEXT NOT NULL,
+            to_id TEXT NOT NULL,
+            label TEXT NOT NULL,
+            direction TEXT NOT NULL CHECK (direction IN ('one_way', 'both')),
+            description TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_relationships_to ON relationships(to_id);
+        -- Counts soft-deleted rows; revival must reuse relationship_id.
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_relationships_pair ON relationships(from_id, to_id);
 
         CREATE TABLE IF NOT EXISTS attribute_registry (
             id TEXT PRIMARY KEY,
@@ -234,21 +249,10 @@ fn seed_attribute_registry(conn: &PooledConn) -> AppResult<()> {
         ("Intelligence", &["character"], 0.0, 10.0, "mental"),
         ("Perception", &["character"], 0.0, 10.0, "skill"),
         ("Luck", &["character"], 0.0, 10.0, "misc"),
-        ("Lock Difficulty", &["object"], 0.0, 10.0, "object"),
-        ("Fragility", &["object"], 0.0, 10.0, "object"),
-        ("Weight", &["object"], 0.0, 10.0, "object"),
-        ("Trap Sensitivity", &["object"], 0.0, 10.0, "object"),
-        ("Value", &["object"], 0.0, 10.0, "object"),
-        ("Durability", &["object"], 0.0, 10.0, "object"),
-        ("Visibility", &["location"], 0.0, 10.0, "location"),
-        ("Terrain Difficulty", &["location"], 0.0, 10.0, "location"),
-        ("Ambient Danger", &["location"], 0.0, 10.0, "location"),
-        ("Shelter", &["location"], 0.0, 10.0, "location"),
         ("Trust", &["relationship"], -10.0, 10.0, "relationship"),
         ("Fear", &["relationship"], -10.0, 10.0, "relationship"),
         ("Affection", &["relationship"], -10.0, 10.0, "relationship"),
         ("Respect", &["relationship"], -10.0, 10.0, "relationship"),
-        ("Difficulty", &["campaign"], 0.0, 10.0, "campaign"),
     ];
 
     for (name, kinds, min, max, category) in starters {
@@ -437,6 +441,7 @@ mod tests {
         assert!(!exists("timeline_entries"));
         assert!(!exists("story_entity_state"));
         assert!(exists("entities"));
+        assert!(exists("relationships"));
         let entity_columns = conn
             .prepare("PRAGMA table_info(entities)")
             .unwrap()

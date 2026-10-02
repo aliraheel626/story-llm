@@ -42,14 +42,18 @@ fn format_entity_context(
     let mut lines = vec![prompts::ENTITY_CONTEXT_HEADER.to_string()];
     for entity in data {
         if detailed_entity_ids.is_some_and(|entity_ids| !entity_ids.contains(&entity.id)) {
-            lines.push(format!("- {} ({})", entity.name, entity.kind));
+            lines.push(if entity.link.is_some() {
+                format!("- {}", entity.name)
+            } else {
+                format!("- {} ({})", entity.name, entity.kind)
+            });
             continue;
         }
-        let appearance = entity
-            .appearance_anchor
-            .as_deref()
-            .map(|a| format!("; appearance: {a}"))
-            .unwrap_or_default();
+        let details = if let Some(link) = &entity.link {
+            link.description.as_deref().map(|text| format!("; description: {text}"))
+        } else {
+            entity.appearance_anchor.as_deref().map(|text| format!("; appearance: {text}"))
+        }.unwrap_or_default();
         let attributes = match attributes.get(&entity.id) {
             Some(attrs) if !attrs.is_empty() => format!(
                 "; attributes: {}",
@@ -62,7 +66,7 @@ fn format_entity_context(
             _ => String::new(),
         };
         lines.push(format!(
-            "- {} ({}){appearance}{attributes}",
+            "- {} ({}){details}{attributes}",
             entity.name, entity.kind
         ));
     }
@@ -229,7 +233,7 @@ mod tests {
         )
         .unwrap();
         let query_id = crate::shared::test_support::record(
-            &conn, "s", transcript_kind::ENTITY_QUERIED, Some("Looked up: Bob"),
+            &conn, "s", transcript_kind::ENTITY_UPDATED, Some("Bob's appearance changed."),
             json!({"entity_ids":["bob"]}), None, None,
         );
         conn.execute(
@@ -244,7 +248,7 @@ mod tests {
             HistoryTurn {
                 entry_id: Some(query_id),
                 role: HistoryRole::Narrator,
-                content: "[Authoritative story event: entity_queried]\nLooked up: Bob".into(),
+                content: "[Authoritative story event: entity_updated]\nBob's appearance changed.".into(),
                 marker: HistoryTurnMarker::Transcript,
                 images: Vec::new(),
                 reasoning: None,
@@ -453,8 +457,8 @@ mod tests {
         turn.with(|conn| {
             let context = crate::features::stories::settings::read_context_settings(conn, "s")?;
             let tools = [ToolDescription {
-                name: "get_entities",
-                instruction: Some("Look up characters."),
+                name: "roll_check",
+                instruction: Some(roll_check::INSTRUCTION),
             }];
             let history = [history_turn];
             let base = Inputs {
@@ -489,9 +493,42 @@ mod tests {
     }
 
     #[test]
+    fn relationship_context_has_current_names_directions_description_and_stats() {
+        use crate::features::entities::model::EntityLink;
+        let pool = crate::shared::db::test_pool();
+        let conn = pool.get().unwrap();
+        crate::shared::test_support::story(&conn, "s");
+        for name in ["Mira", "You", "Varro"] {
+            entities::create_entity_with_id_sync(&conn, name, "s", "character", name, None, "test", None, None).unwrap();
+        }
+        let directed = entities::repository::create_link_sync(&conn, "s", EntityLink {
+            from_id: "Mira".into(), to_id: "You".into(), label: "estranged sister".into(),
+            direction: "one_way".into(), description: Some("Still resents your departure".into()),
+        }, "test", None, None).unwrap();
+        entities::repository::create_link_sync(&conn, "s", EntityLink {
+            from_id: "Mira".into(), to_id: "Varro".into(), label: "siblings".into(),
+            direction: "both".into(), description: None,
+        }, "test", None, None).unwrap();
+        for (name, value) in [("Affection", 8.0), ("Trust", -2.0)] {
+            let definition = entities::registry::find_exact_match(&conn, name).unwrap().unwrap();
+            entities::attributes::set_entity_attribute_sync(&conn, "s", &directed.id, &definition.id, value).unwrap();
+        }
+        let data = entities::list_entities_sync(&conn, "s", None).unwrap();
+        let ids = data.iter().map(|entity| entity.id.as_str()).collect::<Vec<_>>();
+        let attrs = entities::attributes::list_entity_attributes_for_entities_sync(&conn, "s", &ids).unwrap();
+        let text = format_entity_context(&data, &attrs, None);
+        assert!(text.starts_with(&format!("<entities>\n{}", prompts::ENTITY_CONTEXT_HEADER)));
+        assert!(text.contains("- Mira → You: estranged sister (relationship); description: Still resents your departure; attributes: Affection=8, Trust=-2"));
+        assert!(text.contains("- Mira ↔ Varro: siblings (relationship)"));
+        let summary = format_entity_context(&data, &attrs, Some(&HashSet::new()));
+        assert!(summary.contains("\n- Mira → You: estranged sister\n"));
+        assert!(!summary.contains("Still resents"));
+    }
+
+    #[test]
     fn tool_instructions_name_only_available_tools() {
         let mut settings = NarratorToolSettings {
-            get_entities: false,
+            save_relationship: false,
             create_entity: false,
             update_entity: false,
             adjust_entity_attribute: false,
@@ -555,7 +592,7 @@ mod tests {
     #[test]
     fn built_tool_names_match_injected_names_across_availability_combinations() {
         let disabled = NarratorToolSettings {
-            get_entities: false,
+            save_relationship: false,
             create_entity: false,
             update_entity: false,
             adjust_entity_attribute: false,

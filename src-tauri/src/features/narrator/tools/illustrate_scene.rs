@@ -7,6 +7,9 @@ use tokio::sync::Mutex;
 use crate::features::images::model::ImageRequest;
 use crate::features::narrator::catalog::{ToolAvailability, ToolDeps, ToolSpec};
 
+use super::shared::{object_args, required_string};
+use super::to_tool_error;
+
 pub const NAME: &str = "illustrate_scene";
 pub const DESCRIPTION: &str =
     "Generate a scene image. Always call this when the player sends <see>, whatever the \
@@ -24,9 +27,10 @@ pub fn schema() -> Value {
         "type": "object",
         "properties": {
             "description": {"type": "string", "description": "A vivid, concrete visual description of the scene's subject, setting, composition, and lighting."},
-            "character_ids": {"type": "array", "items": {"type": "string"}, "description": "Ids of characters visible in the scene, from get_entities."}
+            "characters": {"type": "array", "items": {"type": "string"}, "description": "Names of characters visible in the scene."}
         },
-        "required": ["description"]
+        "required": ["description"],
+        "additionalProperties": false
     })
 }
 
@@ -59,25 +63,20 @@ pub(super) fn tool(image_requests: Arc<Mutex<Vec<ImageRequest>>>) -> PortableDyn
         move |args: serde_json::Value| {
             let image_requests = image_requests.clone();
             Box::pin(async move {
-                let description = args
-                    .get("description")
-                    .and_then(|v| v.as_str())
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty())
-                    .ok_or_else(|| ToolExecutionError::invalid_args("description is required"))?
-                    .to_string();
-                let character_ids = match args.get("character_ids") {
+                let fields = object_args(&args, &["description", "characters"], NAME).map_err(to_tool_error)?;
+                let description = required_string(fields, "description").map_err(to_tool_error)?;
+                let character_ids = match fields.get("characters") {
                     None => Vec::new(),
                     Some(value) => value
                         .as_array()
                         .ok_or_else(|| {
-                            ToolExecutionError::invalid_args("character_ids must be an array")
+                            ToolExecutionError::invalid_args("characters must be an array")
                         })?
                         .iter()
                         .map(|id| {
-                            id.as_str().map(str::to_string).ok_or_else(|| {
+                            id.as_str().map(str::trim).filter(|name| !name.is_empty()).map(str::to_string).ok_or_else(|| {
                                 ToolExecutionError::invalid_args(
-                                    "character_ids must contain only strings",
+                                    "characters must contain only non-empty strings",
                                 )
                             })
                         })
@@ -125,5 +124,26 @@ mod turn_tests {
         let queued = requests.lock().await;
         assert_eq!(queued.len(), 1);
         assert_eq!(queued[0].description, "a lighthouse at dusk");
+    }
+
+    #[tokio::test]
+    async fn character_names_are_queued_in_internal_ids_and_arguments_are_strict() {
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let tool = illustrate_scene_tool(requests.clone());
+        for args in [
+            json!({"description":false}), json!({"description":"scene","characters":null}),
+            json!({"description":"scene","characters":[7]}),
+            json!({"description":"scene","characters":[" "]}),
+            json!({"description":"scene","character_ids":["mira"]}),
+            json!({"description":"scene","unknown":true}),
+        ] {
+            assert!(tool.execute(args).await.is_err());
+        }
+        tool.execute(json!({"description":"  lighthouse  ","characters":[" mira ","Unknown"]})).await.unwrap();
+        let queued = requests.lock().await;
+        assert_eq!(queued.len(), 1);
+        assert_eq!(queued[0].description, "lighthouse");
+        assert_eq!(queued[0].character_ids, ["mira", "Unknown"]);
+        assert_eq!(super::schema()["additionalProperties"], false);
     }
 }

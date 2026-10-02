@@ -1,27 +1,30 @@
 use std::sync::Arc;
 
-use rig_agent::tool::{PortableDynamicTool, ToolExecutionError, ToolOutput};
+use rig_agent::tool::{PortableDynamicTool, ToolOutput};
 use serde_json::{json, Value};
 
-use crate::features::entities;
+use crate::features::entities::{model::CHARACTER, repository};
 use crate::features::narrator::catalog::{self, ToolAvailability, ToolDeps, ToolSpec};
 use crate::features::turn::TurnTx;
+use crate::shared::error::AppError;
 
+use super::shared::{nullable_field, object_args, required_string};
 use super::to_tool_error;
 
 pub const NAME: &str = "update_entity";
 pub const DESCRIPTION: &str =
-    "Rename an entity or update its appearance description. Use a known entity id; look it up first when the lookup tool is available.";
+    "Rename a character or update its appearance description. Use a known character id.";
 
 pub fn schema() -> Value {
     json!({
         "type": "object",
         "properties": {
-            "id": {"type": "string", "description": "Entity id from get_entities/create_entity."},
+            "id": {"type": "string", "description": "A known character id."},
             "name": {"type": "string", "description": "The entity's (possibly unchanged) name."},
-            "appearance_anchor": {"type": "string", "description": "The entity's (possibly unchanged) appearance description."}
+            "appearance_anchor": {"type": ["string", "null"], "description": "The character's appearance description. Omit to keep it; null clears it."}
         },
-        "required": ["id", "name"]
+        "required": ["id", "name"],
+        "additionalProperties": false
     })
 }
 
@@ -61,53 +64,64 @@ pub(super) fn tool(
             let target_entry_id = target_entry_id.clone();
             let turn_id = turn_id.clone();
             Box::pin(async move {
-                let id = args
-                    .get("id")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| ToolExecutionError::invalid_args("id is required"))?
-                    .to_string();
-                let name = args
-                    .get("name")
-                    .and_then(|v| v.as_str())
-                    .filter(|s| !s.trim().is_empty())
-                    .ok_or_else(|| ToolExecutionError::invalid_args("name is required"))?
-                    .to_string();
-                let appearance_anchor = args
-                    .get("appearance_anchor")
-                    .and_then(|v| v.as_str())
-                    .map(str::to_string);
+                let fields = object_args(&args, &["id", "name", "appearance_anchor"], NAME).map_err(to_tool_error)?;
+                let id = required_string(fields, "id").map_err(to_tool_error)?;
+                let name = required_string(fields, "name").map_err(to_tool_error)?;
+                let appearance_anchor = nullable_field(fields, "appearance_anchor").map_err(to_tool_error)?;
 
                 let updated = turn
-                    .with(|conn| {
-                        if !entities::list_entities_sync(conn, turn.story_id(), None)?
-                            .iter()
-                            .any(|entity| entity.id == id)
-                        {
-                            return Ok(false);
+                    .with_savepoint(|conn| {
+                        let before = repository::load_entity_raw(conn, turn.story_id(), &id)?
+                            .ok_or_else(|| AppError::Invalid(format!("no such entity: {id}")))?;
+                        if before.kind != CHARACTER {
+                            return Err(AppError::Invalid("update_entity only updates characters".into()));
                         }
-                        entities::update_entity_sync(
+                        let anchor = appearance_anchor.clone().unwrap_or(before.appearance_anchor);
+                        repository::update_entity_sync(
                             conn,
                             turn.story_id(),
                             &id,
                             &name,
-                            appearance_anchor.as_deref(),
+                            anchor.as_deref(),
                             "narrator_tool",
                             Some(&target_entry_id),
                             Some(&turn_id),
-                        )?;
-                        Ok(true)
+                        )
                     })
                     .await
                     .map_err(to_tool_error)?;
-                if !updated {
-                    return Err(ToolExecutionError::invalid_args(format!(
-                        "no such entity: {id}"
-                    )));
-                }
                 Ok(ToolOutput::json(
-                    json!({"id": id, "name": name, "appearance_anchor": appearance_anchor}),
+                    json!({"id": id, "name": updated.name, "appearance_anchor": updated.appearance_anchor}),
                 ))
             })
         },
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use super::super::{create_entity::tool as create_entity_tool, test_support::fixture};
+
+    #[tokio::test]
+    async fn nullable_appearance_preserves_omitted_fields_and_rejects_bad_arguments() {
+        let (_pool, turn, target, turn_id) = fixture();
+        let created = create_entity_tool(turn.clone(), target.clone(), turn_id.clone())
+            .execute(json!({"kind":"character","name":"Mira","appearance_anchor":"silver hair"})).await.unwrap();
+        let id = created.as_json().unwrap()["id"].as_str().unwrap();
+        let update = tool(turn.clone(), target, turn_id);
+        let unchanged = update.execute(json!({"id":id,"name":"Mira"})).await.unwrap();
+        assert_eq!(unchanged.as_json().unwrap()["appearance_anchor"], "silver hair");
+        for args in [
+            json!({"id":7,"name":"Mira"}), json!({"id":id,"name":null}),
+            json!({"id":id,"name":"Mira","appearance_anchor":false}),
+            json!({"id":id,"name":"Mira","unknown":true}),
+        ] {
+            assert!(update.execute(args).await.is_err());
+        }
+        let cleared = update.execute(json!({"id":id,"name":"Mira","appearance_anchor":null})).await.unwrap();
+        assert_eq!(cleared.as_json().unwrap()["appearance_anchor"], Value::Null);
+        assert_eq!(schema()["additionalProperties"], false);
+        turn.rollback().await.unwrap();
+    }
 }

@@ -66,14 +66,13 @@ pub fn entities_touched_since(
     let mut stmt = conn.prepare(
         "SELECT payload_json FROM transcript_entries
          WHERE story_id = ?1 AND seq >= ?2
-           AND kind IN (?3, ?4, ?5, ?6, ?7, ?8)",
+            AND kind IN (?3, ?4, ?5, ?6, ?7)",
     )?;
     let rows = stmt.query_map(
         rusqlite::params![
             story_id,
             since_seq,
             kind::ENTITY_CREATED,
-            kind::ENTITY_QUERIED,
             kind::ENTITY_UPDATED,
             kind::ENTITY_DELETED,
             kind::ENTITY_ATTRIBUTE_CHANGED,
@@ -311,7 +310,7 @@ mod tests {
         );
         append(
             &conn,
-            kind::ENTITY_QUERIED,
+            kind::ENTITY_UPDATED,
             None,
             json!({"entity_ids":["two","three"]}),
             None,

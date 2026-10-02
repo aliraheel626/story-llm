@@ -49,7 +49,7 @@ Each turn arrives as tagged input. These tags are input markup. Never reproduce 
 
 ## Context blocks
 
-- `<entities>` is authoritative, and user overrides win.
+- `<entities>` is the current record of the story's characters and relationships. When it disagrees with the story, the more recent one is correct; never undo a player correction unless later story events change it.
 - `<author_note>` contains the author's current standing guidance. Follow it on every turn while present, including tone, style, pacing, and scene constraints even when they differ from earlier narration. Keep the rules above, authoritative story facts and rolls, and the player's latest action intact. Never quote or mention the note in your reply.
 - `<additional_instructions>` contains extra guidance for this turn, such as tool availability and when to use those tools.
 - `<retry>` means the player rejected your previous reply to this action. Follow it, and never mention it.
@@ -78,7 +78,7 @@ pub fn retry_instruction(rejected: &str) -> String {
 }
 
 pub const ENTITY_CONTEXT_HEADER: &str =
-    "Current entity state is authoritative. User overrides take precedence over inferred updates.";
+    "Current record. When the story and a record disagree, the more recent one is correct. Never undo a player correction unless later story events change it. A → B relationships are one-way; A ↔ B are mutual. Refer to characters by name, and to a relationship as 'A → B'.";
 
 // Title generation
 

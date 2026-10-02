@@ -1,5 +1,21 @@
 use serde::{Deserialize, Serialize};
 
+pub const CHARACTER: &str = "character";
+pub const RELATIONSHIP: &str = "relationship";
+
+pub fn relationship_id(from_id: &str, to_id: &str) -> String {
+    format!("relationship:{from_id}:{to_id}")
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EntityLink {
+    pub from_id: String,
+    pub to_id: String,
+    pub label: String,
+    pub direction: String,
+    pub description: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Entity {
     pub id: String,
@@ -7,6 +23,8 @@ pub struct Entity {
     pub kind: String,
     pub name: String,
     pub appearance_anchor: Option<String>,
+    #[serde(default)]
+    pub link: Option<EntityLink>,
     pub created_at: String,
 }
 

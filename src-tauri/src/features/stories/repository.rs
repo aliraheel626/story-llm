@@ -74,8 +74,6 @@ pub(super) fn create_story_in_pool(
     let object = settings
         .as_object_mut()
         .ok_or_else(|| AppError::Invalid("story settings must be an object".into()))?;
-    object.remove("attributes_enabled");
-    object.remove("dice_mode");
     let tools = match object.get("narrator_tools") {
         Some(value) => serde_json::from_value::<NarratorToolSettings>(value.clone())
             .map_err(|error| AppError::Invalid(format!("invalid narrator tools: {error}")))?,
@@ -177,9 +175,7 @@ mod tests {
             Some(json!({
                 "narrator_tools": tools,
                 "reasoning_effort": "HIGH",
-                "author_note": "keep",
-                "attributes_enabled": false,
-                "dice_mode": "never"
+                "author_note": "keep"
             })),
         )
         .unwrap();
@@ -187,8 +183,6 @@ mod tests {
         assert_eq!(settings["narrator_tools"], json!(tools));
         assert_eq!(settings["reasoning_effort"], "high");
         assert_eq!(settings["author_note"], "keep");
-        assert!(settings.get("attributes_enabled").is_none());
-        assert!(settings.get("dice_mode").is_none());
         let conn = pool.get().unwrap();
         let (name, kind): (String, String) = conn
             .query_row(
@@ -208,7 +202,7 @@ mod tests {
         assert!(create_story_in_pool(
             &pool,
             None,
-            Some(json!({"narrator_tools":{"roll_check":true}}))
+            Some(json!({"narrator_tools":{"unknown":true}}))
         )
         .is_err());
         let count: i64 = pool

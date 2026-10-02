@@ -104,8 +104,8 @@ mod tests {
 
     fn tools() -> [ToolDescription<'static>; 1] {
         [ToolDescription {
-            name: "get_entities",
-            instruction: Some("Look up characters."),
+            name: "roll_check",
+            instruction: Some(crate::features::narrator::tools::roll_check::INSTRUCTION),
         }]
     }
 
@@ -186,7 +186,7 @@ mod tests {
         )
         .unwrap();
         append(
-            kind::ENTITY_QUERIED,
+            kind::ENTITY_UPDATED,
             "hidden",
             Some("Looked up: Bob"),
             json!({"entity_ids":["bob"]}),

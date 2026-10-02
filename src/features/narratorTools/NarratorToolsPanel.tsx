@@ -6,8 +6,8 @@ const GROUPS: { title: string; items: { key: keyof NarratorToolSettings; label: 
   {
     title: "Entity",
     items: [
-      { key: "get_entities", label: "Look up entities", description: "The narrator can read characters and other world state." },
-      { key: "create_entity", label: "Create entities", description: "The narrator can add persistent characters, places, and objects." },
+      { key: "save_relationship", label: "Record relationships", description: "The narrator can record how characters relate and change relationship stats." },
+      { key: "create_entity", label: "Create entities", description: "The narrator can add persistent characters." },
       { key: "update_entity", label: "Update entities", description: "The narrator can change persistent world details." },
       { key: "adjust_entity_attribute", label: "Adjust attributes", description: "The narrator can change entity stats. Manual edits remain available when off." },
     ],

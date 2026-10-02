@@ -64,7 +64,6 @@ pub mod kind {
     pub const DICEROLL: &str = "diceroll";
     pub const TOOL_CALL: &str = "tool_call";
     pub const ENTITY_CREATED: &str = "entity_created";
-    pub const ENTITY_QUERIED: &str = "entity_queried";
     pub const ENTITY_UPDATED: &str = "entity_updated";
     pub const ENTITY_DELETED: &str = "entity_deleted";
     pub const ENTITY_ATTRIBUTE_CHANGED: &str = "entity_attribute_changed";
@@ -82,7 +81,6 @@ pub mod kind {
         IMAGE_CAPTIONED,
         TOOL_CALL,
         ENTITY_CREATED,
-        ENTITY_QUERIED,
         ENTITY_UPDATED,
         ENTITY_DELETED,
         ENTITY_ATTRIBUTE_CHANGED,
@@ -95,6 +93,13 @@ pub mod kind {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn transcript_catalog_contains_entity_changes_not_lookups() {
+        let items = crate::features::transcript::filter::TranscriptSettings::default().items();
+        assert!(items.iter().any(|item| item.key == "record.entity_updated"));
+        assert!(!items.iter().any(|item| item.key == "record.entity_queried" || item.label == "Entity lookups"));
+    }
 
     #[test]
     fn story_image_caption_defaults_to_none_and_round_trips() {

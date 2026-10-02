@@ -987,7 +987,7 @@ mod tests {
             rig_agent::agent::ToolResultAction::stop(stop_reason)
         );
         assert_eq!(
-            hook.tool_result_action("get_entities"),
+            hook.tool_result_action("roll_check"),
             rig_agent::agent::ToolResultAction::Keep
         );
 

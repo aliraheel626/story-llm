@@ -26,6 +26,7 @@ pub fn apply(
             kind,
             name,
             appearance_anchor,
+            link,
             created_at,
             ..
         } => {
@@ -48,10 +49,25 @@ pub fn apply(
                     now
                 ],
             )?;
+            if let Some(link) = link {
+                conn.execute(
+                    "INSERT INTO relationships (entity_id, from_id, to_id, label, direction, description)
+                     SELECT id, ?3, ?4, ?5, ?6, ?7 FROM entities WHERE story_id=?1 AND id=?2
+                     ON CONFLICT(entity_id) DO UPDATE SET
+                         from_id=excluded.from_id, to_id=excluded.to_id, label=excluded.label,
+                         direction=excluded.direction, description=excluded.description",
+                    rusqlite::params![
+                        story_id, entity_id, link.from_id, link.to_id, link.label,
+                        link.direction, link.description
+                    ],
+                )?;
+            }
         }
         EntityEvent::Updated {
             entity_id, before, after, ..
         } => {
+            // Relationship names are computed display text; their stored name stays NULL.
+            let character = before.link.is_none() && after.link.is_none();
             conn.execute(
                 "UPDATE entities
                  SET name=CASE WHEN ?1 THEN ?2 ELSE name END,
@@ -59,9 +75,9 @@ pub fn apply(
                      is_present=?5, updated_at=?6
                  WHERE story_id=?7 AND id=?8",
                 rusqlite::params![
-                    before.name != after.name,
+                    character && before.name != after.name,
                     after.name,
-                    before.appearance_anchor != after.appearance_anchor,
+                    character && before.appearance_anchor != after.appearance_anchor,
                     after.appearance_anchor,
                     is_present,
                     now,
@@ -69,6 +85,21 @@ pub fn apply(
                     entity_id
                 ],
             )?;
+            if let (Some(before), Some(after)) = (&before.link, &after.link) {
+                conn.execute(
+                    "UPDATE relationships
+                     SET label=CASE WHEN ?1 THEN ?2 ELSE label END,
+                         direction=CASE WHEN ?3 THEN ?4 ELSE direction END,
+                         description=CASE WHEN ?5 THEN ?6 ELSE description END
+                     WHERE entity_id IN (SELECT id FROM entities WHERE story_id=?7 AND id=?8)",
+                    rusqlite::params![
+                        before.label != after.label, after.label,
+                        before.direction != after.direction, after.direction,
+                        before.description != after.description, after.description,
+                        story_id, entity_id
+                    ],
+                )?;
+            }
         }
         EntityEvent::Deleted { entity_id, .. } => {
             conn.execute(
@@ -217,11 +248,12 @@ pub fn replay_after_erase(
 mod tests {
     use super::*;
     use crate::features::{
-        entities::{attributes, repository as entity_repository},
+        entities::{attributes, model::{EntityLink, CHARACTER}, repository as entity_repository},
         transcript::repository as transcript_repository,
     };
+    use crate::shared::{db::with_transaction, test_support};
 
-    type StateSnapshot = Vec<(String, String, Option<String>, i64)>;
+    type StateSnapshot = Vec<(String, Option<String>, Option<String>, i64)>;
     type AttributeSnapshot = Vec<(String, String, f64, String)>;
 
     fn snapshots(conn: &rusqlite::Connection) -> (StateSnapshot, AttributeSnapshot) {
@@ -376,13 +408,13 @@ mod tests {
                 "guard",
                 &accuracy,
                 -4.0,
-                "locked inference",
+                "later inference",
                 &passage.id,
                 true,
                 None,
             )
             .unwrap(),
-            (7.0, 7.0)
+            (7.0, 3.0)
         );
         attributes::remove_entity_attribute_sync(&conn, "story", "guard", &accuracy_id).unwrap();
 
@@ -390,7 +422,7 @@ mod tests {
             &conn,
             "temporary",
             "story",
-            "location",
+            "character",
             "Temporary Camp",
             None,
             "test",
@@ -409,5 +441,147 @@ mod tests {
         )
         .unwrap();
         assert_eq!(snapshots(&conn), before);
+    }
+
+    #[test]
+    fn replaying_an_endpoint_preserves_relationships_and_their_stats() {
+        let pool = crate::shared::db::test_pool();
+        let conn = pool.get().unwrap();
+        test_support::story(&conn, "story");
+        for (id, name) in [("mira", "Mira"), ("varro", "Varro")] {
+            entity_repository::create_entity_with_id_sync(
+                &conn, id, "story", CHARACTER, name, None, "user", None, None,
+            ).unwrap();
+        }
+        let relationship = entity_repository::create_link_sync(
+            &conn, "story", EntityLink {
+                from_id: "mira".into(), to_id: "varro".into(), label: "friendly rivals".into(),
+                direction: "one_way".into(), description: None,
+            }, "user", None, None,
+        ).unwrap();
+        entity_repository::update_link_sync(
+            &conn, "story", &relationship.id, Some("rivals"), None,
+            Some(Some("An old competition.".into())), "user", None, None,
+        ).unwrap();
+        let affection = attributes::find_exact_match(&conn, "Affection").unwrap().unwrap();
+        attributes::set_entity_attribute_sync(
+            &conn, "story", &relationship.id, &affection.id, -3.0,
+        ).unwrap();
+        // Relationship replay regenerates updated_at; compare semantic state here.
+        let snapshot = |conn: &rusqlite::Connection| {
+            let relation = conn.query_row(
+                "SELECT entity_id, from_id, to_id, label, direction, description
+                 FROM relationships WHERE entity_id=?1",
+                [&relationship.id], |row| Ok((
+                    row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?, row.get::<_, String>(4)?, row.get::<_, Option<String>>(5)?,
+                )),
+            ).unwrap();
+            let identity = conn.query_row(
+                "SELECT name, is_present, created_at FROM entities WHERE id=?1",
+                [&relationship.id], |row| Ok((
+                    row.get::<_, Option<String>>(0)?, row.get::<_, i64>(1)?, row.get::<_, String>(2)?,
+                )),
+            ).unwrap();
+            let stats = attributes::list_entity_attributes_sync(conn, "story", &relationship.id)
+                .unwrap().into_iter().map(|stat| (stat.attribute_id, stat.value, stat.source))
+                .collect::<Vec<_>>();
+            (relation, identity, stats)
+        };
+        let before = snapshot(&conn);
+        assert_eq!(before.1.0, None);
+        assert_eq!(before.2[0].1, -3.0);
+        let timestamps = conn.query_row(
+            "SELECT e.updated_at, a.updated_at FROM entities e
+             JOIN entity_attributes a ON a.entity_id=e.id WHERE e.id=?1",
+            [&relationship.id], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        ).unwrap();
+        replay(&conn, "story", &HashSet::from(["mira".into()]), None).unwrap();
+        assert_eq!(snapshot(&conn), before);
+        assert_eq!(conn.query_row(
+            "SELECT e.updated_at, a.updated_at FROM entities e
+             JOIN entity_attributes a ON a.entity_id=e.id WHERE e.id=?1",
+            [&relationship.id], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        ).unwrap(), timestamps);
+        replay(&conn, "story", &HashSet::from([relationship.id.clone()]), None).unwrap();
+        assert_eq!(snapshot(&conn), before);
+
+        let (turn_id, _, narration_id) =
+            test_support::exchange(&conn, "story", "do", "make peace", Some("An uneasy truce."));
+        entity_repository::update_link_sync(
+            &conn, "story", &relationship.id, None, Some("both"),
+            Some(Some("An uneasy truce.".into())), "narrator_tool", narration_id.as_deref(), Some(&turn_id),
+        ).unwrap();
+        entity_repository::update_link_sync(
+            &conn, "story", &relationship.id, Some("former rivals"), None, None,
+            "user", None, None,
+        ).unwrap();
+        replay(
+            &conn, "story", &HashSet::from([relationship.id.clone()]), Some(&turn_id),
+        ).unwrap();
+        let mut expected = before;
+        expected.0.3 = "former rivals".into();
+        assert_eq!(snapshot(&conn), expected);
+    }
+
+    #[test]
+    fn erasing_relationship_creation_removes_its_subtype_and_stats() {
+        let pool = crate::shared::db::test_pool();
+        let conn = pool.get().unwrap();
+        test_support::story(&conn, "story");
+        for (id, name) in [("mira", "Mira"), ("varro", "Varro")] {
+            entity_repository::create_entity_with_id_sync(
+                &conn, id, "story", CHARACTER, name, None, "user", None, None,
+            ).unwrap();
+        }
+        let (turn_id, action_id, narration_id) =
+            test_support::exchange(&conn, "story", "do", "meet Varro", Some("They become rivals."));
+        let relationship = entity_repository::create_link_sync(
+            &conn, "story", EntityLink {
+                from_id: "mira".into(), to_id: "varro".into(), label: "rivals".into(),
+                direction: "one_way".into(), description: None,
+            }, "narrator_tool", narration_id.as_deref(), Some(&turn_id),
+        ).unwrap();
+        let affection = attributes::find_exact_match(&conn, "Affection").unwrap().unwrap();
+        attributes::apply_attribute_delta(
+            &conn, "story", &relationship.id, &affection, -3.0, "a rivalry",
+            narration_id.as_deref().unwrap(), false, Some(&turn_id),
+        ).unwrap();
+        entity_repository::update_link_sync(
+            &conn, "story", &relationship.id, Some("former rivals"), None, None,
+            "user", None, None,
+        ).unwrap();
+        attributes::set_entity_attribute_sync(
+            &conn, "story", &relationship.id, &affection.id, -2.0,
+        ).unwrap();
+        assert_eq!(conn.query_row(
+            "SELECT name FROM entities WHERE id=?1", [&relationship.id],
+            |row| row.get::<_, Option<String>>(0),
+        ).unwrap(), None);
+        let relationship_id = relationship.id;
+        drop(conn);
+
+        let removed_ids = with_transaction(&pool, |tx| {
+            let removed = crate::features::transcript::erase::erase_last_exchange_in_tx(tx, "story")?
+                .unwrap();
+            replay_after_erase(tx, "story", &removed.entries)?;
+            Ok(removed.visible_ids)
+        }).unwrap();
+        assert_eq!(removed_ids, vec![action_id, narration_id.unwrap()]);
+        let conn = pool.get().unwrap();
+        let counts = conn.query_row(
+            "SELECT (SELECT COUNT(*) FROM entities WHERE id=?1),
+                    (SELECT COUNT(*) FROM relationships WHERE entity_id=?1),
+                    (SELECT COUNT(*) FROM entity_attributes WHERE entity_id=?1)",
+            [&relationship_id], |row| Ok((
+                row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?,
+            )),
+        ).unwrap();
+        assert_eq!(counts, (0, 0, 0));
+        assert_eq!(entity_repository::list_entities_sync(&conn, "story", Some(CHARACTER)).unwrap().len(), 2);
+        assert_eq!(conn.query_row(
+            "SELECT COUNT(*) FROM transcript_entries WHERE kind='entity_attribute_changed'",
+            [], |row| row.get::<_, i64>(0),
+        ).unwrap(), 1);
     }
 }

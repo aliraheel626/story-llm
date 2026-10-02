@@ -52,7 +52,7 @@ globalThis.__storyTestInvoke = async (command, args = {}) => {
       const blank = [...stories].reverse().find(([id, saved]) => saved.title === "New story" && !saved.played && !entries.get(id)?.length);
       if (blank) return { id: blank[0], title: "New story", settings_json: "{}" };
       const id = `story-${stories.size + 1}`;
-      const tools = { get_entities: true, create_entity: true, update_entity: true, adjust_entity_attribute: true, roll_check: true, illustrate_scene: true };
+      const tools = { save_relationship: true, create_entity: true, update_entity: true, adjust_entity_attribute: true, roll_check: true, illustrate_scene: true };
       stories.set(id, { title: "New story", narrator_tools: tools });
       return { id, title: "New story", settings_json: "{}" };
     }
@@ -317,11 +317,11 @@ test("rapid independent toggles remain isolated by story and failed saves roll b
   await store.getState().loadNarratorTools(second);
   assert.equal(stories.get(second).reasoning_effort, undefined);
   await Promise.all([
-    store.getState().saveNarratorTools(first, { get_entities: false }),
+    store.getState().saveNarratorTools(first, { save_relationship: false }),
     store.getState().saveNarratorTools(first, { illustrate_scene: false }),
     store.getState().saveNarratorTools(second, { roll_check: false }),
   ]);
-  assert.equal(stories.get(first).narrator_tools.get_entities, false);
+  assert.equal(stories.get(first).narrator_tools.save_relationship, false);
   assert.equal(stories.get(first).narrator_tools.illustrate_scene, false);
   assert.equal(stories.get(first).narrator_tools.roll_check, false);
   assert.equal(stories.get(second).narrator_tools.roll_check, false);
@@ -834,7 +834,7 @@ test("snapshot selector validates roll shapes without interpreting outcomes", ()
   ];
   const events = invalid.map((patch, index) => rollEvent(`invalid-${index}`, "narration", { ...base, ...patch }));
   events.push(rollEvent("untargeted", null, base));
-  events.push({ ...rollEvent("not-a-roll", "narration", base), kind: "entity_queried" });
+  events.push({ ...rollEvent("not-a-roll", "narration", base), kind: "entity_updated" });
   events.push(rollEvent("null-payload", "narration", null));
   events.push(rollEvent("array-payload", "narration", []));
   assert.deepEqual(Object.keys(groupRollsByEntry(events)), []);

@@ -60,9 +60,11 @@ fn characters_by_ids(
          WHERE entities.story_id = ?
            AND entities.kind = 'character' AND entities.is_present = 1
            AND entities.appearance_anchor IS NOT NULL
-           AND entities.id IN ({placeholders})"
+           AND (entities.id IN ({placeholders})
+                OR entities.name COLLATE NOCASE IN ({placeholders}))"
     ))?;
     let params = std::iter::once(story_id)
+        .chain(ids.iter().map(String::as_str))
         .chain(ids.iter().map(String::as_str));
     let characters = stmt
         .query_map(rusqlite::params_from_iter(params), |row| {
@@ -285,6 +287,28 @@ mod tests {
     use super::*;
     use crate::features::transcript::{repository as transcript_repository, turns};
     use crate::features::turn::TurnGate;
+
+    #[test]
+    fn character_name_resolution_adds_appearance_without_an_image_call() {
+        let pool = crate::shared::db::test_pool();
+        let conn = pool.get().unwrap();
+        crate::shared::test_support::story(&conn, "s");
+        crate::features::entities::create_entity_with_id_sync(
+            &conn, "mira-id", "s", "character", "Mira", Some("silver hair"), "user", None, None,
+        ).unwrap();
+        let characters = characters_by_ids(&conn, "s", &["mIra".into()]).unwrap();
+        assert_eq!(characters, vec![("Mira".to_string(), "silver hair".to_string())]);
+        let matched = characters.iter().collect::<Vec<_>>();
+        let prompt = compose_image_prompt("Painted scene.", "A harbor.", &matched);
+        assert!(prompt.contains("- Mira: silver hair"));
+        assert_eq!(characters_by_ids(&conn, "s", &["mira-id".into()]).unwrap(), characters);
+        let unknown = characters_by_ids(&conn, "s", &["unknown".into()]).unwrap();
+        assert!(unknown.is_empty());
+        assert_eq!(
+            compose_image_prompt("Painted scene.", "A harbor.", &unknown.iter().collect::<Vec<_>>()),
+            "Painted scene. A harbor."
+        );
+    }
 
     async fn turn_fixture() -> (Pool, std::sync::Arc<TurnTx>, String, String) {
         let pool = crate::shared::db::test_pool();

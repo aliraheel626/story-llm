@@ -16,8 +16,8 @@ use super::{
 };
 
 /// Reads an entity's current value for an attribute without writing anything.
-/// The optional source is `None` for the implicit midpoint and identifies
-/// player-locked rows without a second lookup.
+/// The optional source is `None` for the implicit midpoint; otherwise it
+/// identifies the most recent value's source.
 pub fn peek_entity_attribute(
     conn: &rusqlite::Connection,
     story_id: &str,
@@ -76,13 +76,7 @@ pub fn apply_attribute_delta(
     dramatic: bool,
     turn_id: Option<&str>,
 ) -> AppResult<(f64, f64)> {
-    let (before, current_source) = peek_entity_attribute(conn, story_id, entity_id, attribute)?;
-    if current_source.as_deref() == Some("user") {
-        // The narrator context tells the model user overrides take
-        // precedence over inferred updates; honor that here rather than
-        // silently overwriting a value the player explicitly set.
-        return Ok((before, before));
-    }
+    let (before, _) = peek_entity_attribute(conn, story_id, entity_id, attribute)?;
     let after = clamp_delta(before, delta, dramatic, attribute);
 
     let event = EntityEvent::AttributeChanged {
@@ -199,7 +193,20 @@ pub(crate) fn set_entity_attribute_sync(
     }
     conn.query_row("SELECT 1 FROM entities WHERE story_id = ?1 AND id = ?2 AND is_present = 1", rusqlite::params![story_id, entity_id], |_| Ok(()))
         .map_err(|_| AppError::NotFound(format!("entity {entity_id} not found")))?;
-    let before: Option<f64> = conn.query_row("SELECT value FROM entity_attributes JOIN entities ON entities.id = entity_attributes.entity_id WHERE entities.story_id = ?1 AND entity_id = ?2 AND attribute_id = ?3", rusqlite::params![story_id, entity_id, attribute_id], |r| r.get(0)).optional()?;
+    let existing = conn.query_row(
+        "SELECT entities.story_id, entity_attributes.entity_id, entity_attributes.attribute_id,
+                attribute_registry.canonical_name, entity_attributes.value,
+                attribute_registry.min, attribute_registry.max, entity_attributes.updated_at,
+                entity_attributes.source
+         FROM entity_attributes JOIN attribute_registry ON attribute_registry.id=entity_attributes.attribute_id
+         JOIN entities ON entities.id=entity_attributes.entity_id
+         WHERE entities.story_id=?1 AND entity_attributes.entity_id=?2 AND entity_attributes.attribute_id=?3",
+        rusqlite::params![story_id, entity_id, attribute_id], row_to_entity_attribute,
+    ).optional()?;
+    if let Some(existing) = existing.as_ref().filter(|existing| existing.value == value) {
+        return Ok(existing.clone());
+    }
+    let before = existing.map(|existing| existing.value);
     let event = EntityEvent::AttributeChanged {
         entity_id: entity_id.to_string(),
         attribute_id: attribute_id.to_string(),
@@ -369,6 +376,31 @@ mod tests {
         assert!(values["entity"].is_empty());
         let attribute = find_attribute_by_id(&conn, &attribute_id).unwrap();
         assert_eq!(peek_entity_attribute(&conn, "other", "entity", &attribute).unwrap(), (5.0, None));
+    }
+
+    #[test]
+    fn setting_the_current_value_preserves_the_record_without_an_event() {
+        let (pool, attribute_id) = attribute_helper_fixture();
+        let conn = pool.get().unwrap();
+        let passage = crate::features::transcript::repository::append_story_message(
+            &conn, "story", "narrator", "generated", "Scene", None, None,
+        ).unwrap();
+        let attribute = find_attribute_by_id(&conn, &attribute_id).unwrap();
+        apply_attribute_delta(
+            &conn, "story", "entity", &attribute, 2.0, "a later story event",
+            &passage.id, false, None,
+        ).unwrap();
+        let current = list_entity_attributes_sync(&conn, "story", "entity").unwrap().pop().unwrap();
+        assert_eq!(current.source, "inferred");
+        let entries = crate::features::transcript::repository::list_logical_entries(&conn, "story").unwrap();
+        let unchanged = set_entity_attribute_sync(
+            &conn, "story", "entity", &attribute_id, current.value,
+        ).unwrap();
+        assert_eq!(serde_json::to_value(unchanged).unwrap(), serde_json::to_value(current).unwrap());
+        assert_eq!(
+            crate::features::transcript::repository::list_logical_entries(&conn, "story").unwrap(),
+            entries
+        );
     }
 
     #[test]

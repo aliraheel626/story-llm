@@ -2,10 +2,13 @@ use serde_json::{json, Value};
 
 use crate::features::transcript::model::{kind, TranscriptEntry};
 
+use super::model::EntityLink;
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct NameAnchor {
     pub name: String,
     pub appearance_anchor: Option<String>,
+    pub link: Option<EntityLink>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -13,8 +16,9 @@ pub enum EntityEvent {
     Created {
         entity_id: String,
         kind: String,
-        name: String,
+        name: Option<String>,
         appearance_anchor: Option<String>,
+        link: Option<EntityLink>,
         source: String,
         created_at: String,
     },
@@ -66,32 +70,48 @@ impl EntityEvent {
                 kind,
                 name,
                 appearance_anchor,
+                link,
                 source,
                 ..
-            } => json!({
-                "entity_id": entity_id,
-                "kind": kind,
-                "name": name,
-                "appearance_anchor": appearance_anchor,
-                "source": source
-            }),
+            } => {
+                let mut payload = json!({
+                    "entity_id": entity_id,
+                    "kind": kind,
+                    "name": name,
+                    "appearance_anchor": appearance_anchor,
+                    "source": source
+                });
+                if let Some(link) = link {
+                    payload["link"] = json!(link);
+                }
+                payload
+            }
             Self::Updated {
                 entity_id,
                 before,
                 after,
                 source,
-            } => json!({
-                "entity_id": entity_id,
-                "before": {
-                    "name": before.name,
-                    "appearance_anchor": before.appearance_anchor
-                },
-                "after": {
-                    "name": after.name,
-                    "appearance_anchor": after.appearance_anchor
-                },
-                "source": source
-            }),
+            } => {
+                let mut payload = json!({
+                    "entity_id": entity_id,
+                    "before": {
+                        "name": before.name,
+                        "appearance_anchor": before.appearance_anchor
+                    },
+                    "after": {
+                        "name": after.name,
+                        "appearance_anchor": after.appearance_anchor
+                    },
+                    "source": source
+                });
+                if let Some(link) = &before.link {
+                    payload["before"]["link"] = json!(link);
+                }
+                if let Some(link) = &after.link {
+                    payload["after"]["link"] = json!(link);
+                }
+                payload
+            }
             Self::Deleted {
                 entity_id,
                 name,
@@ -141,61 +161,64 @@ impl EntityEvent {
 
     pub fn from_entry(entry: &TranscriptEntry) -> Option<Self> {
         let string = |value: Option<&Value>| value.and_then(Value::as_str).map(str::to_string);
+        let link = |value: Option<&Value>| match value {
+            Some(value) => serde_json::from_value::<Option<EntityLink>>(value.clone()).ok(),
+            None => Some(None),
+        };
         let entity_id = string(entry.payload.get("entity_id"))?;
+        let source = string(entry.payload.get("source"))?;
         match entry.kind.as_str() {
             kind::ENTITY_CREATED => Some(Self::Created {
                 entity_id,
                 kind: string(entry.payload.get("kind"))?,
-                name: string(entry.payload.get("name"))?,
+                name: string(entry.payload.get("name")),
                 appearance_anchor: string(entry.payload.get("appearance_anchor")),
-                source: string(entry.payload.get("source")).unwrap_or_default(),
+                link: link(entry.payload.get("link"))?,
+                source,
                 created_at: entry.created_at.clone(),
             }),
             kind::ENTITY_UPDATED => {
+                let before = entry.payload.get("before")?;
                 let after = entry.payload.get("after")?;
-                let after_name = string(after.get("name"))?;
-                let before = entry.payload.get("before");
                 Some(Self::Updated {
                     entity_id,
                     before: NameAnchor {
-                        name: string(before.and_then(|value| value.get("name")))
-                            .unwrap_or_else(|| after_name.clone()),
-                        appearance_anchor: string(
-                            before.and_then(|value| value.get("appearance_anchor")),
-                        ),
+                        name: string(before.get("name"))?,
+                        appearance_anchor: string(before.get("appearance_anchor")),
+                        link: link(before.get("link"))?,
                     },
                     after: NameAnchor {
-                        name: after_name,
+                        name: string(after.get("name"))?,
                         appearance_anchor: string(after.get("appearance_anchor")),
+                        link: link(after.get("link"))?,
                     },
-                    source: string(entry.payload.get("source")).unwrap_or_default(),
+                    source,
                 })
             }
             kind::ENTITY_DELETED => Some(Self::Deleted {
                 entity_id,
-                name: string(entry.payload.get("name")).unwrap_or_default(),
-                source: string(entry.payload.get("source")).unwrap_or_default(),
+                name: string(entry.payload.get("name"))?,
+                source,
             }),
             kind::ENTITY_ATTRIBUTE_CHANGED => Some(Self::AttributeChanged {
                 entity_id,
                 attribute_id: string(entry.payload.get("attribute_id"))?,
-                attribute_name: string(entry.payload.get("attribute_name")).unwrap_or_default(),
-                before: entry.payload.get("before").and_then(Value::as_f64),
+                attribute_name: string(entry.payload.get("attribute_name"))?,
+                before: match entry.payload.get("before")? {
+                    Value::Null => None,
+                    value => Some(value.as_f64()?),
+                },
                 after: entry.payload.get("after").and_then(Value::as_f64)?,
-                source: string(entry.payload.get("source")).unwrap_or_else(|| "inferred".into()),
+                source,
                 delta: entry.payload.get("delta").and_then(Value::as_f64),
                 cause: string(entry.payload.get("cause")),
             }),
             kind::ENTITY_ATTRIBUTE_REMOVED => Some(Self::AttributeRemoved {
                 entity_id,
                 attribute_id: string(entry.payload.get("attribute_id"))?,
-                attribute_name: string(entry.payload.get("attribute_name")).unwrap_or_default(),
-                before: entry
-                    .payload
-                    .get("before")
-                    .and_then(Value::as_f64)
-                    .unwrap_or_default(),
-                source: string(entry.payload.get("source")).unwrap_or_default(),
+                attribute_name: string(entry.payload.get("attribute_name"))?,
+                before: entry.payload.get("before").and_then(Value::as_f64)?,
+                source,
             }),
             _ => None,
         }
@@ -258,7 +281,7 @@ mod tests {
     }
 
     #[test]
-    fn parser_uses_transcript_creation_time_and_legacy_attribute_source() {
+    fn parser_uses_transcript_creation_time_and_recorded_attribute_source() {
         let created = EntityEvent::from_entry(&entry(
             kind::ENTITY_CREATED,
             json!({
@@ -272,31 +295,112 @@ mod tests {
         .unwrap();
         assert!(matches!(
             created,
-            EntityEvent::Created { created_at, .. } if created_at == "transcript-created-at"
+            EntityEvent::Created { name: Some(name), link: None, created_at, .. }
+                if name == "Mira" && created_at == "transcript-created-at"
         ));
 
         let changed = EntityEvent::from_entry(&entry(
             kind::ENTITY_ATTRIBUTE_CHANGED,
-            json!({"entity_id":"entity", "attribute_id":"attribute", "after":4.0}),
+            json!({
+                "entity_id":"entity", "attribute_id":"attribute", "attribute_name":"Accuracy",
+                "before":3.0, "after":4.0, "source":"inferred"
+            }),
         ))
         .unwrap();
         assert!(matches!(
             changed,
-            EntityEvent::AttributeChanged { source, .. } if source == "inferred"
+            EntityEvent::AttributeChanged { before: Some(before), after, source, .. }
+                if before == 3.0 && after == 4.0 && source == "inferred"
         ));
+    }
+
+    #[test]
+    fn links_round_trip_and_character_payloads_omit_them() {
+        let link = EntityLink {
+            from_id: "mira".into(),
+            to_id: "varro".into(),
+            label: "rivals".into(),
+            direction: "one_way".into(),
+            description: Some("An old competition.".into()),
+        };
+        let created = EntityEvent::Created {
+            entity_id: "relationship:mira:varro".into(),
+            kind: "relationship".into(),
+            name: None,
+            appearance_anchor: None,
+            link: Some(link.clone()),
+            source: "narrator_tool".into(),
+            created_at: "transcript-created-at".into(),
+        };
+        assert!(created.payload()["name"].is_null());
+        assert_eq!(
+            EntityEvent::from_entry(&entry(created.kind(), created.payload())),
+            Some(created)
+        );
+        let updated = EntityEvent::Updated {
+            entity_id: "relationship:mira:varro".into(),
+            before: NameAnchor {
+                name: "rivals".into(),
+                appearance_anchor: None,
+                link: Some(link.clone()),
+            },
+            after: NameAnchor {
+                name: "former rivals".into(),
+                appearance_anchor: None,
+                link: Some(EntityLink { label: "former rivals".into(), ..link }),
+            },
+            source: "user".into(),
+        };
+        assert_eq!(
+            EntityEvent::from_entry(&entry(updated.kind(), updated.payload())),
+            Some(updated)
+        );
+        let character = EntityEvent::Created {
+            entity_id: "mira".into(),
+            kind: "character".into(),
+            name: Some("Mira".into()),
+            appearance_anchor: Some("silver hair".into()),
+            link: None,
+            source: "user".into(),
+            created_at: "transcript-created-at".into(),
+        };
+        assert!(character.payload().get("link").is_none());
+        assert_eq!(
+            EntityEvent::from_entry(&entry(character.kind(), character.payload())),
+            Some(character)
+        );
+        let character_update = EntityEvent::Updated {
+            entity_id: "mira".into(),
+            before: NameAnchor { name: "Mira".into(), appearance_anchor: None, link: None },
+            after: NameAnchor { name: "Mira".into(), appearance_anchor: Some("silver hair".into()), link: None },
+            source: "user".into(),
+        };
+        let payload = character_update.payload();
+        assert!(payload["before"].get("link").is_none());
+        assert!(payload["after"].get("link").is_none());
+        assert_eq!(
+            EntityEvent::from_entry(&entry(character_update.kind(), payload)),
+            Some(character_update)
+        );
     }
 
     #[test]
     fn parser_skips_entries_missing_required_fields() {
         assert!(EntityEvent::from_entry(&entry(
             kind::ENTITY_CREATED,
-            json!({"entity_id":"entity", "name":"Mira"}),
+            json!({"entity_id":"entity", "name":"Mira", "source":"user"}),
         ))
         .is_none());
-        assert!(EntityEvent::from_entry(&entry(
-            kind::ENTITY_UPDATED,
-            json!({"entity_id":"entity", "after":{}}),
-        ))
-        .is_none());
+        let payload = json!({
+            "entity_id":"entity", "source":"user",
+            "before":{"name":"Mira", "appearance_anchor":null},
+            "after":{"name":"Mira Vale", "appearance_anchor":null}
+        });
+        assert!(EntityEvent::from_entry(&entry(kind::ENTITY_UPDATED, payload.clone())).is_some());
+        for field in ["before", "after", "source"] {
+            let mut incomplete = payload.clone();
+            incomplete.as_object_mut().unwrap().remove(field);
+            assert!(EntityEvent::from_entry(&entry(kind::ENTITY_UPDATED, incomplete)).is_none(), "{field}");
+        }
     }
 }

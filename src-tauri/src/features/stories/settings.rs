@@ -10,9 +10,9 @@ use crate::shared::db::{with_transaction, Pool};
 use crate::shared::error::{AppError, AppResult};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(default, deny_unknown_fields)]
 pub struct NarratorToolSettings {
-    pub get_entities: bool,
+    pub save_relationship: bool,
     pub create_entity: bool,
     pub update_entity: bool,
     pub adjust_entity_attribute: bool,
@@ -23,7 +23,7 @@ pub struct NarratorToolSettings {
 impl Default for NarratorToolSettings {
     fn default() -> Self {
         Self {
-            get_entities: true,
+            save_relationship: true,
             create_entity: true,
             update_entity: true,
             adjust_entity_attribute: true,
@@ -331,10 +331,10 @@ mod tests {
     }
 
     #[test]
-    fn tool_shape_rejects_partial_and_unknown_fields() {
-        assert!(
-            serde_json::from_value::<NarratorToolSettings>(json!({"roll_check": true})).is_err()
-        );
+    fn tool_shape_defaults_missing_fields_and_rejects_unknown_fields() {
+        let tools = serde_json::from_value::<NarratorToolSettings>(json!({"roll_check": false})).unwrap();
+        assert!(!tools.roll_check);
+        assert!(tools.save_relationship);
         let mut value = json!(NarratorToolSettings::default());
         value["unexpected"] = json!(true);
         assert!(serde_json::from_value::<NarratorToolSettings>(value).is_err());

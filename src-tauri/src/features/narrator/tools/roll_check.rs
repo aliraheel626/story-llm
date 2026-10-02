@@ -3,7 +3,7 @@ use std::sync::Arc;
 use rig_agent::tool::{PortableDynamicTool, ToolExecutionError, ToolOutput};
 use serde_json::{json, Value};
 
-use crate::features::entities::{self, attributes};
+use crate::features::entities::attributes;
 use crate::features::narrator::{
     catalog::{self, ToolAvailability, ToolDeps, ToolSpec},
     dice::{chance_from_factors, resolve_roll, RollFactor, RollPayload},
@@ -12,16 +12,18 @@ use crate::features::transcript;
 use crate::features::turn::TurnTx;
 use crate::shared::error::{AppError, AppResult};
 
+use super::shared::{object_args, resolve_entity};
+
 pub const NAME: &str = "roll_check";
 pub const DESCRIPTION: &str =
     "Resolve a genuinely uncertain action. With zero factors, chance_percent is optional and \
-     defaults to 50. For one factor, identify the acting entity_id and attribute_name; for two, \
+     defaults to 50. For one factor, name the acting entity and attribute_name; for two, \
      put the acting pair first and the opposing pair second. The backend reads stored attribute \
      values, normalizes each by its registered min/max, and calculates chance_percent as \
      round(50 + 50 * (actor_normalized - opponent_normalized)); a single factor faces a neutral \
-     opponent at 0.5. Do not pass chance_percent with factors, and do not invent entity IDs or \
+     opponent at 0.5. Do not pass chance_percent with factors, and do not invent attribute \
      values. The tool returns the draw and success or failure.";
-pub const INSTRUCTION: &str = "For a genuinely uncertain outcome, call roll_check before narrating the result. With no factors it defaults to 50% unless you provide chance_percent. For a check based on registered attributes, select one acting entity-attribute pair or two opposing pairs; the backend reads their current values and calculates the chance. Use get_entities to find IDs and attribute names when that tool is available. Never invent attribute values or pass chance_percent together with factors. Do not roll routine or certain actions.";
+pub const INSTRUCTION: &str = "For a genuinely uncertain outcome, call roll_check before narrating the result. With no factors it defaults to 50% unless you provide chance_percent. For a check based on registered attributes, select one acting entity-attribute pair or two opposing pairs by name; the backend reads their current values and calculates the chance. Never invent attribute values or pass chance_percent together with factors. Do not roll routine or certain actions.";
 
 pub fn schema() -> Value {
     json!({
@@ -35,10 +37,10 @@ pub fn schema() -> Value {
                 "items": {
                     "type": "object",
                     "properties": {
-                        "entity_id": {"type": "string", "description": "Entity id in this story, preferably from get_entities."},
+                        "entity": {"type": "string", "description": "A character name, or a relationship as 'Mira → You'. An id is also accepted."},
                         "attribute_name": {"type": "string", "description": "Name of an attribute currently set on the entity."}
                     },
-                    "required": ["entity_id", "attribute_name"],
+                    "required": ["entity", "attribute_name"],
                     "additionalProperties": false
                 }
             }
@@ -78,15 +80,12 @@ pub const SPEC: ToolSpec = ToolSpec {
 fn factor_reading(
     conn: &rusqlite::Connection,
     story_id: &str,
-    entity_id: &str,
+    reference: &str,
     attribute_name: &str,
 ) -> AppResult<RollFactor> {
-    let entity = entities::list_entities_sync(conn, story_id, None)?
-        .into_iter()
-        .find(|entity| entity.id == entity_id)
-        .ok_or_else(|| AppError::NotFound(format!("entity {entity_id} not found in this story")))?;
+    let entity = resolve_entity(conn, story_id, reference)?;
     let registry_match = attributes::find_exact_match(conn, attribute_name)?;
-    let values = attributes::list_entity_attributes_sync(conn, story_id, entity_id)?;
+    let values = attributes::list_entity_attributes_sync(conn, story_id, &entity.id)?;
     let value = values
         .into_iter()
         .find(|value| {
@@ -159,7 +158,7 @@ pub(super) fn tool(
                     })? as u8),
                 };
                 let reason = match args.get("reason") {
-                    None | Some(serde_json::Value::Null) => None,
+                    None => None,
                     Some(serde_json::Value::String(s)) => {
                         Some(s.trim().to_string()).filter(|s| !s.is_empty())
                     }
@@ -176,20 +175,19 @@ pub(super) fn tool(
                 };
                 let mut references = Vec::with_capacity(factor_args.len());
                 for factor in factor_args {
-                    let fields = factor.as_object().ok_or_else(|| {
-                        ToolExecutionError::invalid_args("each factor must be an object")
-                    })?;
+                    let fields = object_args(factor, &["entity", "attribute_name"], "factor")
+                        .map_err(super::to_tool_error)?;
                     if fields.len() != 2 {
                         return Err(ToolExecutionError::invalid_args(
-                            "each factor requires only entity_id and attribute_name",
+                            "each factor requires only entity and attribute_name",
                         ));
                     }
-                    let entity_id = fields
-                        .get("entity_id")
+                    let entity = fields
+                        .get("entity")
                         .and_then(|value| value.as_str())
                         .filter(|value| !value.trim().is_empty())
                         .ok_or_else(|| {
-                            ToolExecutionError::invalid_args("factor entity_id is required")
+                            ToolExecutionError::invalid_args("factor entity is required")
                         })?;
                     let attribute_name = fields
                         .get("attribute_name")
@@ -198,7 +196,7 @@ pub(super) fn tool(
                         .ok_or_else(|| {
                             ToolExecutionError::invalid_args("factor attribute_name is required")
                         })?;
-                    references.push((entity_id, attribute_name));
+                    references.push((entity, attribute_name));
                 }
                 if !references.is_empty() && explicit_chance.is_some() {
                     return Err(ToolExecutionError::invalid_args(
@@ -252,12 +250,7 @@ pub(super) fn tool(
                         Ok((output, chance_source, factors))
                     })
                     .await
-                    .map_err(|error| match error {
-                        AppError::NotFound(_) | AppError::Invalid(_) => {
-                            ToolExecutionError::invalid_args(error.to_string())
-                        }
-                        _ => ToolExecutionError::other(error.to_string()),
-                    })?;
+                    .map_err(super::to_tool_error)?;
 
                 Ok(ToolOutput::json(json!({
                     "chance_percent": output.chance_percent, "roll": output.roll,
@@ -275,6 +268,7 @@ mod turn_tests {
     use super::super::{
         adjust_entity_attribute::tool as adjust_entity_attribute_tool,
         create_entity::tool as create_entity_tool, test_support::fixture,
+        save_relationship::tool as save_relationship_tool,
     };
     use super::schema as roll_check_schema;
     use super::tool as roll_check_tool;
@@ -290,7 +284,7 @@ mod turn_tests {
         assert_eq!(schema["properties"]["factors"]["maxItems"], 2);
         assert_eq!(
             schema["properties"]["factors"]["items"]["required"],
-            json!(["entity_id", "attribute_name"])
+            json!(["entity", "attribute_name"])
         );
         assert!(schema["properties"].get("attribute").is_none());
     }
@@ -370,12 +364,12 @@ mod turn_tests {
             turn_id.clone(),
             String::new(),
         )
-        .execute(json!({"entity_id":id,"attribute":"Stealth","delta":3}))
+        .execute(json!({"entity":"You","attribute":"Stealth","delta":3,"reason":"training"}))
         .await
         .unwrap();
         let roll = roll_check_tool(turn.clone(), target, turn_id);
         let result = roll
-            .execute(json!({"factors":[{"entity_id":id,"attribute_name":"Stealth"}]}))
+            .execute(json!({"factors":[{"entity":"you","attribute_name":"Stealth"}]}))
             .await
             .unwrap();
         assert_eq!(result.as_json().unwrap()["chance_percent"], json!(65));
@@ -387,7 +381,7 @@ mod turn_tests {
         .await
         .unwrap();
         let alias = roll
-            .execute(json!({"factors":[{"entity_id":id,"attribute_name":"Sneaking"}]}))
+            .execute(json!({"factors":[{"entity":id,"attribute_name":"Sneaking"}]}))
             .await
             .unwrap();
         assert_eq!(
@@ -395,9 +389,38 @@ mod turn_tests {
             json!("Stealth")
         );
         assert!(roll
-            .execute(json!({"factors":[{"entity_id":"missing","attribute_name":"Stealth"}]}))
+            .execute(json!({"factors":[{"entity":"missing","attribute_name":"Stealth"}]}))
             .await
             .is_err());
+        turn.rollback().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn names_and_relationship_arrows_resolve_to_stored_factor_ids() {
+        let (_pool, turn, target, turn_id) = fixture();
+        let create = create_entity_tool(turn.clone(), target.clone(), turn_id.clone());
+        let mira = create.execute(json!({"kind":"character","name":"Mira"})).await.unwrap();
+        let mira_id = mira.as_json().unwrap()["id"].as_str().unwrap();
+        create.execute(json!({"kind":"character","name":"Varro"})).await.unwrap();
+        adjust_entity_attribute_tool(turn.clone(), target.clone(), turn_id.clone(), String::new())
+            .execute(json!({"entity":"Mira","attribute":"Stealth","delta":3,"reason":"practice"})).await.unwrap();
+        save_relationship_tool(turn.clone(), target.clone(), turn_id.clone(), String::new())
+            .execute(json!({"from":"Mira","to":"Varro","label":"rivals",
+                "stats":[{"attribute":"Affection","delta":2,"reason":"a truce"}]})).await.unwrap();
+        let relationship_id = turn.with(|conn| Ok(super::resolve_entity(conn, turn.story_id(), "Mira → Varro")?.id))
+            .await.unwrap();
+        let roll = roll_check_tool(turn.clone(), target, turn_id);
+        let character = roll.execute(json!({"factors":[{"entity":"MIRA","attribute_name":"Stealth"}]})).await.unwrap();
+        assert_eq!(character.as_json().unwrap()["factors"][0]["entity_id"], mira_id);
+        assert_eq!(character.as_json().unwrap()["factors"][0]["value"], 8.0);
+        for reference in ["Mira → Varro", "mira -> varro"] {
+            let relation = roll.execute(json!({"factors":[{"entity":reference,"attribute_name":"Affection"}]})).await.unwrap();
+            assert_eq!(relation.as_json().unwrap()["factors"][0]["entity_id"], relationship_id);
+            assert_eq!(relation.as_json().unwrap()["factors"][0]["value"], 2.0);
+        }
+        assert!(roll.execute(json!({"factors":[{"entity":"Varro -> Mira","attribute_name":"Affection"}]})).await.is_err());
+        assert!(roll.execute(json!({"factors":[{"entity":"Mira","attribute_name":"Stealth","extra":1}]})).await.is_err());
+        assert!(roll.execute(json!({"reason":null})).await.is_err());
         turn.rollback().await.unwrap();
     }
 }

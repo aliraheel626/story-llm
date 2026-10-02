@@ -431,7 +431,7 @@ mod tests {
             entry(
                 "query",
                 2,
-                kind::ENTITY_QUERIED,
+                kind::ENTITY_UPDATED,
                 Some("Looked up: Bob"),
                 json!({}),
             ),
@@ -494,7 +494,7 @@ mod tests {
     }
 
     #[test]
-    fn for_model_ignores_legacy_dice_roll_preference() {
+    fn for_model_keeps_dice_rolls_with_current_defaults() {
         let pool = crate::shared::db::test_pool();
         let conn = pool.get().unwrap();
         crate::shared::test_support::story(&conn, "s");
@@ -502,11 +502,6 @@ mod tests {
             &conn, "s", kind::DICEROLL, Some("Stealth succeeded."), json!({}), None, None,
         );
         let roll = repository::get_entry(&conn, &roll_id).unwrap();
-        conn.execute(
-            "INSERT INTO settings (key, value) VALUES ('context_injection', ?1)",
-            [r#"{"entity_context_mode":"scoped","dice_rolls_in_context":false}"#],
-        )
-        .unwrap();
         drop(conn);
         let history = for_model(
             &pool.get().unwrap(),
@@ -583,12 +578,12 @@ mod tests {
     }
 
     #[test]
-    fn legacy_entity_queries_remain_contextual_but_tool_calls_do_not() {
+    fn entity_updates_remain_contextual_but_tool_calls_do_not() {
         let rows = vec![
             entry(
                 "query",
                 0,
-                kind::ENTITY_QUERIED,
+                kind::ENTITY_UPDATED,
                 Some("Looked up: Bob"),
                 json!({"entity_ids":["bob"]}),
             ),
@@ -605,8 +600,28 @@ mod tests {
         assert_eq!(history.len(), 1);
         assert_eq!(
             history[0].content,
-            "[Authoritative story event: entity_queried]\nLooked up: Bob"
+            "[Authoritative story event: entity_updated]\nLooked up: Bob"
         );
+    }
+
+    #[test]
+    fn player_rename_is_a_labelled_newer_fact_after_narration() {
+        use crate::features::entities;
+        let pool = crate::shared::db::test_pool();
+        let conn = pool.get().unwrap();
+        crate::shared::test_support::story(&conn, "s");
+        entities::create_entity_with_id_sync(&conn, "mira", "s", "character", "Mira", None, "test", None, None).unwrap();
+        repository::append_entry(&conn, "s", kind::NARRATION, "visible", Some("Mira arrives."), &json!({}), None, None).unwrap();
+        entities::update_entity_sync(&conn, "s", "mira", "Mira Vale", None, "user", None, None).unwrap();
+        let history = for_model(&conn, "s", &TranscriptSettings::default(), ImagePolicy::Unsupported).unwrap();
+        let narration = history.iter().position(|turn| turn.content == "Mira arrives.").unwrap();
+        let correction = history.iter().position(|turn| turn.content.contains("User edit: ") && turn.content.contains("name Mira → Mira Vale")).unwrap();
+        assert!(correction > narration);
+        assert!(history[correction].content.starts_with("[Authoritative story event: entity_updated]\nUser edit: "));
+        entities::update_entity_sync(&conn, "s", "mira", "Mira Gray", None, "narrator_tool", None, None).unwrap();
+        let history = for_model(&conn, "s", &TranscriptSettings::default(), ImagePolicy::Unsupported).unwrap();
+        let update = history.iter().find(|turn| turn.content.contains("name Mira Vale → Mira Gray")).unwrap();
+        assert!(!update.content.contains("User edit: "));
     }
 
     #[test]
@@ -662,7 +677,7 @@ mod tests {
         let query = repository::append_entry(
             &conn,
             "s",
-            kind::ENTITY_QUERIED,
+            kind::ENTITY_UPDATED,
             "hidden",
             Some("Looked up: Bob"),
             &json!({"entity_ids":["bob"]}),

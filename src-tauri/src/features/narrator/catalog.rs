@@ -56,10 +56,10 @@ pub(super) fn normal_mode(availability: &ToolAvailability<'_>) -> bool {
 
 pub static TOOLS: &[ToolSpec] = &[
     tools::roll_check::SPEC,
-    tools::get_entities::SPEC,
     tools::create_entity::SPEC,
     tools::update_entity::SPEC,
     tools::adjust_entity_attribute::SPEC,
+    tools::save_relationship::SPEC,
     tools::illustrate_scene::SPEC,
 ];
 
